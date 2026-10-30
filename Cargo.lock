@@ -512,8 +512,10 @@ version = "0.1.0"
 dependencies = [
  "bot-core",
  "bot-render",
+ "hex",
  "maud",
  "serde",
+ "sha2",
 ]
 
 [[package]]
@@ -531,6 +533,7 @@ version = "0.1.0"
 dependencies = [
  "bot-core",
  "maud",
+ "rand",
  "serde",
 ]
 
@@ -539,8 +542,11 @@ name = "feat-connect"
 version = "0.1.0"
 dependencies = [
  "bot-core",
+ "hex",
  "maud",
+ "rand",
  "serde",
+ "sha2",
 ]
 
 [[package]]
