@@ -1,0 +1,18 @@
+# The container's one public port (Render's $PORT): Relay's rendezvous under /relay, the bot and
+# its dashboard everywhere else. Render ends TLS in front of this, so phones dial wss://<host>/relay.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:{$PORT} {
+	# Strips /relay: the rendezvous serves /host/<room>, /join/<room> and /health.
+	# WebSockets pass through reverse_proxy as they are, with no idle timeout.
+	handle_path /relay/* {
+		reverse_proxy 127.0.0.1:7430
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3001
+	}
+}

@@ -29,7 +29,10 @@ fn var(name: &str) -> Option<String> {
 impl Config {
     pub fn from_env() -> Result<Self> {
         let need = |name: &str| var(name).with_context(|| format!("{name} is not set"));
+        // PUBLIC_BASE_URL and TALLY_OWNER_ID are antho-s-bot's names, accepted so the same
+        // Render service can switch over without renaming its variables.
         let public_url = var("PUBLIC_URL")
+            .or_else(|| var("PUBLIC_BASE_URL"))
             .or_else(|| var("RENDER_EXTERNAL_URL"))
             .unwrap_or_else(|| "http://localhost:3001".into())
             .trim_end_matches('/')
@@ -39,7 +42,11 @@ impl Config {
             discord_client_id: need("DISCORD_CLIENT_ID")?,
             discord_client_secret: need("DISCORD_CLIENT_SECRET")?,
             public_url,
-            owner_id: need("OWNER_ID")?.parse().context("OWNER_ID must be a Discord user id")?,
+            owner_id: var("OWNER_ID")
+                .or_else(|| var("TALLY_OWNER_ID"))
+                .context("OWNER_ID is not set (your Discord user id)")?
+                .parse()
+                .context("OWNER_ID must be a Discord user id")?,
             database_path: var("DATABASE_PATH").unwrap_or_else(|| "data/bot-v2.db".into()),
             port: var("PORT").and_then(|p| p.parse().ok()).unwrap_or(3001),
             twitch_client_id: var("TWITCH_CLIENT_ID"),

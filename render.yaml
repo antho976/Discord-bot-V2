@@ -1,0 +1,31 @@
+# Render Blueprint: one always-on web service running the Docker image, with the persistent disk
+# that holds the database and Relay's cloud copy. Matches antho-s-bot's service so V2 can take it
+# over in place (see README, "Switching over").
+services:
+  - type: web
+    name: anthos-bot
+    runtime: docker
+    region: virginia
+    plan: starter
+    healthCheckPath: /healthz
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: OWNER_ID
+        sync: false
+      - key: TWITCH_CLIENT_ID
+        sync: false
+      - key: TWITCH_CLIENT_SECRET
+        sync: false
+      - key: TWITCH_EVENTSUB_SECRET
+        generateValue: true
+      - key: RELAY_PUBLIC_URL
+        sync: false

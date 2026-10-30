@@ -20,6 +20,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/levels/members", get(members_page))
         .route("/g/{guild}/levels/members/{user}", post(set_member_xp))
         .route("/g/{guild}/levels/import", get(import_page).post(import_upload).layer(DefaultBodyLimit::max(64 * 1024 * 1024)))
+        .route("/g/{guild}/levels/import-local", post(import_local))
 }
 
 fn tabs(page: &Page, active: &str) -> Markup {
@@ -269,9 +270,20 @@ async fn set_member_xp(State(ctx): State<Ctx>, user: User, Path((guild, member))
 
 async fn import_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let local = legacy_db_path().filter(|p| std::path::Path::new(p).exists());
     let body = html! {
         (tabs(&page, "Import"))
-        (ui::section("Bring XP over from antho-s-bot", Some("Use a backup of its database, or the JSON the Render Shell command prints. Only members of this server are imported. Reward roles and XP settings come too."), html! {
+        @if let Some(path) = &local {
+            (ui::section("The old bot's database is on this server", Some(&format!("Found at {path}. Importing reads it and leaves it as it is.")), html! {
+                @if page.can_edit() {
+                    form.inline-form method="post" action=(page.path("levels/import-local")) {
+                        (ui::select("mode", &[("replace".into(), "Replace XP with the old bot's".into()), ("higher".into(), "Keep whichever is higher".into())], "replace"))
+                        button.btn.primary type="submit" { "Import from the old bot" }
+                    }
+                }
+            }))
+        }
+        (ui::section(if local.is_some() { "Or upload a file" } else { "Bring XP over from antho-s-bot" }, Some("Use a backup of its database, or the JSON the Render Shell command prints. Only members of this server are imported. Reward roles and XP settings come too."), html! {
             div.card style="padding:18px" {
                 div.stack {
                     input.input id="import-file" type="file" accept=".db,.sqlite,.json,application/json" style="height:auto;padding:8px";
@@ -300,6 +312,27 @@ document.getElementById("import-go").addEventListener("click", async () => {{
 "#, path = page.path("levels/import")))) }
     };
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
+}
+
+/// Where antho-s-bot kept its database on the shared Render disk.
+fn legacy_db_path() -> Option<String> {
+    let p = std::env::var("LEGACY_DB_PATH").unwrap_or_else(|_| "/data/bot.db".into());
+    (!p.trim().is_empty() && p != "off").then_some(p)
+}
+
+async fn import_local(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let path = legacy_db_path().filter(|p| std::path::Path::new(p).exists()).ok_or(WebError::NotFound)?;
+    let mode = if form.get("mode") == Some("higher") { import::Mode::KeepHigher } else { import::Mode::Replace };
+    let ctx2 = ctx.clone();
+    let report = bot_core::tokio::task::spawn_blocking(move || import::import_db(&ctx2, std::path::Path::new(&path), Some(guild), mode))
+        .await
+        .map_err(|e| WebError::Internal(e.into()))?
+        .map_err(|e| WebError::Bad(format!("Couldn't import: {e}")))?;
+    let msg = report.summary(&ctx);
+    ctx.audit(&page.user, Some(guild), KEY, msg.clone());
+    ctx.notify(Some(guild), KEY, msg, Some(page.path("levels/members")));
+    Ok(saved(&page.path("levels/members")))
 }
 
 #[derive(Deserialize)]
