@@ -174,7 +174,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
 async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = open(&ctx, &user, guild, Level::Edit)?;
     let s = Settings {
-        announce_channel: form.id("announce_channel"),
+        announce_channel: form.channel(&ctx, guild, "announce_channel"),
         expiry_hours: form.int_in("expiry_hours", 0, 720, 24),
         dm_reviews: form.bool("dm_reviews"),
     };

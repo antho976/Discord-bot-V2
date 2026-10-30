@@ -169,11 +169,11 @@ async fn save_messages(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     };
     let s = Settings {
         welcome_on: form.bool("welcome_on"),
-        welcome_channel: form.id("welcome_channel"),
+        welcome_channel: form.channel(&ctx, guild, "welcome_channel"),
         welcome_text: template("welcome_text", DEFAULT_WELCOME),
         welcome_card: form.bool("welcome_card"),
         goodbye_on: form.bool("goodbye_on"),
-        goodbye_channel: form.id("goodbye_channel"),
+        goodbye_channel: form.channel(&ctx, guild, "goodbye_channel"),
         goodbye_text: template("goodbye_text", DEFAULT_GOODBYE),
         ..(*old).clone()
     };
@@ -254,12 +254,22 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
 async fn save_roles(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let old = ctx.settings::<Settings>(guild, KEY)?;
+    let autoroles = form.roles(&ctx, guild, "autoroles");
+    if !page.user.admin {
+        // Only roles being added are checked, so saving other settings doesn't trip over a role an admin chose.
+        if let Some(r) = autoroles.iter().find(|r| !old.autoroles.contains(r) && !ctx.safe_role(guild, **r)) {
+            return Err(WebError::Bad(format!(
+                "{} can't be an auto-role. Only a server admin can hand out roles with moderation permissions, managed roles, or roles at or above the bot's own.",
+                role_names(&ctx, guild, &[*r])
+            )));
+        }
+    }
     let s = Settings {
-        autoroles: form.ids("autoroles"),
+        autoroles,
         autorole_bots: form.bool("autorole_bots"),
         rejoin_on: form.bool("rejoin_on"),
         rejoin_days: form.int_in("rejoin_days", 1, 3650, 90),
-        rejoin_exclude: form.ids("rejoin_exclude"),
+        rejoin_exclude: form.roles(&ctx, guild, "rejoin_exclude"),
         ..(*old).clone()
     };
     ctx.save_settings(guild, KEY, &s)?;

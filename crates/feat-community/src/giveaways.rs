@@ -178,6 +178,9 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
     let Some(guild) = call.guild_id() else { return Ok(()) };
     let Some((sub, opts)) = call.opts().sub() else { return Ok(()) };
     let say = |msg: String| ctx.reply(&call.interaction, Reply::text(msg).ephemeral());
+    if !call.member_has(Permissions::MANAGE_GUILD) {
+        return say("Giveaways need the Manage Server permission.".into()).await;
+    }
     match sub {
         "start" => {
             let prize = opts.str("prize").unwrap_or_default().trim();
@@ -190,6 +193,9 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
                 return say("Say what's being given away.".into()).await;
             }
             let Some(channel) = opts.channel("channel").map(|c| c.get()).or(call.channel_id()) else { return Ok(()) };
+            if ctx.channel_in(guild, Some(channel)).is_none() {
+                return say("That channel isn't in this server.".into()).await;
+            }
             let role = opts.role("required_role").map(|r| r.get());
             ctx.defer(&call.interaction, true).await?;
             let msg = match create(ctx, New { guild, channel, prize, winners, ends_at: now_ms() + secs * 1000, role, by: call.user_id() }).await {

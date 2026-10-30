@@ -150,9 +150,9 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
 async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let s = Settings {
-        channel: form.id("channel"),
-        message_channel: form.id("message_channel"),
-        member_channel: form.id("member_channel"),
+        channel: form.channel(&ctx, guild, "channel"),
+        message_channel: form.channel(&ctx, guild, "message_channel"),
+        member_channel: form.channel(&ctx, guild, "member_channel"),
         message_delete: form.bool("message_delete"),
         message_edit: form.bool("message_edit"),
         bulk_delete: form.bool("bulk_delete"),
@@ -166,7 +166,7 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         boost: form.bool("boost"),
         voice: form.bool("voice"),
         ignore_bots: form.bool("ignore_bots"),
-        ignored_channels: form.ids("ignored_channels"),
+        ignored_channels: form.channels(&ctx, guild, "ignored_channels"),
     };
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed audit log settings");

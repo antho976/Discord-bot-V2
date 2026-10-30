@@ -164,8 +164,8 @@ fn ticket_row(ctx: &Ctx, page: &Page, guild: u64, t: &Ticket, now: i64) -> Marku
 async fn save_tickets(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let mut s = (*ctx.settings::<Settings>(guild, KEY)?).clone();
-    s.ticket_channel = form.id("ticket_channel");
-    s.staff_role = form.id("staff_role");
+    s.ticket_channel = form.channel(&ctx, guild, "ticket_channel");
+    s.staff_role = form.role(&ctx, guild, "staff_role");
     s.max_open = form.int_in("max_open", 1, 10, 1);
     s.auto_close_days = form.int_in("auto_close_days", 0, 90, 0);
     s.panel_title = text::clip(&form.string("panel_title"), 200);
@@ -254,12 +254,12 @@ async fn save_starboard(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
     if starboard::parse_emoji(&emoji).is_none() {
         return Err(WebError::Bad("Paste the emoji itself, like ⭐. A custom emoji looks like <:name:123456>.".into()));
     }
-    s.star_channel = form.id("star_channel");
+    s.star_channel = form.channel(&ctx, guild, "star_channel");
     s.star_emoji = emoji;
     s.star_threshold = form.int_in("star_threshold", 1, 100, 3);
     s.star_remove_below = form.bool("star_remove_below");
     s.star_self = form.bool("star_self");
-    s.star_ignored = form.ids("star_ignored");
+    s.star_ignored = form.channels(&ctx, guild, "star_ignored");
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed starboard settings");
     Ok(saved(&page.path("tickets/starboard")))

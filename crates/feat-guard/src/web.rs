@@ -187,13 +187,13 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     let timeout = form.i64("timeout_minutes").filter(|m| TIMEOUTS.iter().any(|(t, _)| t == m)).ok_or_else(|| WebError::Bad("Pick a timeout length.".into()))?;
     let s = Settings {
         scam_detection: form.bool("scam_detection"),
-        honeypot_channel: form.id("honeypot_channel"),
-        log_channel: form.id("log_channel"),
+        honeypot_channel: form.channel(&ctx, guild, "honeypot_channel"),
+        log_channel: form.channel(&ctx, guild, "log_channel"),
         timeout_minutes: timeout,
         strictness: Strictness::parse(&form.string("strictness")),
         new_account_days: form.int_in("new_account_days", 0, 90, 7),
-        exempt_roles: form.ids("exempt_roles"),
-        exempt_channels: form.ids("exempt_channels"),
+        exempt_roles: form.roles(&ctx, guild, "exempt_roles"),
+        exempt_channels: form.channels(&ctx, guild, "exempt_channels"),
         dm_member: form.bool("dm_member"),
         catch_ads: form.bool("catch_ads"),
     };

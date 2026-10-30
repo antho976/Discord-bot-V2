@@ -246,8 +246,8 @@ async fn save_twitch(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     let message = text::clip(&form.string("live_message"), 500);
     let s = Settings {
         twitch_logins: logins.clone(),
-        live_channel: form.id("live_channel"),
-        live_role: form.id("live_role"),
+        live_channel: form.channel(&ctx, guild, "live_channel"),
+        live_role: form.role(&ctx, guild, "live_role"),
         live_message: if message.is_empty() { crate::DEFAULT_LIVE_MESSAGE.into() } else { message },
         ..(*old).clone()
     };
@@ -389,11 +389,11 @@ async fn save_schedule(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     }
     let s = Settings {
         reminders: form.bool("reminders"),
-        reminder_channel: form.id("reminder_channel"),
-        reminder_role: form.id("reminder_role"),
+        reminder_channel: form.channel(&ctx, guild, "reminder_channel"),
+        reminder_role: form.role(&ctx, guild, "reminder_role"),
         reminder_minutes: parse_minutes(&form.string("reminder_minutes"))?,
         weekly_post: form.bool("weekly_post"),
-        weekly_channel: form.id("weekly_channel"),
+        weekly_channel: form.channel(&ctx, guild, "weekly_channel"),
         weekly_hour: form.int_in("weekly_hour", 0, 23, 10),
         timezone: tz,
         ..(*old).clone()
@@ -469,8 +469,8 @@ async fn save_youtube(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let message = text::clip(&form.text("youtube_message"), 500);
     let s = Settings {
         youtube_ids: ids,
-        youtube_channel: form.id("youtube_channel"),
-        youtube_role: form.id("youtube_role"),
+        youtube_channel: form.channel(&ctx, guild, "youtube_channel"),
+        youtube_role: form.role(&ctx, guild, "youtube_role"),
         youtube_message: if message.is_empty() { crate::DEFAULT_VIDEO_MESSAGE.into() } else { message },
         ..(*old).clone()
     };

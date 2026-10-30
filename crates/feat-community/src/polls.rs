@@ -115,6 +115,9 @@ pub fn command() -> Command {
 
 pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
     let Some(guild) = call.guild_id() else { return Ok(()) };
+    if !call.member_has(Permissions::MANAGE_MESSAGES) {
+        return ctx.reply(&call.interaction, Reply::text("Polls need the Manage Messages permission.").ephemeral()).await;
+    }
     let opts = call.opts();
     let answers = match parse_answers(opts.str("answers").unwrap_or_default()) {
         Ok(a) => a,
