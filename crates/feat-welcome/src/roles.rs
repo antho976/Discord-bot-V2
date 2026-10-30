@@ -1,0 +1,110 @@
+//! Roles saved when a member leaves and given back when they rejoin.
+
+use bot_core::Ctx;
+use bot_core::anyhow::Result;
+use bot_core::rusqlite::{OptionalExtension, params};
+use bot_core::twilight_model::id::Id;
+
+fn encode(ids: &[u64]) -> String {
+    ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",")
+}
+
+fn decode(s: &str) -> Vec<u64> {
+    s.split(',').filter_map(|p| p.parse().ok()).collect()
+}
+
+/// Remember the roles a member had when they left. Replaces any earlier save.
+pub fn save(ctx: &Ctx, guild: u64, user: u64, roles: &[u64]) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO welcome_saved_roles (guild_id, user_id, roles, left_at, restored_at, restored_roles)
+             VALUES (?1, ?2, ?3, ?4, NULL, NULL)
+             ON CONFLICT (guild_id, user_id) DO UPDATE SET roles = excluded.roles, left_at = excluded.left_at,
+               restored_at = NULL, restored_roles = NULL",
+            params![guild as i64, user as i64, encode(roles), bot_core::now_ms()],
+        )
+    })?;
+    Ok(())
+}
+
+/// The roles waiting for a member who left no more than `days` ago and hasn't been restored.
+pub fn waiting(ctx: &Ctx, guild: u64, user: u64, days: i64) -> Result<Vec<u64>> {
+    let cutoff = bot_core::now_ms() - days * 86_400_000;
+    let roles: Option<String> = ctx.db.with(|c| {
+        c.query_row(
+            "SELECT roles FROM welcome_saved_roles WHERE guild_id = ?1 AND user_id = ?2 AND left_at >= ?3 AND restored_at IS NULL",
+            params![guild as i64, user as i64, cutoff],
+            |r| r.get(0),
+        )
+        .optional()
+    })?;
+    Ok(roles.map(|r| decode(&r)).unwrap_or_default())
+}
+
+pub fn mark_restored(ctx: &Ctx, guild: u64, user: u64, given: &[u64]) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute(
+            "UPDATE welcome_saved_roles SET restored_at = ?3, restored_roles = ?4 WHERE guild_id = ?1 AND user_id = ?2",
+            params![guild as i64, user as i64, bot_core::now_ms(), encode(given)],
+        )
+    })?;
+    Ok(())
+}
+
+/// Drop saves older than the keep time, and restored ones after a month.
+pub fn prune(ctx: &Ctx, guild: u64, days: i64) -> Result<()> {
+    let now = bot_core::now_ms();
+    ctx.db.with(|c| {
+        c.execute(
+            "DELETE FROM welcome_saved_roles WHERE guild_id = ?1
+             AND ((restored_at IS NULL AND left_at < ?2) OR (restored_at IS NOT NULL AND restored_at < ?3))",
+            params![guild as i64, now - days * 86_400_000, now - 30 * 86_400_000],
+        )
+    })?;
+    Ok(())
+}
+
+pub struct Restored {
+    pub user: u64,
+    pub roles: Vec<u64>,
+    pub at: i64,
+}
+
+pub fn recently_restored(ctx: &Ctx, guild: u64, limit: i64) -> Result<Vec<Restored>> {
+    ctx.db.with(|c| {
+        let mut s = c.prepare_cached(
+            "SELECT user_id, restored_roles, restored_at FROM welcome_saved_roles
+             WHERE guild_id = ?1 AND restored_at IS NOT NULL ORDER BY restored_at DESC LIMIT ?2",
+        )?;
+        s
+            .query_map(params![guild as i64, limit], |r| {
+                Ok(Restored { user: r.get::<_, i64>(0)? as u64, roles: decode(&r.get::<_, String>(1)?), at: r.get(2)? })
+            })?
+            .collect()
+    })
+}
+
+/// How many departed members have roles saved and waiting.
+pub fn waiting_count(ctx: &Ctx, guild: u64, days: i64) -> Result<i64> {
+    let cutoff = bot_core::now_ms() - days * 86_400_000;
+    ctx.db.with(|c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM welcome_saved_roles WHERE guild_id = ?1 AND restored_at IS NULL AND left_at >= ?2",
+            params![guild as i64, cutoff],
+            |r| r.get(0),
+        )
+    })
+}
+
+/// Can the bot give this role? It must exist, not be managed (integration or booster roles)
+/// and sit below the bot's own highest role. Without a cached bot member we let it try.
+pub fn assignable(ctx: &Ctx, guild: u64, role: u64) -> bool {
+    let Some(r) = ctx.cache.role(Id::new(role)) else { return false };
+    if r.managed || role == guild {
+        return false;
+    }
+    let Some(bot) = ctx.bot_id() else { return true };
+    let Some(me) = ctx.cache.member(Id::new(guild), Id::new(bot)) else { return true };
+    let top = me.roles().iter().filter_map(|id| ctx.cache.role(*id).map(|r| r.position)).max().unwrap_or(0);
+    r.position < top
+}
