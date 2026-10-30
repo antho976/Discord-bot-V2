@@ -21,11 +21,10 @@ impl Db {
         if path == ":memory:" {
             return Self::memory();
         }
-        if let Some(dir) = std::path::Path::new(path).parent() {
-            if !dir.as_os_str().is_empty() {
+        if let Some(dir) = std::path::Path::new(path).parent()
+            && !dir.as_os_str().is_empty() {
                 std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
             }
-        }
         let conn = Connection::open(path).with_context(|| format!("opening {path}"))?;
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;

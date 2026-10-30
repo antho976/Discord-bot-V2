@@ -248,11 +248,10 @@ async fn dispatch(ctx: Ctx, event: Event) {
     }
     for f in ctx.features() {
         let key = f.meta().key;
-        if let Some(g) = guild {
-            if !ctx.enabled(g, key) {
+        if let Some(g) = guild
+            && !ctx.enabled(g, key) {
                 continue;
             }
-        }
         if let Err(e) = f.on_event(&ctx, &event).await {
             tracing::warn!(feature = key, kind = ?event.kind(), error = %e, "event handler failed");
         }
@@ -710,11 +709,10 @@ impl Ctx {
     /// A member's display name from the cache, falling back to the user id.
     pub fn display_name(&self, guild_id: u64, user_id: u64) -> String {
         let (g, u) = (Id::<GuildMarker>::new(guild_id), Id::<UserMarker>::new(user_id));
-        if let Some(m) = self.cache.member(g, u) {
-            if let Some(nick) = m.nick() {
+        if let Some(m) = self.cache.member(g, u)
+            && let Some(nick) = m.nick() {
                 return nick.to_owned();
             }
-        }
         match self.cache.user(u) {
             Some(user) => user.global_name.clone().unwrap_or_else(|| user.name.clone()),
             None => format!("User {user_id}"),
@@ -759,7 +757,7 @@ impl Ctx {
             .filter(|r| r.id.get() != guild_id && !r.managed)
             .map(|r| (r.position, r.id.get(), r.name.clone(), r.colors.primary_color))
             .collect();
-        out.sort_by(|a, b| b.0.cmp(&a.0));
+        out.sort_by_key(|r| std::cmp::Reverse(r.0));
         out.into_iter().map(|(_, id, name, color)| (id, name, color)).collect()
     }
 

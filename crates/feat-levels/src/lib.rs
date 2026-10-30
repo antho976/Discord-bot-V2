@@ -171,19 +171,17 @@ impl Feature for Levels {
                 if s.no_xp_channels.contains(&m.channel_id.get()) {
                     return Ok(());
                 }
-                if let Some(member) = &m.member {
-                    if member.roles.iter().any(|r| s.no_xp_roles.contains(&r.get())) {
+                if let Some(member) = &m.member
+                    && member.roles.iter().any(|r| s.no_xp_roles.contains(&r.get())) {
                         return Ok(());
                     }
-                }
                 let key = (guild, m.author.id.get());
                 {
                     let mut cd = self.cooldowns.lock().unwrap();
-                    if let Some(last) = cd.get(&key) {
-                        if last.elapsed().as_secs() < s.cooldown_secs.max(0) as u64 {
+                    if let Some(last) = cd.get(&key)
+                        && last.elapsed().as_secs() < s.cooldown_secs.max(0) as u64 {
                             return Ok(());
                         }
-                    }
                     cd.insert(key, Instant::now());
                     if cd.len() > 5000 {
                         let limit = s.cooldown_secs.max(0) as u64;
@@ -465,8 +463,8 @@ pub async fn set_xp(ctx: &Ctx, guild: u64, user: u64, xp: i64) -> Result<()> {
 pub fn rewards(ctx: &Ctx, guild: u64) -> Result<Vec<(u32, u64)>> {
     ctx.db.with(|c| {
         let mut s = c.prepare_cached("SELECT level, role_id FROM level_rewards WHERE guild_id = ?1 ORDER BY level")?;
-        let rows = s.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)? as u64)))?.collect();
-        rows
+        
+        s.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)? as u64)))?.collect()
     })
 }
 

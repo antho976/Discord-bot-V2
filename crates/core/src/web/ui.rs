@@ -115,7 +115,8 @@ pub fn layout(ctx: &Ctx, page: &Page, title: &str, actions: Option<Markup>, body
     let guild = page.guild_id;
     let guilds = ctx.guilds_for(&page.user);
     let unread = unread_count(ctx, page);
-    let mut groups: Vec<(Group, Vec<(&'static str, &'static str, Icon, &'static str)>)> = Vec::new();
+    type Link = (&'static str, &'static str, Icon, &'static str);
+    let mut groups: Vec<(Group, Vec<Link>)> = Vec::new();
     for f in ctx.features() {
         let meta = f.meta();
         if !ctx.enabled(guild, meta.key) || ctx.level(&page.user, guild, meta.key) == Level::None {
@@ -381,7 +382,7 @@ pub fn field_role(ctx: &Ctx, guild: u64, name: &str, label: &str, help: Option<&
 
 /// Pick any number of roles, shown as a list of chips you switch on.
 pub fn field_roles(ctx: &Ctx, guild: u64, name: &str, label: &str, help: Option<&str>, selected: &[u64]) -> Markup {
-    row_wide(label, help, name, chips(name, &ctx.roles(guild).into_iter().map(|(id, n, c)| (id, n, c)).collect::<Vec<_>>(), selected))
+    row_wide(label, help, name, chips(name, &ctx.roles(guild).into_iter().collect::<Vec<_>>(), selected))
 }
 
 /// Pick any number of channels.

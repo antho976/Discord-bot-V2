@@ -308,11 +308,10 @@ impl Ctx {
         T: DeserializeOwned + Default + Send + Sync + 'static,
     {
         let key = (guild_id, feature.to_owned());
-        if let Some(hit) = self.settings_cache.read().unwrap().get(&key) {
-            if let Ok(v) = hit.clone().downcast::<T>() {
+        if let Some(hit) = self.settings_cache.read().unwrap().get(&key)
+            && let Ok(v) = hit.clone().downcast::<T>() {
                 return Ok(v);
             }
-        }
         let value = Arc::new(self.db.settings::<T>(guild_id, feature)?);
         self.settings_cache.write().unwrap().insert(key, value.clone());
         Ok(value)
