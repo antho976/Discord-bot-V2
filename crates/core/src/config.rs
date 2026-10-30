@@ -70,7 +70,8 @@ impl Config {
             twitch_client_id: None,
             twitch_client_secret: None,
             twitch_eventsub_secret: None,
-            relay_bin: "relay".into(),
+            // Never a real binary: claiming in the preview must not open a pairing window.
+            relay_bin: "/nonexistent/relay-preview".into(),
             relay_public_url: None,
             preview: true,
         }
