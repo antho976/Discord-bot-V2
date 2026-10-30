@@ -1,11 +1,171 @@
-//! Catches scam messages and anyone posting in the honeypot channel.
+//! Scam protection: scores every message for scams (lookalike links, scam wording, the
+//! compromised-account repeat across channels) and treats any message in the honeypot channel as
+//! a catch. A catch deletes the member's recent messages, times them out and alerts staff with
+//! buttons to release or ban. Everything else (caps, invites, word lists) is left to Discord's
+//! own AutoMod.
 
-use bot_core::{Feature, FeatureMeta, Group, Icon, NavItem, feature_async};
+pub mod links;
+pub mod recent;
+pub mod score;
+mod web;
+
+use std::sync::Mutex;
+
+use bot_core::anyhow::Result;
+use bot_core::discord::{ComponentCall, Reply, button_row};
+use bot_core::rusqlite::{OptionalExtension, params};
+use bot_core::twilight_http::request::AuditLogReason as _;
+use bot_core::twilight_model::channel::message::component::{ButtonStyle, Component};
+use bot_core::twilight_model::channel::message::{Embed, Message};
+use bot_core::twilight_model::gateway::event::Event;
+use bot_core::twilight_model::guild::Permissions;
+use bot_core::twilight_model::id::Id;
+use bot_core::twilight_model::id::marker::{ChannelMarker, MessageMarker};
+use bot_core::twilight_model::util::Timestamp;
+use bot_core::twilight_util::builder::embed::{EmbedBuilder, EmbedFieldBuilder, EmbedFooterBuilder};
+use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, text, tracing};
+use serde::{Deserialize, Serialize};
+
+use recent::Recent;
+use score::{Facts, Signal, Strictness};
 
 pub const KEY: &str = "guard";
+const COLOR: u32 = 0xf0806a;
+const DAY_MS: i64 = 86_400_000;
+/// Discord's longest timeout is 28 days.
+const MAX_TIMEOUT_MIN: i64 = 28 * 24 * 60;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    pub scam_detection: bool,
+    pub honeypot_channel: Option<u64>,
+    pub log_channel: Option<u64>,
+    pub timeout_minutes: i64,
+    pub strictness: Strictness,
+    pub new_account_days: i64,
+    pub exempt_roles: Vec<u64>,
+    pub exempt_channels: Vec<u64>,
+    pub dm_member: bool,
+    /// Also score commission, art and service ads.
+    pub catch_ads: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            scam_detection: true,
+            honeypot_channel: None,
+            log_channel: None,
+            timeout_minutes: 24 * 60,
+            strictness: Strictness::Normal,
+            new_account_days: 7,
+            exempt_roles: Vec::new(),
+            exempt_channels: Vec::new(),
+            dm_member: false,
+            catch_ads: false,
+        }
+    }
+}
+
+/// Timeout lengths offered on the dashboard, in minutes.
+pub const TIMEOUTS: &[(i64, &str)] = &[
+    (60, "1 hour"),
+    (6 * 60, "6 hours"),
+    (12 * 60, "12 hours"),
+    (24 * 60, "1 day"),
+    (3 * 24 * 60, "3 days"),
+    (7 * 24 * 60, "7 days"),
+    (MAX_TIMEOUT_MIN, "28 days"),
+];
+
+pub fn timeout_label(minutes: i64) -> String {
+    TIMEOUTS.iter().find(|(m, _)| *m == minutes).map(|(_, l)| (*l).to_owned()).unwrap_or_else(|| text::duration(minutes * 60))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// Messages deleted and timed out.
+    TimedOut,
+    /// Messages deleted, but the timeout failed (missing permission, higher role).
+    NotTimedOut,
+    /// Staff lifted it: a mistake.
+    Released,
+    Banned,
+}
+
+impl Outcome {
+    fn key(self) -> &'static str {
+        match self {
+            Outcome::TimedOut => "timed_out",
+            Outcome::NotTimedOut => "not_timed_out",
+            Outcome::Released => "released",
+            Outcome::Banned => "banned",
+        }
+    }
+    fn parse(s: &str) -> Self {
+        match s {
+            "released" => Outcome::Released,
+            "banned" => Outcome::Banned,
+            "not_timed_out" => Outcome::NotTimedOut,
+            _ => Outcome::TimedOut,
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Outcome::TimedOut => "Timed out",
+            Outcome::NotTimedOut => "Not timed out",
+            Outcome::Released => "Released",
+            Outcome::Banned => "Banned",
+        }
+    }
+    pub fn open(self) -> bool {
+        matches!(self, Outcome::TimedOut | Outcome::NotTimedOut)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Catch {
+    pub id: i64,
+    pub at: i64,
+    pub user_id: u64,
+    pub user_name: String,
+    pub honeypot: bool,
+    pub score: i64,
+    pub reason: String,
+    pub signals: Vec<Signal>,
+    pub content: String,
+    pub channel_id: u64,
+    pub deleted: i64,
+    pub timeout_until: Option<i64>,
+    pub outcome: Outcome,
+    pub acted_by_name: Option<String>,
+    pub acted_at: Option<i64>,
+    pub alert: Option<(u64, u64)>,
+}
+
+const MIGRATIONS: &[Migration] = &[Migration {
+    name: "001_guard",
+    sql: "
+        CREATE TABLE guard_catches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id INTEGER NOT NULL, at INTEGER NOT NULL,
+            user_id INTEGER NOT NULL, user_name TEXT NOT NULL,
+            honeypot INTEGER NOT NULL DEFAULT 0, score INTEGER NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL, signals TEXT NOT NULL DEFAULT '[]', content TEXT NOT NULL DEFAULT '',
+            channel_id INTEGER NOT NULL, deleted INTEGER NOT NULL DEFAULT 0,
+            timeout_until INTEGER, outcome TEXT NOT NULL,
+            acted_by INTEGER, acted_by_name TEXT, acted_at INTEGER,
+            alert_channel INTEGER, alert_message INTEGER);
+        CREATE INDEX guard_catches_by_guild ON guard_catches(guild_id, at DESC);
+        CREATE INDEX guard_catches_by_user ON guard_catches(guild_id, user_id, at DESC);
+    ",
+}];
 
 #[derive(Default)]
-pub struct Guard;
+pub struct Guard {
+    recent: Mutex<Recent>,
+}
 
 #[feature_async]
 impl Feature for Guard {
@@ -18,4 +178,535 @@ impl Feature for Guard {
             nav: vec![NavItem { label: "Scam protection", path: KEY, icon: Icon::Shield }],
         }
     }
+
+    fn migrations(&self) -> &'static [Migration] {
+        MIGRATIONS
+    }
+
+    fn routes(&self) -> bot_core::axum::Router<Ctx> {
+        web::routes()
+    }
+
+    async fn on_event(&self, ctx: &Ctx, event: &Event) -> Result<()> {
+        match event {
+            Event::MessageCreate(m) => self.on_message(ctx, m).await?,
+            // A moderator lifted the timeout in Discord itself: count it as released.
+            Event::MemberUpdate(u) if u.communication_disabled_until.is_none() => {
+                let guild = u.guild_id.get();
+                let had = ctx.before_member(guild, u.user.id.get()).and_then(|b| b.timed_out_until_ms).is_some_and(|t| t > now_ms());
+                if had {
+                    close_open(ctx, guild, u.user.id.get(), Outcome::Released, "a moderator in Discord")?;
+                }
+            }
+            Event::BanAdd(b) => close_open(ctx, b.guild_id.get(), b.user.id.get(), Outcome::Banned, "a moderator in Discord")?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn on_component(&self, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
+        let Some(guild) = call.guild_id() else { return Ok(()) };
+        let (outcome, id) = match call.args().as_slice() {
+            ["release", id] => (Outcome::Released, id.parse::<i64>()?),
+            ["ban", id] => (Outcome::Banned, id.parse::<i64>()?),
+            _ => return Ok(()),
+        };
+        let allowed = match outcome {
+            Outcome::Banned => call.member_has(Permissions::BAN_MEMBERS),
+            _ => call.member_has(Permissions::MODERATE_MEMBERS | Permissions::BAN_MEMBERS),
+        };
+        if !allowed {
+            let need = if outcome == Outcome::Banned { "Ban Members" } else { "Moderate Members" };
+            ctx.reply(&call.interaction, Reply::text(format!("You need the {need} permission for this.")).ephemeral()).await?;
+            return Ok(());
+        }
+        ctx.defer_update(&call.interaction).await?;
+        let by = ctx.display_name(guild, call.user_id());
+        match resolve(ctx, guild, id, outcome, call.user_id(), &by, false).await {
+            Ok(c) => {
+                let embed = alert_embed(&c);
+                ctx.edit_original(&call.interaction, Reply::embed(embed)).await?;
+            }
+            Err(msg) => ctx.followup(&call.interaction, Reply::text(msg).ephemeral()).await?,
+        }
+        Ok(())
+    }
+
+    async fn tick(&self, _ctx: &Ctx) -> Result<()> {
+        self.recent.lock().unwrap().prune(now_ms());
+        Ok(())
+    }
+
+    fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
+        seed(ctx, guild)
+    }
+}
+
+/// What set off a catch.
+struct Found {
+    honeypot: bool,
+    score: i32,
+    reason: String,
+    signals: Vec<Signal>,
+}
+
+impl Guard {
+    async fn on_message(&self, ctx: &Ctx, m: &Message) -> Result<()> {
+        let Some(guild) = m.guild_id.map(|g| g.get()) else { return Ok(()) };
+        if m.author.bot || m.webhook_id.is_some() || m.author.system == Some(true) {
+            return Ok(());
+        }
+        let s = ctx.settings::<Settings>(guild, KEY)?;
+        let (user, channel) = (m.author.id.get(), m.channel_id.get());
+        let honeypot = s.honeypot_channel == Some(channel);
+        if !honeypot && !s.scam_detection {
+            return Ok(());
+        }
+        let roles: Vec<u64> = match &m.member {
+            Some(member) => member.roles.iter().map(|r| r.get()).collect(),
+            None => ctx.cache.member(Id::new(guild), m.author.id).map(|mm| mm.roles().iter().map(|r| r.get()).collect()).unwrap_or_default(),
+        };
+        if is_staff(ctx, guild, user, &roles) || roles.iter().any(|r| s.exempt_roles.contains(r)) {
+            return Ok(());
+        }
+
+        let text = full_text(m);
+        let attachments: Vec<(String, u64)> = m.attachments.iter().map(|a| (a.filename.clone(), a.size)).collect();
+        let now = now_ms();
+        let repeat = {
+            let print = recent::fingerprint(&text, &attachments);
+            self.recent.lock().unwrap().record(guild, user, channel, m.id.get(), print, now)
+        };
+
+        let found = if honeypot {
+            let signal = Signal { weight: 0, text: "Posted in the honeypot channel".into() };
+            Some(Found { honeypot: true, score: 0, reason: signal.text.clone(), signals: vec![signal] })
+        } else {
+            if is_exempt_channel(ctx, &s, channel) {
+                return Ok(());
+            }
+            let facts = Facts {
+                account_age_days: Some(((now - account_created_ms(user)) as f64 / DAY_MS as f64).max(0.0)),
+                new_account_days: s.new_account_days,
+                repeat_channels: repeat,
+                has_attachments: !attachments.is_empty(),
+                catch_ads: s.catch_ads,
+            };
+            let v = score::score(&text, &facts);
+            v.caught(s.strictness).then(|| Found { honeypot: false, score: v.score, reason: v.reason(), signals: v.signals })
+        };
+        let Some(found) = found else { return Ok(()) };
+
+        // A burst from one account raises one alert; later messages are only deleted.
+        let (repeat_catch, ids) = {
+            let mut r = self.recent.lock().unwrap();
+            (r.already_caught(guild, user, now), r.take(guild, user, now))
+        };
+        let mut ids = ids;
+        if repeat_catch {
+            delete_all(ctx, &[(channel, m.id.get())]).await;
+            return Ok(());
+        }
+        ids.extend(cached_messages_of(ctx, guild, user, now));
+        ids.sort_unstable();
+        ids.dedup();
+        act(ctx, guild, &s, m, &text, found, ids).await
+    }
+}
+
+/// The text a message carries, including forwarded messages.
+fn full_text(m: &Message) -> String {
+    let mut t = m.content.clone();
+    for snap in &m.message_snapshots {
+        if !snap.message.content.is_empty() {
+            t.push('\n');
+            t.push_str(&snap.message.content);
+        }
+    }
+    t
+}
+
+/// When a Discord account was made, from its id.
+pub fn account_created_ms(user: u64) -> i64 {
+    ((user >> 22) + 1_420_070_400_000) as i64
+}
+
+/// "made today", "3 days old", "8 months old", "4 years old".
+pub fn account_age(user: u64) -> String {
+    let days = ((now_ms() - account_created_ms(user)) / DAY_MS).max(0);
+    match days {
+        0 => "made today".into(),
+        1 => "1 day old".into(),
+        2..60 => format!("{days} days old"),
+        60..730 => format!("{} months old", days / 30),
+        _ => format!("{} years old", days / 365),
+    }
+}
+
+/// Server owner, or anyone whose roles grant Administrator or Manage Messages.
+fn is_staff(ctx: &Ctx, guild: u64, user: u64, roles: &[u64]) -> bool {
+    if ctx.cache.guild(Id::new(guild)).is_some_and(|g| g.owner_id().get() == user) {
+        return true;
+    }
+    let mut perms = Permissions::empty();
+    // The @everyone role shares the server's id.
+    for role in std::iter::once(guild).chain(roles.iter().copied()) {
+        if let Some(r) = ctx.cache.role(Id::new(role)) {
+            perms |= r.permissions;
+        }
+    }
+    perms.intersects(Permissions::ADMINISTRATOR | Permissions::MANAGE_MESSAGES | Permissions::MODERATE_MEMBERS)
+}
+
+/// The channel, or the channel a thread is in, is on the exempt list.
+fn is_exempt_channel(ctx: &Ctx, s: &Settings, channel: u64) -> bool {
+    if s.exempt_channels.contains(&channel) {
+        return true;
+    }
+    let parent = ctx.cache.channel(Id::new(channel)).and_then(|c| c.parent_id).map(|p| p.get());
+    parent.is_some_and(|p| s.exempt_channels.contains(&p))
+}
+
+/// The member's messages from the last ten minutes still in the message cache.
+fn cached_messages_of(ctx: &Ctx, guild: u64, user: u64, now: i64) -> Vec<(u64, u64)> {
+    let Some(channels) = ctx.cache.guild_channels(Id::new(guild)).map(|c| c.iter().copied().collect::<Vec<_>>()) else { return Vec::new() };
+    let mut out = Vec::new();
+    for channel in channels {
+        let Some(ids) = ctx.cache.channel_messages(channel).map(|q| q.iter().copied().collect::<Vec<_>>()) else { continue };
+        for id in ids {
+            let sent = account_created_ms(id.get());
+            if now - sent > recent::KEEP_MS {
+                continue;
+            }
+            if ctx.cache.message(id).is_some_and(|msg| msg.author().get() == user) {
+                out.push((channel.get(), id.get()));
+            }
+        }
+    }
+    out
+}
+
+/// Delete messages, in bulk per channel where there are several. Returns how many went.
+async fn delete_all(ctx: &Ctx, ids: &[(u64, u64)]) -> usize {
+    let mut by_channel: Vec<(u64, Vec<u64>)> = Vec::new();
+    for (ch, id) in ids {
+        match by_channel.iter_mut().find(|(c, _)| c == ch) {
+            Some((_, list)) => list.push(*id),
+            None => by_channel.push((*ch, vec![*id])),
+        }
+    }
+    let mut done = 0;
+    for (ch, list) in by_channel {
+        let channel: Id<ChannelMarker> = Id::new(ch);
+        for chunk in list.chunks(100) {
+            let res = if chunk.len() == 1 {
+                ctx.http.delete_message(channel, Id::new(chunk[0])).reason("Scam protection").await.map(|_| ())
+            } else {
+                let ids: Vec<Id<MessageMarker>> = chunk.iter().map(|i| Id::new(*i)).collect();
+                ctx.http.delete_messages(channel, &ids).reason("Scam protection").await.map(|_| ())
+            };
+            match res {
+                Ok(()) => done += chunk.len(),
+                Err(e) => tracing::warn!(channel = ch, error = %e, "couldn't delete caught messages"),
+            }
+        }
+    }
+    done
+}
+
+async fn act(ctx: &Ctx, guild: u64, s: &Settings, m: &Message, text: &str, found: Found, ids: Vec<(u64, u64)>) -> Result<()> {
+    let user = m.author.id.get();
+    let name = ctx.display_name(guild, user);
+    let deleted = delete_all(ctx, &ids).await as i64;
+
+    let minutes = s.timeout_minutes.clamp(1, MAX_TIMEOUT_MIN);
+    // A minute under the limit, so Discord's own check never refuses it.
+    let until_ms = now_ms() + (minutes * 60_000).min(MAX_TIMEOUT_MIN * 60_000 - 60_000);
+    let timed_out = match Timestamp::from_secs(until_ms / 1000) {
+        Ok(ts) => {
+            let res = ctx
+                .http
+                .update_guild_member(Id::new(guild), m.author.id)
+                .communication_disabled_until(Some(ts))
+                .reason("Scam protection: likely compromised account")
+                .await;
+            if let Err(e) = &res {
+                tracing::warn!(guild, user, error = %e, "couldn't time out a caught member");
+            }
+            res.is_ok()
+        }
+        Err(_) => false,
+    };
+    let outcome = if timed_out { Outcome::TimedOut } else { Outcome::NotTimedOut };
+    let signals = bot_core::serde_json::to_string(&found.signals)?;
+    let content = text::clip(text, 1500);
+    let id = ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO guard_catches (guild_id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                guild as i64, now_ms(), user as i64, name, found.honeypot, found.score, found.reason, signals, content,
+                m.channel_id.get() as i64, deleted, timed_out.then_some(until_ms), outcome.key()
+            ],
+        )?;
+        Ok(c.last_insert_rowid())
+    })?;
+    ctx.count(guild, "guard_catches", 1);
+
+    let Some(c) = catch(ctx, guild, id)? else { return Ok(()) };
+    if let Some(log) = s.log_channel {
+        let embed = alert_embed(&c);
+        let rows = alert_buttons(&c);
+        let none = bot_core::twilight_model::channel::message::AllowedMentions::default();
+        match ctx.http.create_message(Id::new(log)).embeds(&[embed]).components(&rows).allowed_mentions(Some(&none)).await {
+            Ok(res) => {
+                if let Ok(msg) = res.model().await {
+                    ctx.db.with(|c| {
+                        c.execute(
+                            "UPDATE guard_catches SET alert_channel = ?2, alert_message = ?3 WHERE id = ?1",
+                            params![id, log as i64, msg.id.get() as i64],
+                        )
+                    })?;
+                }
+            }
+            Err(e) => tracing::warn!(guild, channel = log, error = %e, "couldn't post a scam alert"),
+        }
+    }
+    let what = if found.honeypot { "posted in the honeypot channel".to_owned() } else { found.reason.to_lowercase() };
+    ctx.notify(Some(guild), KEY, format!("Caught {name}: {what}"), Some(format!("/g/{guild}/{KEY}")));
+
+    if s.dm_member && timed_out {
+        let server = ctx.guild_name(guild);
+        let msg = format!(
+            "You were timed out in {server} for {} because your account posted what looks like a scam. \
+             If someone else got into your account, change your password and turn on two-factor authentication, \
+             then ask a moderator to lift the timeout.",
+            timeout_label(minutes)
+        );
+        let _ = ctx.dm(user, &msg, &[], &[]).await;
+    }
+    Ok(())
+}
+
+/// Release (lift the timeout, a mistake) or ban the member of a catch. Shared by the alert's
+/// buttons and the dashboard. `edit_alert` also updates the alert message in the log channel.
+pub async fn resolve(ctx: &Ctx, guild: u64, id: i64, outcome: Outcome, by: u64, by_name: &str, edit_alert: bool) -> std::result::Result<Catch, String> {
+    let fail = |e: bot_core::anyhow::Error| {
+        tracing::warn!(error = %e, "scam catch action failed");
+        "That didn't work. The error is in the bot's log.".to_owned()
+    };
+    let c = catch(ctx, guild, id).map_err(fail)?.ok_or_else(|| "That catch is gone.".to_owned())?;
+    if !c.outcome.open() {
+        let who = c.acted_by_name.clone().unwrap_or_else(|| "someone".into());
+        return Err(format!("Already {} by {who}.", c.outcome.label().to_lowercase()));
+    }
+    let (g, u) = (Id::new(guild), Id::new(c.user_id));
+    match outcome {
+        Outcome::Released => {
+            if c.outcome == Outcome::TimedOut {
+                let res = ctx.http.update_guild_member(g, u).communication_disabled_until(None).reason(&format!("Released by {by_name}")).await;
+                // 404: they already left, nothing to lift.
+                if let Err(e) = res
+                    && !bot_core::discord::is_not_found(&e)
+                {
+                    return Err(format!("Couldn't remove the timeout: {e}"));
+                }
+            }
+        }
+        Outcome::Banned => {
+            let reason = format!("Scam protection, banned by {by_name}");
+            ctx.http
+                .create_ban(g, u)
+                .delete_message_seconds(86_400)
+                .reason(&reason)
+                .await
+                .map_err(|e| format!("Couldn't ban: {e}"))?;
+        }
+        _ => return Err("Unknown action.".into()),
+    }
+    ctx.db
+        .with(|db| {
+            db.execute(
+                "UPDATE guard_catches SET outcome = ?2, acted_by = ?3, acted_by_name = ?4, acted_at = ?5 WHERE id = ?1",
+                params![id, outcome.key(), by as i64, by_name, now_ms()],
+            )
+        })
+        .map_err(fail)?;
+    let c = catch(ctx, guild, id).map_err(fail)?.ok_or_else(|| "That catch is gone.".to_owned())?;
+    if edit_alert && let Some((ch, msg)) = c.alert {
+        let embed = alert_embed(&c);
+        let res = ctx.http.update_message(Id::new(ch), Id::new(msg)).embeds(Some(&[embed])).components(Some(&[])).await;
+        if let Err(e) = res {
+            tracing::warn!(guild, error = %e, "couldn't update a scam alert");
+        }
+    }
+    Ok(c)
+}
+
+/// Mark a member's open catch from the last 28 days as handled outside the bot.
+fn close_open(ctx: &Ctx, guild: u64, user: u64, outcome: Outcome, by_name: &str) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute(
+            "UPDATE guard_catches SET outcome = ?3, acted_by_name = ?4, acted_at = ?5
+             WHERE guild_id = ?1 AND user_id = ?2 AND outcome IN ('timed_out', 'not_timed_out') AND at > ?6",
+            params![guild as i64, user as i64, outcome.key(), by_name, now_ms(), now_ms() - 28 * DAY_MS],
+        )
+    })?;
+    Ok(())
+}
+
+fn alert_buttons(c: &Catch) -> Vec<Component> {
+    if !c.outcome.open() {
+        return Vec::new();
+    }
+    let release = format!("{KEY}:release:{}", c.id);
+    let ban = format!("{KEY}:ban:{}", c.id);
+    let label = if c.outcome == Outcome::TimedOut { "Remove timeout" } else { "Mark as mistake" };
+    vec![button_row(&[(&release, label, ButtonStyle::Secondary), (&ban, "Ban", ButtonStyle::Danger)])]
+}
+
+/// The staff alert for a catch, also used to show who acted on it.
+pub fn alert_embed(c: &Catch) -> Embed {
+    let age = account_age(c.user_id);
+    let title = if c.honeypot { "Honeypot catch" } else { "Scam caught" };
+    let why = c.signals.iter().map(|s| format!("- {}", s.text)).collect::<Vec<_>>().join("\n");
+    let quoted = if c.content.trim().is_empty() { "(no text, attachments only)".to_owned() } else { links::defang(&c.content.replace('`', "'")) };
+    let mut action = format!("Deleted {} message{}", c.deleted, if c.deleted == 1 { "" } else { "s" });
+    match (c.outcome, c.timeout_until) {
+        (Outcome::NotTimedOut, _) => action.push_str(". Couldn't time them out: check the bot's role and permissions."),
+        (_, Some(until)) => action.push_str(&format!(", timed out until <t:{}:f>.", until / 1000)),
+        _ => action.push('.'),
+    }
+    let mut e = EmbedBuilder::new()
+        .title(title)
+        .color(COLOR)
+        .description(format!("<@{}> · {} · account {}\nIn <#{}>", c.user_id, c.user_name, age, c.channel_id))
+        .field(EmbedFieldBuilder::new("Why", text::clip(&why, 1000)))
+        .field(EmbedFieldBuilder::new("Message", format!("```\n{}\n```", text::clip(&quoted, 900))))
+        .field(EmbedFieldBuilder::new("Done", action));
+    if let (false, Some(by)) = (c.outcome.open(), &c.acted_by_name) {
+        let what = match c.outcome {
+            Outcome::Released => format!("Released by {by}, marked as a mistake."),
+            _ => format!("Banned by {by}. Their messages from the last day are deleted."),
+        };
+        e = e.field(EmbedFieldBuilder::new("Outcome", what));
+    }
+    e = e.footer(EmbedFooterBuilder::new(format!("Catch #{} · user id {}", c.id, c.user_id)));
+    if let Ok(ts) = Timestamp::from_secs(c.at / 1000) {
+        e = e.timestamp(ts);
+    }
+    e.build()
+}
+
+// ---- queries ----
+
+const CATCH_COLS: &str = "id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome, acted_by_name, acted_at, alert_channel, alert_message";
+
+fn row_to_catch(r: &bot_core::rusqlite::Row) -> bot_core::rusqlite::Result<Catch> {
+    let signals: String = r.get(7)?;
+    let outcome: String = r.get(12)?;
+    let alert = match (r.get::<_, Option<i64>>(15)?, r.get::<_, Option<i64>>(16)?) {
+        (Some(c), Some(m)) => Some((c as u64, m as u64)),
+        _ => None,
+    };
+    Ok(Catch {
+        id: r.get(0)?,
+        at: r.get(1)?,
+        user_id: r.get::<_, i64>(2)? as u64,
+        user_name: r.get(3)?,
+        honeypot: r.get(4)?,
+        score: r.get(5)?,
+        reason: r.get(6)?,
+        signals: bot_core::serde_json::from_str(&signals).unwrap_or_default(),
+        content: r.get(8)?,
+        channel_id: r.get::<_, i64>(9)? as u64,
+        deleted: r.get(10)?,
+        timeout_until: r.get(11)?,
+        outcome: Outcome::parse(&outcome),
+        acted_by_name: r.get(13)?,
+        acted_at: r.get(14)?,
+        alert,
+    })
+}
+
+pub fn catch(ctx: &Ctx, guild: u64, id: i64) -> Result<Option<Catch>> {
+    ctx.db.with(|c| {
+        c.query_row(&format!("SELECT {CATCH_COLS} FROM guard_catches WHERE guild_id = ?1 AND id = ?2"), params![guild as i64, id], row_to_catch)
+            .optional()
+    })
+}
+
+pub fn recent_catches(ctx: &Ctx, guild: u64, limit: i64) -> Result<Vec<Catch>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare_cached(&format!("SELECT {CATCH_COLS} FROM guard_catches WHERE guild_id = ?1 ORDER BY at DESC LIMIT ?2"))?;
+        let rows = st.query_map(params![guild as i64, limit], row_to_catch)?.collect::<bot_core::rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    })
+}
+
+/// `(caught in 7 days, released in 30 days, banned in 30 days)`.
+pub fn counts(ctx: &Ctx, guild: u64) -> Result<(i64, i64, i64)> {
+    let now = now_ms();
+    ctx.db.with(|c| {
+        c.query_row(
+            "SELECT COALESCE(SUM(at > ?2), 0), COALESCE(SUM(outcome = 'released' AND at > ?3), 0), COALESCE(SUM(outcome = 'banned' AND at > ?3), 0)
+             FROM guard_catches WHERE guild_id = ?1",
+            params![guild as i64, now - 7 * DAY_MS, now - 30 * DAY_MS],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+    })
+}
+
+// ---- preview ----
+
+fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
+    let channels = ctx.text_channels(guild);
+    let find = |name: &str| channels.iter().find(|(_, n)| n == name).map(|(id, _)| *id);
+    let roles = ctx.roles(guild);
+    let s = Settings {
+        honeypot_channel: find("suggestions"),
+        log_channel: find("mod-log"),
+        exempt_roles: roles.iter().filter(|(_, n, _)| n == "Streamer").map(|(id, _, _)| *id).collect(),
+        exempt_channels: find("tickets").into_iter().collect(),
+        ..Settings::default()
+    };
+    ctx.save_settings(guild, KEY, &s)?;
+    let general = find("general").unwrap_or_default();
+    let honeypot = s.honeypot_channel.unwrap_or_default();
+    let now = now_ms();
+    let members = bot_core::preview::MEMBERS;
+    // (hours ago, user, name, honeypot, text, outcome, acted by)
+    type Sample<'a> = (i64, u64, &'a str, bool, &'a str, Outcome, Option<&'a str>);
+    let samples: &[Sample] = &[
+        (2, 1_250_000_000_000_000_001, "kaiden.trades", false, "I'm leaving CS2, giving away my whole inventory. first come first serve, send a trade offer https://steamcommunlty.com/tradeoffer/new", Outcome::TimedOut, None),
+        (9, members[5].0, members[5].1, false, "@everyone free nitro for everyone https://discord-nitro.shop/claim", Outcome::Banned, Some("Mira")),
+        (26, 1_250_000_000_000_000_002, "lunafae_", true, "hey cuties check my bio 😘", Outcome::Banned, Some("Oskar")),
+        (51, members[8].0, members[8].1, false, "is free nitro from epic still a thing? https://bit.ly/3epicnitro", Outcome::Released, Some("Mira")),
+        (77, 1_250_000_000_000_000_003, "crypto_drop_bot", false, "Huge crypto airdrop is live, connect your wallet to claim https://claim-drop.site", Outcome::NotTimedOut, None),
+        (140, members[3].0, members[3].1, false, "look at this https://gift-steam.ru/card", Outcome::Banned, Some("Mira")),
+    ];
+    for (hours, user, name, honeypot_catch, msg, outcome, by) in samples {
+        let at = now - hours * 3_600_000;
+        let (score, reason, signals) = if *honeypot_catch {
+            let sig = vec![Signal { weight: 0, text: "Posted in the honeypot channel".into() }];
+            (0, "Posted in the honeypot channel".to_owned(), sig)
+        } else {
+            let repeat = if *hours == 140 { 3 } else { 1 };
+            let v = score::score(msg, &Facts { account_age_days: Some(2.0), new_account_days: 7, repeat_channels: repeat, has_attachments: false, catch_ads: false });
+            (v.score, v.reason(), v.signals)
+        };
+        let timeout_until = (*outcome == Outcome::TimedOut).then_some(at + DAY_MS);
+        ctx.db.with(|c| {
+            c.execute(
+                "INSERT INTO guard_catches (guild_id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome, acted_by_name, acted_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                params![
+                    guild as i64, at, *user as i64, name, honeypot_catch, score, reason, bot_core::serde_json::to_string(&signals).unwrap_or_default(),
+                    msg, (if *honeypot_catch { honeypot } else { general }) as i64, 1 + (hours % 4), timeout_until, outcome.key(), by,
+                    by.map(|_| at + 600_000)
+                ],
+            )
+        })?;
+    }
+    Ok(())
 }
