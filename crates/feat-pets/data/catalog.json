@@ -1,0 +1,620 @@
+{
+ "categories": [
+  "Legacy Companions",
+  "Fallen Spirits",
+  "Shallow Waters",
+  "Exclusive Companions"
+ ],
+ "catalog": [
+  {
+   "id": "king-doot",
+   "name": "King Doot",
+   "emoji": "👑",
+   "category": "Legacy Companions",
+   "rarity": "legendary",
+   "description": "The royal ruler of all doots.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "rift-slug",
+   "name": "Rift Slug",
+   "emoji": "🐌",
+   "category": "Legacy Companions",
+   "rarity": "uncommon",
+   "description": "A slimy traveler from between dimensions.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "dedotated-ram",
+   "name": "Dedotated Ram",
+   "emoji": "🐏",
+   "category": "Legacy Companions",
+   "rarity": "rare",
+   "description": "A legendary ram with dedotated power.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "crystal-custard",
+   "name": "Crystal Custard",
+   "emoji": "🍮",
+   "category": "Legacy Companions",
+   "rarity": "uncommon",
+   "description": "A shimmering dessert-shaped companion.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "sheepie",
+   "name": "Sheepie",
+   "emoji": "🐑",
+   "category": "Legacy Companions",
+   "rarity": "common",
+   "description": "A fluffy and gentle woolly friend.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "molti",
+   "name": "Molti",
+   "emoji": "🦎",
+   "category": "Legacy Companions",
+   "rarity": "uncommon",
+   "description": "A colorful multi-formed critter.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "bored-bean",
+   "name": "Bored Bean",
+   "emoji": "😐",
+   "category": "Legacy Companions",
+   "rarity": "common",
+   "description": "A bean that has seen it all.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "slime",
+   "name": "Slime",
+   "emoji": "🟢",
+   "category": "Legacy Companions",
+   "rarity": "common",
+   "description": "A jiggly blob of goo.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "sandy-pot",
+   "name": "Sandy Pot",
+   "emoji": "🏺",
+   "category": "Legacy Companions",
+   "rarity": "uncommon",
+   "description": "A dusty pot from ancient sands.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "bloque",
+   "name": "Bloque",
+   "emoji": "🧱",
+   "category": "Legacy Companions",
+   "rarity": "common",
+   "description": "A sturdy block with attitude.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "frog",
+   "name": "Frog",
+   "emoji": "🐸",
+   "category": "Legacy Companions",
+   "rarity": "common",
+   "description": "A classic ribbiting companion.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "ancient-golem",
+   "name": "Ancient Golem",
+   "emoji": "🗿",
+   "category": "Fallen Spirits",
+   "rarity": "legendary",
+   "description": "A massive stone guardian from forgotten times.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "samurai-guardian",
+   "name": "Samurai Guardian",
+   "emoji": "⚔️",
+   "category": "Fallen Spirits",
+   "rarity": "legendary",
+   "description": "A noble warrior spirit bound to protect.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "rift-jocund",
+   "name": "Rift Jocund",
+   "emoji": "🃏",
+   "category": "Fallen Spirits",
+   "rarity": "rare",
+   "description": "A mischievous jester from the rift.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "leek-spirit",
+   "name": "Leek Spirit",
+   "emoji": "🥬",
+   "category": "Fallen Spirits",
+   "rarity": "uncommon",
+   "description": "A vegetable spirit with surprising power.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "crystal-capybara",
+   "name": "Crystal Capybara",
+   "emoji": "💎",
+   "category": "Fallen Spirits",
+   "rarity": "rare",
+   "description": "A crystalline capybara radiating calm energy.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "biggole-mole",
+   "name": "Biggole Mole",
+   "emoji": "🕳️",
+   "category": "Fallen Spirits",
+   "rarity": "uncommon",
+   "description": "An oversized mole that digs deeper than most.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "gigafrog",
+   "name": "Gigafrog",
+   "emoji": "🐸",
+   "category": "Fallen Spirits",
+   "rarity": "rare",
+   "description": "A colossal amphibian of immense power.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "mashed-potato",
+   "name": "Mashed Potato",
+   "emoji": "🥔",
+   "category": "Fallen Spirits",
+   "rarity": "common",
+   "description": "A squishy spud spirit — surprisingly fierce.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "flying-worm",
+   "name": "Flying Worm",
+   "emoji": "🪱",
+   "category": "Fallen Spirits",
+   "rarity": "uncommon",
+   "description": "A worm that defies gravity.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "poisonic-frog",
+   "name": "Poisonic Frog",
+   "emoji": "☠️",
+   "category": "Fallen Spirits",
+   "rarity": "rare",
+   "description": "A toxic amphibian dripping venom.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "quenchie",
+   "name": "Quenchie",
+   "emoji": "💧",
+   "category": "Fallen Spirits",
+   "rarity": "common",
+   "description": "A refreshing water spirit.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "green-mushroom",
+   "name": "Green Mushroom",
+   "emoji": "🍄",
+   "category": "Fallen Spirits",
+   "rarity": "uncommon",
+   "description": "A glowing fungal friend from the deep forest.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "whallamus",
+   "name": "Whallamus",
+   "emoji": "🐋",
+   "category": "Shallow Waters",
+   "rarity": "legendary",
+   "description": "An enormous whale-like beast of the shallows.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "balloonfish",
+   "name": "Balloonfish",
+   "emoji": "🎈",
+   "category": "Shallow Waters",
+   "rarity": "uncommon",
+   "description": "A fish that inflates like a balloon.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "pufferblob",
+   "name": "Pufferblob",
+   "emoji": "🐡",
+   "category": "Shallow Waters",
+   "rarity": "common",
+   "description": "A puffy blob drifting through the tides.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "shellslug",
+   "name": "Shellslug",
+   "emoji": "🐚",
+   "category": "Shallow Waters",
+   "rarity": "common",
+   "description": "A slug that carries its home on its back.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "crystal-cuttlefish",
+   "name": "Crystal Cuttlefish",
+   "emoji": "🦑",
+   "category": "Shallow Waters",
+   "rarity": "rare",
+   "description": "A dazzling cephalopod made of crystal.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "eamsy-earl",
+   "name": "Eamsy Earl",
+   "emoji": "🦐",
+   "category": "Shallow Waters",
+   "rarity": "uncommon",
+   "description": "A noble shrimp of distinguished taste.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "litterfish",
+   "name": "Litterfish",
+   "emoji": "🐟",
+   "category": "Shallow Waters",
+   "rarity": "common",
+   "description": "A small fish that collects ocean debris.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "spearfish",
+   "name": "Spearfish",
+   "emoji": "🗡️",
+   "category": "Shallow Waters",
+   "rarity": "uncommon",
+   "description": "A sharp-nosed fish built for speed.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "equinox-broadbass",
+   "name": "Equinox Broadbass",
+   "emoji": "🐠",
+   "category": "Shallow Waters",
+   "rarity": "rare",
+   "description": "A rare bass that only appears at the equinox.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "mafioso",
+   "name": "Mafioso",
+   "emoji": "🎩",
+   "category": "Shallow Waters",
+   "rarity": "rare",
+   "description": "A shady fish with connections.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "baby-boa",
+   "name": "Baby Boa",
+   "emoji": "🐍",
+   "category": "Shallow Waters",
+   "rarity": "uncommon",
+   "description": "A tiny sea serpent just learning to swim.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "purp-mushroom",
+   "name": "Purp Mushroom",
+   "emoji": "🍄",
+   "category": "Shallow Waters",
+   "rarity": "uncommon",
+   "description": "A purple aquatic mushroom glowing underwater.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "bubba-the-seal",
+   "name": "Bubba the Seal",
+   "emoji": "🦭",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "A lovable chonky seal named Bubba.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "santa-snake",
+   "name": "Santa Snake",
+   "emoji": "🐍",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "A festive serpent spreading holiday cheer.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "santas-little-helper",
+   "name": "Santas Little Helper",
+   "emoji": "🎅",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "Santa's most trusted tiny companion.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "cool-bird",
+   "name": "Cool Bird",
+   "emoji": "🐦",
+   "category": "Exclusive Companions",
+   "rarity": "rare",
+   "description": "The coolest bird you have ever seen.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "axolotl",
+   "name": "Axolotl",
+   "emoji": "🦎",
+   "category": "Exclusive Companions",
+   "rarity": "rare",
+   "description": "An adorable pink aquatic salamander.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "mallay",
+   "name": "Mallay",
+   "emoji": "🦆",
+   "category": "Exclusive Companions",
+   "rarity": "uncommon",
+   "description": "A mysterious mallard with hidden talents.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "spirit-reindeer",
+   "name": "Spirit Reindeer",
+   "emoji": "🦌",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "A ghostly reindeer glowing with spirit energy.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "rip-tide",
+   "name": "RIP Tide",
+   "emoji": "🌊",
+   "category": "Exclusive Companions",
+   "rarity": "rare",
+   "description": "A dangerous tidal spirit from the deep.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "squirrel",
+   "name": "Squirrel",
+   "emoji": "🐿️",
+   "category": "Exclusive Companions",
+   "rarity": "common",
+   "description": "A hyperactive nut-hoarding buddy.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "mr-pig",
+   "name": "Mr Pig",
+   "emoji": "🐷",
+   "category": "Exclusive Companions",
+   "rarity": "uncommon",
+   "description": "A distinguished pig of fine manners.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "wild-boar",
+   "name": "Wild Boar",
+   "emoji": "🐗",
+   "category": "Exclusive Companions",
+   "rarity": "uncommon",
+   "description": "A fierce tusked beast from the wilds.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "whale",
+   "name": "Whale",
+   "emoji": "🐳",
+   "category": "Exclusive Companions",
+   "rarity": "rare",
+   "description": "A majestic ocean giant.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "chippy",
+   "name": "Chippy",
+   "emoji": "🐿️",
+   "category": "Exclusive Companions",
+   "rarity": "common",
+   "description": "A cheeky chipmunk full of energy.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "bunny",
+   "name": "Bunny",
+   "emoji": "🐰",
+   "category": "Exclusive Companions",
+   "rarity": "common",
+   "description": "A soft and fluffy hopping friend.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "panda",
+   "name": "Panda",
+   "emoji": "🐼",
+   "category": "Exclusive Companions",
+   "rarity": "rare",
+   "description": "A gentle bamboo-loving bear.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "hedgehog",
+   "name": "Hedgehog",
+   "emoji": "🦔",
+   "category": "Exclusive Companions",
+   "rarity": "uncommon",
+   "description": "A tiny spiky ball of cuteness.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "jellofish",
+   "name": "JelloFish",
+   "emoji": "🪼",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "",
+   "bonus": "1.50x Research EXP gain (World 7 feature)",
+   "image": ""
+  },
+  {
+   "id": "koi-fish",
+   "name": "Koi Fish",
+   "emoji": "🐟",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "",
+   "bonus": "100x Gaming bits gained (World 5 feature)",
+   "image": ""
+  },
+  {
+   "id": "neonscale",
+   "name": "Neonscale",
+   "emoji": "🐉",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "",
+   "bonus": "1 new Research shape, shows up after you get to research lv. 20",
+   "image": ""
+  },
+  {
+   "id": "boomy-mine",
+   "name": "Boomy Mine",
+   "emoji": "💣",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "",
+   "bonus": "20x total spelunking POW, and 2x Minehead Currency gain!",
+   "image": ""
+  },
+  {
+   "id": "glimbo",
+   "name": "Glimbo",
+   "emoji": "✨",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "",
+   "bonus": "1.60x extra kills and 2x Artifact find chance",
+   "image": ""
+  },
+  {
+   "id": "deckhand-pirate",
+   "name": "Deckhand Pirate",
+   "emoji": "🏴‍☠️",
+   "category": "Exclusive Companions",
+   "rarity": "rare",
+   "description": "A loyal pirate companion ready to sail the seas.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "vanillie",
+   "name": "Vanillie",
+   "emoji": "🍦",
+   "category": "Exclusive Companions",
+   "rarity": "rare",
+   "description": "A sweet and creamy companion with a cool personality.",
+   "bonus": "",
+   "image": ""
+  },
+  {
+   "id": "rift-hivemind",
+   "name": "Rift Hivemind",
+   "emoji": "🧠",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "A collective consciousness from the rift, buzzing with prismatic energy.",
+   "bonus": "50% Prisma Bubble bonus multi and +5 Prisma Bubble",
+   "image": ""
+  },
+  {
+   "id": "mechanical-mouse",
+   "name": "Mechanical Mouse",
+   "emoji": "🐭",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "A clockwork rodent engineered for maximum efficiency.",
+   "bonus": "2x Construction Build Speed",
+   "image": ""
+  },
+  {
+   "id": "cryosnake",
+   "name": "Cryosnake",
+   "emoji": "🐍",
+   "category": "Exclusive Companions",
+   "rarity": "legendary",
+   "description": "A frigid serpent radiating icy power that freezes upgrade costs.",
+   "bonus": "All Upgrade Vault upgrades are 50% cheaper!",
+   "image": ""
+  }
+ ]
+}
