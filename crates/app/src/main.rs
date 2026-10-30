@@ -7,7 +7,7 @@ use anyhow::Result;
 use bot_core::{Config, Ctx, Db, Feature};
 
 fn features() -> Vec<Arc<dyn Feature>> {
-    vec![]
+    vec![Arc::new(feat_levels::Levels::default())]
 }
 
 fn main() -> Result<()> {
@@ -31,6 +31,7 @@ async fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         None | Some("run") => serve().await,
+        Some("import-xp") => import_xp(&args[1..]).await,
         Some("preview") => preview(args.get(1).and_then(|p| p.parse().ok()).unwrap_or(3099)).await,
         Some("help") | Some("--help") | Some("-h") => {
             println!("{HELP}");
@@ -41,6 +42,8 @@ async fn run() -> Result<()> {
 }
 
 const HELP: &str = "bot                 run the bot and dashboard
+bot import-xp <file> [--keep-higher]
+                    carry XP over from antho-s-bot's database or a JSON list
 bot preview [port]  dashboard with sample servers and no Discord, for local design work
 bot help            show this";
 
@@ -66,6 +69,22 @@ async fn serve() -> Result<()> {
     let _ = gateway.await;
     let _ = timer.await;
     let _ = web.await;
+    Ok(())
+}
+
+async fn import_xp(args: &[String]) -> Result<()> {
+    let Some(path) = args.first() else { anyhow::bail!("usage: bot import-xp <file> [--keep-higher]") };
+    let mode = if args.iter().any(|a| a == "--keep-higher") { feat_levels::import::Mode::KeepHigher } else { feat_levels::import::Mode::Replace };
+    let cfg = Config::from_env()?;
+    let db = Db::open(&cfg.database_path)?;
+    let ctx = Ctx::new(cfg, db)?;
+    ctx.install_features(features())?;
+    let bytes = std::fs::read(path)?;
+    let report = feat_levels::import::import_bytes(&ctx, &bytes, None, mode)?;
+    for (g, n) in &report.imported {
+        println!("server {g}: {n} members");
+    }
+    println!("reward roles: {}, settings: {}", report.rewards, report.settings);
     Ok(())
 }
 

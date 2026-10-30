@@ -110,6 +110,16 @@ async fn dispatch(ctx: Ctx, event: Event) {
         return;
     }
     let guild = event.guild_id().map(|g| g.get());
+    match &event {
+        Event::MessageCreate(m) if !m.author.bot => {
+            if let Some(g) = guild {
+                ctx.count(g, "messages", 1);
+            }
+        }
+        Event::MemberAdd(m) => ctx.count(m.guild_id.get(), "joins", 1),
+        Event::MemberRemove(m) => ctx.count(m.guild_id.get(), "leaves", 1),
+        _ => {}
+    }
     for f in ctx.features() {
         let key = f.meta().key;
         if let Some(g) = guild {

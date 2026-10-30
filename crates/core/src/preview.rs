@@ -11,6 +11,20 @@ use crate::Ctx;
 pub const GUILD_A: u64 = 1_100_000_000_000_000_001;
 pub const GUILD_B: u64 = 1_100_000_000_000_000_002;
 
+/// Sample members present in both preview servers: `(user id, name)`.
+pub const MEMBERS: &[(u64, &str)] = &[
+    (2_000_000_000_000_000_001, "Mira"),
+    (2_000_000_000_000_000_002, "Oskar"),
+    (2_000_000_000_000_000_003, "juniper.fern"),
+    (2_000_000_000_000_000_004, "Teo"),
+    (2_000_000_000_000_000_005, "Kasia"),
+    (2_000_000_000_000_000_006, "bramble"),
+    (2_000_000_000_000_000_007, "Noor"),
+    (2_000_000_000_000_000_008, "Lu"),
+    (2_000_000_000_000_000_009, "Ines"),
+    (2_000_000_000_000_000_010, "Pavel"),
+];
+
 fn guild(id: u64, name: &str, members: u64) -> serde_json::Value {
     let ch = |n: u64, name: &str, kind: u8, pos: i64| {
         json!({"id": (id + n * 10).to_string(), "type": kind, "name": name, "position": pos, "guild_id": id.to_string(), "permission_overwrites": []})
@@ -33,7 +47,10 @@ fn guild(id: u64, name: &str, members: u64) -> serde_json::Value {
             ch(5, "stream-alerts", 0, 4), ch(6, "pets", 0, 5), ch(7, "suggestions", 0, 6), ch(8, "mod-log", 0, 7),
             ch(9, "starboard", 0, 8), ch(10, "tickets", 0, 9)
         ],
-        "emojis": [], "stickers": [], "members": [], "presences": [], "voice_states": [], "threads": [],
+        "emojis": [], "stickers": [], "members": MEMBERS.iter().map(|(uid, name)| json!({
+            "user": {"id": uid.to_string(), "username": name.to_lowercase(), "global_name": name, "discriminator": "0", "avatar": null, "bot": false},
+            "roles": [], "joined_at": "2025-03-01T00:00:00.000000+00:00", "deaf": false, "mute": false, "flags": 0
+        })).collect::<Vec<_>>(), "presences": [], "voice_states": [], "threads": [],
         "stage_instances": [], "guild_scheduled_events": [], "unavailable": false, "large": false,
         "joined_at": "2024-01-01T00:00:00.000000+00:00"
     })
@@ -48,6 +65,11 @@ pub fn seed(ctx: &Ctx) -> Result<()> {
     }
     for f in ctx.features() {
         ctx.set_enabled(GUILD_A, f.meta().key, true)?;
+    }
+    for f in ctx.features() {
+        if let Err(e) = f.seed_preview(ctx, GUILD_A) {
+            tracing::warn!(feature = f.meta().key, error = %e, "preview seed failed");
+        }
     }
     let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
     let mut conn = ctx.db.lock();

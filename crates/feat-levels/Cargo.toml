@@ -1,0 +1,11 @@
+[package]
+name = "feat-levels"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+bot-core.workspace = true
+serde.workspace = true
+rand.workspace = true
+maud.workspace = true

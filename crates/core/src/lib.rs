@@ -35,6 +35,8 @@ pub use twilight_model;
 pub use twilight_util;
 pub use jiff;
 pub use reqwest;
+pub use rand;
+pub use tokio;
 
 pub use config::Config;
 pub use db::{Db, Migration};
@@ -146,6 +148,12 @@ pub trait Feature: Send + Sync + 'static {
 
     /// Called once a minute. The feature keeps its own slower cadence if it needs one.
     async fn tick(&self, _ctx: &Ctx) -> Result<()> {
+        Ok(())
+    }
+
+    /// `bot preview` only: fill the feature's tables with believable sample rows for `guild`, so
+    /// its pages can be looked at without Discord. Member ids from [`preview::MEMBERS`].
+    fn seed_preview(&self, _ctx: &Ctx, _guild: u64) -> Result<()> {
         Ok(())
     }
 }

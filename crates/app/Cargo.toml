@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 bot-core.workspace = true
+feat-levels = { path = "../feat-levels" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
