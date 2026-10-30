@@ -4,6 +4,12 @@
 	admin off
 	auto_https off
 	persist_config off
+	# Render's edge proxy connects from a private address. Trusting private ranges keeps the
+	# X-Forwarded-For it sends (with the real client address) instead of replacing it, so the bot
+	# can rate-limit by client. The bot reads the rightmost public address in the header.
+	servers {
+		trusted_proxies static private_ranges
+	}
 }
 
 :{$PORT} {
