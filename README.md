@@ -107,6 +107,11 @@ Auth.js.
 
 ## Memory
 
+Measured on 2026-10-30, release build in preview mode while serving dashboard pages and rendering the
+schedule image: 20 MB resident, 27 MB at peak. For comparison, antho-s-bot's Next.js alone used
+220 MB. A live gateway caching two servers' members adds some on top. The binary is 20 MB with the
+fonts and the time-zone database built in.
+
 The bot runs as one Rust process with two worker threads and a single SQLite connection. The
 gateway cache holds servers, channels, roles, members, voice states and the last 25 messages per
 channel. All periodic work runs on one minute timer. Twitch pushes events instead of being polled
