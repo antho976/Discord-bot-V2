@@ -224,16 +224,22 @@ pub fn public_layout(title: &str, subtitle: Option<&str>, body: Markup) -> Marku
 }
 
 fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
-    ctx.db
+    let rows: Vec<(String, bool)> = ctx
+        .db
         .with(|c| {
-            c.query_row(
-                "SELECT COUNT(*) FROM notifications n, dash_users u
-                 WHERE u.id = ?1 AND n.at > u.notif_seen AND (n.guild_id IS NULL OR n.guild_id = ?2)",
-                rusqlite::params![page.user.id as i64, page.guild_id as i64],
-                |r| r.get(0),
-            )
+            let mut s = c.prepare(
+                "SELECT n.feature, n.guild_id IS NULL FROM notifications n, dash_users u
+                 WHERE u.id = ?1 AND n.at > u.notif_seen AND (n.guild_id IS NULL OR n.guild_id = ?2) LIMIT 500",
+            )?;
+            let rows = s
+                .query_map(rusqlite::params![page.user.id as i64, page.guild_id as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
         })
-        .unwrap_or(0)
+        .unwrap_or_default();
+    rows.iter()
+        .filter(|(feature, global)| if *global { page.user.admin } else { ctx.level(&page.user, page.guild_id, feature) >= Level::View })
+        .count() as i64
 }
 
 pub fn guild_avatar(ctx: &Ctx, guild: u64) -> Markup {

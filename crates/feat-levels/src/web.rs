@@ -128,13 +128,13 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         curve_factor: form.f64("curve_factor").filter(|f| (1.0..=5.0).contains(f)).unwrap_or(1.2),
         custom_curve: if form.bool("keep_custom") { old.custom_curve.clone() } else { Default::default() },
         announce: form.bool("announce"),
-        announce_channel: form.id("announce_channel"),
+        announce_channel: form.channel(&ctx, guild, "announce_channel"),
         announce_ping: form.bool("announce_ping"),
         announce_min_level: form.int_in("announce_min_level", 0, 500, 0) as u32,
         message: { let m = form.string("message"); if m.is_empty() { crate::DEFAULT_MESSAGE.into() } else { text::clip(&m, 500) } },
         stack_rewards: form.bool("stack_rewards"),
-        no_xp_channels: form.ids("no_xp_channels"),
-        no_xp_roles: form.ids("no_xp_roles"),
+        no_xp_channels: form.channels(&ctx, guild, "no_xp_channels"),
+        no_xp_roles: form.roles(&ctx, guild, "no_xp_roles"),
     };
     let curve_changed = s.curve_base != old.curve_base || s.curve_factor != old.curve_factor || s.custom_curve != old.custom_curve;
     ctx.save_settings(guild, KEY, &s)?;
@@ -164,7 +164,10 @@ fn recompute_levels(ctx: &Ctx, guild: u64, s: &Settings) -> bot_core::anyhow::Re
 async fn add_reward(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let level = form.i64("level").filter(|l| (1..=500).contains(l)).ok_or_else(|| WebError::Bad("Pick a level from 1 to 500.".into()))?;
-    let role = form.id("role").ok_or_else(|| WebError::Bad("Pick a role.".into()))?;
+    let role = form.role(&ctx, guild, "role").ok_or_else(|| WebError::Bad("Pick a role.".into()))?;
+    if !page.user.admin && !ctx.safe_role(guild, role) {
+        return Err(WebError::Bad("That role has moderation or admin permissions, or sits above the bot's role. Only a dashboard admin can make it a reward.".into()));
+    }
     ctx.db.with(|c| {
         c.execute(
             "INSERT INTO level_rewards (guild_id, level, role_id) VALUES (?1, ?2, ?3)
@@ -325,7 +328,8 @@ async fn import_local(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let path = legacy_db_path().filter(|p| std::path::Path::new(p).exists()).ok_or(WebError::NotFound)?;
     let mode = if form.get("mode") == Some("higher") { import::Mode::KeepHigher } else { import::Mode::Replace };
     let ctx2 = ctx.clone();
-    let report = bot_core::tokio::task::spawn_blocking(move || import::import_db(&ctx2, std::path::Path::new(&path), Some(guild), mode))
+    let page_admin = page.user.admin;
+    let report = bot_core::tokio::task::spawn_blocking(move || import::import_db(&ctx2, std::path::Path::new(&path), Some(guild), mode, page_admin))
         .await
         .map_err(|e| WebError::Internal(e.into()))?
         .map_err(|e| WebError::Bad(format!("Couldn't import: {e}")))?;
@@ -343,7 +347,7 @@ struct ImportQuery {
 async fn import_upload(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<ImportQuery>, body: Bytes) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let mode = if q.mode.as_deref() == Some("higher") { import::Mode::KeepHigher } else { import::Mode::Replace };
-    let res = tokio_blocking(ctx.clone(), body, guild, mode).await;
+    let res = tokio_blocking(ctx.clone(), body, guild, mode, page.user.admin).await;
     let (ok, message) = match res {
         Ok(report) => {
             let m = report.summary(&ctx);
@@ -355,7 +359,7 @@ async fn import_upload(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     Ok(Json(serde_json::json!({ "ok": ok, "message": message })).into_response())
 }
 
-async fn tokio_blocking(ctx: Ctx, body: Bytes, guild: u64, mode: import::Mode) -> bot_core::anyhow::Result<import::Report> {
+async fn tokio_blocking(ctx: Ctx, body: Bytes, guild: u64, mode: import::Mode, admin: bool) -> bot_core::anyhow::Result<import::Report> {
     // SQLite work on a large file shouldn't hold up the async workers.
-    bot_core::tokio::task::spawn_blocking(move || import::import_bytes(&ctx, &body, Some(guild), mode)).await?
+    bot_core::tokio::task::spawn_blocking(move || import::import_bytes(&ctx, &body, Some(guild), mode, admin)).await?
 }

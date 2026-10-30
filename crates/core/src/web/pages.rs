@@ -91,7 +91,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
     let joins = daily(&ctx, guild, "joins", 7);
     let leaves = daily(&ctx, guild, "leaves", 7);
     let on = ctx.features().iter().filter(|f| ctx.enabled(guild, f.meta().key)).count();
-    let notes = recent_notifications(&ctx, guild, 6);
+    let notes = recent_notifications(&ctx, &user, guild, 6);
 
     let body = html! {
         (ui::readings(&[
@@ -123,16 +123,31 @@ struct Note {
     feature: String,
     text: String,
     link: Option<String>,
+    global: bool,
 }
 
-fn recent_notifications(ctx: &Ctx, guild: u64, limit: i64) -> Vec<Note> {
+/// Notices for a server that this person may see: only features they can at least view, and
+/// server-less notices (app connections) only for admins.
+fn recent_notifications(ctx: &Ctx, user: &User, guild: u64, limit: i64) -> Vec<Note> {
+    let mut notes = all_notifications(ctx, guild, limit * 4);
+    notes.retain(|n| match n.global {
+        true => user.admin,
+        false => ctx.level(user, guild, &n.feature) >= Level::View,
+    });
+    notes.truncate(limit as usize);
+    notes
+}
+
+fn all_notifications(ctx: &Ctx, guild: u64, limit: i64) -> Vec<Note> {
     ctx.db
         .with(|c| {
             let mut s = c.prepare(
-                "SELECT at, feature, text, link FROM notifications WHERE guild_id IS NULL OR guild_id = ?1 ORDER BY at DESC LIMIT ?2",
+                "SELECT at, feature, text, link, guild_id IS NULL FROM notifications WHERE guild_id IS NULL OR guild_id = ?1 ORDER BY at DESC LIMIT ?2",
             )?;
             let rows = s
-                .query_map(params![guild as i64, limit], |r| Ok(Note { at: r.get(0)?, feature: r.get(1)?, text: r.get(2)?, link: r.get(3)? }))?
+                .query_map(params![guild as i64, limit], |r| {
+                    Ok(Note { at: r.get(0)?, feature: r.get(1)?, text: r.get(2)?, link: r.get(3)?, global: r.get(4)? })
+                })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
@@ -158,7 +173,7 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         return Err(WebError::Forbidden);
     }
     let page = super::Page { user: user.clone(), guild_id: guild, key: "notifications", level: Level::View };
-    let notes = recent_notifications(&ctx, guild, 100);
+    let notes = recent_notifications(&ctx, &user, guild, 100);
     let body = html! {
         @if notes.is_empty() {
             (ui::empty(Icon::Bell, "No notifications", "Features post here when something needs you."))
@@ -351,7 +366,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
             @if !person.admin && !is_owner {
                 @for g in ctx.guild_ids() {
                     (ui::section(&ctx.guild_name(g), Some("No access hides the page. View shows it read-only. Edit lets them change it."), ui::card(html! {
-                        @for f in ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key)) {
+                        @for f in ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key) && !f.admin_only()) {
                             @let m = f.meta();
                             @let name = format!("p:{}:{}", g, m.key);
                             @let cur = level_of(g, m.key);
@@ -366,7 +381,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                                 }
                             }))
                         }
-                        @if ctx.features().iter().all(|f| !ctx.enabled(g, f.meta().key)) {
+                        @if ctx.features().iter().all(|f| !ctx.enabled(g, f.meta().key) || f.admin_only()) {
                             (ui::empty(Icon::Toggle, "No features on here", "Turn features on for this server first."))
                         }
                     })))

@@ -274,6 +274,12 @@ impl Feature for Levels {
                 ctx.reply(&call.interaction, Reply::embed(embed).components(rows)).await?;
             }
             "xp" => {
+                // Discord hides /xp from members without Manage Server, but server admins can
+                // loosen that per role, so check here too.
+                if !call.member_has(Permissions::MANAGE_GUILD) {
+                    ctx.reply(&call.interaction, Reply::text("You need Manage Server to change XP.").ephemeral()).await?;
+                    return Ok(());
+                }
                 let Some((sub, opts)) = call.opts().sub() else { return Ok(()) };
                 let Some(user) = opts.user("member").map(|u| u.get()) else { return Ok(()) };
                 let name = ctx.display_name(guild, user);

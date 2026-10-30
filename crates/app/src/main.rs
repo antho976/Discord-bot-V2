@@ -9,16 +9,16 @@ use bot_core::{Config, Ctx, Db, Feature};
 fn features() -> Vec<Arc<dyn Feature>> {
     vec![
         Arc::new(feat_levels::Levels::default()),
-        Arc::new(feat_alerts::Alerts::default()),
+        Arc::new(feat_alerts::Alerts),
         Arc::new(feat_guard::Guard::default()),
-        Arc::new(feat_connect::Connect::default()),
-        Arc::new(feat_pets::Pets::default()),
+        Arc::new(feat_connect::Connect),
+        Arc::new(feat_pets::Pets),
         Arc::new(feat_welcome::Welcome::default()),
         Arc::new(feat_audit::Audit::default()),
-        Arc::new(feat_community::Community::default()),
+        Arc::new(feat_community::Community),
         Arc::new(feat_tickets::Tickets::default()),
         Arc::new(feat_utility::Utility::default()),
-        Arc::new(feat_embeds::Embeds::default()),
+        Arc::new(feat_embeds::Embeds),
     ]
 }
 
@@ -92,7 +92,7 @@ async fn import_xp(args: &[String]) -> Result<()> {
     let ctx = Ctx::new(cfg, db)?;
     ctx.install_features(features())?;
     let bytes = std::fs::read(path)?;
-    let report = feat_levels::import::import_bytes(&ctx, &bytes, None, mode)?;
+    let report = feat_levels::import::import_bytes(&ctx, &bytes, None, mode, true)?;
     for (g, n) in &report.imported {
         println!("server {g}: {n} members");
     }

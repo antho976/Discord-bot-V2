@@ -68,4 +68,26 @@ impl FormData {
     pub fn ids(&self, name: &str) -> Vec<u64> {
         self.all(name).into_iter().filter_map(|v| v.parse().ok()).collect()
     }
+
+    /// A channel select, kept only when the channel belongs to `guild`.
+    pub fn channel(&self, ctx: &crate::Ctx, guild: u64, name: &str) -> Option<u64> {
+        ctx.channel_in(guild, self.id(name))
+    }
+
+    /// A channel list, keeping only channels of `guild`.
+    pub fn channels(&self, ctx: &crate::Ctx, guild: u64, name: &str) -> Vec<u64> {
+        self.ids(name).into_iter().filter(|c| ctx.channel_in(guild, Some(*c)).is_some()).collect()
+    }
+
+    /// A role select, kept only when the role belongs to `guild`.
+    pub fn role(&self, ctx: &crate::Ctx, guild: u64, name: &str) -> Option<u64> {
+        let id = self.id(name)?;
+        ctx.roles(guild).iter().any(|(r, _, _)| *r == id).then_some(id)
+    }
+
+    /// A role list, keeping only roles of `guild`.
+    pub fn roles(&self, ctx: &crate::Ctx, guild: u64, name: &str) -> Vec<u64> {
+        let known: Vec<u64> = ctx.roles(guild).into_iter().map(|(r, _, _)| r).collect();
+        self.ids(name).into_iter().filter(|r| known.contains(r)).collect()
+    }
 }

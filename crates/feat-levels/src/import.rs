@@ -64,13 +64,15 @@ struct Row {
 }
 
 /// Import from bytes: a SQLite file or JSON. `only` limits it to one server.
-pub fn import_bytes(ctx: &Ctx, bytes: &[u8], only: Option<u64>, mode: Mode) -> Result<Report> {
+/// `any_role`: keep reward roles with moderation or admin power. Only for admins and the CLI;
+/// otherwise such rewards are skipped.
+pub fn import_bytes(ctx: &Ctx, bytes: &[u8], only: Option<u64>, mode: Mode, any_role: bool) -> Result<Report> {
     if bytes.starts_with(b"SQLite format 3\0") {
         let dir = std::env::temp_dir().join(format!("bot-import-{}", bot_core::now_ms()));
         std::fs::create_dir_all(&dir)?;
         let path = dir.join("import.db");
         std::fs::write(&path, bytes)?;
-        let res = import_db(ctx, &path, only, mode);
+        let res = import_db(ctx, &path, only, mode, any_role);
         let _ = std::fs::remove_dir_all(&dir);
         res
     } else {
@@ -78,7 +80,7 @@ pub fn import_bytes(ctx: &Ctx, bytes: &[u8], only: Option<u64>, mode: Mode) -> R
     }
 }
 
-pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode) -> Result<Report> {
+pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode, any_role: bool) -> Result<Report> {
     let src = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("opening {}", path.display()))?;
     let has = |table: &str| -> bool {
@@ -168,6 +170,7 @@ pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode) -> Resul
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)))?
             .filter_map(|r| r.ok())
             .filter_map(|(g, l, role)| Some((g.parse().ok()?, l, role.parse().ok()?)))
+            .filter(|(g, _, role)| any_role || ctx.safe_role(*g, *role))
             .collect();
         ctx.db.with(|c| {
             for (g, level, role) in &rewards {

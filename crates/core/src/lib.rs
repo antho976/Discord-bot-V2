@@ -107,6 +107,12 @@ pub trait Feature: Send + Sync + 'static {
         &[]
     }
 
+    /// Admin-only features can't be granted per server: they act on things shared by every
+    /// server (app connections), so only dashboard admins see or change them.
+    fn admin_only(&self) -> bool {
+        false
+    }
+
     /// Slash commands, registered per server where the feature is on.
     fn commands(&self) -> Vec<Command> {
         Vec::new()

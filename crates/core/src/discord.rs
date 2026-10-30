@@ -799,6 +799,50 @@ impl Ctx {
         out.into_iter().map(|(_, id, name, color)| (id, name, color)).collect()
     }
 
+    /// `channel` if it belongs to this server, otherwise None. Use on every channel id that comes
+    /// from a form, so a channel from another server can't be saved.
+    pub fn channel_in(&self, guild_id: u64, channel: Option<u64>) -> Option<u64> {
+        let id = channel?;
+        let c = self.cache.channel(Id::new(id))?;
+        (c.guild_id.map(|g| g.get()) == Some(guild_id)).then_some(id)
+    }
+
+    /// The bot's highest role position in a server.
+    pub fn bot_top_role_position(&self, guild_id: u64) -> i64 {
+        let Some(bot) = self.bot_id() else { return 0 };
+        let Some(member) = self.cache.member(Id::new(guild_id), Id::new(bot)) else { return 0 };
+        member
+            .roles()
+            .iter()
+            .filter_map(|r| self.cache.role(*r))
+            .map(|r| r.position)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// True when the bot can hand this role out and it carries no moderation or admin power.
+    /// Features that give roles automatically (level rewards, auto-roles) only accept these
+    /// from non-admins, so a dashboard grant can't be turned into server admin.
+    pub fn safe_role(&self, guild_id: u64, role: u64) -> bool {
+        use twilight_model::guild::Permissions as P;
+        let Some(r) = self.cache.role(Id::new(role)) else { return false };
+        let dangerous = P::ADMINISTRATOR
+            | P::MANAGE_GUILD
+            | P::MANAGE_ROLES
+            | P::MANAGE_CHANNELS
+            | P::MANAGE_WEBHOOKS
+            | P::BAN_MEMBERS
+            | P::KICK_MEMBERS
+            | P::MODERATE_MEMBERS
+            | P::MANAGE_MESSAGES
+            | P::MENTION_EVERYONE;
+        role != guild_id
+            && !r.managed
+            && self.cache.guild_roles(Id::new(guild_id)).is_some_and(|set| set.contains(&r.id))
+            && !r.permissions.intersects(dangerous)
+            && (self.bot_id().is_none() || r.position < self.bot_top_role_position(guild_id))
+    }
+
     pub fn guild_name(&self, guild_id: u64) -> String {
         self.cache
             .guild(Id::new(guild_id))

@@ -93,16 +93,6 @@ pub fn seed(ctx: &Ctx) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn sample_guild_parses() {
-        let v = super::guild(super::GUILD_A, "x", 1);
-        let r: Result<twilight_model::guild::Guild, _> = serde_json::from_value(v);
-        r.unwrap();
-    }
-}
-
 /// Serve a preview of the dashboard with only these features, on `port`. Feature crates call
 /// this from `examples/preview.rs` so each can be looked at on its own:
 /// `cargo run -p feat-x --example preview -- 3101`, then open `http://localhost:3101/dev/login`.
@@ -123,4 +113,14 @@ pub fn main(features: Vec<std::sync::Arc<dyn crate::Feature>>) -> Result<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let port = std::env::args().nth(1).and_then(|p| p.parse().ok()).unwrap_or(3100);
     tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?.block_on(run(features, port))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn sample_guild_parses() {
+        let v = super::guild(super::GUILD_A, "x", 1);
+        let r: Result<twilight_model::guild::Guild, _> = serde_json::from_value(v);
+        r.unwrap();
+    }
 }

@@ -90,6 +90,9 @@ impl Ctx {
         if user.admin {
             return Level::Edit;
         }
+        if self.feature(key).is_some_and(|f| f.admin_only()) {
+            return Level::None;
+        }
         self.db
             .with(|c| {
                 c.query_row(
