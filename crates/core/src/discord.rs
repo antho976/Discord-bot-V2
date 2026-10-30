@@ -361,6 +361,19 @@ impl CommandCall {
     pub fn channel_id(&self) -> Option<u64> {
         self.interaction.channel.as_ref().map(|c| c.id.get())
     }
+    /// True when the member running the command has any of these permission bits.
+    pub fn member_has(&self, perms: twilight_model::guild::Permissions) -> bool {
+        self.interaction
+            .member
+            .as_ref()
+            .and_then(|m| m.permissions)
+            .is_some_and(|p| p.contains(twilight_model::guild::Permissions::ADMINISTRATOR) || p.intersects(perms))
+    }
+}
+
+/// True when a Discord REST error is a 404 (the message, channel or member is gone).
+pub fn is_not_found(e: &twilight_http::Error) -> bool {
+    matches!(e.kind(), twilight_http::error::ErrorType::Response { status, .. } if status.get() == 404)
 }
 
 pub struct ComponentCall {
