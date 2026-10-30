@@ -117,6 +117,17 @@ gateway cache holds servers, channels, roles, members, voice states and the last
 channel. All periodic work runs on one minute timer. Twitch pushes events instead of being polled
 when `TWITCH_EVENTSUB_SECRET` is set.
 
+## Not tested against the real services yet
+
+Everything builds, 146 tests pass, and every dashboard page was checked in the preview. The parts
+that talk to Discord, Twitch or YouTube have only run against sample data, so check them first
+after deploying:
+- Slash commands, buttons and DMs.
+- Twitch EventSub. Twitch's follower total needs a user token, so follower stats stay empty.
+- The YouTube feed.
+- The relay pairing subprocess.
+- The Docker image. Docker wasn't available where this was built.
+
 ## Code
 
 - `crates/core` is the shared runtime: config, SQLite, the gateway, interaction helpers, and the
