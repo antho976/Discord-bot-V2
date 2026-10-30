@@ -66,6 +66,7 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
                 };
                 snapshot_before(&ctx, &event);
                 ctx.cache.update(&event);
+                track_member_count(&ctx, &event);
                 match &event {
                     Event::Ready(ready) => {
                         ctx.set_bot_id(ready.user.id.get());
@@ -214,6 +215,30 @@ impl Ctx {
     /// The voice channel a member was in before the voice update being handled.
     pub fn before_voice(&self, guild_id: u64, user_id: u64) -> Option<u64> {
         self.snapshots.lock().unwrap().voice.get(&(guild_id, user_id)).and_then(|(_, c)| *c)
+    }
+}
+
+fn track_member_count(ctx: &Ctx, event: &Event) {
+    let mut counts = ctx.member_counts.lock().unwrap();
+    match event {
+        Event::GuildCreate(g) => {
+            if let twilight_model::gateway::payload::incoming::GuildCreate::Available(g) = &**g
+                && let Some(n) = g.member_count
+            {
+                counts.insert(g.id.get(), n);
+            }
+        }
+        Event::MemberAdd(m) => {
+            if let Some(n) = counts.get_mut(&m.guild_id.get()) {
+                *n += 1;
+            }
+        }
+        Event::MemberRemove(m) => {
+            if let Some(n) = counts.get_mut(&m.guild_id.get()) {
+                *n = n.saturating_sub(1);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -774,8 +799,14 @@ impl Ctx {
         Some(format!("https://cdn.discordapp.com/icons/{guild_id}/{icon}.png?size=64"))
     }
 
+    /// The server's member count, kept current as members join and leave.
     pub fn member_count(&self, guild_id: u64) -> Option<u64> {
-        self.cache.guild(Id::new(guild_id)).and_then(|g| g.member_count())
+        self.member_counts
+            .lock()
+            .unwrap()
+            .get(&guild_id)
+            .copied()
+            .or_else(|| self.cache.guild(Id::new(guild_id)).and_then(|g| g.member_count()))
     }
 }
 

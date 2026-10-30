@@ -172,6 +172,9 @@ pub struct CtxInner {
     settings_cache: RwLock<HashMap<(u64, String), Arc<dyn std::any::Any + Send + Sync>>>,
     counters: Mutex<HashMap<(u64, &'static str), i64>>,
     pub(crate) snapshots: Mutex<discord::Snapshots>,
+    /// Live member counts: set from GuildCreate, then moved by joins and leaves (the cache's own
+    /// count never changes after connect).
+    pub(crate) member_counts: Mutex<HashMap<u64, u64>>,
 }
 
 /// Cheap to clone; everything a handler needs.
@@ -225,6 +228,7 @@ impl Ctx {
             settings_cache: RwLock::new(HashMap::new()),
             counters: Mutex::new(HashMap::new()),
             snapshots: Mutex::new(discord::Snapshots::default()),
+            member_counts: Mutex::new(HashMap::new()),
         })))
     }
 
