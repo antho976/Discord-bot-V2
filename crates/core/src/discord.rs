@@ -1,0 +1,654 @@
+//! The gateway connection, event routing to features, slash-command registration and the
+//! helpers features use to answer interactions.
+
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+
+use anyhow::{Context, Result};
+use twilight_gateway::{CloseFrame, Config as GatewayConfig, Event, EventTypeFlags, Intents, Shard, StreamExt as _};
+use twilight_model::application::command::CommandOptionChoice;
+use twilight_model::application::interaction::application_command::{
+    CommandData, CommandDataOption, CommandOptionValue,
+};
+use twilight_model::application::interaction::message_component::MessageComponentInteractionData;
+use twilight_model::application::interaction::modal::{ModalInteractionComponent, ModalInteractionData};
+use twilight_model::application::interaction::{Interaction, InteractionData, InteractionType};
+use twilight_model::channel::message::component::{ActionRow, Button, ButtonStyle, Component};
+use twilight_model::channel::message::{AllowedMentions, Embed, MessageFlags};
+use twilight_model::http::interaction::{InteractionResponse, InteractionResponseData, InteractionResponseType};
+use twilight_model::id::Id;
+use twilight_model::id::marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker};
+use twilight_model::user::User;
+
+use crate::Ctx;
+
+pub fn intents() -> Intents {
+    Intents::GUILDS
+        | Intents::GUILD_MEMBERS
+        | Intents::GUILD_MODERATION
+        | Intents::GUILD_INVITES
+        | Intents::GUILD_VOICE_STATES
+        | Intents::GUILD_MESSAGES
+        | Intents::GUILD_MESSAGE_REACTIONS
+        | Intents::MESSAGE_CONTENT
+        | Intents::DIRECT_MESSAGES
+}
+
+/// Connect and run until `shutdown` fires. Reconnects are handled inside twilight.
+pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> Result<()> {
+    let app = ctx
+        .http
+        .current_user_application()
+        .await
+        .context("fetching the bot's application (is DISCORD_TOKEN right?)")?
+        .model()
+        .await?;
+    ctx.set_app_id(app.id);
+
+    let config = GatewayConfig::new(ctx.cfg.discord_token.clone(), intents());
+    let mut shard = Shard::with_config(twilight_gateway::ShardId::ONE, config);
+    let registered: Arc<Mutex<HashSet<u64>>> = Default::default();
+
+    loop {
+        tokio::select! {
+            _ = shutdown.changed() => {
+                shard.close(CloseFrame::NORMAL);
+                break;
+            }
+            item = shard.next_event(EventTypeFlags::all()) => {
+                let Some(item) = item else { break };
+                let event = match item {
+                    Ok(event) => event,
+                    Err(source) => {
+                        tracing::warn!(?source, "gateway error");
+                        continue;
+                    }
+                };
+                ctx.cache.update(&event);
+                match &event {
+                    Event::Ready(ready) => {
+                        ctx.set_bot_id(ready.user.id.get());
+                        tracing::info!(user = %ready.user.name, guilds = ready.guilds.len(), "connected to Discord");
+                    }
+                    Event::GuildCreate(g) => {
+                        let id = g.id().get();
+                        if registered.lock().unwrap().insert(id) {
+                            let ctx = ctx.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = register_commands(&ctx, id).await {
+                                    tracing::warn!(guild = id, error = %e, "couldn't register commands");
+                                }
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+                let ctx = ctx.clone();
+                tokio::spawn(async move { dispatch(ctx, event).await });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Replace a server's slash commands with those of the features switched on there.
+pub async fn register_commands(ctx: &Ctx, guild_id: u64) -> Result<()> {
+    let commands: Vec<_> = ctx
+        .features()
+        .iter()
+        .filter(|f| ctx.enabled(guild_id, f.meta().key))
+        .flat_map(|f| f.commands())
+        .collect();
+    ctx.interaction().set_guild_commands(Id::new(guild_id), &commands).await?;
+    tracing::info!(guild = guild_id, count = commands.len(), "registered commands");
+    Ok(())
+}
+
+async fn dispatch(ctx: Ctx, event: Event) {
+    if let Event::InteractionCreate(i) = &event {
+        route_interaction(&ctx, &i.0).await;
+        return;
+    }
+    let guild = event.guild_id().map(|g| g.get());
+    for f in ctx.features() {
+        let key = f.meta().key;
+        if let Some(g) = guild {
+            if !ctx.enabled(g, key) {
+                continue;
+            }
+        }
+        if let Err(e) = f.on_event(&ctx, &event).await {
+            tracing::warn!(feature = key, kind = ?event.kind(), error = %e, "event handler failed");
+        }
+    }
+}
+
+async fn route_interaction(ctx: &Ctx, i: &Interaction) {
+    let guild = i.guild_id.map(|g| g.get());
+    let usable = |key: &str| guild.is_none_or(|g| ctx.enabled(g, key));
+    let result = match (&i.kind, &i.data) {
+        (InteractionType::ApplicationCommand | InteractionType::ApplicationCommandAutocomplete, Some(InteractionData::ApplicationCommand(data))) => {
+            let owner = ctx
+                .features()
+                .iter()
+                .find(|f| f.commands().iter().any(|c| c.name == data.name));
+            match owner {
+                Some(f) if usable(f.meta().key) => {
+                    let call = CommandCall { interaction: i.clone(), data: (**data).clone() };
+                    let res = if i.kind == InteractionType::ApplicationCommandAutocomplete {
+                        f.on_autocomplete(ctx, &call).await
+                    } else {
+                        f.on_command(ctx, &call).await
+                    };
+                    res.map_err(|e| (f.meta().key, e))
+                }
+                _ => Ok(()),
+            }
+        }
+        (InteractionType::MessageComponent, Some(InteractionData::MessageComponent(data))) => {
+            let prefix = data.custom_id.split(':').next().unwrap_or_default();
+            match ctx.feature(prefix) {
+                Some(f) if usable(prefix) => {
+                    let call = ComponentCall { interaction: i.clone(), data: (**data).clone() };
+                    f.on_component(ctx, &call).await.map_err(|e| (prefix, e))
+                }
+                _ => Ok(()),
+            }
+        }
+        (InteractionType::ModalSubmit, Some(InteractionData::ModalSubmit(data))) => {
+            let prefix = data.custom_id.split(':').next().unwrap_or_default();
+            match ctx.feature(prefix) {
+                Some(f) if usable(prefix) => {
+                    let call = ModalCall { interaction: i.clone(), data: (**data).clone() };
+                    f.on_modal(ctx, &call).await.map_err(|e| (prefix, e))
+                }
+                _ => Ok(()),
+            }
+        }
+        _ => Ok(()),
+    };
+    if let Err((feature, e)) = result {
+        tracing::warn!(feature, error = %e, "interaction failed");
+        if i.kind != InteractionType::ApplicationCommandAutocomplete {
+            let msg = Reply::text("That didn't work. The error is in the bot's log.").ephemeral();
+            if ctx.reply(i, msg.clone()).await.is_err() {
+                let _ = ctx.followup(i, msg).await;
+            }
+        }
+    }
+}
+
+// ---- interaction calls ----
+
+pub struct CommandCall {
+    pub interaction: Interaction,
+    pub data: CommandData,
+}
+
+impl CommandCall {
+    pub fn opts(&self) -> Opts<'_> {
+        Opts(&self.data.options)
+    }
+    pub fn guild_id(&self) -> Option<u64> {
+        self.interaction.guild_id.map(|g| g.get())
+    }
+    pub fn user(&self) -> Option<&User> {
+        self.interaction.author()
+    }
+    pub fn user_id(&self) -> u64 {
+        self.interaction.author_id().map(|u| u.get()).unwrap_or_default()
+    }
+    pub fn channel_id(&self) -> Option<u64> {
+        self.interaction.channel.as_ref().map(|c| c.id.get())
+    }
+}
+
+pub struct ComponentCall {
+    pub interaction: Interaction,
+    pub data: MessageComponentInteractionData,
+}
+
+impl ComponentCall {
+    /// The custom id after the `"{key}:"` prefix, split on `:`.
+    pub fn args(&self) -> Vec<&str> {
+        self.data.custom_id.split(':').skip(1).collect()
+    }
+    pub fn guild_id(&self) -> Option<u64> {
+        self.interaction.guild_id.map(|g| g.get())
+    }
+    pub fn user_id(&self) -> u64 {
+        self.interaction.author_id().map(|u| u.get()).unwrap_or_default()
+    }
+    /// True when the clicking member has any of these permission bits in the server.
+    pub fn member_has(&self, perms: twilight_model::guild::Permissions) -> bool {
+        self.interaction
+            .member
+            .as_ref()
+            .and_then(|m| m.permissions)
+            .is_some_and(|p| p.contains(twilight_model::guild::Permissions::ADMINISTRATOR) || p.intersects(perms))
+    }
+}
+
+pub struct ModalCall {
+    pub interaction: Interaction,
+    pub data: ModalInteractionData,
+}
+
+impl ModalCall {
+    pub fn args(&self) -> Vec<&str> {
+        self.data.custom_id.split(':').skip(1).collect()
+    }
+    /// The value typed into the text input with this custom id.
+    pub fn value(&self, custom_id: &str) -> Option<String> {
+        fn walk(c: &ModalInteractionComponent, id: &str) -> Option<String> {
+            match c {
+                ModalInteractionComponent::TextInput(t) if t.custom_id == id => Some(t.value.clone()),
+                ModalInteractionComponent::Label(l) => walk(&l.component, id),
+                ModalInteractionComponent::ActionRow(r) => r.components.iter().find_map(|c| walk(c, id)),
+                _ => None,
+            }
+        }
+        self.data.components.iter().find_map(|c| walk(c, custom_id))
+    }
+    pub fn guild_id(&self) -> Option<u64> {
+        self.interaction.guild_id.map(|g| g.get())
+    }
+    pub fn user_id(&self) -> u64 {
+        self.interaction.author_id().map(|u| u.get()).unwrap_or_default()
+    }
+}
+
+/// Typed access to slash-command options.
+#[derive(Clone, Copy)]
+pub struct Opts<'a>(pub &'a [CommandDataOption]);
+
+impl<'a> Opts<'a> {
+    fn get(&self, name: &str) -> Option<&'a CommandOptionValue> {
+        self.0.iter().find(|o| o.name == name).map(|o| &o.value)
+    }
+    /// The chosen subcommand (or subcommand group) and its options.
+    pub fn sub(&self) -> Option<(&'a str, Opts<'a>)> {
+        self.0.iter().find_map(|o| match &o.value {
+            CommandOptionValue::SubCommand(inner) | CommandOptionValue::SubCommandGroup(inner) => {
+                Some((o.name.as_str(), Opts(inner.as_slice())))
+            }
+            _ => None,
+        })
+    }
+    pub fn str(&self, name: &str) -> Option<&'a str> {
+        match self.get(name)? {
+            CommandOptionValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+    pub fn int(&self, name: &str) -> Option<i64> {
+        match self.get(name)? {
+            CommandOptionValue::Integer(n) => Some(*n),
+            _ => None,
+        }
+    }
+    pub fn num(&self, name: &str) -> Option<f64> {
+        match self.get(name)? {
+            CommandOptionValue::Number(n) => Some(*n),
+            CommandOptionValue::Integer(n) => Some(*n as f64),
+            _ => None,
+        }
+    }
+    pub fn bool(&self, name: &str) -> Option<bool> {
+        match self.get(name)? {
+            CommandOptionValue::Boolean(b) => Some(*b),
+            _ => None,
+        }
+    }
+    pub fn user(&self, name: &str) -> Option<Id<UserMarker>> {
+        match self.get(name)? {
+            CommandOptionValue::User(u) => Some(*u),
+            _ => None,
+        }
+    }
+    pub fn channel(&self, name: &str) -> Option<Id<ChannelMarker>> {
+        match self.get(name)? {
+            CommandOptionValue::Channel(c) => Some(*c),
+            _ => None,
+        }
+    }
+    pub fn role(&self, name: &str) -> Option<Id<RoleMarker>> {
+        match self.get(name)? {
+            CommandOptionValue::Role(r) => Some(*r),
+            _ => None,
+        }
+    }
+    /// For autocomplete: the option being typed and what's typed so far.
+    pub fn focused(&self) -> Option<(&'a str, &'a str)> {
+        for o in self.0 {
+            match &o.value {
+                CommandOptionValue::Focused(v, _) => return Some((o.name.as_str(), v.as_str())),
+                CommandOptionValue::SubCommand(inner) | CommandOptionValue::SubCommandGroup(inner) => {
+                    if let Some(f) = Opts(inner).focused() {
+                        return Some(f);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+}
+
+// ---- replies ----
+
+/// What to send back to an interaction. Mentions are off unless set with `mentions`.
+#[derive(Clone, Default)]
+pub struct Reply {
+    pub content: Option<String>,
+    pub embeds: Vec<Embed>,
+    pub components: Vec<Component>,
+    pub ephemeral: bool,
+    pub mentions: Option<AllowedMentions>,
+}
+
+impl Reply {
+    pub fn text(s: impl Into<String>) -> Self {
+        Self { content: Some(s.into()), ..Default::default() }
+    }
+    pub fn embed(e: Embed) -> Self {
+        Self { embeds: vec![e], ..Default::default() }
+    }
+    pub fn ephemeral(mut self) -> Self {
+        self.ephemeral = true;
+        self
+    }
+    pub fn with_embed(mut self, e: Embed) -> Self {
+        self.embeds.push(e);
+        self
+    }
+    pub fn components(mut self, rows: Vec<Component>) -> Self {
+        self.components = rows;
+        self
+    }
+    pub fn mentions(mut self, m: AllowedMentions) -> Self {
+        self.mentions = Some(m);
+        self
+    }
+    fn data(self) -> InteractionResponseData {
+        InteractionResponseData {
+            content: self.content,
+            embeds: Some(self.embeds),
+            components: Some(self.components),
+            flags: self.ephemeral.then_some(MessageFlags::EPHEMERAL),
+            allowed_mentions: Some(self.mentions.unwrap_or_default()),
+            ..Default::default()
+        }
+    }
+}
+
+/// A row of buttons. Each tuple is `(custom_id, label, style)`.
+pub fn button_row(buttons: &[(&str, &str, ButtonStyle)]) -> Component {
+    Component::ActionRow(ActionRow {
+        id: None,
+        components: buttons
+            .iter()
+            .map(|(id, label, style)| {
+                Component::Button(Button {
+                    id: None,
+                    custom_id: Some((*id).to_owned()),
+                    disabled: false,
+                    emoji: None,
+                    label: Some((*label).to_owned()),
+                    style: *style,
+                    url: None,
+                    sku_id: None,
+                })
+            })
+            .collect(),
+    })
+}
+
+/// A link button row.
+pub fn link_row(label: &str, url: &str) -> Component {
+    Component::ActionRow(ActionRow {
+        id: None,
+        components: vec![Component::Button(Button {
+            id: None,
+            custom_id: None,
+            disabled: false,
+            emoji: None,
+            label: Some(label.to_owned()),
+            style: ButtonStyle::Link,
+            url: Some(url.to_owned()),
+            sku_id: None,
+        })],
+    })
+}
+
+impl Ctx {
+    async fn respond(&self, i: &Interaction, kind: InteractionResponseType, data: Option<InteractionResponseData>) -> Result<()> {
+        let resp = InteractionResponse { kind, data };
+        self.interaction().create_response(i.id, &i.token, &resp).await?;
+        Ok(())
+    }
+
+    /// Answer with a new message.
+    pub async fn reply(&self, i: &Interaction, r: Reply) -> Result<()> {
+        self.respond(i, InteractionResponseType::ChannelMessageWithSource, Some(r.data())).await
+    }
+
+    /// Answer a button press by editing the message it's on.
+    pub async fn update(&self, i: &Interaction, r: Reply) -> Result<()> {
+        self.respond(i, InteractionResponseType::UpdateMessage, Some(r.data())).await
+    }
+
+    /// Show "thinking…" now and answer later with `edit_original` or `followup`.
+    pub async fn defer(&self, i: &Interaction, ephemeral: bool) -> Result<()> {
+        let data = InteractionResponseData {
+            flags: ephemeral.then_some(MessageFlags::EPHEMERAL),
+            ..Default::default()
+        };
+        self.respond(i, InteractionResponseType::DeferredChannelMessageWithSource, Some(data)).await
+    }
+
+    /// Acknowledge a button press without changing anything yet.
+    pub async fn defer_update(&self, i: &Interaction) -> Result<()> {
+        self.respond(i, InteractionResponseType::DeferredUpdateMessage, None).await
+    }
+
+    pub async fn edit_original(&self, i: &Interaction, r: Reply) -> Result<()> {
+        let client = self.interaction();
+        let mentions = r.mentions.unwrap_or_default();
+        client
+            .update_response(&i.token)
+            .content(r.content.as_deref())
+            .embeds(Some(&r.embeds))
+            .components(Some(&r.components))
+            .allowed_mentions(Some(&mentions))
+            .await?;
+        Ok(())
+    }
+
+    pub async fn followup(&self, i: &Interaction, r: Reply) -> Result<()> {
+        let client = self.interaction();
+        let mentions = r.mentions.unwrap_or_default();
+        let mut req = client
+            .create_followup(&i.token)
+            .embeds(&r.embeds)
+            .components(&r.components)
+            .allowed_mentions(Some(&mentions));
+        if let Some(c) = r.content.as_deref() {
+            req = req.content(c);
+        }
+        if r.ephemeral {
+            req = req.flags(MessageFlags::EPHEMERAL);
+        }
+        req.await?;
+        Ok(())
+    }
+
+    /// Open a modal. `fields` are `(custom_id, label, long, required, prefilled)`.
+    pub async fn modal(&self, i: &Interaction, custom_id: &str, title: &str, fields: &[(&str, &str, bool, bool, Option<&str>)]) -> Result<()> {
+        use twilight_model::channel::message::component::{Label, TextInput, TextInputStyle};
+        #[allow(deprecated)]
+        let components = fields
+            .iter()
+            .map(|(id, label, long, required, value)| {
+                Component::Label(Label {
+                    id: None,
+                    label: (*label).to_owned(),
+                    description: None,
+                    component: Box::new(Component::TextInput(TextInput {
+                        id: None,
+                        custom_id: (*id).to_owned(),
+                        label: None,
+                        max_length: Some(if *long { 2000 } else { 200 }),
+                        min_length: None,
+                        placeholder: None,
+                        required: Some(*required),
+                        style: if *long { TextInputStyle::Paragraph } else { TextInputStyle::Short },
+                        value: value.map(str::to_owned),
+                    })),
+                })
+            })
+            .collect();
+        let data = InteractionResponseData {
+            custom_id: Some(custom_id.to_owned()),
+            title: Some(title.to_owned()),
+            components: Some(components),
+            ..Default::default()
+        };
+        self.respond(i, InteractionResponseType::Modal, Some(data)).await
+    }
+
+    /// Answer an autocomplete with up to 25 `(label, value)` choices.
+    pub async fn autocomplete(&self, i: &Interaction, choices: Vec<(String, String)>) -> Result<()> {
+        let choices = choices
+            .into_iter()
+            .take(25)
+            .map(|(name, value)| CommandOptionChoice {
+                name,
+                name_localizations: None,
+                value: twilight_model::application::command::CommandOptionChoiceValue::String(value),
+            })
+            .collect();
+        let data = InteractionResponseData { choices: Some(choices), ..Default::default() };
+        self.respond(i, InteractionResponseType::ApplicationCommandAutocompleteResult, Some(data)).await
+    }
+
+    /// Send a plain message to a channel with mentions off. Returns the message id.
+    pub async fn say(&self, channel_id: u64, content: &str) -> Result<u64> {
+        let none = AllowedMentions::default();
+        let msg = self
+            .http
+            .create_message(Id::new(channel_id))
+            .content(content)
+            .allowed_mentions(Some(&none))
+            .await?
+            .model()
+            .await?;
+        Ok(msg.id.get())
+    }
+
+    /// DM a user. Returns false when their DMs are closed.
+    pub async fn dm(&self, user_id: u64, content: &str, embeds: &[Embed], components: &[Component]) -> Result<Option<(u64, u64)>> {
+        let channel = match self.http.create_private_channel(Id::new(user_id)).await {
+            Ok(r) => r.model().await?,
+            Err(_) => return Ok(None),
+        };
+        let none = AllowedMentions::default();
+        let mut req = self
+            .http
+            .create_message(channel.id)
+            .embeds(embeds)
+            .components(components)
+            .allowed_mentions(Some(&none));
+        if !content.is_empty() {
+            req = req.content(content);
+        }
+        match req.await {
+            Ok(r) => {
+                let m = r.model().await?;
+                Ok(Some((channel.id.get(), m.id.get())))
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
+    /// A member's display name from the cache, falling back to the user id.
+    pub fn display_name(&self, guild_id: u64, user_id: u64) -> String {
+        let (g, u) = (Id::<GuildMarker>::new(guild_id), Id::<UserMarker>::new(user_id));
+        if let Some(m) = self.cache.member(g, u) {
+            if let Some(nick) = m.nick() {
+                return nick.to_owned();
+            }
+        }
+        match self.cache.user(u) {
+            Some(user) => user.global_name.clone().unwrap_or_else(|| user.name.clone()),
+            None => format!("User {user_id}"),
+        }
+    }
+
+    /// Text channels of a server as `(id, name)`, in sidebar order.
+    pub fn text_channels(&self, guild_id: u64) -> Vec<(u64, String)> {
+        use twilight_model::channel::ChannelType;
+        let Some(ids) = self.cache.guild_channels(Id::new(guild_id)) else { return Vec::new() };
+        let mut out: Vec<_> = ids
+            .iter()
+            .filter_map(|id| self.cache.channel(*id))
+            .filter(|c| matches!(c.kind, ChannelType::GuildText | ChannelType::GuildAnnouncement | ChannelType::GuildForum))
+            .map(|c| (c.position.unwrap_or_default(), c.id.get(), c.name.clone().unwrap_or_default()))
+            .collect();
+        out.sort();
+        out.into_iter().map(|(_, id, name)| (id, name)).collect()
+    }
+
+    /// Categories of a server as `(id, name)`.
+    pub fn categories(&self, guild_id: u64) -> Vec<(u64, String)> {
+        use twilight_model::channel::ChannelType;
+        let Some(ids) = self.cache.guild_channels(Id::new(guild_id)) else { return Vec::new() };
+        let mut out: Vec<_> = ids
+            .iter()
+            .filter_map(|id| self.cache.channel(*id))
+            .filter(|c| c.kind == ChannelType::GuildCategory)
+            .map(|c| (c.position.unwrap_or_default(), c.id.get(), c.name.clone().unwrap_or_default()))
+            .collect();
+        out.sort();
+        out.into_iter().map(|(_, id, name)| (id, name)).collect()
+    }
+
+    /// Assignable roles of a server as `(id, name, colour)`, highest first, without @everyone
+    /// and bot-managed roles.
+    pub fn roles(&self, guild_id: u64) -> Vec<(u64, String, u32)> {
+        let Some(ids) = self.cache.guild_roles(Id::new(guild_id)) else { return Vec::new() };
+        let mut out: Vec<_> = ids
+            .iter()
+            .filter_map(|id| self.cache.role(*id))
+            .filter(|r| r.id.get() != guild_id && !r.managed)
+            .map(|r| (r.position, r.id.get(), r.name.clone(), r.colors.primary_color))
+            .collect();
+        out.sort_by(|a, b| b.0.cmp(&a.0));
+        out.into_iter().map(|(_, id, name, color)| (id, name, color)).collect()
+    }
+
+    pub fn guild_name(&self, guild_id: u64) -> String {
+        self.cache
+            .guild(Id::new(guild_id))
+            .map(|g| g.name().to_owned())
+            .unwrap_or_else(|| format!("Server {guild_id}"))
+    }
+
+    pub fn guild_icon_url(&self, guild_id: u64) -> Option<String> {
+        let g = self.cache.guild(Id::new(guild_id))?;
+        let icon = g.icon()?;
+        Some(format!("https://cdn.discordapp.com/icons/{guild_id}/{icon}.png?size=64"))
+    }
+
+    pub fn member_count(&self, guild_id: u64) -> Option<u64> {
+        self.cache.guild(Id::new(guild_id)).and_then(|g| g.member_count())
+    }
+}
+
+/// Avatar URL for a user, or Discord's default avatar.
+pub fn avatar_url(user_id: u64, avatar: Option<&str>) -> String {
+    match avatar {
+        Some(hash) => format!("https://cdn.discordapp.com/avatars/{user_id}/{hash}.png?size=128"),
+        None => format!("https://cdn.discordapp.com/embed/avatars/{}.png", (user_id >> 22) % 6),
+    }
+}

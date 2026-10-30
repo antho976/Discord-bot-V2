@@ -1,0 +1,48 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[workspace.dependencies]
+bot-core = { path = "crates/core" }
+anyhow = "1"
+async-trait = "0.1"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "form", "json", "macros"] }
+maud = { version = "0.27", features = ["axum"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal", "process"] }
+tracing = "0.1"
+twilight-gateway = { version = "0.17", default-features = false, features = ["rustls-webpki-roots"] }
+twilight-http = { version = "0.17", default-features = false, features = ["rustls-webpki-roots", "decompression"] }
+twilight-model = "0.17"
+twilight-cache-inmemory = "0.17"
+twilight-util = { version = "0.17", features = ["builder"] }
+twilight-mention = "0.17"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "form", "query"] }
+jiff = { version = "0.2", features = ["serde", "tzdb-bundle-always"] }
+rand = "0.10"
+sha2 = "0.11"
+hmac = "0.13"
+hex = "0.4"
+base64 = "0.22"
+futures-util = { version = "0.3", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 4
+strip = true
+panic = "abort"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
