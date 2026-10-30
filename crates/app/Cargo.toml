@@ -11,6 +11,16 @@ path = "src/main.rs"
 [dependencies]
 bot-core.workspace = true
 feat-levels = { path = "../feat-levels" }
+feat-alerts = { path = "../feat-alerts" }
+feat-guard = { path = "../feat-guard" }
+feat-connect = { path = "../feat-connect" }
+feat-pets = { path = "../feat-pets" }
+feat-welcome = { path = "../feat-welcome" }
+feat-audit = { path = "../feat-audit" }
+feat-community = { path = "../feat-community" }
+feat-tickets = { path = "../feat-tickets" }
+feat-utility = { path = "../feat-utility" }
+feat-embeds = { path = "../feat-embeds" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true

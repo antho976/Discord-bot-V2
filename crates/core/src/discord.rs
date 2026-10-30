@@ -64,6 +64,7 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
                         continue;
                     }
                 };
+                snapshot_before(&ctx, &event);
                 ctx.cache.update(&event);
                 match &event {
                     Event::Ready(ready) => {
@@ -89,6 +90,131 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
         }
     }
     Ok(())
+}
+
+/// A message as the cache had it just before an edit or delete event.
+#[derive(Debug, Clone)]
+pub struct MessageSnapshot {
+    pub id: u64,
+    pub channel_id: u64,
+    pub guild_id: Option<u64>,
+    pub author_id: u64,
+    pub content: String,
+    pub attachments: Vec<String>,
+}
+
+/// A member as the cache had them just before an update or their leaving.
+#[derive(Debug, Clone)]
+pub struct MemberSnapshot {
+    pub guild_id: u64,
+    pub user_id: u64,
+    pub nick: Option<String>,
+    pub roles: Vec<u64>,
+    pub joined_at_ms: Option<i64>,
+    pub timed_out_until_ms: Option<i64>,
+}
+
+#[derive(Default)]
+pub(crate) struct Snapshots {
+    messages: std::collections::HashMap<u64, (std::time::Instant, MessageSnapshot)>,
+    members: std::collections::HashMap<(u64, u64), (std::time::Instant, MemberSnapshot)>,
+    voice: std::collections::HashMap<(u64, u64), (std::time::Instant, Option<u64>)>,
+}
+
+impl Snapshots {
+    fn prune(&mut self) {
+        let keep = |t: &std::time::Instant| t.elapsed().as_secs() < 120;
+        if self.messages.len() > 500 {
+            self.messages.retain(|_, (t, _)| keep(t));
+        }
+        if self.members.len() > 500 {
+            self.members.retain(|_, (t, _)| keep(t));
+        }
+        if self.voice.len() > 500 {
+            self.voice.retain(|_, (t, _)| keep(t));
+        }
+    }
+}
+
+fn snapshot_before(ctx: &Ctx, event: &Event) {
+    use twilight_model::id::marker::MessageMarker;
+    let now = std::time::Instant::now();
+    let message = |id: Id<MessageMarker>| {
+        ctx.cache.message(id).map(|m| MessageSnapshot {
+            id: id.get(),
+            channel_id: m.channel_id().get(),
+            guild_id: m.guild_id().map(|g| g.get()),
+            author_id: m.author().get(),
+            content: m.content().to_owned(),
+            attachments: m.attachments().iter().map(|a| a.url.clone()).collect(),
+        })
+    };
+    let member = |g: Id<GuildMarker>, u: Id<UserMarker>| {
+        ctx.cache.member(g, u).map(|m| MemberSnapshot {
+            guild_id: g.get(),
+            user_id: u.get(),
+            nick: m.nick().map(str::to_owned),
+            roles: m.roles().iter().map(|r| r.get()).collect(),
+            joined_at_ms: m.joined_at().map(|t| t.as_micros() / 1000),
+            timed_out_until_ms: m.communication_disabled_until().map(|t| t.as_micros() / 1000),
+        })
+    };
+    let mut snaps = ctx.snapshots.lock().unwrap();
+    match event {
+        Event::MessageUpdate(m) => {
+            if let Some(s) = message(m.id) {
+                snaps.messages.insert(m.id.get(), (now, s));
+            }
+        }
+        Event::MessageDelete(m) => {
+            if let Some(s) = message(m.id) {
+                snaps.messages.insert(m.id.get(), (now, s));
+            }
+        }
+        Event::MessageDeleteBulk(m) => {
+            for id in &m.ids {
+                if let Some(s) = message(*id) {
+                    snaps.messages.insert(id.get(), (now, s));
+                }
+            }
+        }
+        Event::MemberUpdate(m) => {
+            if let Some(s) = member(m.guild_id, m.user.id) {
+                snaps.members.insert((m.guild_id.get(), m.user.id.get()), (now, s));
+            }
+        }
+        Event::MemberRemove(m) => {
+            if let Some(s) = member(m.guild_id, m.user.id) {
+                snaps.members.insert((m.guild_id.get(), m.user.id.get()), (now, s));
+            }
+        }
+        Event::VoiceStateUpdate(v) => {
+            if let Some(g) = v.guild_id {
+                let before = ctx.cache.voice_state(v.user_id, g).map(|s| s.channel_id().get());
+                snaps.voice.insert((g.get(), v.user_id.get()), (now, before));
+            }
+        }
+        _ => {}
+    }
+    snaps.prune();
+}
+
+impl Ctx {
+    /// The message as it was before the edit or delete event being handled. Only messages the
+    /// cache had (the last 25 per channel since the bot connected) have one.
+    pub fn before_message(&self, message_id: u64) -> Option<MessageSnapshot> {
+        self.snapshots.lock().unwrap().messages.get(&message_id).map(|(_, s)| s.clone())
+    }
+
+    /// The member as they were before the update or leave event being handled.
+    pub fn before_member(&self, guild_id: u64, user_id: u64) -> Option<MemberSnapshot> {
+        self.snapshots.lock().unwrap().members.get(&(guild_id, user_id)).map(|(_, s)| s.clone())
+    }
+
+    /// The voice channel a member was in before the voice update being handled.
+    pub fn before_voice(&self, guild_id: u64, user_id: u64) -> Option<u64> {
+        self.snapshots.lock().unwrap().voice.get(&(guild_id, user_id)).and_then(|(_, c)| *c)
+    }
 }
 
 /// Replace a server's slash commands with those of the features switched on there.

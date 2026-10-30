@@ -7,7 +7,19 @@ use anyhow::Result;
 use bot_core::{Config, Ctx, Db, Feature};
 
 fn features() -> Vec<Arc<dyn Feature>> {
-    vec![Arc::new(feat_levels::Levels::default())]
+    vec![
+        Arc::new(feat_levels::Levels::default()),
+        Arc::new(feat_alerts::Alerts::default()),
+        Arc::new(feat_guard::Guard::default()),
+        Arc::new(feat_connect::Connect::default()),
+        Arc::new(feat_pets::Pets::default()),
+        Arc::new(feat_welcome::Welcome::default()),
+        Arc::new(feat_audit::Audit::default()),
+        Arc::new(feat_community::Community::default()),
+        Arc::new(feat_tickets::Tickets::default()),
+        Arc::new(feat_utility::Utility::default()),
+        Arc::new(feat_embeds::Embeds::default()),
+    ]
 }
 
 fn main() -> Result<()> {
@@ -89,14 +101,7 @@ async fn import_xp(args: &[String]) -> Result<()> {
 }
 
 async fn preview(port: u16) -> Result<()> {
-    let cfg = Config::preview(port);
-    let db = Db::open(&cfg.database_path)?;
-    let ctx = Ctx::new(cfg, db)?;
-    ctx.install_features(features())?;
-    bot_core::preview::seed(&ctx)?;
-    println!("Preview: http://localhost:{port}/dev/login");
-    let (_stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-    bot_core::web::serve(ctx, stop_rx).await
+    bot_core::preview::run(features(), port).await
 }
 
 async fn shutdown_signal() {

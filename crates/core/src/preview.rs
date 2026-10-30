@@ -102,3 +102,25 @@ mod tests {
         r.unwrap();
     }
 }
+
+/// Serve a preview of the dashboard with only these features, on `port`. Feature crates call
+/// this from `examples/preview.rs` so each can be looked at on its own:
+/// `cargo run -p feat-x --example preview -- 3101`, then open `http://localhost:3101/dev/login`.
+pub async fn run(features: Vec<std::sync::Arc<dyn crate::Feature>>, port: u16) -> Result<()> {
+    let cfg = crate::Config::preview(port);
+    let db = crate::Db::open(&cfg.database_path)?;
+    let ctx = Ctx::new(cfg, db)?;
+    ctx.install_features(features)?;
+    seed(&ctx)?;
+    println!("Preview: http://localhost:{port}/dev/login?to=/g/{GUILD_A}");
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    crate::web::serve(ctx, rx).await
+}
+
+/// Entry point for a feature crate's `examples/preview.rs`: reads the port from the first
+/// argument (default 3100) and runs [`run`] on a small runtime.
+pub fn main(features: Vec<std::sync::Arc<dyn crate::Feature>>) -> Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let port = std::env::args().nth(1).and_then(|p| p.parse().ok()).unwrap_or(3100);
+    tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build()?.block_on(run(features, port))
+}

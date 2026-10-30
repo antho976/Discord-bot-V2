@@ -171,6 +171,7 @@ pub struct CtxInner {
     toggles: RwLock<HashMap<(u64, String), bool>>,
     settings_cache: RwLock<HashMap<(u64, String), Arc<dyn std::any::Any + Send + Sync>>>,
     counters: Mutex<HashMap<(u64, &'static str), i64>>,
+    pub(crate) snapshots: Mutex<discord::Snapshots>,
 }
 
 /// Cheap to clone; everything a handler needs.
@@ -223,6 +224,7 @@ impl Ctx {
             toggles: RwLock::new(toggles),
             settings_cache: RwLock::new(HashMap::new()),
             counters: Mutex::new(HashMap::new()),
+            snapshots: Mutex::new(discord::Snapshots::default()),
         })))
     }
 
