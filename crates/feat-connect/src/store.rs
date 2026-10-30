@@ -26,6 +26,11 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
             token_hash TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, last_seen_at INTEGER,
             revoked_at INTEGER);
     ",
+}, Migration {
+    name: "002_dm_rounds",
+    // 0: not asked yet, 1: approvers were DMed, 2: held back and rang the bell, 3: held back quietly.
+    sql: "ALTER TABLE connect_requests ADD COLUMN dm_round INTEGER NOT NULL DEFAULT 0;
+          CREATE INDEX connect_requests_ip ON connect_requests(ip, created_at);",
 }];
 
 #[derive(Debug, Clone)]
@@ -120,6 +125,15 @@ fn create_on(c: &Connection, new: &NewRequest, now: i64) -> Result<Result<Reques
         return Ok(Err(Refusal::Busy));
     }
     if let Some(ip) = new.ip {
+        // One open request per address: a loop on one machine can't keep the queue full.
+        let waiting: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM connect_requests WHERE ip = ?1 AND status = 'pending' AND expires_at > ?2)",
+            params![ip, now],
+            |r| r.get(0),
+        )?;
+        if waiting {
+            return Ok(Err(Refusal::SlowDown));
+        }
         let recent: bool = c.query_row(
             "SELECT EXISTS(SELECT 1 FROM connect_requests WHERE ip = ?1 AND created_at >= ?2)",
             params![ip, now - domain::IP_COOLDOWN_MS],
@@ -151,6 +165,34 @@ fn create_on(c: &Connection, new: &NewRequest, now: i64) -> Result<Result<Reques
         params![req.id, req.kind, req.device, req.challenge, req.code, new.ip, req.created_at, req.expires_at],
     )?;
     Ok(Ok(req))
+}
+
+/// Whether a new request may DM the approvers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Round {
+    Dm,
+    /// Over the hourly allowance. `ring`: the first one held back this hour rings the bell.
+    Quiet { ring: bool },
+}
+
+/// Count this request against the rolling hour of DM rounds and record which it got.
+pub fn take_dm_round(ctx: &Ctx, id: &str, now: i64) -> Result<Round> {
+    let conn = ctx.db.lock();
+    let since = now - 3_600_000;
+    let (rounds, rung): (i64, bool) = conn.query_row(
+        "SELECT COUNT(*) FILTER (WHERE dm_round = 1), COALESCE(MAX(dm_round = 2), 0)
+         FROM connect_requests WHERE created_at >= ?1 AND id != ?2",
+        params![since, id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let round = if rounds < domain::MAX_DM_ROUNDS_PER_HOUR { Round::Dm } else { Round::Quiet { ring: !rung } };
+    let mark = match round {
+        Round::Dm => 1,
+        Round::Quiet { ring: true } => 2,
+        Round::Quiet { ring: false } => 3,
+    };
+    conn.execute("UPDATE connect_requests SET dm_round = ?2 WHERE id = ?1", params![id, mark])?;
+    Ok(round)
 }
 
 pub fn set_notified(ctx: &Ctx, id: &str) -> Result<()> {

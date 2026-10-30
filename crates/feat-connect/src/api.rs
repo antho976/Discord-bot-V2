@@ -87,8 +87,9 @@ pub fn tally_hello_answer(ctx: &Ctx) -> Answer {
 // ---- POST /api/connect/enroll (and /api/tally/enroll) ----
 
 async fn enroll(State(ctx): State<Ctx>, headers: HeaderMap, bytes: Bytes) -> Response {
-    let h = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
-    let ip = domain::client_ip(h("x-forwarded-for"), h("x-real-ip"));
+    // Several X-Forwarded-For headers read as one list, in order.
+    let forwarded: Vec<&str> = headers.get_all("x-forwarded-for").iter().filter_map(|v| v.to_str().ok()).collect();
+    let ip = domain::client_ip((!forwarded.is_empty()).then(|| forwarded.join(",")).as_deref());
     respond(enroll_answer(&ctx, &bytes, ip.as_deref()).await)
 }
 

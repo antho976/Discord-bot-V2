@@ -3,6 +3,8 @@
 //! only its sha256 (the challenge); an approver allows the request on Discord; the device then
 //! shows the verifier to collect its pairing link. Someone who sees the request, or the DM, cannot.
 
+use std::net::{IpAddr, Ipv4Addr};
+
 use sha2::{Digest, Sha256};
 
 /// A request is good for 15 minutes.
@@ -11,6 +13,8 @@ pub const TTL_MS: i64 = 15 * 60_000;
 pub const MAX_PENDING: i64 = 3;
 /// One request per address in this window, so a loop cannot fire DMs back to back.
 pub const IP_COOLDOWN_MS: i64 = 5_000;
+/// Rounds of approval DMs in a rolling hour. Past this, requests wait on the dashboard only.
+pub const MAX_DM_ROUNDS_PER_HOUR: i64 = 6;
 /// Pairing links one allowed request may collect: a device whose first attempt failed retries.
 pub const MAX_CLAIMS: i64 = 5;
 /// Old requests are history nobody reads: keep a month.
@@ -204,11 +208,43 @@ pub fn parse_pair_link(stdout: &str) -> Option<String> {
     (link.len() > "relay://pair?".len()).then_some(link)
 }
 
-/// The client's address as the proxy forwards it: the first X-Forwarded-For entry, else
-/// X-Real-IP. None when neither says, and then no cooldown applies (as before).
-pub fn client_ip(forwarded_for: Option<&str>, real_ip: Option<&str>) -> Option<String> {
-    let first = forwarded_for.and_then(|f| f.split(',').next()).map(str::trim).filter(|s| !s.is_empty());
-    first.or_else(|| real_ip.map(str::trim).filter(|s| !s.is_empty())).map(|s| s.chars().take(64).collect())
+/// The client's address from X-Forwarded-For: the rightmost entry that isn't a private,
+/// loopback or link-local address. Entries to its left were written by the client and can say
+/// anything; entries to its right are our own proxies (Caddy trusts private ranges and appends
+/// Render's edge). With no public entry (a local setup), the rightmost entry. X-Real-IP isn't
+/// read: nothing in front of the bot sets it, so a client could.
+pub fn client_ip(forwarded_for: Option<&str>) -> Option<String> {
+    let entries: Vec<IpAddr> = forwarded_for?.split(',').filter_map(parse_ip).collect();
+    let pick = entries.iter().rev().find(|ip| is_public(ip)).or(entries.last())?;
+    Some(pick.to_string())
+}
+
+/// An address as a proxy writes it: bare, with a port, or in brackets.
+fn parse_ip(entry: &str) -> Option<IpAddr> {
+    let e = entry.trim();
+    e.parse::<IpAddr>().ok().or_else(|| e.parse::<std::net::SocketAddr>().ok().map(|s| s.ip())).or_else(|| {
+        e.strip_prefix('[').and_then(|r| r.strip_suffix(']')).and_then(|r| r.parse().ok())
+    })
+}
+
+fn is_public(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => public_v4(v4),
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => public_v4(&v4),
+            None => {
+                let first = v6.segments()[0];
+                !(v6.is_loopback() || v6.is_unspecified() || (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80)
+            }
+        },
+    }
+}
+
+fn public_v4(ip: &Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    // 100.64.0.0/10 is carrier-grade NAT space, never a client's own public address.
+    let shared = a == 100 && (64..128).contains(&b);
+    !(ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified() || ip.is_broadcast() || shared)
 }
 
 /// Length as JavaScript counts it, which is what the old bot's limits were written against.
@@ -300,10 +336,22 @@ mod tests {
     }
 
     #[test]
-    fn the_client_ip_comes_from_the_proxy() {
-        assert_eq!(client_ip(Some("203.0.113.9, 10.0.0.1"), None).as_deref(), Some("203.0.113.9"));
-        assert_eq!(client_ip(Some(" "), Some("198.51.100.4")).as_deref(), Some("198.51.100.4"));
-        assert_eq!(client_ip(None, None), None);
+    fn the_client_ip_is_the_rightmost_public_address() {
+        // What Caddy passes on: whatever the client wrote, the real client, Render's edge.
+        assert_eq!(client_ip(Some("1.1.1.1, 203.0.113.9, 10.0.0.1")).as_deref(), Some("203.0.113.9"));
+        assert_eq!(client_ip(Some("203.0.113.9, 10.20.0.5")).as_deref(), Some("203.0.113.9"));
+        // A spoofed leftmost entry is ignored, even a private one.
+        assert_eq!(client_ip(Some("10.0.0.7, 198.51.100.4, 172.16.3.1")).as_deref(), Some("198.51.100.4"));
+        // Ports, brackets, IPv6, mapped IPv4, link-local and CGNAT.
+        assert_eq!(client_ip(Some("198.51.100.4:5555, 192.168.1.1")).as_deref(), Some("198.51.100.4"));
+        assert_eq!(client_ip(Some("[2001:db8::1]:443, fd00::2")).as_deref(), Some("2001:db8::1"));
+        assert_eq!(client_ip(Some("2001:db8::7, fe80::1, ::1")).as_deref(), Some("2001:db8::7"));
+        assert_eq!(client_ip(Some("::ffff:10.0.0.1, 203.0.113.2, 100.70.0.1, 169.254.1.1")).as_deref(), Some("203.0.113.2"));
+        // Nothing public (a local setup): the rightmost entry.
+        assert_eq!(client_ip(Some("10.0.0.1, 127.0.0.1")).as_deref(), Some("127.0.0.1"));
+        assert_eq!(client_ip(Some("garbage, , ")), None);
+        assert_eq!(client_ip(Some(" ")), None);
+        assert_eq!(client_ip(None), None);
     }
 
     #[test]

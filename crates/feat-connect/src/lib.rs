@@ -64,6 +64,12 @@ impl Feature for Connect {
         store::MIGRATIONS
     }
 
+    /// App connections are shared by every server, so a per-server grant mustn't reach them:
+    /// only dashboard admins see the page, answer requests, or edit approvers and PCs.
+    fn admin_only(&self) -> bool {
+        true
+    }
+
     fn routes(&self) -> bot_core::axum::Router<Ctx> {
         api::routes().merge(web::routes())
     }
@@ -140,6 +146,27 @@ async fn settle_dms(ctx: &Ctx, id: &str, text: &str) {
 /// DM every approver the request with Allow and Deny. True when at least one DM went out; when
 /// none did, the dashboard bell says so instead.
 pub async fn ask_approvers(ctx: &Ctx, req: &store::Request) -> bool {
+    // Anyone can ask, so DMs are rationed: past the hourly allowance requests still wait on the
+    // dashboard, and the bell rings once for the lot instead of DMs for each.
+    match store::take_dm_round(ctx, &req.id, now_ms()) {
+        Ok(store::Round::Dm) => {}
+        Ok(store::Round::Quiet { ring }) => {
+            bot_core::tracing::warn!(kind = %req.kind, device = %req.device, "too many requests to connect this hour: not DMing approvers");
+            if ring {
+                ctx.notify(
+                    None,
+                    KEY,
+                    "Requests to connect are arriving faster than usual, so approvers aren't being DMed for now. Answer them here.",
+                    store::some_enabled_guild(ctx).map(|g| format!("/g/{g}/{KEY}")),
+                );
+            }
+            return false;
+        }
+        Err(e) => {
+            bot_core::tracing::warn!(error = %e, "couldn't count approval DMs");
+            return false;
+        }
+    }
     let mut sent = false;
     if !ctx.cfg.preview {
         let text = domain::ask_text(&req.kind, &req.device, &req.code);
@@ -291,6 +318,46 @@ mod tests {
         assert!(decide(&ctx, &req.id, false, 8, Via::Dashboard("Oskar".into())).await.unwrap().is_none());
         let row = store::get(&ctx, &req.id).unwrap().unwrap();
         assert_eq!((row.status.as_str(), row.decided_by, row.decided_on.as_deref()), ("allowed", Some(7), Some("discord")));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn one_open_request_per_address() {
+        let ctx = testing::ctx();
+        let now = now_ms();
+        let ask = |n: &str, ip: &str, at: i64| {
+            let challenge = domain::sha256_hex(n);
+            store::create(&ctx, &store::NewRequest { kind: "relay", device: "x", challenge: &challenge, ip: Some(ip) }, at).unwrap()
+        };
+        assert!(ask("a", "203.0.113.1", now).is_ok());
+        // Well past the 5 s cooldown, but the first is still waiting.
+        assert_eq!(ask("b", "203.0.113.1", now + 60_000).unwrap_err(), store::Refusal::SlowDown);
+        assert!(ask("c", "203.0.113.2", now + 60_000).is_ok());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn dm_rounds_are_rationed_and_the_bell_rings_once() {
+        let ctx = testing::ctx();
+        let now = now_ms();
+        let bells = || -> i64 { ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM notifications WHERE feature = 'connect'", [], |r| r.get(0))).unwrap() };
+        for i in 0..domain::MAX_DM_ROUNDS_PER_HOUR + 3 {
+            let challenge = domain::sha256_hex(&i.to_string());
+            // Answer each so the pending cap doesn't get in the way.
+            let req = store::create(&ctx, &store::NewRequest { kind: "tally", device: "x", challenge: &challenge, ip: None }, now).unwrap().unwrap();
+            let round = store::take_dm_round(&ctx, &req.id, now).unwrap();
+            let want = match i - domain::MAX_DM_ROUNDS_PER_HOUR {
+                ..0 => store::Round::Dm,
+                0 => store::Round::Quiet { ring: true },
+                _ => store::Round::Quiet { ring: false },
+            };
+            assert_eq!(round, want, "request {i}");
+            store::decide(&ctx, &req.id, false, 1, "dashboard", now).unwrap();
+        }
+        // Through ask_approvers: held back, notified false, and no second bell this hour.
+        let challenge = domain::sha256_hex("late");
+        let req = store::create(&ctx, &store::NewRequest { kind: "tally", device: "x", challenge: &challenge, ip: None }, now_ms()).unwrap().unwrap();
+        let before = bells();
+        assert!(!ask_approvers(&ctx, &req).await);
+        assert_eq!(bells(), before);
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
