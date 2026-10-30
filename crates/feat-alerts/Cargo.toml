@@ -9,3 +9,5 @@ bot-core.workspace = true
 maud.workspace = true
 serde.workspace = true
 bot-render = { path = "../render" }
+sha2.workspace = true
+hex.workspace = true
