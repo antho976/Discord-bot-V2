@@ -271,7 +271,11 @@ pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
             continue;
         }
         tracing::info!(id = %s.id, kind = %s.kind, status = %s.status, "removing a Twitch subscription");
-        let _ = request(ctx, Method::DELETE, "eventsub/subscriptions", &[("id", s.id.clone())], None).await;
+        match request(ctx, Method::DELETE, "eventsub/subscriptions", &[("id", s.id.clone())], None).await {
+            Ok(r) if r.status().is_success() || r.status() == StatusCode::NOT_FOUND => {}
+            Ok(r) => tracing::warn!(id = %s.id, status = %r.status(), "Twitch refused to remove a subscription"),
+            Err(e) => tracing::warn!(id = %s.id, error = %e, "couldn't remove a Twitch subscription"),
+        }
     }
     // What each wanted subscription ended up as, for the Twitch tab.
     let mut states: HashMap<String, HashMap<String, String>> = HashMap::new();
@@ -794,8 +798,10 @@ async fn followers(ctx: &Ctx, guilds: &[(u64, std::sync::Arc<Settings>)]) {
     }
     for (guild, s) in guilds {
         let found: Vec<i64> = s.twitch_logins.iter().filter_map(|l| totals.get(l).copied()).collect();
-        if !found.is_empty() {
-            let _ = ctx.record_stat(*guild, "followers", found.iter().sum());
+        if !found.is_empty()
+            && let Err(e) = ctx.record_stat(*guild, "followers", found.iter().sum())
+        {
+            tracing::warn!(guild, error = %e, "couldn't store the follower total");
         }
     }
 }

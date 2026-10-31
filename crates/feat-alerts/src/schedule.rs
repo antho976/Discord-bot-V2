@@ -151,19 +151,24 @@ pub async fn send_reminders(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
                 continue;
             }
             let key = format!("{}@{}", seg.id, seg.starts_at);
-            let sent: Vec<i64> = ctx
-                .db
-                .with(|c| {
-                    let mut st = c.prepare_cached("SELECT minutes FROM alerts_reminders_sent WHERE guild_id = ?1 AND segment = ?2")?;
-                    st.query_map(params![*guild as i64, key], |r| r.get(0))?.collect()
-                })
-                .unwrap_or_default();
+            // Without knowing what was sent, posting could repeat a reminder every minute.
+            let sent: Vec<i64> = match ctx.db.with(|c| {
+                let mut st = c.prepare_cached("SELECT minutes FROM alerts_reminders_sent WHERE guild_id = ?1 AND segment = ?2")?;
+                st.query_map(params![*guild as i64, key], |r| r.get(0))?.collect()
+            }) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(guild, error = %e, "couldn't read sent reminders; skipping");
+                    continue;
+                }
+            };
             let (post, mark) = due_reminder(now, seg.starts_at, &s.reminder_minutes, &sent);
             if mark.is_empty() {
                 continue;
             }
-            // Marked before posting: a failing channel shouldn't be retried every minute.
-            let _ = ctx.db.with(|c| {
+            // Marked before posting: a failing channel shouldn't be retried every minute. If the
+            // mark doesn't stick, don't post, or the same reminder would go out every minute.
+            let marked = ctx.db.with(|c| {
                 for m in &mark {
                     c.execute(
                         "INSERT OR IGNORE INTO alerts_reminders_sent (guild_id, segment, minutes, at) VALUES (?1, ?2, ?3, ?4)",
@@ -172,6 +177,10 @@ pub async fn send_reminders(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
                 }
                 Ok(())
             });
+            if let Err(e) = marked {
+                tracing::warn!(guild, error = %e, "couldn't record a stream reminder; not posting it");
+                continue;
+            }
             if post.is_none() {
                 continue;
             }
