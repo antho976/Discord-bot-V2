@@ -165,12 +165,19 @@ pub async fn connect(ctx: &Ctx, guild: u64, code: &str) -> Result<String> {
     Ok(login)
 }
 
-/// Forget the sign-in, and ask Twitch to drop the token too.
+/// Forget the sign-in, and ask Twitch to revoke it too. Twitch revokes by access token, so an
+/// expired one is refreshed first; revoking it ends the sign-in, refresh token included.
 pub async fn disconnect(ctx: &Ctx, guild: u64) -> Result<()> {
     if let (Some(c), Some((id, _))) = (conn(ctx, guild)?, app(ctx))
-        && let Some(token) = c.refresh_token.or(c.access_token)
+        && c.connected()
     {
-        let _ = ctx.web.post("https://id.twitch.tv/oauth2/revoke").form(&[("client_id", id), ("token", token.as_str())]).send().await;
+        let access = match token(ctx, guild, false).await {
+            Ok((t, _)) => Some(t),
+            Err(_) => c.access_token,
+        };
+        if let Some(t) = access {
+            let _ = ctx.web.post("https://id.twitch.tv/oauth2/revoke").form(&[("client_id", id), ("token", t.as_str())]).send().await;
+        }
     }
     ctx.db.with(|c| c.execute("DELETE FROM reviews_twitch WHERE guild_id = ?1", [guild as i64]))?;
     Ok(())

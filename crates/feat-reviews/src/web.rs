@@ -120,7 +120,7 @@ async fn queue_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
                 form.inline method="post" action=(page.path("reviews/sync")) { button.btn type="submit" { "Sync Twitch" } }
             }
             @if s.channel.is_some() {
-                form.inline method="post" action=(page.path("reviews/scan")) { button.btn.primary type="submit" { "Scan posts" } }
+                form.inline method="post" action=(page.path("reviews/scan")) { button.btn.primary type="submit" title="Adds open posts, and archived ones from the last 30 days, that aren't in the queue" { "Scan posts" } }
             }
         }
     });
@@ -189,7 +189,7 @@ fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, num
             div.rv-body {
                 div.rv-title {
                     strong { (r.name) }
-                    @if r.redeemed_at.is_some() { (ui::badge("Channel points", Tone::Accent)) }
+                    @if r.redeemed_at.is_some() { (ui::badge("Channel points", Tone::Muted)) }
                 }
                 p.muted.small {
                     @if let Some(w) = who(ctx, guild, r) { (w) " · " }
@@ -201,13 +201,6 @@ fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, num
             }
             @if page.can_edit() {
                 div.rv-acts {
-                    (ui::pop("rv-pop", "Notes", None, "small", html! {
-                        form.stack method="post" action=(page.path(&format!("{base}/notes"))) {
-                            label.small for={ "notes-" (r.id) } { "Notes for " (r.name) }
-                            textarea.input id={ "notes-" (r.id) } name="notes" rows="4" placeholder="Profile link, what to look at" { (r.notes) }
-                            div { button.btn.small.primary type="submit" { "Save notes" } }
-                        }
-                    }))
                     @if r.thread_id.is_some() {
                         (ui::action_button(&page.path(&format!("{base}/ping")), "Ping", Tone::Muted, false))
                     }
@@ -224,7 +217,14 @@ fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, num
                             div { button.btn.small.primary type="submit" { "Complete" } }
                         }
                     }))
-                    (remove_button(page, r))
+                    (ui::pop("rv-pop", "More", None, "small", html! {
+                        form.stack method="post" action=(page.path(&format!("{base}/notes"))) {
+                            label.small for={ "notes-" (r.id) } { "Notes for " (r.name) }
+                            textarea.input id={ "notes-" (r.id) } name="notes" rows="4" placeholder="Profile link, what to look at" { (r.notes) }
+                            div { button.btn.small.primary type="submit" { "Save notes" } }
+                        }
+                        div.rv-pop-foot { (remove_button(page, r)) }
+                    }))
                 }
             }
         }
@@ -464,7 +464,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         (tabs(&page, open.len(), "Settings"))
         (ui::settings_form(&page, &page.path("reviews/settings"), html! {
             (ui::section("Requests", None, ui::card(html! {
-                (ui::field_channel(&ctx, guild, "channel", "Review channel", Some("Each new post in this forum joins the queue, named after its title. A text channel works too: each new thread joins."), s.channel))
+                (ui::field_channel(&ctx, guild, "channel", "Review channel", Some("Each new post in this forum joins the queue, named after its title. A text channel works too: each new thread joins. Scan posts on the Queue tab picks up open posts and archived ones from the last 30 days."), s.channel))
             })))
             (ui::section("Messages", Some("{mention} pings the member, or names them when there's no member. {name} is the request's name."), ui::card(html! {
                 (ui::field_textarea("ping_message", "Ping", Some("Posted in their post when you press Ping."), &s.ping_message, DEFAULT_PING))
@@ -731,6 +731,7 @@ const CSS: &str = "
 .rv-notes { font-size: 12.5px; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; border-left: 2px solid var(--edge-2); padding-left: 9px; margin-top: 3px; }
 .rv-acts { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
 .rv-acts .pop-body { width: 280px; right: 0; left: auto; }
+.rv-pop-foot { border-top: 1px solid var(--edge-1); padding-top: 10px; }
 .rv-closed .rv-title strong { color: var(--ink-2); }
 .rv-twitch { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
 .rv-tw-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
@@ -742,7 +743,8 @@ const CSS: &str = "
 @media (max-width: 560px) {
   .rv-row { grid-template-columns: 36px minmax(0, 1fr); }
   .rv-place { display: none; }
-  .rv-acts { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; }
+  .rv-acts { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; position: relative; }
+  .rv-acts .pop { position: static; }
   .rv-acts .pop-body { left: 0; right: auto; }
 }
 ";

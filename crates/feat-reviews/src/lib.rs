@@ -20,6 +20,9 @@ pub const KEY: &str = "reviews";
 /// Forum tags that mean a post was dealt with; a scan skips those posts.
 const DONE_TAGS: &[&str] = &["done", "closed", "completed", "finished", "resolved"];
 pub const DEFAULT_PING: &str = "{mention}, it's your turn for an account review. Answer here when you're ready.";
+/// A scan takes archived posts created this recently. Forums archive idle posts, so older
+/// archived ones are mostly reviews that were finished without a tag.
+const SCAN_ARCHIVED_MS: i64 = 30 * 86_400_000;
 pub const DEFAULT_DONE: &str = "Your account review is done. Thanks for waiting.";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,12 +143,18 @@ fn request_from_thread(ctx: &Ctx, t: &Channel, source: &'static str) -> Option<R
     if name.is_empty() {
         return None;
     }
-    let at = t.thread_metadata.as_ref().and_then(|m| m.create_timestamp).map(|ts| ts.as_micros() / 1000).unwrap_or_else(|| bot_core::discord::snowflake_ms(t.id.get()));
+    let at = created_ms(t);
     Some(Request { name, user_id: owner, thread_id: Some(t.id.get()), requested_at: at, source, ..Request::default() })
 }
 
-/// Look through the channel's open posts and up to 50 archived ones for requests missed while
-/// the bot was away, skipping posts tagged as done. Returns (added, already here or merged).
+/// When a post was made.
+fn created_ms(t: &Channel) -> i64 {
+    t.thread_metadata.as_ref().and_then(|m| m.create_timestamp).map(|ts| ts.as_micros() / 1000).unwrap_or_else(|| bot_core::discord::snowflake_ms(t.id.get()))
+}
+
+/// Look through the channel's open posts, and up to 50 archived ones made in the last 30 days,
+/// for requests missed while the bot was away, skipping posts tagged as done. Returns (added,
+/// already here or merged).
 pub async fn scan(ctx: &Ctx, guild: u64, channel: u64) -> Result<(usize, usize)> {
     let done: Vec<Id<TagMarker>> = ctx
         .cache
@@ -167,7 +176,10 @@ pub async fn scan(ctx: &Ctx, guild: u64, channel: u64) -> Result<(usize, usize)>
         .filter(|t| t.parent_id.map(|p| p.get()) == Some(channel))
         .collect();
     match ctx.http.public_archived_threads(Id::new(channel)).limit(50).await {
-        Ok(r) => threads.extend(r.model().await?.threads),
+        Ok(r) => {
+            let since = now_ms() - SCAN_ARCHIVED_MS;
+            threads.extend(r.model().await?.threads.into_iter().filter(|t| created_ms(t) >= since));
+        }
         Err(e) => bot_core::tracing::warn!(guild, channel, error = %e, "couldn't list archived posts"),
     }
     let (mut added, mut skipped) = (0, 0);
