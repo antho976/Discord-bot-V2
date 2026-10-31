@@ -89,6 +89,12 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       The detail now drops below 600 px.
 - [x] YouTube: "Send a test post" posts the newest stored video in the chosen channel, pinging
       nobody, like the Twitch test alert.
+- [x] Embed builder: the form checks Discord's limits as you type (each part, field names and
+      values, 6,000 in total) and on send (half-filled fields), with the server's wording. It
+      offers 25 fields, Discord's limit, instead of 10. Duplicate on a template and on a sent
+      message.
+- [x] Found: a field added after removing another was sent out of order (rows were read by
+      number, not by position).
 - [ ] For core (brisk-heron): on a phone the page title wraps beside a header status pill
       ("Stream alerts" next to "Twitch not connected"). The header could drop the pill under the
       title below ~480 px.
