@@ -243,8 +243,12 @@ fn track_member_count(ctx: &Ctx, event: &Event) {
     }
 }
 
-/// Replace a server's slash commands with those of the features switched on there.
+/// Replace a server's slash commands with those of the features switched on there. One at a
+/// time, reading the switches once it's this call's turn, so two quick toggles can't finish out
+/// of order and leave the older set registered.
 pub async fn register_commands(ctx: &Ctx, guild_id: u64) -> Result<()> {
+    static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _turn = ONE_AT_A_TIME.lock().await;
     let commands: Vec<_> = ctx
         .features()
         .iter()
@@ -288,6 +292,14 @@ async fn dispatch(ctx: Ctx, event: Event) {
 async fn route_interaction(ctx: &Ctx, i: &Interaction) {
     let guild = i.guild_id.map(|g| g.get());
     let usable = |key: &str| guild.is_none_or(|g| ctx.enabled(g, key));
+    // A button or form from a feature that has since been switched off (or a command Discord
+    // hasn't dropped yet) still gets an answer, rather than Discord's "interaction failed".
+    let off = || async {
+        if i.kind != InteractionType::ApplicationCommandAutocomplete {
+            let _ = ctx.reply(i, Reply::text("That's switched off in this server.").ephemeral()).await;
+        }
+        Ok(())
+    };
     let result = match (&i.kind, &i.data) {
         (InteractionType::ApplicationCommand | InteractionType::ApplicationCommandAutocomplete, Some(InteractionData::ApplicationCommand(data))) => {
             let owner = ctx
@@ -304,7 +316,7 @@ async fn route_interaction(ctx: &Ctx, i: &Interaction) {
                     };
                     res.map_err(|e| (f.meta().key, e))
                 }
-                _ => Ok(()),
+                _ => off().await,
             }
         }
         (InteractionType::MessageComponent, Some(InteractionData::MessageComponent(data))) => {
@@ -314,7 +326,7 @@ async fn route_interaction(ctx: &Ctx, i: &Interaction) {
                     let call = ComponentCall { interaction: i.clone(), data: (**data).clone() };
                     f.on_component(ctx, &call).await.map_err(|e| (prefix, e))
                 }
-                _ => Ok(()),
+                _ => off().await,
             }
         }
         (InteractionType::ModalSubmit, Some(InteractionData::ModalSubmit(data))) => {
@@ -324,7 +336,7 @@ async fn route_interaction(ctx: &Ctx, i: &Interaction) {
                     let call = ModalCall { interaction: i.clone(), data: (**data).clone() };
                     f.on_modal(ctx, &call).await.map_err(|e| (prefix, e))
                 }
-                _ => Ok(()),
+                _ => off().await,
             }
         }
         _ => Ok(()),
