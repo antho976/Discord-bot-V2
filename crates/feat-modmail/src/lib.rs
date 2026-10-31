@@ -6,6 +6,7 @@ mod web;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use bot_core::anyhow::Result;
 use bot_core::discord::{CommandCall, ComponentCall};
@@ -17,6 +18,8 @@ use serde::{Deserialize, Serialize};
 
 pub const KEY: &str = "modmail";
 const HOUR_MS: i64 = 3_600_000;
+/// How long a member's pick of server holds for the messages after it.
+const PICK_KEPT: Duration = Duration::from_secs(600);
 
 pub const DEFAULT_GREETING: &str = "Your message reached the staff of {server}. They answer here, in this DM.";
 pub const DEFAULT_CLOSING: &str = "The staff of {server} closed this conversation. Message again any time to start a new one.";
@@ -65,6 +68,9 @@ pub struct Modmail {
     turns: Mutex<HashMap<u64, Arc<bot_core::tokio::sync::Mutex<()>>>>,
     /// Messages from members who share several servers with modmail on, held until they pick one.
     held: Mutex<HashMap<u64, mail::Held>>,
+    /// The server each member last picked, and when, so a member with conversations in several
+    /// servers isn't asked again for every burst of messages.
+    picks: Mutex<HashMap<u64, (u64, Instant)>>,
     /// Staff threads of open conversations, loaded on first use, so a message in any other
     /// channel costs no query. May hold a few closed ones; those drop out when looked up.
     threads: Mutex<Option<HashSet<u64>>>,
@@ -88,6 +94,17 @@ impl Modmail {
             *threads = Some(ctx.db.with(mail::open_threads)?);
         }
         Ok(threads.as_ref().is_some_and(|t| t.contains(&thread)))
+    }
+
+    /// The server the member picked in the last [`PICK_KEPT`], if any.
+    fn last_pick(&self, user: u64) -> Option<u64> {
+        let mut picks = self.picks.lock().unwrap();
+        picks.retain(|_, (_, at)| at.elapsed() < PICK_KEPT);
+        picks.get(&user).map(|(g, _)| *g)
+    }
+
+    fn remember_pick(&self, user: u64, guild: u64) {
+        self.picks.lock().unwrap().insert(user, (guild, Instant::now()));
     }
 
     fn add_thread(&self, thread: u64) {

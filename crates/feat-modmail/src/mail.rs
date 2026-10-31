@@ -214,15 +214,35 @@ pub fn stats(conn: &Connection, guild: u64, now: i64) -> bot_core::rusqlite::Res
 
 // ---- message text ----
 
-/// A message as it reaches the other side: its text, then its attachments as links.
+/// Discord's limit on an embed description, in characters.
+const MAX_BODY: usize = 4096;
+/// Kept free for the line saying some attachments didn't fit.
+const MORE_ROOM: usize = 48;
+
+/// A message as it reaches the other side: its text, then its attachments as links, within
+/// [`MAX_BODY`]. Links that don't fit are counted on a last line instead.
 pub fn body(content: &str, files: &[(String, String)]) -> String {
     let mut out = text::clip(content.trim(), 3500);
-    for (name, url) in files.iter().take(10) {
-        if !out.is_empty() {
+    let mut len = out.chars().count();
+    let mut shown = 0;
+    for (name, url) in files {
+        let name: String = name.chars().filter(|c| !matches!(c, '[' | ']')).collect();
+        let link = format!("[{}]({url})", text::clip(&name, 80));
+        let add = link.chars().count() + usize::from(len > 0);
+        if len + add > MAX_BODY - MORE_ROOM {
+            break;
+        }
+        if len > 0 {
             out.push('\n');
         }
-        let name: String = name.chars().filter(|c| !matches!(c, '[' | ']')).collect();
-        out.push_str(&format!("[{}]({url})", text::clip(&name, 80)));
+        out.push_str(&link);
+        len += add;
+        shown += 1;
+    }
+    match files.len() - shown {
+        0 => {}
+        1 => out.push_str("\n1 more attachment didn't fit here."),
+        n => out.push_str(&format!("\n{n} more attachments didn't fit here.")),
     }
     if out.is_empty() {
         out = "Sent something the bot can't show here, like a sticker.".into();
@@ -327,7 +347,10 @@ pub async fn on_dm(f: &Modmail, ctx: &Ctx, m: &Message) -> Result<()> {
     let shared = if open.is_empty() { shared_servers(ctx, user) } else { Vec::new() };
     match route(&open, &shared) {
         Route::To(guild) => deliver(f, ctx, guild, user, &name, &avatar, &[incoming]).await,
-        Route::Pick(guilds) => hold(f, ctx, user, name, avatar, incoming, &guilds).await,
+        Route::Pick(guilds) => match f.last_pick(user).filter(|g| guilds.contains(g)) {
+            Some(guild) => deliver(f, ctx, guild, user, &name, &avatar, &[incoming]).await,
+            None => hold(f, ctx, user, name, avatar, incoming, &guilds).await,
+        },
         // Nobody to pass it to: the bot also gets DMs that aren't meant for staff.
         Route::Nowhere => Ok(()),
     }
@@ -525,14 +548,36 @@ pub async fn on_staff_message(f: &Modmail, ctx: &Ctx, guild: u64, m: &Message) -
     let files: Vec<(String, String)> = m.attachments.iter().map(|a| (a.filename.clone(), a.url.clone())).collect();
     let avatar = ctx.member_avatar(guild, staff);
     let reply = embed(&staff_name, &avatar, &body(&m.content, &files), Some(&ctx.guild_name(guild)));
-    if ctx.dm(conv.user_id, "", &[reply], &[]).await?.is_some() {
-        let _ = ctx.http.create_reaction(m.channel_id, m.id, &RequestReactionType::Unicode { name: "✅" }).await;
-        ctx.db.with(|c| record(c, conv.id, staff, &preview(&m.content, files.len()), m.timestamp.as_micros() / 1000))?;
-    } else {
-        let text = format!("Couldn't DM {}. Their DMs are closed, or they left the server.", conv.name(ctx, guild));
-        ctx.say(m.channel_id.get(), &text).await?;
+    match dm_embed(ctx, conv.user_id, reply).await {
+        Ok(()) => {
+            let _ = ctx.http.create_reaction(m.channel_id, m.id, &RequestReactionType::Unicode { name: "✅" }).await;
+            ctx.db.with(|c| record(c, conv.id, staff, &preview(&m.content, files.len()), m.timestamp.as_micros() / 1000))?;
+        }
+        Err(why) => {
+            ctx.say(m.channel_id.get(), &format!("Couldn't DM {}. {why}", conv.name(ctx, guild))).await?;
+        }
     }
     Ok(())
+}
+
+/// DM an embed to a member. The error says why it didn't go, for staff: closed DMs and a refused
+/// message read differently. (`ctx.dm` reports both as closed DMs.)
+async fn dm_embed(ctx: &Ctx, user: u64, embed: Embed) -> std::result::Result<(), String> {
+    let channel = match ctx.http.create_private_channel(Id::new(user)).await {
+        Ok(r) => r.model().await.map_err(|_| "Discord didn't open a DM with them.".to_owned())?,
+        Err(e) => return Err(why_no_dm(&e)),
+    };
+    let none = AllowedMentions::default();
+    ctx.http.create_message(channel.id).embeds(&[embed]).allowed_mentions(Some(&none)).await.map(|_| ()).map_err(|e| why_no_dm(&e))
+}
+
+fn why_no_dm(e: &bot_core::twilight_http::Error) -> String {
+    match e.kind() {
+        bot_core::twilight_http::error::ErrorType::Response { status, .. } if status.get() == 403 => {
+            "Their DMs are closed, or they left the server.".into()
+        }
+        _ => text::clip(&format!("Discord refused the message: {e}"), 300),
+    }
 }
 
 // ---- closing ----
@@ -653,7 +698,9 @@ async fn pick(f: &Modmail, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
     let Some(held) = held else {
         return ctx.update(&call.interaction, Reply::text("That choice timed out. Send your message again.")).await;
     };
-    ctx.update(&call.interaction, Reply::text(format!("Sending to the staff of {}.", ctx.guild_name(guild)))).await?;
+    f.remember_pick(user, guild);
+    let text = format!("Sending to the staff of {}. What you send in the next 10 minutes goes there too.", ctx.guild_name(guild));
+    ctx.update(&call.interaction, Reply::text(text)).await?;
     let turn = f.turn(user);
     let _turn = turn.lock().await;
     deliver(f, ctx, guild, user, &held.name, &held.avatar, &held.messages).await
@@ -798,6 +845,12 @@ mod tests {
         assert_eq!(body("look", &files), "look\n[shot 1.png](https://cdn/x.png)");
         assert_eq!(body("", &files), "[shot 1.png](https://cdn/x.png)");
         assert!(body("  ", &[]).starts_with("Sent something"));
+        // Long text and long links stay within an embed, and say what was left out.
+        let long: Vec<(String, String)> = (0..10).map(|i| (format!("{i}.png"), format!("https://cdn/{}", "a".repeat(300)))).collect();
+        let full = body(&"x".repeat(5000), &long);
+        assert!(full.chars().count() <= MAX_BODY);
+        assert!(full.ends_with("9 more attachments didn't fit here."), "{full}");
+        assert_eq!(body("", &long[..1]).lines().count(), 1);
         assert_eq!(preview("two\nlines", 0), "two lines");
         assert_eq!(preview("", 1), "An attachment");
         assert_eq!(preview("", 3), "3 attachments");
