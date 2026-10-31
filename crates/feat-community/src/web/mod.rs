@@ -167,6 +167,10 @@ const STYLE: &str = r#"
 .cm-bar .pct { font: 12px var(--mono); color: var(--ink-2); flex: none; }
 .cm-bar.win .pct { color: var(--data); }
 .cm-bar-row .votes { font: 12px var(--mono); color: var(--ink-3); width: 76px; text-align: right; flex: none; }
+.cm-live { width: 100%; }
+.cm-live .cm-bar { flex: 1; }
+.cm-voters { width: 66px; flex: none; display: flex; }
+.cm-voters .avatar { width: 22px; height: 22px; }
 .cm-results { width: 360px; flex: none; }
 .cm-recent { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: 13px; }
 .cm-recent > strong { font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -219,6 +223,7 @@ const STYLE: &str = r#"
   .cm-results { min-width: 0; width: 100%; }
   .cm-bars { width: 100%; }
   .cm-bar-row .votes { width: 60px; }
+  .cm-voters { display: none; }
   .cm-sg { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; }
   .cm-vote { width: 44px; }
   .cm-sg-side { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; }

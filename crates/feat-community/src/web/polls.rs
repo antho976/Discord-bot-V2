@@ -57,9 +57,12 @@ fn open_view(ctx: &Ctx, page: &Page, guild: u64, open: &[Poll], edit: bool) -> M
     }
 }
 
-/// The newest open poll: who asked, the question and its answers. Live counts are not kept
-/// here, so the answers show without bars.
+/// The newest open poll: who asked, the question, and each answer with its live count and the
+/// latest voters.
 fn hero(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, edit: bool) -> Markup {
+    let live = ctx.db.with(|c| pl::live(c, p)).ok();
+    let top = live.as_ref().and_then(|l| l.answers.iter().map(|a| a.1).max()).unwrap_or(0);
+    let total: i64 = live.as_ref().map(|l| l.answers.iter().map(|a| a.1).sum()).unwrap_or(0);
     html! {
         article.cm-poll {
             div.cm-poll-head {
@@ -70,13 +73,26 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, edit: bool) -> Markup {
                 span.status { span.dot.live {} (until("Closes in", p.ends_at)) }
             }
             h2.cm-question { (p.question) }
-            div.cm-answers {
-                @for a in &p.answers { div.cm-answer { (a) } }
+            div.cm-bars.cm-live {
+                @for (answer, n, pct, voters) in live.as_ref().map(|l| l.answers.as_slice()).unwrap_or_default() {
+                    div.cm-bar-row {
+                        div.cm-bar.win[*n == top && top > 0] {
+                            i style=(format!("width:{pct}%")) {}
+                            span { (answer) }
+                            span.pct { (pct) "%" }
+                        }
+                        span.cm-voters { (ui::avatars(&voters.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), 3)) }
+                        span.votes { (text::num(*n)) " " (if *n == 1 { "vote" } else { "votes" }) }
+                    }
+                }
             }
             div.cm-poll-foot {
                 p.muted.small {
-                    @if p.multi { "Members can pick more than one answer. " }
-                    "This page doesn't keep live vote counts. Discord shows them on the poll, and the final results appear here once it closes."
+                    @let voters = live.as_ref().map(|l| l.voters).unwrap_or(0);
+                    @if total == 0 { "No votes yet" } @else {
+                        (text::num(total)) " " (if total == 1 { "vote" } else { "votes" }) " from " (text::num(voters)) " " (if voters == 1 { "member" } else { "members" })
+                    }
+                    " · " (if p.multi { "several answers allowed" } else { "one answer each" })
                 }
                 div.cm-actions {
                     (open_link(page, p.channel_id, Some(p.message_id), "Open in Discord"))
@@ -88,16 +104,25 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, edit: bool) -> Markup {
 }
 
 fn row_open(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, edit: bool) -> Markup {
+    let live = ctx.db.with(|c| pl::live(c, p)).ok();
+    let total: i64 = live.as_ref().map(|l| l.answers.iter().map(|a| a.1).sum()).unwrap_or(0);
+    let lead = live.as_ref().and_then(|l| {
+        let top = l.answers.iter().map(|a| a.1).max()?;
+        let leaders: Vec<_> = l.answers.iter().filter(|a| a.1 == top && top > 0).collect();
+        (leaders.len() == 1).then(|| format!("{} leads with {}%", leaders[0].0, leaders[0].2))
+    });
     html! {
         div.cm-row {
             div.cm-tile { (ui::icon(Icon::Poll)) }
             div.cm-row-main {
                 strong.clip { (p.question) }
                 span.muted.small {
-                    (p.answers.len()) " answers · " (channel_name(ctx, guild, p.channel_id)) " · " (until("Closes in", p.ends_at))
+                    @match &lead { Some(l) => { (l) }, None => { (p.answers.len()) " answers" } }
+                    " · " (channel_name(ctx, guild, p.channel_id)) " · " (until("Closes in", p.ends_at))
                     @if p.multi { " · pick several" }
                 }
             }
+            span.cm-entries { (text::num(total)) " " (if total == 1 { "vote" } else { "votes" }) }
             div.cm-row-actions {
                 (open_link(page, p.channel_id, Some(p.message_id), "Open in Discord"))
                 @if edit { (ui::action_button(&page.path(&format!("community/polls/{}/end", p.id)), "End now", Tone::Muted, true)) }

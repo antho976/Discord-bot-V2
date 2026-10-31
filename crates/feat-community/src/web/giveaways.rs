@@ -96,7 +96,13 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64]
                 p.muted { (winners_text(g)) " · in " (channel_name(ctx, guild, g.channel_id)) " · started by " (ctx.display_name(guild, g.created_by)) ", " (text::ago(g.created_at)) }
                 div.cm-faces {
                     (face_row(ctx, guild, people, 5))
-                    @if n == 0 { span { "No entries yet" } } @else { span { strong.mono { (text::num(n)) } " " (plural(n, "entry", "entries")) } }
+                    @let recent = ctx.db.with(|c| gw::entered_since(c, g.id, bot_core::now_ms() - 3_600_000)).unwrap_or(0);
+                    @if n == 0 { span { "No entries yet" } } @else {
+                        span {
+                            strong.mono { (text::num(n)) } " " (plural(n, "entry", "entries"))
+                            @if recent > 0 { ", " (text::num(recent)) " in the last hour" }
+                        }
+                    }
                 }
                 span.meter { span style=(format!("width:{}%", elapsed(g))) {} }
                 div.cm-actions {

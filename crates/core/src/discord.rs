@@ -32,6 +32,7 @@ pub fn intents() -> Intents {
         | Intents::GUILD_MESSAGE_REACTIONS
         | Intents::MESSAGE_CONTENT
         | Intents::DIRECT_MESSAGES
+        | Intents::GUILD_MESSAGE_POLLS
 }
 
 /// Connect and run until `shutdown` fires. Reconnects are handled inside twilight.

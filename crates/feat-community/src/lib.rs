@@ -11,6 +11,7 @@ use bot_core::discord::{CommandCall, ComponentCall, ModalCall};
 use bot_core::twilight_model::application::command::Command;
 use bot_core::twilight_model::application::interaction::Interaction;
 use bot_core::twilight_model::channel::message::component::{ActionRow, Button, ButtonStyle, Component};
+use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::guild::Permissions;
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async};
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,14 @@ const MIGRATIONS: &[Migration] = &[Migration {
         ALTER TABLE giveaways ADD COLUMN ended_at INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE suggestions ADD COLUMN status_at INTEGER NOT NULL DEFAULT 0;
     ",
+}, Migration {
+    name: "003_community_live",
+    sql: "
+        ALTER TABLE giveaway_entries ADD COLUMN entered_at INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE poll_votes (
+            poll_id INTEGER NOT NULL, user_id INTEGER NOT NULL, answer INTEGER NOT NULL, at INTEGER NOT NULL,
+            PRIMARY KEY (poll_id, user_id, answer));
+    ",
 }];
 
 #[feature_async]
@@ -92,6 +101,21 @@ impl Feature for Community {
 
     fn migrations(&self) -> &'static [Migration] {
         MIGRATIONS
+    }
+
+    /// Votes on the polls posted from here, as members cast and take them back, so the
+    /// dashboard can show live counts.
+    async fn on_event(&self, ctx: &Ctx, event: &Event) -> Result<()> {
+        match event {
+            Event::MessagePollVoteAdd(v) => {
+                ctx.db.with(|c| polls::vote(c, v.message_id.get(), v.user_id.get(), v.answer_id, true))?;
+            }
+            Event::MessagePollVoteRemove(v) => {
+                ctx.db.with(|c| polls::vote(c, v.message_id.get(), v.user_id.get(), v.answer_id, false))?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn commands(&self) -> Vec<Command> {

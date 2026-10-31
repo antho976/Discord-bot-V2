@@ -123,8 +123,13 @@ pub fn toggle_entry(c: &Connection, id: i64, user: u64) -> bot_core::rusqlite::R
     if removed > 0 {
         return Ok(false);
     }
-    c.execute("INSERT INTO giveaway_entries (giveaway_id, user_id) VALUES (?1, ?2)", params![id, id_i64(user)])?;
+    c.execute("INSERT INTO giveaway_entries (giveaway_id, user_id, entered_at) VALUES (?1, ?2, ?3)", params![id, id_i64(user), now_ms()])?;
     Ok(true)
+}
+
+/// Entries made since `since`.
+pub fn entered_since(c: &Connection, id: i64, since: i64) -> bot_core::rusqlite::Result<i64> {
+    c.query_row("SELECT COUNT(*) FROM giveaway_entries WHERE giveaway_id = ?1 AND entered_at >= ?2", params![id, since], |r| r.get(0))
 }
 
 /// Pick up to `count` different winners from the entries, skipping anyone in `exclude`.
@@ -488,7 +493,10 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
             )?;
             let id = c.last_insert_rowid();
             for n in 0..entrants {
-                c.execute("INSERT INTO giveaway_entries (giveaway_id, user_id) VALUES (?1, ?2)", params![id, id_i64(who(n))])?;
+                c.execute(
+                    "INSERT INTO giveaway_entries (giveaway_id, user_id, entered_at) VALUES (?1, ?2, ?3)",
+                    params![id, id_i64(who(n)), now - (n as i64 * 23 % 180) * 60_000],
+                )?;
             }
             Ok(())
         })?;
