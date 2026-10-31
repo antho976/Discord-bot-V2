@@ -119,7 +119,7 @@ when `TWITCH_EVENTSUB_SECRET` is set.
 
 ## Not tested against the real services yet
 
-Everything builds, 146 tests pass, and every dashboard page was checked in the preview. The parts
+Everything builds, 152 tests pass, and every dashboard page was checked in the preview against the agreed designs. The parts
 that talk to Discord, Twitch or YouTube have only run against sample data, so check them first
 after deploying:
 - Slash commands, buttons and DMs.
