@@ -425,6 +425,10 @@ body.public { background: var(--page); }
   .row-control:has(> .switch) { justify-content: flex-start; }
   .row:has(> .row-control > .seg) { grid-template-columns: minmax(0, 1fr) auto; }
   .wide-only { display: none; }
+  /* A header popover hangs from the whole header, not its button, so it stays on screen. */
+  .page-head { position: relative; }
+  .page-head .head-actions .pop { position: static; }
+  .page-head .head-actions .pop-body { left: 16px; right: 16px; top: calc(100% + 6px); width: auto; max-width: none; }
   .pop > summary:has(.icon) .pop-label { display: none; }
   .pop > summary:has(.icon) { padding: 0 10px; }
   .split { grid-template-columns: 1fr; }
