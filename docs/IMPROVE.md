@@ -83,7 +83,7 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       (cached briefly) rather than storing it.
 - [x] Levels: search finds only cached members. Check large servers and the podium with fewer
       than 3 members.
-- [ ] Welcome: let invites have a friendly name ("Twitch link") set on the Invites tab, and show
+- [x] Welcome: let invites have a friendly name ("Twitch link") set on the Invites tab, and show
       it on "Joined today".
 
 ### D: keen-tapir

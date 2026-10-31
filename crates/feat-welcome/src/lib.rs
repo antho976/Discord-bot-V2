@@ -101,6 +101,14 @@ const MIGRATIONS: &[Migration] = &[Migration {
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, roles TEXT NOT NULL, left_at INTEGER NOT NULL,
             restored_at INTEGER, restored_roles TEXT, PRIMARY KEY (guild_id, user_id));
     ",
+}, Migration {
+    // A name for an invite, like "Twitch link". Kept apart from welcome_invites, which is
+    // rewritten on every reading, and kept after the invite is gone so old joins still read well.
+    name: "002_invite_names",
+    sql: "
+        CREATE TABLE welcome_invite_names (
+            guild_id INTEGER NOT NULL, code TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (guild_id, code));
+    ",
 }];
 
 #[derive(Default)]
@@ -166,6 +174,7 @@ impl Feature for Welcome {
     fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> bot_core::Overview {
         let guild = page.guild_id;
         let since = bot_core::now_ms() - 2 * 86_400_000;
+        let names = invites::names(ctx, guild).unwrap_or_default();
         let feed = invites::recent_joins(ctx, guild, 5)
             .unwrap_or_default()
             .into_iter()
@@ -174,9 +183,10 @@ impl Feature for Welcome {
                 at: j.at,
                 avatar: ctx.member_avatar(guild, j.user),
                 who: ctx.display_name(guild, j.user),
-                text: match j.inviter {
-                    Some(inviter) => format!("joined, invited by {}", ctx.display_name(guild, inviter)),
-                    None => "joined".into(),
+                text: match (j.code.as_ref().and_then(|c| names.get(c)), j.inviter) {
+                    (Some(name), _) => format!("joined through {name}"),
+                    (None, Some(inviter)) => format!("joined, invited by {}", ctx.display_name(guild, inviter)),
+                    (None, None) => "joined".into(),
                 },
             })
             .collect();
@@ -381,6 +391,7 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
             "INSERT INTO welcome_invite_state (guild_id, checked_at, ok, error) VALUES (?1, ?2, 1, NULL)",
             params![guild as i64, now - 12 * 60_000],
         )?;
+        c.execute("INSERT INTO welcome_invite_names (guild_id, code, name) VALUES (?1, 'hX9d2Q', 'Twitch link')", [guild as i64])?;
         for (user, saved, restored_ago) in [(7usize, vec![role(3), role(4)], Some(3 * 3_600_000)), (8, vec![role(3), role(5), role(4)], Some(2 * day)), (9, vec![role(3)], None)] {
             let list = saved.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
             c.execute(

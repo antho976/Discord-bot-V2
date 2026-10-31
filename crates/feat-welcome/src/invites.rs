@@ -1,5 +1,7 @@
 //! Invite tracking: remember each invite's use count, and on a join find the one that went up.
 
+use std::collections::HashMap;
+
 use bot_core::Ctx;
 use bot_core::anyhow::Result;
 use bot_core::rusqlite::{OptionalExtension, params};
@@ -57,9 +59,10 @@ pub fn state(ctx: &Ctx, guild: u64) -> Result<Option<State>> {
     })
 }
 
-fn load(ctx: &Ctx, guild: u64) -> Result<Vec<Inv>> {
+/// The server's invites as last read, most used first.
+pub fn load(ctx: &Ctx, guild: u64) -> Result<Vec<Inv>> {
     ctx.db.with(|c| {
-        let mut s = c.prepare_cached("SELECT code, uses, max_uses, inviter_id FROM welcome_invites WHERE guild_id = ?1")?;
+        let mut s = c.prepare_cached("SELECT code, uses, max_uses, inviter_id FROM welcome_invites WHERE guild_id = ?1 ORDER BY uses DESC, code")?;
         s
             .query_map([guild as i64], |r| {
                 Ok(Inv { code: r.get(0)?, uses: r.get(1)?, max_uses: r.get(2)?, inviter: r.get::<_, Option<i64>>(3)?.map(|i| i as u64) })
@@ -206,6 +209,33 @@ pub async fn record_join(ctx: &Ctx, lock: &bot_core::tokio::sync::Mutex<()>, gui
     if let Err(e) = res {
         bot_core::tracing::warn!(guild, error = %e, "couldn't record a join");
     }
+}
+
+/// Invite names by code.
+pub fn names(ctx: &Ctx, guild: u64) -> Result<HashMap<String, String>> {
+    ctx.db.with(|c| {
+        let mut s = c.prepare_cached("SELECT code, name FROM welcome_invite_names WHERE guild_id = ?1")?;
+        s.query_map([guild as i64], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+    })
+}
+
+/// Name invites, or clear a name with an empty one.
+pub fn set_names(ctx: &Ctx, guild: u64, names: &[(String, String)]) -> Result<()> {
+    let mut conn = ctx.db.lock();
+    let tx = conn.transaction()?;
+    for (code, name) in names {
+        if name.is_empty() {
+            tx.execute("DELETE FROM welcome_invite_names WHERE guild_id = ?1 AND code = ?2", params![guild as i64, code])?;
+        } else {
+            tx.execute(
+                "INSERT INTO welcome_invite_names (guild_id, code, name) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (guild_id, code) DO UPDATE SET name = excluded.name",
+                params![guild as i64, code, name],
+            )?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 #[derive(Debug, Clone)]

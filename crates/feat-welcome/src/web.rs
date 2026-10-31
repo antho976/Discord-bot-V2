@@ -20,6 +20,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/welcome/test", post(send_test))
         .route("/g/{guild}/welcome/roles", get(roles_page).post(save_roles))
         .route("/g/{guild}/welcome/invites", get(invites_page).post(save_invites))
+        .route("/g/{guild}/welcome/invites/names", post(save_invite_names))
 }
 
 fn tabs(page: &Page, active: &str) -> Markup {
@@ -131,6 +132,8 @@ const CSS: &str = "
 .wl-settings .settings { gap: 22px; }
 .wl-big { display: flex; flex-direction: column; gap: 2px; }
 .wl-big .big-num { font-size: 26px; }
+.wl-invite .input { width: 200px; flex: none; }
+@media (max-width: 560px) { .wl-invite { flex-wrap: wrap; } .wl-invite .input { width: 100%; } }
 ";
 
 const SCRIPT: &str = r#"
@@ -190,12 +193,15 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let (bot_name, bot_avatar) = bot_identity(&ctx);
     let max_recent = top.iter().map(|t| t.1).max().unwrap_or(1).max(1);
     let more = joins - shown.len() as i64;
+    let names = invites::names(&ctx, guild)?;
     let faces: Vec<(u64, String, String)> = shown
         .iter()
         .map(|(j, came_back)| {
             let mut parts = vec![short_ago(j.at)];
             if *came_back {
                 parts.push("came back".to_owned());
+            } else if let Some(name) = j.code.as_ref().and_then(|c| names.get(c)) {
+                parts.push(format!("via {name}"));
             } else if let Some(i) = j.inviter {
                 parts.push(format!("via {}", ctx.display_name(guild, i)));
             }
@@ -476,6 +482,8 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let top = invites::top_inviters(&ctx, guild, month, 15)?;
     let recent = invites::recent_joins(&ctx, guild, 25)?;
     let state = invites::state(&ctx, guild)?;
+    let live = invites::load(&ctx, guild)?;
+    let names = invites::names(&ctx, guild)?;
 
     let status = if !s.track_invites {
         html! { (ui::badge("Off", Tone::Muted)) " " span.muted.small { "Invites aren't being read. Joins are still listed, without who invited them." } }
@@ -500,6 +508,38 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 (ui::settings_form(&page, &page.path("welcome/invites"), ui::card(html! {
                     (ui::field_toggle("track_invites", "Track invites", Some("Works out which invite each new member used. The bot needs the Manage Server permission to read invites."), s.track_invites))
                 })))
+                (ui::section("Invites", Some("Name a link to see where members come from, like \"Twitch link\". The name shows on Joined today and in recent joins."), html! {
+                    @if live.is_empty() {
+                        (ui::empty(Icon::Door, "No invites read yet", "The server's invites show up here once the bot has read them."))
+                    } @else {
+                        form method="post" action=(page.path("welcome/invites/names")) {
+                            div.list {
+                                @for inv in &live {
+                                    div.list-item.wl-invite {
+                                        div.grow {
+                                            strong { code { (inv.code) } }
+                                            div.muted.small.clip {
+                                                @match inv.inviter { Some(u) => { "by " (ctx.display_name(guild, u)) " · " }, None => {} }
+                                                (counted(inv.uses, "use", "uses"))
+                                                @if inv.max_uses > 0 { " of " (inv.max_uses) }
+                                            }
+                                        }
+                                        @let name = names.get(&inv.code).map(String::as_str).unwrap_or_default();
+                                        @if page.can_edit() {
+                                            input type="hidden" name="code" value=(inv.code);
+                                            input.input type="text" name={ "name-" (inv.code) } value=(name) maxlength="40" placeholder="Name this link" aria-label={ "Name for invite " (inv.code) };
+                                        } @else if !name.is_empty() {
+                                            span.meta { (name) }
+                                        }
+                                    }
+                                }
+                            }
+                            @if page.can_edit() {
+                                div.wl-send { button.btn.small type="submit" { "Save names" } }
+                            }
+                        }
+                    }
+                }))
                 (ui::section("Top inviters", Some("Members whose invites brought people in."), html! {
                     @if top.is_empty() {
                         (ui::empty(Icon::Users, "No invited joins yet", "Joins through a member's invite are counted here once tracking has taken its first reading."))
@@ -530,7 +570,10 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                                 Some(i) => { "invited by " (ctx.display_name(guild, i)) },
                                                 None => { "invite unknown" },
                                             }
-                                            @if let Some(c) = &j.code { " · " code { (c) } }
+                                            @if let Some(c) = &j.code {
+                                                " · "
+                                                @match names.get(c) { Some(n) => { (n) }, None => { code { (c) } } }
+                                            }
                                         }
                                     }
                                     span.meta { (text::ago(j.at)) }
@@ -550,9 +593,13 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 }
                 div.rail-block {
                     h2 { "With a known inviter" }
-                    div.wl-big {
-                        span.big-num { @if joins > 0 { (known * 100 / joins) "%" } @else { "-" } }
-                        span.muted.small { "of joins matched to an invite" }
+                    @if joins > 0 {
+                        div.wl-big {
+                            span.big-num { (known * 100 / joins) "%" }
+                            span.muted.small { "of joins matched to an invite" }
+                        }
+                    } @else {
+                        p.muted.small { "Nobody has joined in the last 30 days." }
                     }
                 }
                 div.rail-block {
@@ -566,6 +613,22 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         }
     };
     Ok(ui::layout(&ctx, &page, "Welcome", None, body).into_response())
+}
+
+async fn save_invite_names(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    // Only invites the bot knows of, live or already named, can be named.
+    let known: Vec<String> = invites::load(&ctx, guild)?.into_iter().map(|i| i.code).chain(invites::names(&ctx, guild)?.into_keys()).collect();
+    // Each name has its own field, since an emptied one (clearing the name) isn't sent as a value.
+    let pairs: Vec<(String, String)> = form
+        .all("code")
+        .into_iter()
+        .filter(|code| known.iter().any(|k| k == code))
+        .map(|code| (code.to_owned(), text::clip(&form.string(&format!("name-{code}")).split_whitespace().collect::<Vec<_>>().join(" "), 40)))
+        .collect();
+    invites::set_names(&ctx, guild, &pairs)?;
+    ctx.audit(&page.user, Some(guild), KEY, "Named invite links");
+    Ok(saved(&page.path("welcome/invites")))
 }
 
 async fn save_invites(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
