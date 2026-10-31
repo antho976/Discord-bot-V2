@@ -44,18 +44,22 @@
     best.closest(".nav-fold")?.setAttribute("open", "");
   }
 
-  // Sidebar groups remember being opened or folded, per browser. The current page's group
-  // always starts open.
+  // Sidebar groups remember being opened or folded by the person, per browser. Only their own
+  // clicks are stored; the current page's group and groups opened here aren't.
   const folds = [...document.querySelectorAll(".nav-fold")];
   const FOLDS = "nav-open";
   let opened = [];
   try { opened = JSON.parse(localStorage.getItem(FOLDS) || "[]"); } catch (_) {}
-  folds.forEach((d) => { if (opened.includes(d.dataset.group)) d.setAttribute("open", ""); });
-  let searching = false;
-  folds.forEach((d) => d.addEventListener("toggle", () => {
-    if (searching) return;
-    try { localStorage.setItem(FOLDS, JSON.stringify(folds.filter((f) => f.open).map((f) => f.dataset.group))); } catch (_) {}
-  }));
+  folds.forEach((d) => {
+    if (opened.includes(d.dataset.group)) d.setAttribute("open", "");
+    d.querySelector("summary").addEventListener("click", () => {
+      const g = d.dataset.group;
+      // The click runs before the details toggles, so it is about to become !open.
+      opened = opened.filter((x) => x !== g);
+      if (!d.open) opened.push(g);
+      try { localStorage.setItem(FOLDS, JSON.stringify(opened)); } catch (_) {}
+    });
+  });
 
   // Page search: matches names and what each page does, opens groups that hold a match, and
   // Enter goes to the first one.
@@ -64,7 +68,9 @@
     const side = q.closest(".side");
     const links = [...side.querySelectorAll(".side-links .nav")];
     const none = side.querySelector(".nav-none");
+    const found = side.querySelector("#nav-found");
     let before = null;
+    let searching = false;
     const visible = () => links.filter((a) => !a.hidden);
     q.addEventListener("input", () => {
       const words = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -80,6 +86,8 @@
       });
       side.classList.toggle("searching", words.length > 0);
       none.hidden = !words.length || visible().length > 0;
+      const n = visible().length;
+      found.textContent = words.length ? (n ? `${n} ${n === 1 ? "page" : "pages"}` : "No page matches.") : "";
       if (!words.length && searching) {
         folds.forEach((d, i) => { d.open = before[i]; });
         searching = false;
@@ -96,6 +104,7 @@
       if (t.closest("input, textarea, select, [contenteditable]")) return;
       e.preventDefault();
       side.classList.add("open");
+      side.querySelector(".menu-btn")?.setAttribute("aria-expanded", "true");
       q.focus();
     });
   }

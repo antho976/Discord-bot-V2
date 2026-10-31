@@ -1,6 +1,8 @@
 //! The dashboard's building blocks. Features compose their pages from these so every page has
 //! the same shell, spacing and controls. Classes are defined in `assets/app.css`.
 
+use std::collections::HashMap;
+
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 
 use super::auth::{Level, Page};
@@ -123,6 +125,7 @@ pub fn head(title: &str) -> Markup {
 /// `actions` sits at the right of the title.
 pub fn layout(ctx: &Ctx, page: &Page, title: &str, actions: Option<Markup>, body: Markup) -> Markup {
     let (ic, line) = identity(ctx, page, title);
+    let unread = unread_by_feature(ctx, page);
     let head = html! {
         header.page-head {
             span.head-icon { (icon(ic)) }
@@ -132,21 +135,24 @@ pub fn layout(ctx: &Ctx, page: &Page, title: &str, actions: Option<Markup>, body
             }
             div.head-actions {
                 @if let Some(a) = actions { (a) }
-                (bell(ctx, page))
+                (bell_count(page, unread.values().sum()))
             }
         }
     };
-    shell(ctx, page, title, head, html! { div.page-body { (body) } })
+    shell(ctx, page, title, &unread, head, html! { div.page-body { (body) } })
 }
 
 /// The shell with a page that draws its own header (the overview's banner). Put [`bell`] in it.
 pub fn layout_custom(ctx: &Ctx, page: &Page, title: &str, body: Markup) -> Markup {
-    shell(ctx, page, title, html! {}, body)
+    shell(ctx, page, title, &unread_by_feature(ctx, page), html! {}, body)
 }
 
 /// The notification bell with its unread count.
 pub fn bell(ctx: &Ctx, page: &Page) -> Markup {
-    let unread = unread_count(ctx, page);
+    bell_count(page, unread_by_feature(ctx, page).values().sum())
+}
+
+fn bell_count(page: &Page, unread: i64) -> Markup {
     html! {
         a.icon-btn.bell href={ "/g/" (page.guild_id) "/notifications" } title="Notifications" aria-label={ "Notifications, " (unread) " new" } {
             (icon(Icon::Bell))
@@ -175,31 +181,36 @@ fn identity(ctx: &Ctx, page: &Page, title: &str) -> (Icon, Option<&'static str>)
     }
 }
 
-fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Markup {
+fn shell(ctx: &Ctx, page: &Page, title: &str, unread: &HashMap<String, i64>, top: Markup, body: Markup) -> Markup {
     let guild = page.guild_id;
     let guilds = ctx.guilds_for(&page.user);
     let levels = ctx.levels(&page.user, guild);
-    type Link = (&'static str, &'static str, Icon, &'static str, &'static str);
-    let mut groups: Vec<(Group, Vec<Link>)> = Vec::new();
+    // label, path, icon, about, unread count (on a feature's first page only, so a feature with
+    // several pages counts once)
+    type Link = (&'static str, &'static str, Icon, &'static str, i64);
+    // A folded group shows the unread notices inside it, so nothing waiting hides.
+    let mut groups: Vec<(Group, Vec<Link>, bool)> = Vec::new();
     for f in ctx.features() {
         let meta = f.meta();
         if !ctx.enabled(guild, meta.key) || levels.get(meta.key) == Level::None {
             continue;
         }
-        let items: Vec<_> = meta.nav.iter().map(|n| (n.label, n.path, n.icon, meta.key, n.about)).collect();
+        let waiting = unread.get(meta.key).copied().unwrap_or(0);
+        let items: Vec<Link> = meta.nav.iter().enumerate().map(|(i, n)| (n.label, n.path, n.icon, n.about, if i == 0 { waiting } else { 0 })).collect();
+        let here = meta.key == page.key;
         if items.is_empty() {
             continue;
         }
-        match groups.iter_mut().find(|(g, _)| *g == meta.group) {
-            Some((_, list)) => list.extend(items),
-            None => groups.push((meta.group, items)),
+        match groups.iter_mut().find(|(g, ..)| *g == meta.group) {
+            Some((_, list, open)) => {
+                list.extend(items);
+                *open |= here;
+            }
+            None => groups.push((meta.group, items, here)),
         }
     }
-    groups.sort_by_key(|(g, _)| *g);
+    groups.sort_by_key(|(g, ..)| *g);
     let current = page.key;
-    // Unread notices per feature: a folded group shows their total, so nothing waiting hides.
-    let unread = unread_by_feature(ctx, page);
-    let waiting = |key: &str| unread.get(key).copied().unwrap_or(0);
 
     html! {
         (DOCTYPE)
@@ -235,37 +246,37 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
                         }
                         div.side-links {
                             a.nav.on[current == "overview"] aria-current=[(current == "overview").then_some("page")] href={ "/g/" (guild) } data-about="home summary" { (icon(Icon::Home)) span { "Overview" } }
-                            @for (group, items) in &groups {
-                                @let here = items.iter().any(|l| l.3 == current);
-                                @let count: i64 = items.iter().map(|l| waiting(l.3)).sum();
-                                details.nav-fold open[here] data-group=(group.label()) {
+                            @for (group, items, here) in &groups {
+                                @let count: i64 = items.iter().map(|l| l.4).sum();
+                                details.nav-fold open[*here] data-group=(group.label()) {
                                     summary.nav-group {
                                         span.grow { (group.label()) }
-                                        @if count > 0 { span.nav-count.folded { (count) } }
+                                        @if count > 0 { span.nav-count.folded { (count) span.sr { " unread" } } }
                                         (icon(Icon::Chevron))
                                     }
-                                    @for (label, path, ic, key, about) in items {
+                                    @for (label, path, ic, about, waiting) in items {
                                         a.nav href={ "/g/" (guild) "/" (path) } data-path={ "/g/" (guild) "/" (path) } data-about=(about) {
                                             (icon(*ic)) span.grow { (label) }
-                                            @if waiting(key) > 0 { span.nav-count { (waiting(key)) } }
+                                            @if *waiting > 0 { span.nav-count { (waiting) span.sr { " unread" } } }
                                         }
                                     }
                                 }
                             }
                             p.nav-none hidden { "No page matches." }
+                            p.sr #nav-found role="status" {}
                         }
                         div.side-foot {
                             details.pop.account {
-                                summary.account-btn aria-label="Account and admin" {
+                                summary.account-btn {
                                     img.avatar src=(page.user.avatar_url()) alt="" width="24" height="24" loading="lazy";
                                     span.grow.clip { (page.user.name) }
                                     (icon(Icon::Chevron))
                                 }
                                 div.pop-body.account-menu {
                                     @if page.user.admin {
-                                        a.menu-item.on[current == "features"] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
-                                        a.menu-item.on[current == "users"] href="/users" { (icon(Icon::Users)) span { "People" } }
-                                        a.menu-item.on[current == "activity"] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
+                                        a.menu-item.on[current == "features"] aria-current=[(current == "features").then_some("page")] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
+                                        a.menu-item.on[current == "users"] aria-current=[(current == "users").then_some("page")] href="/users" { (icon(Icon::Users)) span { "People" } }
+                                        a.menu-item.on[current == "activity"] aria-current=[(current == "activity").then_some("page")] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
                                     }
                                     form method="post" action="/logout" {
                                         button.menu-item type="submit" { (icon(Icon::Logout)) span { "Sign out" } }
@@ -303,12 +314,8 @@ pub fn public_layout(title: &str, subtitle: Option<&str>, body: Markup) -> Marku
     }
 }
 
-fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
-    unread_by_feature(ctx, page).values().sum()
-}
-
 /// Unread notices this person may see, by feature key ("" for notices about no server).
-fn unread_by_feature(ctx: &Ctx, page: &Page) -> std::collections::HashMap<String, i64> {
+fn unread_by_feature(ctx: &Ctx, page: &Page) -> HashMap<String, i64> {
     let seen = notifications_seen(ctx, page.user.id, page.guild_id);
     let global_seen = notifications_seen_anywhere(ctx, page.user.id);
     let rows: Vec<(String, bool)> = ctx
@@ -325,7 +332,7 @@ fn unread_by_feature(ctx: &Ctx, page: &Page) -> std::collections::HashMap<String
         })
         .unwrap_or_default();
     let levels = ctx.levels(&page.user, page.guild_id);
-    let mut out = std::collections::HashMap::new();
+    let mut out = HashMap::new();
     for (feature, global) in rows {
         if if global { page.user.admin } else { levels.get(&feature) >= Level::View } {
             *out.entry(if global { String::new() } else { feature }).or_insert(0) += 1;

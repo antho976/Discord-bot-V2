@@ -30,13 +30,13 @@ Never a raw grey in feature CSS: use the tokens.
 
 ## Shell
 
-- **Sidebar:** the server switcher, a page search (`/` jumps to it; it matches names and each
-  page's `about`, Enter opens the first match), Overview, then the pages in folding groups
-  (Streams, Community, Members, Safety, Idleon, Tools), 30 px rows. The group holding the current
-  page starts open and the browser remembers the others; a folded group shows a coral count of
-  unread notices inside it. Features, People and Activity sit in the menu under the signed-in
-  person at the bottom, with Sign out. Option A of three, picked by the lead on 2026-10-31 when the owner left it to us (Relay
-  design 16, page "Sidebar"), because the flat list ran past the screen.
+- **Sidebar:** the server switcher, a page search (`/` jumps to it; it matches names and each page's
+  `about`, Enter opens the first match), Overview, then the pages in folding groups (Streams,
+  Community, Members, Safety, Idleon, Tools), 30 px rows. The group holding the current page starts
+  open and the browser remembers the others; a folded group shows a coral count of unread notices
+  inside it. Features, People and Activity sit in the menu under the signed-in person at the bottom,
+  with Sign out. Option A of three, picked by the lead on 2026-10-31 when the owner left it to us
+  (Relay design 16, page "Sidebar"), because the flat list ran past the screen.
 - **Page header** (`ui::layout`): a 40 px icon tile with the page's own icon, the title (20 px,
   600), one line on what the page does (`NavItem::about`), then actions and the bell. One filled
   primary button at most; status pills (`span.status > span.dot`) for connection states.
