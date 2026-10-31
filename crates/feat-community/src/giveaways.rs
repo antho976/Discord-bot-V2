@@ -411,6 +411,40 @@ pub async fn create(ctx: &Ctx, new: New<'_>) -> Result<i64> {
     }
 }
 
+/// What an editor can change on a running giveaway. Checked by the caller.
+pub struct Changes<'a> {
+    pub prize: &'a str,
+    pub emoji: &'a str,
+    pub ends_at: i64,
+    pub winners: i64,
+}
+
+pub enum EditOutcome {
+    Missing,
+    AlreadyEnded,
+    Edited,
+}
+
+/// Change a running giveaway and rewrite its message. One that has ended is left alone: the
+/// update only applies while `ended` is 0, so it can't race the end in `tick`.
+pub async fn edit(ctx: &Ctx, id: i64, ch: Changes<'_>) -> Result<EditOutcome> {
+    let prize = text::clip(ch.prize.trim(), 200);
+    let changed = ctx.db.with(|c| {
+        c.execute(
+            "UPDATE giveaways SET prize = ?2, emoji = ?3, ends_at = ?4, winners = ?5 WHERE id = ?1 AND ended = 0",
+            params![id, prize, ch.emoji, ch.ends_at, ch.winners.clamp(1, MAX_WINNERS)],
+        )
+    })?;
+    let Some((g, n)) = ctx.db.with(|c| Ok(match get(c, id)? { Some(g) => Some((g, entry_count(c, id)?)), None => None }))? else {
+        return Ok(EditOutcome::Missing);
+    };
+    if changed == 0 {
+        return Ok(EditOutcome::AlreadyEnded);
+    }
+    refresh(ctx, &g, n).await;
+    Ok(EditOutcome::Edited)
+}
+
 pub enum EndOutcome {
     Missing,
     AlreadyEnded,
@@ -620,6 +654,34 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    fn ctx() -> Ctx {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Community)]).unwrap();
+        ctx
+    }
+
+    #[test]
+    fn editing_changes_running_giveaways_only() {
+        let rt = bot_core::tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _in = rt.enter();
+        let ctx = ctx();
+        ctx.db
+            .with(|c| {
+                c.execute("INSERT INTO giveaways (id, guild_id, channel_id, prize, ends_at) VALUES (1, 1, 2, 'old', 10), (2, 1, 2, 'done', 10)", [])?;
+                c.execute("UPDATE giveaways SET ended = 1 WHERE id = 2", [])
+            })
+            .unwrap();
+        let ch = |prize| Changes { prize, emoji: "🎮", ends_at: 99, winners: 40 };
+        rt.block_on(async {
+            assert!(matches!(edit(&ctx, 1, ch("  New prize ")).await.unwrap(), EditOutcome::Edited));
+            assert!(matches!(edit(&ctx, 2, ch("x")).await.unwrap(), EditOutcome::AlreadyEnded));
+            assert!(matches!(edit(&ctx, 3, ch("x")).await.unwrap(), EditOutcome::Missing));
+        });
+        let g = ctx.db.with(|c| get(c, 1)).unwrap().unwrap();
+        assert_eq!((g.prize.as_str(), g.emoji.as_str(), g.ends_at, g.winners), ("New prize", "🎮", 99, MAX_WINNERS));
+        assert_eq!(ctx.db.with(|c| get(c, 2)).unwrap().unwrap().prize, "done");
     }
 
     #[test]

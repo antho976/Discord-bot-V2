@@ -20,6 +20,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/community/giveaways", get(giveaways::page).post(giveaways::create))
         .route("/g/{guild}/community/giveaways/{id}/end", post(giveaways::end))
         .route("/g/{guild}/community/giveaways/{id}/reroll", post(giveaways::reroll))
+        .route("/g/{guild}/community/giveaways/{id}/edit", post(giveaways::edit))
         .route("/g/{guild}/community/polls", get(polls::page).post(polls::create))
         .route("/g/{guild}/community/polls/{id}/end", post(polls::end))
         .route("/g/{guild}/community/suggestions", get(suggestions::page).post(suggestions::save_settings))
@@ -204,6 +205,9 @@ const STYLE: &str = r#"
 .cm-reply strong { font-weight: 500; color: var(--ink); }
 .cm-sg-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .cm-review .pop-body { width: 280px; }
+.cm-edit .pop-body { width: min(500px, calc(100vw - 32px)); padding: 16px; }
+.cm-edit.left .pop-body { left: 0; right: auto; }
+.cm-edit .pop-body .card { padding: 0 14px; }
 .cm-review .stack { gap: 8px; }
 .cm-sg-side .badge { height: 22px; }
 .cm-sg-side .cm-actions { flex-wrap: nowrap; gap: 2px; }
@@ -234,5 +238,7 @@ const STYLE: &str = r#"
   .cm-vote { width: 44px; }
   .cm-sg-side { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; }
   .cm-pop .pop-body { width: calc(100vw - 32px); }
+  .cm-edit[open] { flex-basis: 100%; order: 10; }
+  .cm-edit .pop-body { position: static; width: 100%; margin-top: 8px; }
 }
 "#;
