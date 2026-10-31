@@ -109,6 +109,8 @@ const CSS: &str = "
 .lv-board { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .lv-name { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 .lv-prestige { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+/* Room for \"Level 17 · Prestige 1 · 27-day streak\" on one line. */
+@media (min-width: 821px) { .lb .rank { grid-template-columns: 28px 28px minmax(100px, 250px) minmax(0, 1fr) auto auto; } }
 @media (max-width: 560px) {
   .lv-table th:nth-child(3), .lv-table td:nth-child(3) { display: none; }
   .lv-acts { flex-direction: column; align-items: flex-end; }
