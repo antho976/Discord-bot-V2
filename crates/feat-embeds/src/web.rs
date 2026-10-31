@@ -13,7 +13,7 @@ use bot_core::{Ctx, Icon, text};
 use serde::Deserialize;
 
 use crate::model::{self, EmbedData, FORM_FIELDS, Field};
-use crate::{KEY, Sent, Template};
+use crate::{KEY, Sent};
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
@@ -39,6 +39,9 @@ struct ComposeQuery {
     template: Option<i64>,
     sent: Option<i64>,
 }
+
+/// The preset colours offered under the editor. The native picker and the hex field take any other.
+const SWATCHES: [&str; 5] = ["#f0806a", "#c3a6ff", "#4fc38a", "#5865f2", "#e3a948"];
 
 async fn compose(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<ComposeQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
@@ -70,7 +73,9 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
     let sent = crate::sent_list(ctx, guild)?;
     let channels = ctx.text_channels(guild);
     let channel_name = |id: u64| channels.iter().find(|(c, _)| *c == id).map(|(_, n)| format!("#{n}")).unwrap_or_else(|| "a deleted channel".into());
-    let bot_name = ctx.cache.current_user().map(|u| u.name.clone()).unwrap_or_else(|| "Bot".into());
+    let bot = ctx.cache.current_user();
+    let bot_name = bot.as_ref().map(|u| u.name.clone()).unwrap_or_else(|| "Bot".into());
+    let bot_avatar = bot.as_ref().map(|u| bot_core::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref()));
     let d = &v.data;
     let color_ok = model::parse_color(&d.color).map(|c| format!("#{c:06x}"));
     let mut options = vec![(String::new(), "Pick a channel".to_owned())];
@@ -78,12 +83,34 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
     let selected = v.channel.map(|c| c.to_string()).unwrap_or_default();
     let can_edit = page.can_edit();
     let rows: Vec<&Field> = d.fields.iter().take(FORM_FIELDS).collect();
+    // The optional parts open on their own when a loaded embed uses any of them.
+    let more = !d.content.is_empty() || !d.url.is_empty() || !d.author.is_empty() || !d.footer.is_empty() || !d.thumbnail.is_empty() || !d.fields.is_empty();
+
+    let chips = html! {
+        nav.eb-chips aria-label="Saved embeds" {
+            @for t in &templates {
+                span.eb-chip-wrap {
+                    a.eb-chip.on[t.name == v.template_name] href=(page.path(&format!("embeds?template={}", t.id))) title=(t.data.summary()) { (t.name) }
+                    @if can_edit {
+                        form.inline method="post" action=(page.path(&format!("embeds/templates/{}/delete", t.id))) {
+                            button.eb-x type="submit" data-confirm="Delete?" aria-label={ "Delete " (t.name) } title="Delete this template" { (ui::icon(Icon::Close)) }
+                        }
+                    }
+                }
+            }
+            a.eb-chip.new href=(page.path("embeds")) { (ui::icon(Icon::Plus)) "New" }
+            @if let Some(t) = templates.iter().find(|t| t.name == v.template_name && v.editing.is_none()) {
+                span.muted.small { "Saved " (text::ago(t.updated_at)) }
+            }
+        }
+    };
 
     let body = html! {
         style { (PreEscaped(CSS)) }
+        (chips)
         form #eb-form method="post" action=(page.path("embeds/send")) {
             fieldset.eb disabled[!can_edit] {
-                div.eb-main {
+                div.eb-card {
                     @if let Some(s) = v.editing {
                         div.eb-note {
                             p {
@@ -96,60 +123,48 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                     @if let Some(e) = &v.error {
                         div.eb-error role="alert" { (e) }
                     }
-                    div.eb-group {
-                        (text_field("content", "Message text", "Shown above the embed. Optional.", &d.content, true, Some(model::MAX_CONTENT), 3))
-                    }
-                    div.eb-group {
-                        h2 { "Embed" }
-                        (text_field("title", "Title", "", &d.title, false, Some(model::MAX_TITLE), 1))
-                        (text_field("description", "Description", "Supports **bold**, *italic*, `code`, ~~strike~~ and [links](https://example.com).", &d.description, true, Some(model::MAX_DESCRIPTION), 6))
-                        div.eb-2 {
-                            div.eb-f {
-                                label for="color" { "Colour" }
-                                div.eb-color {
-                                    input.eb-swatch #eb-swatch type="color" value=(color_ok.as_deref().unwrap_or("#2b2d31")) aria-label="Pick a colour";
-                                    input.input.num #color type="text" name="color" value=(d.color) placeholder="No colour" autocomplete="off" maxlength="7";
-                                }
+                    (text_field("title", "Title", "", &d.title, false, Some(model::MAX_TITLE), 1))
+                    (text_field("description", "Description", "Supports **bold**, *italic*, `code`, ~~strike~~ and [links](https://example.com).", &d.description, true, Some(model::MAX_DESCRIPTION), 6))
+                    div.eb-f {
+                        div.eb-lab { label for="color" { "Colour" } }
+                        div.eb-colours {
+                            @for c in SWATCHES {
+                                button.eb-sw type="button" data-swatch=(c) style={ "--c:" (c) } aria-label={ "Colour " (c) } aria-pressed="false" {}
                             }
+                            input.eb-swatch #eb-swatch type="color" value=(color_ok.as_deref().unwrap_or("#2b2d31")) aria-label="Pick any colour";
+                            input.input.num.eb-hex #color type="text" name="color" value=(d.color) placeholder="No colour" autocomplete="off" maxlength="7" aria-label="Colour as hex";
+                        }
+                    }
+                    div.eb-f {
+                        div.eb-lab { label for="image" { "Image" } }
+                        input.input #image type="text" name="image" value=(d.image) placeholder="https://cdn.discordapp.com/.../banner.png" autocomplete="off";
+                    }
+                    details.eb-more open[more] {
+                        summary { "More options" (ui::icon(Icon::Chevron)) }
+                        div.eb-more-body {
+                            (text_field("content", "Message text", "Shown above the embed. Optional.", &d.content, true, Some(model::MAX_CONTENT), 3))
                             (text_field("url", "Title link", "", &d.url, false, None, 1))
-                        }
-                        div.eb-2 {
-                            (text_field("author", "Author", "", &d.author, false, Some(model::MAX_AUTHOR), 1))
-                            (text_field("footer", "Footer", "", &d.footer, false, Some(model::MAX_FOOTER), 1))
-                        }
-                        div.eb-2 {
-                            (text_field("image", "Image address", "", &d.image, false, None, 1))
+                            div.eb-2 {
+                                (text_field("author", "Author", "", &d.author, false, Some(model::MAX_AUTHOR), 1))
+                                (text_field("footer", "Footer", "", &d.footer, false, Some(model::MAX_FOOTER), 1))
+                            }
                             (text_field("thumbnail", "Thumbnail address", "", &d.thumbnail, false, None, 1))
-                        }
-                    }
-                    div.eb-group {
-                        div.eb-fhead {
-                            h2 { "Fields" }
-                            span.muted.small #eb-fcount {}
-                        }
-                        div #eb-rows {
-                            @for (i, f) in rows.iter().enumerate() { (field_row(&i.to_string(), f)) }
-                        }
-                        div { button.btn.small #eb-add type="button" { (ui::icon(Icon::Plus)) "Add field" } }
-                        template #eb-ftpl { (field_row("__I__", &Field::default())) }
-                    }
-                }
-                aside.eb-side {
-                    div.eb-fhead {
-                        h2 { "Preview" }
-                        span.eb-count #eb-total {}
-                    }
-                    div.dc {
-                        span.dc-av { (bot_name.chars().next().unwrap_or('B')) }
-                        div.dc-main {
-                            div.dc-head { b.dc-name { (bot_name) } span.dc-tag { "APP" } span.dc-time { "Today" } }
-                            div.dc-content #p-content {}
-                            div #p-embed {}
+                            div.eb-fblock {
+                                div.eb-fhead {
+                                    h3 { "Fields" }
+                                    span.muted.small #eb-fcount {}
+                                }
+                                div #eb-rows {
+                                    @for (i, f) in rows.iter().enumerate() { (field_row(&i.to_string(), f)) }
+                                }
+                                div { button.btn.small #eb-add type="button" { (ui::icon(Icon::Plus)) "Add field" } }
+                                template #eb-ftpl { (field_row("__I__", &Field::default())) }
+                            }
                         }
                     }
                     @if can_edit {
-                        div.eb-send {
-                            div.eb-f {
+                        div.eb-foot {
+                            div.eb-chan {
                                 label for="channel" { "Channel" }
                                 (ui::select("channel", &options, &selected))
                             }
@@ -160,26 +175,41 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                                 } @else {
                                     button.btn.primary type="submit" formaction=(page.path("embeds/send")) { "Send" }
                                 }
-                            }
-                            div.eb-tpl {
-                                input.input type="text" name="template_name" value=(v.template_name) placeholder="Template name" maxlength="60" autocomplete="off" aria-label="Template name";
-                                button.btn type="submit" formaction=(page.path("embeds/templates")) { "Save template" }
+                                details.pop.eb-savetpl {
+                                    summary.btn { "Save template" }
+                                    div.pop-body {
+                                        div.eb-f {
+                                            label for="template_name" { "Template name" }
+                                            input.input #template_name type="text" name="template_name" value=(v.template_name) placeholder="Name it" maxlength="60" autocomplete="off";
+                                        }
+                                        div.eb-btns {
+                                            button.btn.primary type="submit" formaction=(page.path("embeds/templates")) { "Save template" }
+                                        }
+                                        p.help { "Saved embeds show up as chips above the composer." }
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                aside.eb-side {
+                    span.muted.small { "Preview" }
+                    div.dc {
+                        @if let Some(url) = &bot_avatar {
+                            img.dc-av src=(url) alt="" width="40" height="40" loading="lazy";
+                        } @else {
+                            span.dc-av.letter { (bot_name.chars().next().unwrap_or('B')) }
+                        }
+                        div.dc-main {
+                            div.dc-head { b.dc-name { (bot_name) } span.dc-tag { "APP" } span.dc-time { "Today" } }
+                            div.dc-content #p-content {}
+                            div #p-embed {}
+                        }
+                    }
+                    span.muted.small.eb-total #eb-total {}
+                }
             }
         }
-        (ui::section("Templates", Some("Saved embeds you can load back into the composer."), html! {
-            @if templates.is_empty() {
-                (ui::empty(Icon::Brush, "No templates yet", "Name an embed next to the preview and save it to reuse it."))
-            } @else {
-                div.table-wrap { table.table.eb-tbl {
-                    thead { tr { th { "Name" } th.m-hide { "Starts with" } th.m-hide { "Saved" } th {} } }
-                    tbody { @for t in &templates { (template_row(page, t)) } }
-                } }
-            }
-        }))
         (ui::section("Sent", Some("Embeds posted from here. Edit one to change the message in Discord."), html! {
             @if sent.is_empty() {
                 (ui::empty(Icon::Log, "Nothing sent yet", "Messages you send from the composer are listed here so you can edit them later."))
@@ -204,20 +234,6 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
         script { (PreEscaped(JS)) }
     };
     Ok(ui::layout(ctx, page, "Embed builder", None, body))
-}
-
-fn template_row(page: &Page, t: &Template) -> Markup {
-    html! {
-        tr {
-            td { (t.name) }
-            td.m-hide { span.clip.cell { (t.data.summary()) } }
-            td.muted.m-hide { (text::ago(t.updated_at)) }
-            td.actions {
-                a.btn.small href=(page.path(&format!("embeds?template={}", t.id))) { "Load" }
-                @if page.can_edit() { (ui::action_button(&page.path(&format!("embeds/templates/{}/delete", t.id)), "Delete", Tone::Bad, true)) }
-            }
-        }
-    }
 }
 
 /// A labelled input or textarea with a live character count when it has a limit.
@@ -377,47 +393,77 @@ async fn delete_template(State(ctx): State<Ctx>, user: User, Path((guild, id)): 
 }
 
 
+
 const CSS: &str = r##"
-.page-body:has(.eb) { max-width: 1180px; }
-fieldset.eb { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 470px); gap: 32px; align-items: start; }
-.eb-main { display: flex; flex-direction: column; gap: 26px; min-width: 0; }
-.eb-group { display: flex; flex-direction: column; gap: 12px; }
-.eb-f { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.page-body:has(.eb-chips) { max-width: 1180px; }
+.eb-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.eb-chip-wrap { display: inline-flex; align-items: center; gap: 2px; }
+.eb-chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 13px; border-radius: 15px; background: var(--control); color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+.eb-chip:hover { background: var(--hover); color: var(--ink); }
+.eb-chip.on { background: var(--ink); color: var(--ground); font-weight: 500; }
+.eb-chip.new { background: transparent; box-shadow: inset 0 0 0 1px var(--edge-2); }
+.eb-chip.new .icon { width: 14px; height: 14px; }
+.eb-x { display: inline-grid; place-items: center; height: 22px; min-width: 22px; padding: 0 4px; border: 0; border-radius: 11px; background: transparent; color: var(--ink-3); cursor: pointer; opacity: 0; transition: opacity .15s; font: 500 11px var(--sans); }
+.eb-x .icon { width: 12px; height: 12px; }
+.eb-x:hover, .eb-x:focus-visible, .eb-x.armed { opacity: 1; color: var(--held); }
+.eb-x.armed { background: rgba(236, 106, 94, 0.14); padding: 0 8px; }
+.eb-chip-wrap:hover .eb-x { opacity: 1; }
+@media (hover: none) { .eb-x { opacity: 1; } }
+
+fieldset.eb { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); gap: 24px; align-items: start; }
+.eb-card { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 20px; border-radius: var(--r-card); background: var(--veil); border: 1px solid var(--edge-1); }
+.eb-f { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .eb-lab { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.eb-lab label, .eb-f > label { font-size: 12.5px; font-weight: 500; color: var(--ink-2); }
+.eb-lab label, .eb-f > label, .eb-chan > label { font-size: 12.5px; font-weight: 500; color: var(--ink-2); }
 .eb-count { font: 11px var(--mono); color: var(--ink-3); }
 .eb-count.over { color: var(--held); }
+.eb-f .help { margin-top: 0; }
 .eb-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
-.eb-color { display: flex; gap: 8px; }
-.eb-swatch { flex: none; width: 32px; height: 32px; padding: 2px; border: 1px solid var(--edge-1); border-radius: var(--r-key); background: var(--well); cursor: pointer; }
+.eb-colours { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.eb-sw { width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: var(--c); cursor: pointer; flex: none; }
+.eb-sw:hover { box-shadow: 0 0 0 2px var(--page), 0 0 0 3px var(--edge-3); }
+.eb-sw[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--ink-2); }
+.eb-swatch { width: 26px; height: 26px; padding: 0; border: 1px solid var(--edge-2); border-radius: 50%; background: var(--well); cursor: pointer; flex: none; overflow: hidden; }
+.eb-hex { width: 112px; height: 28px; margin-left: 6px; }
 .eb-fhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.eb-fhead h3 { font-size: 13px; font-weight: 500; }
+.eb-fblock { display: flex; flex-direction: column; gap: 10px; }
+.eb-more { border-top: 1px solid var(--edge-1); padding-top: 14px; }
+.eb-more > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); }
+.eb-more > summary::-webkit-details-marker { display: none; }
+.eb-more > summary:hover { color: var(--ink); }
+.eb-more > summary .icon { color: var(--ink-3); transition: transform .15s; }
+.eb-more[open] > summary .icon { transform: rotate(180deg); }
+.eb-more-body { display: flex; flex-direction: column; gap: 16px; padding-top: 16px; }
 .eb-frow { display: flex; flex-direction: column; gap: 8px; padding: 14px 0; border-top: 1px solid var(--edge-1); }
 .eb-frow:first-child { border-top: 0; padding-top: 0; }
 .eb-frow textarea.input { min-height: 58px; }
 .eb-check input { accent-color: var(--signal); }
 .eb-fbar { display: flex; justify-content: space-between; align-items: center; }
 .eb-check { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); cursor: pointer; }
-.eb-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: var(--r-key); background: var(--veil); border: 1px solid var(--edge-1); font-size: 13px; }
+.eb-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-radius: var(--r-key); background: var(--well); border: 1px solid var(--edge-1); font-size: 13px; }
 .eb-note strong { font-weight: 500; }
 .eb-error { padding: 10px 14px; border-radius: var(--r-key); background: rgba(236, 106, 94, 0.1); border: 1px solid rgba(236, 106, 94, 0.35); color: var(--ink); font-size: 13px; }
-.eb-side { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.eb-send { display: flex; flex-direction: column; gap: 12px; padding-top: 14px; border-top: 1px solid var(--edge-1); }
-.eb-btns { display: flex; gap: 8px; }
-.eb-btns .btn { flex: 1; }
-.eb-tpl { display: flex; gap: 8px; }
-.eb-tpl .input { flex: 1; min-width: 0; }
+.eb-foot { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-top: 16px; border-top: 1px solid var(--edge-1); }
+.eb-chan { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; max-width: 220px; }
+.eb-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.eb-savetpl .pop-body { width: 290px; }
+.eb-savetpl .pop-body .eb-btns { justify-content: flex-end; }
+.eb-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.eb-total { align-self: flex-start; }
 td .cell { display: inline-block; max-width: 38ch; vertical-align: bottom; }
 
-.dc { background: #313338; border-radius: 8px; padding: 14px 16px; display: flex; gap: 14px; color: #dbdee1; font: 15px/1.4 var(--sans); min-height: 90px; }
-.dc-av { flex: none; width: 40px; height: 40px; border-radius: 50%; background: var(--signal); color: var(--signal-ink); display: grid; place-items: center; font-weight: 600; font-size: 17px; text-transform: uppercase; }
+.dc { display: flex; gap: 14px; color: #dbdee1; font: 15px/1.4 var(--sans); min-width: 0; }
+.dc-av { flex: none; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.dc-av.letter { background: var(--signal); color: var(--signal-ink); display: grid; place-items: center; font-weight: 600; font-size: 17px; text-transform: uppercase; }
 .dc-main { min-width: 0; flex: 1; }
-.dc-head { display: flex; align-items: center; gap: 8px; }
+.dc-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .dc-name { color: #f2f3f5; font-weight: 500; }
 .dc-tag { background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; border-radius: 3px; padding: 1px 4px; line-height: 12px; }
 .dc-time { color: #949ba4; font-size: 12px; }
 .dc-content { white-space: pre-wrap; overflow-wrap: anywhere; }
 .dc-content:empty { display: none; }
-.dc-embed { margin-top: 6px; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; max-width: 432px; background: #2b2d31; border: 1px solid rgba(255, 255, 255, 0.06); border-left: 4px solid var(--c, #1e1f22); border-radius: 4px; padding: 0 16px 16px 12px; font-size: 14px; }
+.dc-embed { margin-top: 6px; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; max-width: 480px; background: #2b2d31; border: 1px solid rgba(255, 255, 255, 0.06); border-left: 4px solid var(--c, #1e1f22); border-radius: 4px; padding: 0 16px 16px 12px; font-size: 14px; }
 .dc-embed > * { grid-column: 1; min-width: 0; margin-top: 8px; overflow-wrap: anywhere; }
 .dc-embed > .dc-th { grid-column: 2; grid-row: 1 / span 4; width: 80px; height: 80px; object-fit: cover; border-radius: 4px; }
 .dc-author { font-weight: 600; color: #f2f3f5; }
@@ -444,14 +490,17 @@ td .cell { display: inline-block; max-width: 38ch; vertical-align: bottom; }
 }
 @media (max-width: 520px) {
   .eb-2 { grid-template-columns: minmax(0, 1fr); }
-  .dc { padding: 12px; gap: 10px; }
-  .eb-tpl { flex-direction: column; }
-  .eb-tpl .input { flex: none; }
-  .m-hide { display: none; }
+  .eb-card { padding: 16px; }
+  .eb-chan { max-width: none; }
+  .eb-foot { flex-direction: column; align-items: stretch; }
+  .eb-btns .btn { flex: 1; }
+  .eb-savetpl { align-self: stretch; }
+  .eb-savetpl > summary { width: 100%; }
+  .dc { gap: 10px; }
+  .eb-tbl .m-hide { display: none; }
   .eb-tbl .cell { white-space: normal; display: inline; max-width: none; }
-  .eb-tbl td.actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .eb-tbl td.actions { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; white-space: normal; }
   .eb-tbl td { padding-left: 8px; }
-  .eb-tbl td.actions { white-space: normal; }
   .eb-tbl td.actions > * + * { margin-left: 0; }
 }
 "##;
@@ -476,6 +525,7 @@ const JS: &str = r##"
   const web = (s) => (/^https?:\/\/\S+$/.test(s) ? s : "");
   const len = (s) => [...s].length;
   const rows = $("eb-rows");
+  const swatches = [...f.querySelectorAll("[data-swatch]")];
 
   const fieldRows = () => [...rows.querySelectorAll(".eb-frow")].map((r) => ({
     n: r.querySelector(".fn-name").value.trim(),
@@ -489,10 +539,10 @@ const JS: &str = r##"
     const fields = fieldRows();
     $("p-content").innerHTML = md(val("content"));
     const has = title || desc || author || footer || image || thumb || fields.length;
-    const color = /^#?[0-9a-f]{6}$/i.test(val("color")) ? "#" + val("color").replace("#", "") : "";
+    const hex = /^#?[0-9a-f]{6}$/i.test(val("color")) ? "#" + val("color").replace("#", "").toLowerCase() : "";
     let h = "";
     if (has) {
-      h += '<div class="dc-embed"' + (color ? ' style="--c:' + color + '"' : "") + ">";
+      h += '<div class="dc-embed"' + (hex ? ' style="--c:' + hex + '"' : "") + ">";
       if (thumb) h += '<img class="dc-th" alt="" src="' + esc(thumb) + '">';
       if (author) h += '<div class="dc-author">' + esc(author) + "</div>";
       if (title) h += '<div class="dc-title">' + (link ? '<a href="' + esc(link) + '" target="_blank" rel="noreferrer noopener">' + esc(title) + "</a>" : esc(title)) + "</div>";
@@ -511,6 +561,7 @@ const JS: &str = r##"
     $("p-embed").innerHTML = h;
     $("p-embed").querySelectorAll("img").forEach((i) => i.addEventListener("error", () => { i.style.display = "none"; }));
 
+    swatches.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.swatch === hex)));
     f.querySelectorAll("[data-count]").forEach((c) => {
       const el = f.elements[c.dataset.count];
       const n = len(el.value.trim());
@@ -519,7 +570,7 @@ const JS: &str = r##"
     });
     const total = len(title) + len(desc) + len(author) + len(footer) + fields.reduce((a, x) => a + len(x.n) + len(x.v), 0);
     const t = $("eb-total");
-    t.textContent = total.toLocaleString("en-US") + " / " + LIMIT.toLocaleString("en-US");
+    t.textContent = total.toLocaleString("en-US") + " / " + LIMIT.toLocaleString("en-US") + " characters";
     t.classList.toggle("over", total > LIMIT);
     const n = rows.children.length;
     $("eb-fcount").textContent = n + " of " + MAX_ROWS;
@@ -551,6 +602,11 @@ const JS: &str = r##"
     const v = color.value.trim().replace("#", "");
     if (/^[0-9a-f]{6}$/i.test(v)) swatch.value = "#" + v.toLowerCase();
   });
+  swatches.forEach((b) => b.addEventListener("click", () => {
+    color.value = b.dataset.swatch;
+    swatch.value = b.dataset.swatch;
+    render();
+  }));
   render();
 })();
 "##;

@@ -87,6 +87,10 @@ pub fn offset_label(secs: i32) -> String {
 pub struct Local {
     /// "Thu 14:32"
     pub time: String,
+    /// "14:32"
+    pub clock: String,
+    /// The hour on the local clock, 0 to 23.
+    pub hour: u32,
     /// "UTC+2"
     pub offset: String,
     pub offset_secs: i32,
@@ -96,7 +100,13 @@ pub fn local(zone: &str, now: Timestamp) -> Option<Local> {
     let tz = TimeZone::get(zone).ok()?;
     let z = now.to_zoned(tz);
     let offset_secs = z.offset().seconds();
-    Some(Local { time: z.strftime("%a %H:%M").to_string(), offset: offset_label(offset_secs), offset_secs })
+    Some(Local {
+        time: z.strftime("%a %H:%M").to_string(),
+        clock: z.strftime("%H:%M").to_string(),
+        hour: z.hour() as u32,
+        offset: offset_label(offset_secs),
+        offset_secs,
+    })
 }
 
 #[cfg(test)]
