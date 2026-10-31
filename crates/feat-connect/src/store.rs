@@ -233,9 +233,30 @@ pub fn decide(ctx: &Ctx, id: &str, allow: bool, by: u64, on: &str, now: i64) -> 
     get(ctx, id)
 }
 
-/// One pairing link handed out for an allowed request.
-pub fn mark_claimed(ctx: &Ctx, id: &str, now: i64) -> Result<()> {
-    ctx.db.with(|c| c.execute("UPDATE connect_requests SET status = 'claimed', claimed_at = ?2, claims = claims + 1 WHERE id = ?1", params![id, now]))?;
+/// Count one pairing link against an allowed request before handing it out, in one statement so
+/// two claims at once can't both slip under the limit. False when the request is past it, ran
+/// out, or (for a Relay phone) has no link from a PC yet.
+pub fn reserve_claim(ctx: &Ctx, id: &str, now: i64) -> Result<bool> {
+    let n = ctx.db.with(|c| {
+        c.execute(
+            "UPDATE connect_requests SET status = 'claimed', claimed_at = ?2, claims = claims + 1
+             WHERE id = ?1 AND status IN ('allowed', 'claimed') AND claims < ?3 AND expires_at > ?2
+               AND (kind != 'relay' OR pc_link IS NOT NULL)",
+            params![id, now, domain::MAX_CLAIMS],
+        )
+    })?;
+    Ok(n > 0)
+}
+
+/// Give back a claim whose link couldn't be made, so the device can try again.
+pub fn release_claim(ctx: &Ctx, id: &str) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute(
+            "UPDATE connect_requests SET claims = claims - 1, status = CASE WHEN claims = 1 THEN 'allowed' ELSE status END
+             WHERE id = ?1 AND claims > 0",
+            [id],
+        )
+    })?;
     Ok(())
 }
 
@@ -316,16 +337,18 @@ pub struct Host {
 }
 
 /// The PC that connected through request `request_id`, with a new token hash. A PC that claims
-/// its request again (its first try failed half way) replaces the token it was given before.
-pub fn upsert_host(ctx: &Ctx, request_id: &str, name: &str, token_hash: &str, now: i64) -> Result<()> {
-    ctx.db.with(|c| {
+/// its request again (its first try failed half way) replaces the token it was given before. A
+/// PC someone forgot stays forgotten: false, and no token is stored.
+pub fn upsert_host(ctx: &Ctx, request_id: &str, name: &str, token_hash: &str, now: i64) -> Result<bool> {
+    let n = ctx.db.with(|c| {
         c.execute(
             "INSERT INTO connect_hosts (id, request_id, name, token_hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT (request_id) DO UPDATE SET token_hash = excluded.token_hash, name = excluded.name, revoked_at = NULL",
+             ON CONFLICT (request_id) DO UPDATE SET token_hash = excluded.token_hash, name = excluded.name
+             WHERE connect_hosts.revoked_at IS NULL",
             params![domain::random_hex(8), request_id, name, token_hash, now],
         )
     })?;
-    Ok(())
+    Ok(n > 0)
 }
 
 /// The PC holding the token behind `token_hash`, unless it was forgotten. Marks it seen.
@@ -357,15 +380,22 @@ pub fn hosts(ctx: &Ctx) -> Result<Vec<Host>> {
     })
 }
 
-/// Forget a PC here: its token stops working. Its cloud link is revoked on the engine apart.
+/// Forget a PC here: its token stops working, and the request it came through can't hand out
+/// another, so a PC forgotten minutes after it was allowed can't claim its way back. Its cloud
+/// link is revoked on the engine apart.
 pub fn revoke_host(ctx: &Ctx, id: &str, now: i64) -> Result<Option<String>> {
     ctx.db.with(|c| {
-        c.query_row(
-            "UPDATE connect_hosts SET revoked_at = ?2 WHERE id = ?1 AND revoked_at IS NULL RETURNING name",
-            params![id, now],
-            |r| r.get(0),
-        )
-        .optional()
+        let gone: Option<(String, String)> = c
+            .query_row(
+                "UPDATE connect_hosts SET revoked_at = ?2 WHERE id = ?1 AND revoked_at IS NULL RETURNING name, request_id",
+                params![id, now],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        if let Some((_, request)) = &gone {
+            c.execute("UPDATE connect_requests SET claims = MAX(claims, ?2) WHERE id = ?1", params![request, domain::MAX_CLAIMS])?;
+        }
+        Ok(gone.map(|(name, _)| name))
     })
 }
 

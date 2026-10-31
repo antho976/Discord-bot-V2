@@ -174,13 +174,36 @@ Found and fixed along the way:
 
 ### D: keen-tapir
 `crates/feat-guard`, `crates/feat-audit`, `crates/feat-connect`.
-- [ ] Scam protection: store who decided and an optional reason when someone releases or bans,
+- [x] Scam protection: store who decided and an optional reason when someone releases or bans,
       and show it. Check the message tester and the settings tab at phone width.
-- [ ] Audit log: search reads the JSON summaries. Make search match what the page shows. Add
+- [x] Audit log: search reads the JSON summaries. Make search match what the page shows. Add
       "by <moderator>" to the #mod-log posts now that the moderator is known.
-- [ ] Audit log: check that "by <moderator>" matching holds when Discord sends the audit entry
+- [x] Audit log: check that "by <moderator>" matching holds when Discord sends the audit entry
       before or after the event, and when several happen at once.
-- [ ] App approvals: review the pairing and expiry flows for edge cases.
+- [x] App approvals: review the pairing and expiry flows for edge cases.
+- Found and done:
+  - [x] Scam protection: bans and timeout lifts done in Discord record the moderator and reason
+        from the audit log, and the alert loses its buttons. Two moderators clicking at once
+        can't both act.
+  - [x] Scam protection: the tester added new-account points when that check was off, and its
+        gauge didn't show the score.
+  - [x] Scam protection and audit log: say when the honeypot, alert or log channel was deleted.
+  - [x] Scam protection: filter the catch list (Waiting, Banned, Released); undecided catches
+        could fall out of the newest 50.
+  - [x] Audit log: the bot's own actions were credited to a moderator who acted on the same
+        member a moment before. They're recorded now and kept out of the weekly rail.
+  - [x] App approvals: a PC forgotten on the dashboard could claim its way back within 15
+        minutes; two claims at once could pass the 5-link limit; the cloud pill disagreed with
+        the API for a blank RELAY_PUBLIC_URL; say when allowing a request won't be enough.
+- Known limit: Discord merges repeated message deletions by one moderator into one audit entry,
+  so an author deleting their own message in the same channel within a minute is also shown as
+  deleted by that moderator.
+- Waiting on core PR #3, for the morning once it is on main:
+  - [ ] Point guard, audit and connect at `text::made_ago`, `discord::snowflake_ms` and
+        `ui::status`.
+  - [ ] With #3, `display_name` gives "Unknown member" for someone not cached. Audit and guard
+        store that name in rows that outlive the cache (`audit_events.user_name`,
+        `guard_catches.user_name`, `acted_by_name`): use the name the event carries instead.
 
 ### E: teal-marten
 `crates/feat-community` (giveaways, polls, suggestions), `crates/feat-pets`.

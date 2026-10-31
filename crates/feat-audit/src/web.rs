@@ -35,23 +35,26 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let group = q.group.as_deref().and_then(Group::from_key).unwrap_or(Group::All);
     let search = q.q.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned);
-    let filter = Filter { group, search: search.clone() };
+    let filter = Filter { group, search: search.as_deref().map(|q| store::Search::new(&ctx, guild, q)) };
     let filtered = group != Group::All || search.is_some();
     let (rows, total) = store::recent(&ctx, guild, &filter, SHOWN)?;
     // "Today" starts at midnight in the viewer's own timezone.
     let since = page.user.local(now_ms()).start_of_day()?.timestamp().as_millisecond();
     let today = store::today(&ctx, guild, since)?;
-    let mods = store::mod_actions(&ctx, guild, now_ms() - crate::KEEP_DAYS * 86_400_000)?;
-    let week_ago = now_ms() - 7 * 86_400_000;
-    let mut week: Vec<(u64, i64)> = Vec::new();
-    for a in mods.iter().filter(|a| a.at >= week_ago) {
-        match week.iter_mut().find(|w| w.0 == a.moderator) {
-            Some(w) => w.1 += 1,
-            None => week.push((a.moderator, 1)),
-        }
-    }
-    week.sort_by_key(|w| -w.1);
+    // Only the actions that can explain the entries shown.
+    let oldest = rows.last().map_or(now_ms(), |r| r.at);
+    let mods = store::mod_actions(&ctx, guild, oldest - store::MATCH_MS)?;
+    let week = store::moderator_counts(&ctx, guild, now_ms() - 7 * 86_400_000, ctx.bot_id())?;
     let has_channel = s.channel.is_some() || s.message_channel.is_some() || s.member_channel.is_some();
+    // Set but gone from the server. Only once the server is cached, so a restart doesn't flash it.
+    let cached = ctx.cache.guild(Id::new(guild)).is_some();
+    let gone: Vec<&str> = [(s.channel, "log channel"), (s.message_channel, "channel for message events"), (s.member_channel, "channel for member events")]
+        .into_iter()
+        // The log channel isn't used when both of the others are set.
+        .filter(|(c, _)| *c != s.channel || s.message_channel.is_none() || s.member_channel.is_none())
+        .filter(|(c, _)| cached && c.is_some_and(|c| ctx.cache.channel(Id::new(c)).is_none()))
+        .map(|(_, name)| name)
+        .collect();
     let search_value = search.as_deref().unwrap_or_default();
 
     let body = html! {
@@ -59,6 +62,9 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         (tabs(&page, "Recent"))
         div.with-rail {
             div.au-main {
+                @for name in &gone {
+                    p.au-warn { "The " (name) " was deleted, so its events aren't posted in Discord. Pick another in " a href=(page.path("audit/settings")) { "Settings" } "." }
+                }
                 div.au-filters {
                     form.au-chips method="get" action=(page.path(KEY)) {
                         input type="hidden" name="q" value=(search_value);
@@ -68,7 +74,7 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                     }
                     form method="get" action=(page.path(KEY)) {
                         input type="hidden" name="group" value=(group.key());
-                        input.input.au-search type="search" name="q" value=(search_value) placeholder="Member name or ID" aria-label="Search the log";
+                        input.input.au-search type="search" name="q" value=(search_value) placeholder="Name, channel or text" aria-label="Search the log";
                     }
                 }
                 @if rows.is_empty() {
@@ -172,9 +178,13 @@ fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row, mods: &[store::ModAction])
                 span.au-icon { (ui::icon(Icon::Log)) }
             }
             div.au-body {
-                @let by = store::moderator_for(mods, r.kind, r.user_id, r.at).filter(|m| Some(*m) != r.user_id).map(|m| ctx.display_name(guild, m));
+                @let action = store::moderator_for(mods, r.kind, r.user_id, r.channel_id, r.at).filter(|a| Some(a.moderator) != r.user_id);
+                @let by = action.map(|a| ctx.display_name(guild, a.moderator));
                 (headline(r.kind, name.as_deref(), &chan, by.as_deref()))
                 (detail(r))
+                @if let Some(reason) = action.and_then(|a| a.reason.as_deref()) {
+                    p.muted.small { "Reason: " (reason) }
+                }
             }
         }
     }
@@ -320,6 +330,8 @@ fn style() -> Markup {
 
 const STYLE: &str = r#"
 .au-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.au-warn { font-size: 13px; color: var(--waiting); }
+.au-warn a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .au-filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
 .au-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .au-mods { display: flex; flex-wrap: wrap; gap: 14px; }

@@ -18,6 +18,7 @@ use bot_core::twilight_http::request::AuditLogReason as _;
 use bot_core::twilight_model::channel::message::component::{ButtonStyle, Component};
 use bot_core::twilight_model::channel::message::{Embed, Message};
 use bot_core::twilight_model::gateway::event::Event;
+use bot_core::twilight_model::guild::audit_log::{AuditLogChange, AuditLogEntry, AuditLogEventType};
 use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
 use bot_core::twilight_model::id::marker::{ChannelMarker, MessageMarker};
@@ -142,6 +143,10 @@ pub struct Catch {
     pub acted_by: Option<u64>,
     pub acted_by_name: Option<String>,
     pub acted_at: Option<i64>,
+    /// Why they were released or banned, when the moderator said.
+    pub acted_reason: Option<String>,
+    /// Released or banned with Discord's own tools rather than the alert or the dashboard.
+    pub acted_in_discord: bool,
     pub alert: Option<(u64, u64)>,
 }
 
@@ -160,6 +165,12 @@ const MIGRATIONS: &[Migration] = &[Migration {
             alert_channel INTEGER, alert_message INTEGER);
         CREATE INDEX guard_catches_by_guild ON guard_catches(guild_id, at DESC);
         CREATE INDEX guard_catches_by_user ON guard_catches(guild_id, user_id, at DESC);
+    ",
+}, Migration {
+    name: "002_guard_reason",
+    sql: "
+        ALTER TABLE guard_catches ADD COLUMN acted_reason TEXT;
+        ALTER TABLE guard_catches ADD COLUMN acted_in_discord INTEGER NOT NULL DEFAULT 0;
     ",
 }];
 
@@ -196,10 +207,20 @@ impl Feature for Guard {
                 let guild = u.guild_id.get();
                 let had = ctx.before_member(guild, u.user.id.get()).and_then(|b| b.timed_out_until_ms).is_some_and(|t| t > now_ms());
                 if had {
-                    close_open(ctx, guild, u.user.id.get(), Outcome::Released, "a moderator in Discord")?;
+                    close_open(ctx, guild, u.user.id.get(), Outcome::Released, None).await?;
                 }
             }
-            Event::BanAdd(b) => close_open(ctx, b.guild_id.get(), b.user.id.get(), Outcome::Banned, "a moderator in Discord")?,
+            Event::BanAdd(b) => close_open(ctx, b.guild_id.get(), b.user.id.get(), Outcome::Banned, None).await?,
+            // Who did it and why, from Discord's audit log. It can come before or after the ban or
+            // member update itself; the bot's own actions are already recorded by `resolve`.
+            Event::GuildAuditLogEntryCreate(e) => {
+                if let (Some(guild), Some(by), Some((user, outcome))) = (e.guild_id, e.user_id, native_decision(&e.0))
+                    && ctx.bot_id() != Some(by.get())
+                {
+                    let reason = e.reason.as_deref().map(str::trim).filter(|r| !r.is_empty());
+                    close_open(ctx, guild.get(), user, outcome, Some((by.get(), reason))).await?;
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -223,7 +244,7 @@ impl Feature for Guard {
         }
         ctx.defer_update(&call.interaction).await?;
         let by = ctx.display_name(guild, call.user_id());
-        match resolve(ctx, guild, id, outcome, call.user_id(), &by, false).await {
+        match resolve(ctx, guild, id, outcome, call.user_id(), &by, None, false).await {
             Ok(c) => {
                 let embed = alert_embed(&c);
                 ctx.edit_original(&call.interaction, Reply::embed(embed)).await?;
@@ -257,7 +278,7 @@ impl Feature for Guard {
                     icon: Icon::Shield,
                     title: format!("Scam caught: {}", c.user_name),
                     detail,
-                    href: page.path(KEY),
+                    href: format!("{}?show=waiting", page.path(KEY)),
                     action: "Review",
                     alert: true,
                 }
@@ -351,9 +372,14 @@ fn full_text(m: &Message) -> String {
     t
 }
 
+/// When a Discord id was made: for a user, when the account was; for a message, when it was sent.
+fn snowflake_ms(id: u64) -> i64 {
+    ((id >> 22) + 1_420_070_400_000) as i64
+}
+
 /// When a Discord account was made, from its id.
 pub fn account_created_ms(user: u64) -> i64 {
-    ((user >> 22) + 1_420_070_400_000) as i64
+    snowflake_ms(user)
 }
 
 /// "made today", "3 days old", "8 months old", "4 years old".
@@ -399,7 +425,7 @@ fn cached_messages_of(ctx: &Ctx, guild: u64, user: u64, now: i64) -> Vec<(u64, u
     for channel in channels {
         let Some(ids) = ctx.cache.channel_messages(channel).map(|q| q.iter().copied().collect::<Vec<_>>()) else { continue };
         for id in ids {
-            let sent = account_created_ms(id.get());
+            let sent = snowflake_ms(id.get());
             if now - sent > recent::KEEP_MS {
                 continue;
             }
@@ -498,7 +524,7 @@ async fn act(ctx: &Ctx, guild: u64, s: &Settings, m: &Message, text: &str, found
         }
     }
     let what = if found.honeypot { "posted in the honeypot channel".to_owned() } else { found.reason.to_lowercase() };
-    ctx.notify(Some(guild), KEY, format!("Caught {name}: {what}"), Some(format!("/g/{guild}/{KEY}")));
+    ctx.notify(Some(guild), KEY, format!("Caught {name}: {what}"), Some(format!("/g/{guild}/{KEY}?show=waiting")));
 
     if s.dm_member && timed_out {
         let server = ctx.guild_name(guild);
@@ -515,68 +541,171 @@ async fn act(ctx: &Ctx, guild: u64, s: &Settings, m: &Message, text: &str, found
 
 /// Release (lift the timeout, a mistake) or ban the member of a catch. Shared by the alert's
 /// buttons and the dashboard. `edit_alert` also updates the alert message in the log channel.
-pub async fn resolve(ctx: &Ctx, guild: u64, id: i64, outcome: Outcome, by: u64, by_name: &str, edit_alert: bool) -> std::result::Result<Catch, String> {
+#[allow(clippy::too_many_arguments)]
+pub async fn resolve(
+    ctx: &Ctx,
+    guild: u64,
+    id: i64,
+    outcome: Outcome,
+    by: u64,
+    by_name: &str,
+    reason: Option<&str>,
+    edit_alert: bool,
+) -> std::result::Result<Catch, String> {
     let fail = |e: bot_core::anyhow::Error| {
         tracing::warn!(error = %e, "scam catch action failed");
         "That didn't work. The error is in the bot's log.".to_owned()
     };
+    if !matches!(outcome, Outcome::Released | Outcome::Banned) {
+        return Err("Unknown action.".into());
+    }
     let c = catch(ctx, guild, id).map_err(fail)?.ok_or_else(|| "That catch is gone.".to_owned())?;
     if !c.outcome.open() {
-        let who = c.acted_by_name.clone().unwrap_or_else(|| "someone".into());
-        return Err(format!("Already {} by {who}.", c.outcome.label().to_lowercase()));
+        return Err(already(&c));
     }
-    let (g, u) = (Id::new(guild), Id::new(c.user_id));
-    match outcome {
-        Outcome::Released => {
-            if c.outcome == Outcome::TimedOut {
-                let res = ctx.http.update_guild_member(g, u).communication_disabled_until(None).reason(&format!("Released by {by_name}")).await;
-                // 404: they already left, nothing to lift.
-                if let Err(e) = res
-                    && !bot_core::discord::is_not_found(&e)
-                {
-                    return Err(format!("Couldn't remove the timeout: {e}"));
-                }
-            }
-        }
-        Outcome::Banned => {
-            let reason = format!("Scam protection, banned by {by_name}");
-            ctx.http
-                .create_ban(g, u)
-                .delete_message_seconds(86_400)
-                .reason(&reason)
-                .await
-                .map_err(|e| format!("Couldn't ban: {e}"))?;
-        }
-        _ => return Err("Unknown action.".into()),
-    }
-    ctx.db
+    let reason = reason.map(str::trim).filter(|r| !r.is_empty()).map(|r| text::clip(r, 300));
+    // Claim the catch before acting: of two moderators clicking at once only one acts, and the
+    // ban or lifted timeout Discord reports back finds the catch already decided.
+    let claimed = ctx
+        .db
         .with(|db| {
             db.execute(
-                "UPDATE guard_catches SET outcome = ?2, acted_by = ?3, acted_by_name = ?4, acted_at = ?5 WHERE id = ?1",
-                params![id, outcome.key(), by as i64, by_name, now_ms()],
+                "UPDATE guard_catches SET outcome = ?3, acted_by = ?4, acted_by_name = ?5, acted_reason = ?6, acted_at = ?7, acted_in_discord = 0
+                 WHERE guild_id = ?1 AND id = ?2 AND outcome = ?8",
+                params![guild as i64, id, outcome.key(), by as i64, by_name, reason, now_ms(), c.outcome.key()],
             )
         })
         .map_err(fail)?;
+    if claimed == 0 {
+        let now = catch(ctx, guild, id).map_err(fail)?.ok_or_else(|| "That catch is gone.".to_owned())?;
+        return Err(already(&now));
+    }
+    let done = act_on_member(ctx, guild, &c, outcome, by_name, reason.as_deref()).await;
+    // The call can fail on our side after Discord made the change (a dropped connection). The
+    // member update it sent was skipped while the catch was claimed, so ask the cache.
+    let lifted_anyway = outcome == Outcome::Released && !timed_out_now(ctx, guild, c.user_id);
+    if let Err(msg) = done
+        && !lifted_anyway
+    {
+        // Put it back, so someone can try again; only if nothing else decided it meanwhile.
+        ctx.db
+            .with(|db| {
+                db.execute(
+                    "UPDATE guard_catches SET outcome = ?2, acted_by = NULL, acted_by_name = NULL, acted_reason = NULL, acted_at = NULL
+                     WHERE id = ?1 AND outcome = ?3 AND acted_by = ?4 AND acted_in_discord = 0",
+                    params![id, c.outcome.key(), outcome.key(), by as i64],
+                )
+            })
+            .map_err(fail)?;
+        return Err(msg);
+    }
     let c = catch(ctx, guild, id).map_err(fail)?.ok_or_else(|| "That catch is gone.".to_owned())?;
-    if edit_alert && let Some((ch, msg)) = c.alert {
-        let embed = alert_embed(&c);
-        let res = ctx.http.update_message(Id::new(ch), Id::new(msg)).embeds(Some(&[embed])).components(Some(&[])).await;
-        if let Err(e) = res {
-            tracing::warn!(guild, error = %e, "couldn't update a scam alert");
-        }
+    if edit_alert {
+        update_alert(ctx, guild, &c).await;
     }
     Ok(c)
 }
 
-/// Mark a member's open catch from the last 28 days as handled outside the bot.
-fn close_open(ctx: &Ctx, guild: u64, user: u64, outcome: Outcome, by_name: &str) -> Result<()> {
-    ctx.db.with(|c| {
-        c.execute(
-            "UPDATE guard_catches SET outcome = ?3, acted_by_name = ?4, acted_at = ?5
-             WHERE guild_id = ?1 AND user_id = ?2 AND outcome IN ('timed_out', 'not_timed_out') AND at > ?6",
-            params![guild as i64, user as i64, outcome.key(), by_name, now_ms(), now_ms() - 28 * DAY_MS],
-        )
+/// Whether the cache still shows the member timed out. A member it doesn't know counts as still
+/// timed out, so a failed release is never taken for a done one.
+fn timed_out_now(ctx: &Ctx, guild: u64, user: u64) -> bool {
+    ctx.cache.member(Id::new(guild), Id::new(user)).is_none_or(|m| m.communication_disabled_until().is_some_and(|t| t.as_micros() / 1000 > now_ms()))
+}
+
+/// "Already banned by Mira."
+fn already(c: &Catch) -> String {
+    let who = c.acted_by_name.clone().unwrap_or_else(|| "someone".into());
+    format!("Already {} by {who}.", c.outcome.label().to_lowercase())
+}
+
+/// Lift the timeout or ban, in Discord, with who decided in the audit log reason.
+async fn act_on_member(ctx: &Ctx, guild: u64, c: &Catch, outcome: Outcome, by_name: &str, reason: Option<&str>) -> std::result::Result<(), String> {
+    let (g, u) = (Id::new(guild), Id::new(c.user_id));
+    let why = reason.map(|r| format!(": {r}")).unwrap_or_default();
+    match outcome {
+        Outcome::Released if c.outcome == Outcome::TimedOut => {
+            let res = ctx.http.update_guild_member(g, u).communication_disabled_until(None).reason(&format!("Released by {by_name}{why}")).await;
+            // 404: they already left, nothing to lift.
+            match res {
+                Err(e) if !bot_core::discord::is_not_found(&e) => Err(format!("Couldn't remove the timeout: {e}")),
+                _ => Ok(()),
+            }
+        }
+        Outcome::Banned => {
+            let reason = format!("Scam protection, banned by {by_name}{why}");
+            ctx.http
+                .create_ban(g, u)
+                .delete_message_seconds(86_400)
+                .reason(&text::clip(&reason, 500))
+                .await
+                .map(|_| ())
+                .map_err(|e| format!("Couldn't ban: {e}"))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Show the decision on the alert in the log channel, without its buttons.
+async fn update_alert(ctx: &Ctx, guild: u64, c: &Catch) {
+    let Some((ch, msg)) = c.alert else { return };
+    let embed = alert_embed(c);
+    let res = ctx.http.update_message(Id::new(ch), Id::new(msg)).embeds(Some(&[embed])).components(Some(&[])).await;
+    if let Err(e) = res {
+        tracing::warn!(guild, error = %e, "couldn't update a scam alert");
+    }
+}
+
+/// A ban, or a lifted timeout, from Discord's audit log: the member and what it means for their
+/// catch.
+fn native_decision(e: &AuditLogEntry) -> Option<(u64, Outcome)> {
+    let target = e.target_id?.get();
+    match e.action_type {
+        AuditLogEventType::MemberBanAdd => Some((target, Outcome::Banned)),
+        AuditLogEventType::MemberUpdate => e
+            .changes
+            .iter()
+            .any(|c| matches!(c, AuditLogChange::CommunicationDisabledUntil { new: None, .. }))
+            .then_some((target, Outcome::Released)),
+        _ => None,
+    }
+}
+
+/// A member's open catch from the last 28 days, released or banned with Discord's own tools.
+/// `by` is the moderator and their reason, from the audit log; the ban or member update itself
+/// doesn't say. Whichever of the two arrives second fills in the catch the first one closed.
+async fn close_open(ctx: &Ctx, guild: u64, user: u64, outcome: Outcome, by: Option<(u64, Option<&str>)>) -> Result<()> {
+    let now = now_ms();
+    let by = by.map(|(who, reason)| (who, ctx.display_name(guild, who), reason.map(|r| text::clip(r, 300))));
+    let ids: Vec<i64> = ctx.db.with(|c| {
+        let mut st = match &by {
+            None => c.prepare_cached(
+                "UPDATE guard_catches SET outcome = ?3, acted_by_name = 'a moderator in Discord', acted_at = ?4, acted_in_discord = 1
+                 WHERE guild_id = ?1 AND user_id = ?2 AND outcome IN ('timed_out', 'not_timed_out') AND at > ?5
+                 RETURNING id",
+            )?,
+            Some(_) => c.prepare_cached(
+                "UPDATE guard_catches SET outcome = ?3, acted_by = ?6, acted_by_name = ?7, acted_reason = ?8, acted_at = ?4, acted_in_discord = 1
+                 WHERE guild_id = ?1 AND user_id = ?2 AND at > ?5
+                   AND (outcome IN ('timed_out', 'not_timed_out')
+                        OR (outcome = ?3 AND acted_in_discord = 1 AND acted_by IS NULL AND acted_at > ?4 - 300000))
+                 RETURNING id",
+            )?,
+        };
+        let base = params![guild as i64, user as i64, outcome.key(), now, now - 28 * DAY_MS];
+        let rows = match &by {
+            None => st.query_map(base, |r| r.get(0))?.collect::<bot_core::rusqlite::Result<Vec<_>>>()?,
+            Some((who, name, reason)) => {
+                let all = params![guild as i64, user as i64, outcome.key(), now, now - 28 * DAY_MS, *who as i64, name, reason];
+                st.query_map(all, |r| r.get(0))?.collect::<bot_core::rusqlite::Result<Vec<_>>>()?
+            }
+        };
+        Ok(rows)
     })?;
+    for id in ids {
+        if let Some(c) = catch(ctx, guild, id)? {
+            update_alert(ctx, guild, &c).await;
+        }
+    }
     Ok(())
 }
 
@@ -609,12 +738,8 @@ pub fn alert_embed(c: &Catch) -> Embed {
         .field(EmbedFieldBuilder::new("Why", text::clip(&why, 1000)))
         .field(EmbedFieldBuilder::new("Message", format!("```\n{}\n```", text::clip(&quoted, 900))))
         .field(EmbedFieldBuilder::new("Done", action));
-    if let (false, Some(by)) = (c.outcome.open(), &c.acted_by_name) {
-        let what = match c.outcome {
-            Outcome::Released => format!("Released by {by}, marked as a mistake."),
-            _ => format!("Banned by {by}. Their messages from the last day are deleted."),
-        };
-        e = e.field(EmbedFieldBuilder::new("Outcome", what));
+    if !c.outcome.open() {
+        e = e.field(EmbedFieldBuilder::new("Outcome", outcome_line(c)));
     }
     e = e.footer(EmbedFooterBuilder::new(format!("Catch #{} · user id {}", c.id, c.user_id)));
     if let Ok(ts) = Timestamp::from_secs(c.at / 1000) {
@@ -623,9 +748,26 @@ pub fn alert_embed(c: &Catch) -> Embed {
     e.build()
 }
 
+/// Who released or banned the member, where, and why, for the alert.
+fn outcome_line(c: &Catch) -> String {
+    let by = c.acted_by.and(c.acted_by_name.as_deref());
+    let mut line = match (c.outcome, c.acted_in_discord, by) {
+        (Outcome::Released, false, Some(by)) => format!("Released by {by}, marked as a mistake."),
+        (Outcome::Released, true, Some(by)) => format!("Timeout removed in Discord by {by}, counted as a mistake."),
+        (Outcome::Released, _, None) => "Timeout removed in Discord, counted as a mistake.".to_owned(),
+        (_, false, Some(by)) => format!("Banned by {by}. Their messages from the last day are deleted."),
+        (_, true, Some(by)) => format!("Banned in Discord by {by}."),
+        (_, _, None) => "Banned in Discord.".to_owned(),
+    };
+    if let Some(reason) = &c.acted_reason {
+        line.push_str(&format!("\nReason: {}", text::clip(reason, 300)));
+    }
+    line
+}
+
 // ---- queries ----
 
-const CATCH_COLS: &str = "id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome, acted_by_name, acted_at, alert_channel, alert_message, acted_by";
+const CATCH_COLS: &str = "id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome, acted_by_name, acted_at, alert_channel, alert_message, acted_by, acted_reason, acted_in_discord";
 
 fn row_to_catch(r: &bot_core::rusqlite::Row) -> bot_core::rusqlite::Result<Catch> {
     let signals: String = r.get(7)?;
@@ -651,6 +793,8 @@ fn row_to_catch(r: &bot_core::rusqlite::Row) -> bot_core::rusqlite::Result<Catch
         acted_by: r.get::<_, Option<i64>>(17)?.map(|u| u as u64),
         acted_by_name: r.get(13)?,
         acted_at: r.get(14)?,
+        acted_reason: r.get(18)?,
+        acted_in_discord: r.get(19)?,
         alert,
     })
 }
@@ -672,11 +816,25 @@ pub fn recent_unhandled(ctx: &Ctx, guild: u64, since: i64, limit: i64) -> Result
     })
 }
 
-pub fn recent_catches(ctx: &Ctx, guild: u64, limit: i64) -> Result<Vec<Catch>> {
+/// The newest catches, all of them or only those with one of `outcomes`.
+pub fn recent_catches(ctx: &Ctx, guild: u64, outcomes: &[Outcome], limit: i64) -> Result<Vec<Catch>> {
+    // The keys are fixed words from `Outcome::key`, so they can go in as text.
+    let only = if outcomes.is_empty() {
+        String::new()
+    } else {
+        format!(" AND outcome IN ({})", outcomes.iter().map(|o| format!("'{}'", o.key())).collect::<Vec<_>>().join(", "))
+    };
     ctx.db.with(|c| {
-        let mut st = c.prepare_cached(&format!("SELECT {CATCH_COLS} FROM guard_catches WHERE guild_id = ?1 ORDER BY at DESC LIMIT ?2"))?;
+        let mut st = c.prepare_cached(&format!("SELECT {CATCH_COLS} FROM guard_catches WHERE guild_id = ?1{only} ORDER BY at DESC LIMIT ?2"))?;
         let rows = st.query_map(params![guild as i64, limit], row_to_catch)?.collect::<bot_core::rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    })
+}
+
+/// Catches nobody has released or banned yet, however old.
+pub fn count_open(ctx: &Ctx, guild: u64) -> Result<i64> {
+    ctx.db.with(|c| {
+        c.query_row("SELECT COUNT(*) FROM guard_catches WHERE guild_id = ?1 AND outcome IN ('timed_out', 'not_timed_out')", [guild as i64], |r| r.get(0))
     })
 }
 
@@ -793,17 +951,143 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
         };
         let timeout_until = (*outcome == Outcome::TimedOut).then_some(at + DAY_MS);
         let (by_id, by_name) = by.map_or((None, None), |(id, name)| (Some(id as i64), Some(name)));
+        // One ban with a reason from the dashboard, one made with Discord's own ban.
+        let (why, in_discord) = match hours {
+            48 => (Some("Spam bot, nothing else on the account"), false),
+            140 => (Some("Compromised. Told them to rejoin once it's secured"), true),
+            _ => (None, false),
+        };
         ctx.db.with(|c| {
             c.execute(
-                "INSERT INTO guard_catches (guild_id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome, acted_by, acted_by_name, acted_at, alert_channel, alert_message)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                "INSERT INTO guard_catches (guild_id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome, acted_by, acted_by_name, acted_at, alert_channel, alert_message, acted_reason, acted_in_discord)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
                 params![
                     guild as i64, at, user as i64, name, honeypot_catch, score, reason, bot_core::serde_json::to_string(&signals).unwrap_or_default(),
                     msg, (if *honeypot_catch { honeypot } else { general }) as i64, 1 + (hours % 4), timeout_until, outcome.key(),
-                    by_id, by_name, by.map(|_| at + 600_000), log.map(|c| c as i64), log.map(|_| 1i64)
+                    by_id, by_name, by.map(|_| at + 600_000), log.map(|c| c as i64), log.map(|_| 1i64), why, in_discord
                 ],
             )
         })?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bot_core::{Config, Db};
+
+    const G: u64 = 42;
+    const U: u64 = 1_250_000_000_000_000_001;
+    const MOD: u64 = 1_250_000_000_000_000_009;
+
+    fn ctx() -> Ctx {
+        let ctx = Ctx::new(Config::preview(0), Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(Guard::default())]).unwrap();
+        ctx.set_enabled(G, KEY, true).unwrap();
+        ctx
+    }
+
+    /// An open catch of `U`, as `act` stores it, without an alert message.
+    fn open_catch(ctx: &Ctx) -> i64 {
+        ctx.db
+            .with(|c| {
+                c.execute(
+                    "INSERT INTO guard_catches (guild_id, at, user_id, user_name, reason, channel_id, outcome) VALUES (?1, ?2, ?3, 'kaiden', 'x', 7, 'timed_out')",
+                    params![G as i64, now_ms() - 60_000, U as i64],
+                )?;
+                Ok(c.last_insert_rowid())
+            })
+            .unwrap()
+    }
+
+    fn entry(json: &str) -> AuditLogEntry {
+        bot_core::serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn audit_entries_that_decide_a_catch() {
+        let ban = entry(r#"{"action_type":22,"changes":[],"guild_id":"42","id":"5","target_id":"77","user_id":"9","reason":"spam"}"#);
+        assert_eq!(native_decision(&ban), Some((77, Outcome::Banned)));
+        let lift = entry(r#"{"action_type":24,"changes":[{"key":"communication_disabled_until","old_value":"2026-10-31T00:00:00+00:00"}],"id":"5","target_id":"77","user_id":"9"}"#);
+        assert_eq!(native_decision(&lift), Some((77, Outcome::Released)));
+        let timeout = entry(r#"{"action_type":24,"changes":[{"key":"communication_disabled_until","new_value":"2026-10-31T00:00:00+00:00"}],"id":"5","target_id":"77","user_id":"9"}"#);
+        assert_eq!(native_decision(&timeout), None);
+        let nick = entry(r#"{"action_type":24,"changes":[{"key":"nick","new_value":"x"}],"id":"5","target_id":"77","user_id":"9"}"#);
+        assert_eq!(native_decision(&nick), None);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_ban_in_discord_then_its_audit_entry() {
+        let ctx = ctx();
+        let id = open_catch(&ctx);
+        close_open(&ctx, G, U, Outcome::Banned, None).await.unwrap();
+        let c = catch(&ctx, G, id).unwrap().unwrap();
+        assert_eq!((c.outcome, c.acted_by, c.acted_in_discord), (Outcome::Banned, None, true));
+        // The audit entry names the moderator and their reason.
+        close_open(&ctx, G, U, Outcome::Banned, Some((MOD, Some("selling accounts")))).await.unwrap();
+        let c = catch(&ctx, G, id).unwrap().unwrap();
+        assert_eq!((c.acted_by, c.acted_reason.as_deref()), (Some(MOD), Some("selling accounts")));
+        assert!(outcome_line(&c).starts_with("Banned in Discord by "));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn the_audit_entry_can_come_first() {
+        let ctx = ctx();
+        let id = open_catch(&ctx);
+        close_open(&ctx, G, U, Outcome::Released, Some((MOD, None))).await.unwrap();
+        // The member update that follows changes nothing.
+        close_open(&ctx, G, U, Outcome::Released, None).await.unwrap();
+        let c = catch(&ctx, G, id).unwrap().unwrap();
+        assert_eq!((c.outcome, c.acted_by, c.acted_reason), (Outcome::Released, Some(MOD), None));
+        assert_eq!(c.acted_by_name.as_deref(), Some(ctx.display_name(G, MOD).as_str()));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_decided_catch_isnt_decided_again() {
+        let ctx = ctx();
+        let id = open_catch(&ctx);
+        close_open(&ctx, G, U, Outcome::Banned, Some((MOD, None))).await.unwrap();
+        // A later audit entry for another action, and a release from the dashboard, leave it be.
+        close_open(&ctx, G, U, Outcome::Released, Some((7, Some("oops")))).await.unwrap();
+        let err = resolve(&ctx, G, id, Outcome::Released, 7, "Oskar", Some("mistake"), false).await.unwrap_err();
+        assert!(err.starts_with("Already banned by "), "{err}");
+        let c = catch(&ctx, G, id).unwrap().unwrap();
+        assert_eq!((c.outcome, c.acted_by, c.acted_reason), (Outcome::Banned, Some(MOD), None));
+        // An older catch from before the 28 days isn't touched.
+        ctx.db.with(|c| c.execute("UPDATE guard_catches SET outcome = 'timed_out', at = ?1", [now_ms() - 30 * DAY_MS])).unwrap();
+        close_open(&ctx, G, U, Outcome::Banned, None).await.unwrap();
+        assert!(catch(&ctx, G, id).unwrap().unwrap().outcome.open());
+    }
+
+    #[test]
+    fn the_alert_says_who_and_why() {
+        let mut c = Catch {
+            id: 1,
+            at: 0,
+            user_id: U,
+            user_name: "kaiden".into(),
+            honeypot: false,
+            score: 9,
+            reason: String::new(),
+            signals: Vec::new(),
+            content: String::new(),
+            channel_id: 7,
+            deleted: 2,
+            timeout_until: None,
+            outcome: Outcome::Released,
+            acted_by: Some(MOD),
+            acted_by_name: Some("Mira".into()),
+            acted_at: Some(1),
+            acted_reason: Some("their brother's account".into()),
+            acted_in_discord: false,
+            alert: None,
+        };
+        assert_eq!(outcome_line(&c), "Released by Mira, marked as a mistake.\nReason: their brother's account");
+        c.outcome = Outcome::Banned;
+        c.acted_in_discord = true;
+        c.acted_by = None;
+        c.acted_reason = None;
+        assert_eq!(outcome_line(&c), "Banned in Discord.");
+    }
 }

@@ -2,6 +2,7 @@
 
 use bot_core::Ctx;
 use bot_core::anyhow::Result;
+use bot_core::twilight_model::id::Id;
 use bot_core::rusqlite::{ToSql, params, params_from_iter};
 use bot_core::twilight_model::guild::audit_log::{AuditLogChange, AuditLogEntry, AuditLogEventType};
 
@@ -68,7 +69,63 @@ impl Group {
 #[derive(Debug, Clone)]
 pub struct Filter {
     pub group: Group,
-    pub search: Option<String>,
+    pub search: Option<Search>,
+}
+
+/// A search, and what it matches outside the stored rows: names and channels as the page shows
+/// them now, from the cache.
+#[derive(Debug, Clone, Default)]
+pub struct Search {
+    /// As typed, trimmed. SQLite's `lower()` only folds ASCII, so the stored text and this are
+    /// both lowered there, the same way.
+    pub text: String,
+    /// Members whose name now contains the text.
+    pub users: Vec<u64>,
+    /// Channels whose name contains it.
+    pub channels: Vec<u64>,
+    /// Moderators whose name contains it.
+    pub moderators: Vec<u64>,
+    /// Kinds of event whose label contains it ("banned", "joined").
+    pub kinds: Vec<Kind>,
+}
+
+impl Search {
+    pub fn new(ctx: &Ctx, guild: u64, q: &str) -> Search {
+        let text = q.trim().to_owned();
+        let lower = text.to_lowercase();
+        let has = |name: &str| name.to_lowercase().contains(&lower);
+        let g = Id::new(guild);
+        let users = ctx
+            .cache
+            .guild_members(g)
+            .map(|set| set.iter().map(|u| u.get()).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|u| has(&ctx.display_name(guild, *u)))
+            .take(500)
+            .collect();
+        let bare = lower.trim_start_matches('#');
+        let channels = ctx
+            .cache
+            .guild_channels(g)
+            .map(|set| set.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| !bare.is_empty() && ctx.cache.channel(*c).and_then(|c| c.name.clone()).is_some_and(|n| n.to_lowercase().contains(bare)))
+            .map(|c| c.get())
+            .collect();
+        let moderators = moderator_ids(ctx, guild).unwrap_or_default().into_iter().filter(|m| has(&ctx.display_name(guild, *m))).collect();
+        let kinds = Kind::ALL.into_iter().filter(|k| has(k.label())).collect();
+        Search { text, users, channels, moderators, kinds }
+    }
+}
+
+/// Everyone who took a moderator action in the last two weeks.
+fn moderator_ids(ctx: &Ctx, guild: u64) -> Result<Vec<u64>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare_cached("SELECT DISTINCT moderator_id FROM audit_mod_actions WHERE guild_id = ?1")?;
+        st.query_map([guild as i64], |r| Ok(r.get::<_, i64>(0)? as u64))?.collect()
+    })
 }
 
 pub fn record(ctx: &Ctx, guild: u64, kind: Kind, user: Option<u64>, user_name: &str, channel: Option<u64>, summary: &str) -> Result<()> {
@@ -97,15 +154,15 @@ pub struct ModAction {
     pub moderator: u64,
     pub action: String,
     pub target: Option<u64>,
+    /// For a deleted message, the channel it was in.
+    pub channel: Option<u64>,
+    pub reason: Option<String>,
 }
 
-/// Remember who did what, for the actions moderators take by hand. The bot's own actions
-/// (scam protection's timeouts and bans) are left out.
+/// Remember who did what. The bot's own actions (scam protection, reward roles) are kept too, so
+/// they aren't put down to a moderator who acted on the same member a moment before.
 pub fn record_moderator(ctx: &Ctx, e: &AuditLogEntry) -> Result<()> {
     let (Some(guild), Some(moderator)) = (e.guild_id, e.user_id) else { return Ok(()) };
-    if ctx.bot_id() == Some(moderator.get()) {
-        return Ok(());
-    }
     let action = match e.action_type {
         AuditLogEventType::MemberBanAdd => "ban",
         AuditLogEventType::MemberBanRemove => "unban",
@@ -124,10 +181,12 @@ pub fn record_moderator(ctx: &Ctx, e: &AuditLogEntry) -> Result<()> {
         }
         _ => return Ok(()),
     };
+    let channel = e.options.as_ref().and_then(|o| o.channel_id).map(|c| c.get() as i64);
+    let reason = e.reason.as_deref().map(str::trim).filter(|r| !r.is_empty()).map(|r| bot_core::text::clip(r, 300));
     ctx.db.with(|c| {
         c.execute(
-            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![guild.get() as i64, bot_core::now_ms(), moderator.get() as i64, action, e.target_id.map(|t| t.get() as i64)],
+            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, channel_id, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![guild.get() as i64, bot_core::now_ms(), moderator.get() as i64, action, e.target_id.map(|t| t.get() as i64), channel, reason],
         )
     })?;
     Ok(())
@@ -137,18 +196,42 @@ pub fn record_moderator(ctx: &Ctx, e: &AuditLogEntry) -> Result<()> {
 pub fn mod_actions(ctx: &Ctx, guild: u64, since: i64) -> Result<Vec<ModAction>> {
     ctx.db.with(|c| {
         let mut st = c.prepare_cached(
-            "SELECT at, moderator_id, action, target_id FROM audit_mod_actions WHERE guild_id = ?1 AND at >= ?2 ORDER BY at DESC LIMIT 2000",
+            "SELECT at, moderator_id, action, target_id, channel_id, reason FROM audit_mod_actions WHERE guild_id = ?1 AND at >= ?2 ORDER BY at DESC LIMIT 2000",
         )?;
         st.query_map(params![guild as i64, since], |r| {
-            Ok(ModAction { at: r.get(0)?, moderator: r.get::<_, i64>(1)? as u64, action: r.get(2)?, target: r.get::<_, Option<i64>>(3)?.map(|t| t as u64) })
+            Ok(ModAction {
+                at: r.get(0)?,
+                moderator: r.get::<_, i64>(1)? as u64,
+                action: r.get(2)?,
+                target: r.get::<_, Option<i64>>(3)?.map(|t| t as u64),
+                channel: r.get::<_, Option<i64>>(4)?.map(|c| c as u64),
+                reason: r.get(5)?,
+            })
         })?
         .collect()
     })
 }
 
-/// The moderator behind a logged event: the same kind of action on the same member within a
-/// minute of it.
-pub fn moderator_for(actions: &[ModAction], kind: Kind, target: Option<u64>, at: i64) -> Option<u64> {
+/// Moderators by how many actions they took since `since`, most first, leaving out `skip` (the bot).
+pub fn moderator_counts(ctx: &Ctx, guild: u64, since: i64, skip: Option<u64>) -> Result<Vec<(u64, i64)>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare_cached(
+            "SELECT moderator_id, COUNT(*) AS n FROM audit_mod_actions WHERE guild_id = ?1 AND at >= ?2 AND moderator_id != ?3
+             GROUP BY moderator_id ORDER BY n DESC, MAX(at) DESC LIMIT 12",
+        )?;
+        st.query_map(params![guild as i64, since, skip.map_or(-1, |s| s as i64)], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
+    })
+}
+
+/// How far apart an event and its audit entry may be. Discord sends the entry a moment before or
+/// after the event; a minute leaves room for a slow gateway.
+pub const MATCH_MS: i64 = 60_000;
+
+/// The moderator action behind a logged event: the same kind of action on the same member (and,
+/// for a deleted message, in the same channel) closest in time to it, within a minute either way.
+/// Closest, not newest, so two moderators acting on one member in the same minute each get their
+/// own event.
+pub fn moderator_for(actions: &[ModAction], kind: Kind, target: Option<u64>, channel: Option<u64>, at: i64) -> Option<&ModAction> {
     let want = match kind {
         Kind::Ban => "ban",
         Kind::Unban => "unban",
@@ -160,23 +243,64 @@ pub fn moderator_for(actions: &[ModAction], kind: Kind, target: Option<u64>, at:
         _ => return None,
     };
     let target = target?;
-    actions.iter().find(|a| a.action == want && a.target == Some(target) && (a.at - at).abs() < 60_000).map(|a| a.moderator)
+    // Discord says which channel a deleted message was in; a delete elsewhere is someone else's.
+    let same_channel = |a: &ModAction| kind != Kind::MessageDelete || a.channel.is_none() || channel.is_none() || a.channel == channel;
+    actions
+        .iter()
+        .filter(|a| a.action == want && a.target == Some(target) && (a.at - at).abs() < MATCH_MS && same_channel(a))
+        .min_by_key(|a| (a.at - at).abs())
 }
 
-fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
-    let mut sql = "guild_id = ?1".to_owned();
+/// `'a', 'b'`: the keys are fixed words from `Kind::key`, so they can go in as text.
+fn kind_list(kinds: &[Kind]) -> String {
+    kinds.iter().map(|k| format!("'{}'", k.key())).collect::<Vec<_>>().join(", ")
+}
+
+/// `1, 2, 3`, or `NULL` for none (so `IN (NULL)` matches nothing).
+fn id_list(ids: &[u64]) -> String {
+    if ids.is_empty() { "NULL".into() } else { ids.iter().map(|i| (*i as i64).to_string()).collect::<Vec<_>>().join(", ") }
+}
+
+/// What a search matches, in the words the page shows: the member's name then or now, their id,
+/// the channel, the event's label, the deleted text, an edit's or nickname's before and after,
+/// the roles' names, and the moderator behind it and their reason.
+const SEARCH_SQL: &str = "
+    instr(lower(e.user_name), ?Q) > 0 OR e.user_id = ?N OR e.user_id IN ({users}) OR e.channel_id IN ({channels}) OR e.kind IN ({kinds})
+    OR (e.kind IN ('message_edit', 'nickname') AND json_valid(e.summary)
+        AND (instr(lower(COALESCE(json_extract(e.summary, '$.before'), '')), ?Q) > 0
+             OR instr(lower(COALESCE(json_extract(e.summary, '$.after'), '')), ?Q) > 0))
+    OR (e.kind = 'roles' AND json_valid(e.summary) AND (
+        EXISTS (SELECT 1 FROM json_each(e.summary, '$.added') j WHERE j.type = 'object' AND instr(lower(json_extract(j.value, '$.name')), ?Q) > 0)
+        OR EXISTS (SELECT 1 FROM json_each(e.summary, '$.removed') j WHERE j.type = 'object' AND instr(lower(json_extract(j.value, '$.name')), ?Q) > 0)))
+    -- Plain summaries, including edits, nicknames and role changes stored as text by older versions.
+    OR ((e.kind NOT IN ('message_edit', 'nickname', 'roles') OR NOT json_valid(e.summary)) AND instr(lower(e.summary), ?Q) > 0)
+    -- A range on `at`, not abs(), so the lookup is an index range rather than a scan per event.
+    OR EXISTS (SELECT 1 FROM audit_mod_actions a
+               WHERE a.guild_id = e.guild_id AND a.target_id = e.user_id AND a.at BETWEEN e.at - 59999 AND e.at + 59999
+                 AND a.action = CASE e.kind WHEN 'ban' THEN 'ban' WHEN 'unban' THEN 'unban' WHEN 'timeout' THEN 'timeout'
+                     WHEN 'timeout_end' THEN 'untimeout' WHEN 'message_delete' THEN 'delete' WHEN 'roles' THEN 'roles'
+                     WHEN 'leave' THEN 'kick' END
+                 AND (a.moderator_id IN ({moderators}) OR a.moderator_id = ?N OR instr(lower(COALESCE(a.reason, '')), ?Q) > 0))";
+
+pub(crate) fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
+    let mut sql = "e.guild_id = ?1".to_owned();
     let mut args: Vec<Box<dyn ToSql>> = vec![Box::new(guild as i64)];
     let kinds = f.group.kinds();
     if !kinds.is_empty() {
-        // The keys are fixed words from `Kind::key`, so they can go in as text.
-        let list = kinds.iter().map(|k| format!("'{}'", k.key())).collect::<Vec<_>>().join(", ");
-        sql.push_str(&format!(" AND kind IN ({list})"));
+        sql.push_str(&format!(" AND e.kind IN ({})", kind_list(kinds)));
     }
-    if let Some(q) = f.search.as_deref().filter(|q| !q.is_empty()) {
-        args.push(Box::new(q.to_owned()));
-        let name = args.len();
-        args.push(Box::new(q.parse::<i64>().unwrap_or(-1)));
-        sql.push_str(&format!(" AND (instr(lower(user_name), lower(?{name})) > 0 OR user_id = ?{})", args.len()));
+    if let Some(q) = f.search.as_ref().filter(|q| !q.text.is_empty()) {
+        args.push(Box::new(q.text.clone()));
+        args.push(Box::new(q.text.parse::<i64>().unwrap_or(-1)));
+        let kinds = if q.kinds.is_empty() { "NULL".to_owned() } else { kind_list(&q.kinds) };
+        let clause = SEARCH_SQL
+            .replace("?Q", "lower(?2)")
+            .replace("?N", "?3")
+            .replace("{users}", &id_list(&q.users))
+            .replace("{channels}", &id_list(&q.channels))
+            .replace("{moderators}", &id_list(&q.moderators))
+            .replace("{kinds}", &kinds);
+        sql.push_str(&format!(" AND ({clause})"));
     }
     (sql, args)
 }
@@ -185,9 +309,9 @@ fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
 pub fn recent(ctx: &Ctx, guild: u64, f: &Filter, limit: i64) -> Result<(Vec<Row>, i64)> {
     let (clause, args) = where_clause(guild, f);
     ctx.db.with(|c| {
-        let total: i64 = c.query_row(&format!("SELECT COUNT(*) FROM audit_events WHERE {clause}"), params_from_iter(args.iter().map(|a| a.as_ref())), |r| r.get(0))?;
+        let total: i64 = c.query_row(&format!("SELECT COUNT(*) FROM audit_events e WHERE {clause}"), params_from_iter(args.iter().map(|a| a.as_ref())), |r| r.get(0))?;
         let mut stmt = c.prepare(&format!(
-            "SELECT at, kind, user_id, user_name, channel_id, summary FROM audit_events WHERE {clause} ORDER BY at DESC, id DESC LIMIT {limit}"
+            "SELECT e.at, e.kind, e.user_id, e.user_name, e.channel_id, e.summary FROM audit_events e WHERE {clause} ORDER BY e.at DESC, e.id DESC LIMIT {limit}"
         ))?;
         let rows = stmt
             .query_map(params_from_iter(args.iter().map(|a| a.as_ref())), |r| {
@@ -287,15 +411,16 @@ pub fn seed_preview(ctx: &Ctx, guild: u64) -> Result<()> {
             params![guild as i64, now - ago * min, kind.key(), user, name, channel.map(|c| c as i64), summary],
         )?;
     }
-    // Who did the moderation, as Discord's audit log would report it: (minutes ago, moderator, action, member).
-    let mods: [(i64, usize, &str, usize); 9] = [
-        (95, 1, "timeout", 6), (96, 1, "delete", 6), (420, 1, "roles", 0), (600, 0, "ban", 7), (1500, 1, "untimeout", 6),
-        (1700, 0, "unban", 7), (2100, 1, "delete", 2), (5900, 3, "roles", 5), (7000, 0, "delete", 3),
+    // Who did the moderation, as Discord's audit log would report it: (minutes ago, moderator, action, member, reason).
+    let mods: [(i64, usize, &str, usize, Option<&str>); 9] = [
+        (95, 1, "timeout", 6, Some("Arguing after a warning")), (96, 1, "delete", 6, None), (420, 1, "roles", 0, None),
+        (600, 0, "ban", 7, Some("Selling accounts in DMs")), (1500, 1, "untimeout", 6, None), (1700, 0, "unban", 7, Some("Appealed")),
+        (2100, 1, "delete", 2, None), (5900, 3, "roles", 5, None), (7000, 0, "delete", 3, None),
     ];
-    for (ago, moderator, action, target) in mods {
+    for (ago, moderator, action, target, reason) in mods {
         tx.execute(
-            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![guild as i64, now - ago * min, m(moderator).0 as i64, action, m(target).0 as i64],
+            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![guild as i64, now - ago * min, m(moderator).0 as i64, action, m(target).0 as i64, reason],
         )?;
     }
     tx.commit()?;

@@ -93,7 +93,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
     let history = store::history(&ctx, now, 8)?;
     let hosts = store::hosts(&ctx)?;
     let approvers = crate::approvers(&ctx);
-    let cloud = ctx.cfg.relay_public_url.is_some();
+    let cloud = crate::api::cloud(&ctx);
 
     let body = html! {
         style { (PreEscaped(CSS)) }
@@ -113,7 +113,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                     } @else {
                         div.cn-reqs {
                             @for (i, r) in pending.iter().enumerate() {
-                                (request_card(&ctx, &page, guild, r, now, i == 0))
+                                (request_card(&ctx, &page, guild, r, now, i == 0, stuck(r, cloud, !hosts.is_empty())))
                             }
                         }
                     }
@@ -194,8 +194,19 @@ fn cloud_pill(on: bool) -> Markup {
     }
 }
 
+/// Why an allowed request still couldn't connect, as things stand.
+fn stuck(r: &Request, cloud: bool, has_pc: bool) -> Option<&'static str> {
+    if domain::pairs_with_cloud(&r.kind) && !cloud {
+        Some("It can't connect while the cloud copy is off, even if you allow it.")
+    } else if r.kind == "relay" && !has_pc {
+        Some("No PC is connected to open its pairing window, so allowing it won't be enough.")
+    } else {
+        None
+    }
+}
+
 /// One request waiting for an answer. The first one in the list is outlined: it's the next to answer.
-fn request_card(ctx: &Ctx, page: &Page, guild: u64, r: &Request, now: i64, first: bool) -> Markup {
+fn request_card(ctx: &Ctx, page: &Page, guild: u64, r: &Request, now: i64, first: bool, stuck: Option<&str>) -> Markup {
     let dmed: Vec<String> = if r.notified {
         store::dms(ctx, &r.id).unwrap_or_default().into_iter().map(|(user, _, _)| name_in(ctx, guild, user)).collect()
     } else {
@@ -210,6 +221,9 @@ fn request_card(ctx: &Ctx, page: &Page, guild: u64, r: &Request, now: i64, first
                     "Asked " (text::ago(r.created_at)) " · " (minutes_left(r.expires_at, now))
                     " · "
                     @if !r.notified { "nobody could be DMed" } @else if dmed.is_empty() { "approvers were DMed" } @else { "DMed to " (names_line(&dmed)) }
+                }
+                @if let Some(why) = stuck {
+                    div.cn-stuck { (why) }
                 }
             }
             div.cn-code {
@@ -346,7 +360,13 @@ async fn add_approver(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 
 async fn remove_approver(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, u64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    if id == ctx.cfg.owner_id {
+        return Err(WebError::Bad("The bot's owner can't be removed.".into()));
+    }
     let mut list = crate::approvers(&ctx);
+    if !list.contains(&id) {
+        return Err(WebError::NotFound);
+    }
     list.retain(|u| *u != id);
     if list.is_empty() {
         return Err(WebError::Bad("Keep at least one approver, or nobody can let an app in.".into()));
@@ -389,6 +409,7 @@ const CSS: &str = "
 .cn-title { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .cn-title strong { font-weight: 500; font-size: 14px; overflow-wrap: anywhere; }
 .cn-meta { font-size: 12px; color: var(--ink-3); }
+.cn-stuck { font-size: 12px; color: var(--waiting); }
 .cn-code { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .cn-code .lbl { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
 .cn-code b { font-size: 22px; font-weight: 500; letter-spacing: 0.14em; line-height: 1; }
