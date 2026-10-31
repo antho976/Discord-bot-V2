@@ -83,32 +83,48 @@ pub fn svg(names: &[&str], server: &str, number: Option<i64>, avatar: Option<&st
         None => {
             let initial = escape(&name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default());
             format!(
-                r##"<circle cx="176" cy="160" r="88" fill="#1c1c1c"/>
-  <text x="176" y="188" text-anchor="middle" font-family="Geist" font-weight="600" font-size="80" fill="#ededed">{initial}</text>"##
+                r##"<circle cx="176" cy="160" r="88" fill="#1b1a26"/>
+  <text x="176" y="188" text-anchor="middle" font-family="Geist" font-weight="600" font-size="80" fill="#f3f2f8">{initial}</text>"##
             )
         }
     };
+    // The member number sits in a pill sized to its text (Geist Mono runs 0.6 em a character).
     let member = number
         .map(|n| {
+            let label = format!("Member #{}", bot_core::text::num(n));
+            let w = label.chars().count() as f64 * 0.6 * 24.0 + 36.0;
             format!(
-                r##"<text x="{TEXT_X}" y="244" font-family="Geist Mono" font-weight="500" font-size="28" fill="#f0806a">Member #{}</text>"##,
-                bot_core::text::num(n)
+                r##"<rect x="{TEXT_X}" y="212" width="{w:.0}" height="46" rx="23" fill="#3ddcb0" fill-opacity="0.13"/>
+  <rect x="{x:.1}" y="212.5" width="{w2:.0}" height="45" rx="22.5" fill="none" stroke="#3ddcb0" stroke-opacity="0.35"/>
+  <text x="{tx:.0}" y="243" font-family="Geist Mono" font-weight="500" font-size="24" fill="#62f0c6">{label}</text>"##,
+                x = TEXT_X + 0.5,
+                w2 = w - 1.0,
+                tx = TEXT_X + 18.0,
             )
         })
         .unwrap_or_default();
 
+    // A dark ground lit by the members' teal behind the face, lilac from the top right and a
+    // little coral low down; a gradient ring round the avatar.
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">
-  <rect width="{W}" height="{H}" fill="#0f0f0f"/>
-  <rect x="0.5" y="0.5" width="{}" height="{}" fill="none" stroke="#262626"/>
+  <defs>
+    <radialGradient id="g1" cx="176" cy="160" r="430" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#3ddcb0" stop-opacity="0.34"/><stop offset="1" stop-color="#3ddcb0" stop-opacity="0"/></radialGradient>
+    <radialGradient id="g2" cx="930" cy="-20" r="560" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#9d7bff" stop-opacity="0.5"/><stop offset="1" stop-color="#9d7bff" stop-opacity="0"/></radialGradient>
+    <radialGradient id="g3" cx="640" cy="380" r="360" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ff8266" stop-opacity="0.16"/><stop offset="1" stop-color="#ff8266" stop-opacity="0"/></radialGradient>
+    <linearGradient id="ring" x1="88" y1="72" x2="264" y2="248" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#62f0c6"/><stop offset="1" stop-color="#b99cff"/></linearGradient>
+  </defs>
+  <rect width="{W}" height="{H}" fill="#0c0c14"/>
+  <rect width="{W}" height="{H}" fill="url(#g1)"/>
+  <rect width="{W}" height="{H}" fill="url(#g2)"/>
+  <rect width="{W}" height="{H}" fill="url(#g3)"/>
+  <circle cx="176" cy="160" r="108" fill="none" stroke="url(#ring)" stroke-opacity="0.22" stroke-width="2"/>
   {portrait}
-  <circle cx="176" cy="160" r="89.5" fill="none" stroke="#2a2a2a" stroke-width="3"/>
-  <text x="{TEXT_X}" y="112" font-family="Geist" font-weight="400" font-size="24" fill="#8c8c8c">{server}</text>
-  <text x="{TEXT_X}" y="184" font-family="Geist" font-weight="600" font-size="{size:.1}" fill="#ededed">{title}</text>
+  <circle cx="176" cy="160" r="91" fill="none" stroke="url(#ring)" stroke-width="6"/>
+  <text x="{TEXT_X}" y="112" font-family="Geist" font-weight="500" font-size="24" fill="#c9c4dc">{server}</text>
+  <text x="{TEXT_X}" y="184" font-family="Geist" font-weight="600" font-size="{size:.1}" fill="#f6f4fb">{title}</text>
   {member}
-</svg>"##,
-        W - 1,
-        H - 1
+</svg>"##
     )
 }
 
@@ -125,6 +141,8 @@ pub async fn fetch_avatar(ctx: &Ctx, url: &str) -> Option<Vec<u8>> {
 /// Draw the card and return PNG bytes. The avatar is fetched here; a missing one is not an error.
 pub async fn render(ctx: &Ctx, names: &[&str], server: &str, number: Option<i64>, avatar_url: &str) -> bot_core::anyhow::Result<Vec<u8>> {
     let big = avatar_url.replace("size=128", "size=256");
+    // A local picture (the preview's sample faces) is fetched from this same server.
+    let big = if big.starts_with('/') { format!("{}{big}", ctx.cfg.public_url.trim_end_matches('/')) } else { big };
     let avatar = fetch_avatar(ctx, &big).await.map(|b| bot_render::data_uri(&b));
     let svg = svg(names, server, number, avatar.as_deref());
     bot_core::tokio::task::spawn_blocking(move || bot_render::png(&svg)).await?
