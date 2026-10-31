@@ -25,7 +25,8 @@ pub const MEMBERS: &[(u64, &str)] = &[
     (2_000_000_000_000_000_010, "Pavel"),
 ];
 
-fn guild(id: u64, name: &str, members: u64) -> serde_json::Value {
+/// A sample server as the gateway's GuildCreate would carry it, with the 10 [`MEMBERS`] listed.
+pub(crate) fn guild_json(id: u64, name: &str, members: u64) -> serde_json::Value {
     let ch = |n: u64, name: &str, kind: u8, pos: i64| {
         json!({"id": (id + n * 10).to_string(), "type": kind, "name": name, "position": pos, "guild_id": id.to_string(), "permission_overwrites": []})
     };
@@ -60,7 +61,7 @@ fn guild(id: u64, name: &str, members: u64) -> serde_json::Value {
 /// little history so charts aren't empty.
 pub fn seed(ctx: &Ctx) -> Result<()> {
     for (id, name, members) in [(GUILD_A, "Antho's server", 1284u64), (GUILD_B, "Idleon guild", 212)] {
-        let g: GuildCreate = serde_json::from_value(guild(id, name, members))?;
+        let g: GuildCreate = serde_json::from_value(guild_json(id, name, members))?;
         ctx.cache.update(&Event::GuildCreate(Box::new(g)));
     }
     for f in ctx.features() {
@@ -185,7 +186,7 @@ pub fn main(features: Vec<std::sync::Arc<dyn crate::Feature>>) -> Result<()> {
 mod tests {
     #[test]
     fn sample_guild_parses() {
-        let v = super::guild(super::GUILD_A, "x", 1);
+        let v = super::guild_json(super::GUILD_A, "x", 1);
         let r: Result<twilight_model::guild::Guild, _> = serde_json::from_value(v);
         r.unwrap();
     }

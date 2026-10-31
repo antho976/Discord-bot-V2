@@ -15,6 +15,8 @@ use twilight_model::application::interaction::modal::{ModalInteractionComponent,
 use twilight_model::application::interaction::{Interaction, InteractionData, InteractionType};
 use twilight_model::channel::message::component::{ActionRow, Button, ButtonStyle, Component};
 use twilight_model::channel::message::{AllowedMentions, Embed, MessageFlags};
+use twilight_model::gateway::payload::incoming::GuildCreate;
+use twilight_model::gateway::payload::outgoing::RequestGuildMembers;
 use twilight_model::http::interaction::{InteractionResponse, InteractionResponseData, InteractionResponseType};
 use twilight_model::id::Id;
 use twilight_model::id::marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker};
@@ -49,6 +51,7 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
     let config = GatewayConfig::new(ctx.cfg.discord_token.clone(), intents());
     let mut shard = Shard::with_config(twilight_gateway::ShardId::ONE, config);
     let registered: Arc<Mutex<HashSet<u64>>> = Default::default();
+    let mut members = MemberRequests::default();
 
     loop {
         tokio::select! {
@@ -71,9 +74,15 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
                 match &event {
                     Event::Ready(ready) => {
                         ctx.set_bot_id(ready.user.id.get());
+                        members.session_started();
                         tracing::info!(user = %ready.user.name, guilds = ready.guilds.len(), "connected to Discord");
                     }
                     Event::GuildCreate(g) => {
+                        // The shard paces its commands (120 a minute, heartbeats kept aside),
+                        // so this queues behind anything else it has to send.
+                        if let Some(ask) = members.for_guild(g) {
+                            shard.command(&ask);
+                        }
                         let id = g.id().get();
                         if registered.lock().unwrap().insert(id) {
                             let ctx = ctx.clone();
@@ -92,6 +101,31 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
         }
     }
     Ok(())
+}
+
+/// Which servers' full member lists were asked for in this gateway session. A server over 50
+/// members comes with only the members Discord counts as online, so everyone else would be
+/// "Unknown member" with a default avatar until they did something. The rest are asked for
+/// once per server per session (an empty query with no limit, under the GUILD_MEMBERS intent)
+/// and the cache fills from the chunks Discord sends back.
+#[derive(Default)]
+struct MemberRequests(HashSet<u64>);
+
+impl MemberRequests {
+    /// A new session (Ready, not a resume) sends every server again: ask again.
+    fn session_started(&mut self) {
+        self.0.clear();
+    }
+
+    /// The request for a server that just arrived, once per session, and only when its
+    /// GuildCreate didn't already bring every member.
+    fn for_guild(&mut self, g: &GuildCreate) -> Option<RequestGuildMembers> {
+        let GuildCreate::Available(g) = g else { return None };
+        if g.member_count.is_some_and(|n| g.members.len() as u64 >= n) || !self.0.insert(g.id.get()) {
+            return None;
+        }
+        Some(RequestGuildMembers::builder(g.id).query("", None))
+    }
 }
 
 /// A message as the cache had it just before an edit or delete event.
@@ -957,6 +991,30 @@ mod tests {
         assert_eq!(refusal(Some(404), &"x"), "The channel was deleted. Pick another one.");
         assert_eq!(refusal(Some(500), &"Response error: status code 500"), "Discord refused the message: Response error: status code 500");
         assert_eq!(refusal(None, &"timed out"), "Discord refused the message: timed out");
+    }
+
+    fn guild(id: u64, members: u64) -> super::GuildCreate {
+        let mut v = crate::preview::guild_json(id, "x", members);
+        // The preview server lists 10 members; say how many it really has.
+        v["member_count"] = members.into();
+        super::GuildCreate::Available(serde_json::from_value(v).unwrap())
+    }
+
+    #[test]
+    fn member_lists_are_asked_for_once_per_session() {
+        let mut m = super::MemberRequests::default();
+        let ask = m.for_guild(&guild(1, 266)).expect("a large server is asked for its members");
+        assert_eq!((ask.d.guild_id.get(), ask.d.query.as_deref(), ask.d.limit, ask.d.presences), (1, Some(""), Some(0), None));
+        // A second GuildCreate in the same session (an outage ending) doesn't ask again.
+        assert!(m.for_guild(&guild(1, 266)).is_none());
+        // A server whose GuildCreate listed everyone has nothing more to ask for.
+        assert!(m.for_guild(&guild(2, 10)).is_none());
+        // A new session asks again.
+        m.session_started();
+        assert!(m.for_guild(&guild(1, 266)).is_some());
+        // A server that's down for Discord isn't asked.
+        let down: super::GuildCreate = serde_json::from_value(serde_json::json!({"id": "3", "unavailable": true})).unwrap();
+        assert!(m.for_guild(&down).is_none());
     }
 
     #[tokio::test]
