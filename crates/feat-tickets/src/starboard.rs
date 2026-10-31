@@ -286,6 +286,11 @@ fn is_not_found(e: &bot_core::twilight_http::Error) -> bool {
     matches!(e.kind(), ErrorType::Response { status, .. } if status.get() == 404)
 }
 
+/// A 4xx answer other than a rate limit: asking again gets the same answer.
+fn is_final(e: &bot_core::twilight_http::Error) -> bool {
+    matches!(e.kind(), ErrorType::Response { status, .. } if (400..500).contains(&status.get()) && status.get() != 429)
+}
+
 /// Whether the message's author reacted with the emoji. Looks through up to 500 reactors.
 async fn author_reacted(ctx: &Ctx, message: &Message, emoji: &Emoji) -> bool {
     let request = emoji.request();
@@ -391,7 +396,8 @@ pub async fn fill_missing_images(ctx: &Ctx, guild: u64, posts: &mut [Post]) {
                 Ok(m) => image_of(&m).unwrap_or_default(),
                 Err(_) => continue,
             },
-            Err(e) if is_not_found(&e) => String::new(),
+            // Gone, or the bot can't read the channel: that won't change by asking again.
+            Err(e) if is_final(&e) => String::new(),
             Err(_) => continue,
         };
         if ctx.db.with(|c| set_image(c, guild, p.message_id, &image)).is_ok() {
