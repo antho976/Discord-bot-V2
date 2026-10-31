@@ -99,6 +99,10 @@ const MIGRATIONS: &[Migration] = &[Migration {
         ALTER TABLE tickets ADD COLUMN last_message_at INTEGER;
         ALTER TABLE tickets ADD COLUMN first_reply_at INTEGER;
     ",
+}, Migration {
+    // The picture a starboard post carries, as Discord gave it. NULL: not looked up yet; '': none.
+    name: "003_starboard_images",
+    sql: "ALTER TABLE starboard_posts ADD COLUMN image TEXT;",
 }];
 
 #[derive(Default)]

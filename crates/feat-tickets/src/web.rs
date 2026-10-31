@@ -332,11 +332,13 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
     let now = now_ms();
     let view = q.view.as_deref().unwrap_or("most");
     let stats = ctx.db.with(|c| starboard::stats(c, guild, now))?;
-    let rows = match view {
+    let mut rows = match view {
         "newest" => ctx.db.with(|c| starboard::recent(c, guild, 25))?,
         "settings" => Vec::new(),
         _ => ctx.db.with(|c| starboard::top(c, guild, 25))?,
     };
+    starboard::fill_missing_images(&ctx, guild, &mut rows).await;
+    let images = starboard::shown_images(&ctx, &rows).await;
     let authors = ctx.db.with(|c| starboard::top_authors(c, guild, 3))?;
     let active = match view {
         "newest" => "Newest",
@@ -386,10 +388,17 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
                                         }
                                         span.sb-stars { (glyph) " " (p.stars) }
                                     }
-                                    @if p.preview.is_empty() {
-                                        p.sb-text.muted { "No text" }
-                                    } @else {
-                                        p.sb-text { (p.preview) }
+                                    @let image = p.image.as_ref().and_then(|i| images.get(i));
+                                    // "Attachment" is what a post without text stores; the picture says it better.
+                                    @if image.is_none() || (!p.preview.is_empty() && p.preview != "Attachment") {
+                                        @if p.preview.is_empty() {
+                                            p.sb-text.muted { "No text" }
+                                        } @else {
+                                            p.sb-text { (p.preview) }
+                                        }
+                                    }
+                                    @if let Some(src) = image {
+                                        img.sb-img src=(src) alt="" loading="lazy";
                                     }
                                     div.sb-links {
                                         a href={ (thread_url(guild, p.channel_id)) "/" (p.message_id) } target="_blank" rel="noopener" { "Original" }
@@ -482,6 +491,7 @@ const CSS: &str = "
 .sb-who span { font-size: 12px; color: var(--ink-3); }
 .sb-stars { flex: none; font-size: 13px; font-weight: 500; color: var(--waiting); }
 .sb-text { font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.sb-img { display: block; width: 100%; height: auto; max-height: 320px; object-fit: cover; border-radius: 8px; background: var(--well); }
 .sb-links { display: flex; gap: 12px; font-size: 12px; color: var(--ink-3); }
 .sb-links a:hover { color: var(--ink); }
 .sb-totals { display: flex; gap: 32px; }
