@@ -54,7 +54,7 @@ Never a raw grey in feature CSS: use the tokens.
 | Timeline (`.timeline`, `.change`, day headings in the viewer's timezone) | Activity, audit log |
 | `.need` rows with an outlined button | Overview "Needs you" |
 | Faces (`img.avatar`, `ui::avatars` overlapping) | Wherever a person appears. Always `ctx.member_avatar` |
-| `ui::area_chart` (lilac curve), `.meter` (lilac bar) | Data |
+| `ui::area_chart` (lilac curve, daily series ending today), `ui::column_bars` and `ui::mini_bars` (weekly bars, a blank where nothing was read), `.meter` (lilac bar) | Data |
 | Discord-style previews (message, embed with coral edge, APP tag) | Live post, welcome card, embeds |
 | `details.pop` + `.pop-body` | A header or row action that needs a small form |
 | `.seg` | A small segmented choice (None / View / Edit, 7 / 30 days) |
