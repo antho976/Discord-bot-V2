@@ -11,7 +11,7 @@ use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, User, WebResult, saved};
 use bot_core::{Ctx, Icon, text};
 
-use crate::{KEY, Settings, afk_clear, afk_list, restore_nick, tz_all, zones};
+use crate::{KEY, Settings, afk_clear, afk_list, name_of, restore_nick, tz_all, zones};
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
@@ -23,12 +23,12 @@ pub fn routes() -> Router<Ctx> {
 /// the members whose saved zone the bot no longer knows (a zone renamed in a tz update).
 type MemberTimes = (Vec<(u64, String, zones::Local)>, Vec<u64>);
 
-fn member_times(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<MemberTimes> {
-    let members: HashSet<u64> = ctx
-        .cache
-        .guild_members(Id::new(guild))
-        .map(|set| set.iter().map(|u| u.get()).collect())
-        .unwrap_or_default();
+/// Everyone in the server, from the gateway cache.
+fn members(ctx: &Ctx, guild: u64) -> HashSet<u64> {
+    ctx.cache.guild_members(Id::new(guild)).map(|set| set.iter().map(|u| u.get()).collect()).unwrap_or_default()
+}
+
+fn member_times(ctx: &Ctx, members: &HashSet<u64>) -> bot_core::anyhow::Result<MemberTimes> {
     let now = Timestamp::now();
     let (mut rows, mut unknown) = (Vec::new(), Vec::new());
     for (u, zone) in tz_all(ctx)?.into_iter().filter(|(u, _)| members.contains(u)) {
@@ -93,11 +93,13 @@ fn opt_switch(name: &str, label: &str, help: &str, on: bool) -> bot_core::maud::
 async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let away = afk_list(&ctx, guild)?;
-    let (times, unknown) = member_times(&ctx, guild)?;
-    let unknown: Vec<String> = unknown.into_iter().map(|u| ctx.display_name(guild, u)).collect();
+    let members = members(&ctx, guild);
+    // Someone who left while the bot was offline keeps a row until they're back; don't list them.
+    let away: Vec<_> = afk_list(&ctx, guild)?.into_iter().filter(|a| members.contains(&a.user_id)).collect();
+    let (times, unknown) = member_times(&ctx, &members)?;
+    let unknown: Vec<String> = unknown.into_iter().map(|u| name_of(&ctx, guild, u)).collect();
     const SHOWN: usize = 200;
-    let who = |u: u64| ctx.display_name(guild, u);
+    let who = |u: u64| name_of(&ctx, guild, u);
 
     let body = html! {
         style { (PreEscaped(CSS)) }
@@ -166,7 +168,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                     h2 { "Options" }
                     (ui::settings_form(&page, &page.path(KEY), html! {
                         div.au-opts {
-                            (opt_switch("afk_enabled", "AFK", "Off: /afk does nothing and mentions get no notice.", s.afk_enabled))
+                            (opt_switch("afk_enabled", "AFK", "Off: /afk does nothing, mentions get no notice, and anyone away now is back.", s.afk_enabled))
                             (opt_switch("nick_prefix", "Put [AFK] in their nickname", "Skipped for the owner and for members above the bot's role.", s.nick_prefix))
                             (opt_switch("welcome_back", "Say welcome back when they return", "A short message that deletes itself after a few seconds.", s.welcome_back))
                             (opt_switch("timezones_enabled", "Timezones", "Off: /timezone and /time do nothing. Saved zones are kept.", s.timezones_enabled))
@@ -181,6 +183,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
 
 async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let was_on = ctx.settings::<Settings>(guild, KEY)?.afk_enabled;
     let s = Settings {
         afk_enabled: form.bool("afk_enabled"),
         nick_prefix: form.bool("nick_prefix"),
@@ -188,6 +191,14 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         timezones_enabled: form.bool("timezones_enabled"),
     };
     ctx.save_settings(guild, KEY, &s)?;
+    // With AFK off nobody's next message ends it, so end everyone's now and put nicknames back.
+    if was_on && !s.afk_enabled {
+        for a in afk_list(&ctx, guild)? {
+            if let Some(was) = afk_clear(&ctx, guild, a.user_id)? {
+                restore_nick(&ctx, guild, a.user_id, &was).await;
+            }
+        }
+    }
     ctx.audit(&page.user, Some(guild), KEY, "Changed AFK and timezone settings");
     Ok(saved(&page.path(KEY)))
 }
@@ -196,7 +207,7 @@ async fn clear_afk(State(ctx): State<Ctx>, user: User, Path((guild, member)): Pa
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     if let Some(was) = afk_clear(&ctx, guild, member)? {
         restore_nick(&ctx, guild, member, &was).await;
-        ctx.audit(&page.user, Some(guild), KEY, format!("Cleared AFK for {}", ctx.display_name(guild, member)));
+        ctx.audit(&page.user, Some(guild), KEY, format!("Cleared AFK for {}", name_of(&ctx, guild, member)));
     }
     Ok(saved(&page.path(KEY)))
 }

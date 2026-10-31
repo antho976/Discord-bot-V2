@@ -122,6 +122,13 @@ fn notice_line(name: &str, a: &Afk) -> String {
     if a.reason.is_empty() { format!("{name} is AFK ({since})") } else { format!("{name} is AFK: {} ({since})", a.reason) }
 }
 
+/// Someone's name without the AFK prefix, which can still be in the cached nickname for a moment
+/// after it's taken off.
+pub(crate) fn name_of(ctx: &Ctx, guild: u64, user: u64) -> String {
+    let name = ctx.display_name(guild, user);
+    name.strip_prefix(NICK_PREFIX).map(str::to_owned).unwrap_or(name)
+}
+
 /// The nickname while away, kept inside Discord's 32 characters.
 fn afk_nick(display: &str) -> String {
     let room = 32 - NICK_PREFIX.chars().count();
@@ -183,7 +190,7 @@ impl Feature for Utility {
                     restore_nick(ctx, guild, author, &back).await;
                     if s.welcome_back {
                         let away = ((bot_core::now_ms() - back.since_ms) / 1000).max(0);
-                        let name = ctx.display_name(guild, author);
+                        let name = name_of(ctx, guild, author);
                         let line = format!("Welcome back, {name}. You were away for {}.", text::duration(away));
                         if let Ok(id) = ctx.say(channel, &line).await {
                             let ctx = ctx.clone();
@@ -208,7 +215,7 @@ impl Feature for Utility {
                     .iter()
                     .filter(|a| due.contains(&a.user_id))
                     .take(MAX_NOTICES)
-                    .map(|a| notice_line(&ctx.display_name(guild, a.user_id), a))
+                    .map(|a| notice_line(&name_of(ctx, guild, a.user_id), a))
                     .collect();
                 if lines.is_empty() {
                     return Ok(());
@@ -291,7 +298,7 @@ impl Feature for Utility {
                     return ctx.reply(&call.interaction, Reply::text("Timezones are turned off on this server.").ephemeral()).await;
                 }
                 let target = call.opts().user("member").map(|u| u.get()).unwrap_or(user);
-                let name = ctx.display_name(guild, target);
+                let name = name_of(ctx, guild, target);
                 let zone = tz_get(ctx, target)?;
                 let local = zone.as_deref().and_then(|z| zones::local(z, Timestamp::now()));
                 let reply = match (zone, local) {
