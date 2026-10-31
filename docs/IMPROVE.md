@@ -115,15 +115,23 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       undercounted.
 - [x] Found: dashes for an unknown confirmation rate on pets pages; overview polls without
       their live votes; editors had no "Open in Discord" on suggestions.
-- [ ] Giveaways: let editors change a running giveaway's prize, end time and number of
+- [x] Giveaways: let editors change a running giveaway's prize, end time and number of
       winners, and update the Discord message to match.
-- [ ] Suggestions: let staff edit their reply after deciding (it updates the Discord message).
-- [ ] Polls: polish the Ended tab to the hero card's standard; check ten answers and long
+- [x] Suggestions: let staff edit their reply after deciding (it updates the Discord message).
+- [x] Polls: polish the Ended tab to the hero card's standard; check ten answers and long
       answers at phone width.
-- [ ] Pets: check the public page and the Collection tab with 100+ pets and a member with many
+- [x] Pets: check the public page and the Collection tab with 100+ pets and a member with many
       copies, for speed and layout. Keep queries indexed.
-- [ ] Code review pass over both crates: unwraps on Discord data, silent errors, the race when
+- [x] Code review pass over both crates: unwraps on Discord data, silent errors, the race when
       a giveaway ends while someone enters, missing tests.
+- [x] Found: ended polls were listed by when they were posted, not when they ended.
+- [x] Found: re-saving a suggestion's status re-DMed the author and reset the decision date;
+      Discord had no way to edit a reply.
+- [x] Found: an entry could land after a giveaway's winners were drawn, and its message
+      update could revive the Enter button; a failed entry read left a giveaway ended with no
+      winners.
+- [x] Found: "Couldn't post" was shown for giveaways and suggestions that did post; tick read
+      errors were swallowed; a double click on /pet add submitted twice.
 
 ### Lead: sharp-hare
 - Review every pull request (correctness, scope, look) and leave comments; check CI.
