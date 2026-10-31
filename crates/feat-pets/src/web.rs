@@ -112,26 +112,6 @@ fn members_datalist(ctx: &Ctx, guild: u64) -> Markup {
 const DAY_MS: i64 = 86_400_000;
 
 const COLLECTION_CSS: &str = "
-.pets-hero { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 36px; align-items: center; }
-.pets-ring-wrap { display: flex; align-items: center; gap: 22px; }
-.pets-ring { position: relative; width: 88px; height: 88px; flex: none; }
-.pets-ring svg { width: 100%; height: 100%; transform: rotate(-90deg); display: block; }
-.pets-ring span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 17px; font-weight: 500; letter-spacing: -0.01em; }
-.pets-count { display: flex; flex-direction: column; gap: 3px; }
-.pets-count .muted { font-size: 13px; }
-.pets-count .small { color: var(--live); }
-.pets-cats { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.pets-cat { display: grid; grid-template-columns: minmax(96px, 150px) minmax(0, 1fr) 40px; align-items: center; gap: 16px; font-size: 13px; }
-.pets-cat .clip { min-width: 0; }
-.pets-cat .meter { height: 5px; }
-.pets-cat .mono { text-align: right; color: var(--ink-2); }
-.pets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; }
-.pets-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px 8px 12px; min-width: 0; border-radius: 12px; background: var(--veil); border: 1px solid var(--edge-1); text-align: center; }
-.pets-tile.missing { opacity: .4; }
-.pets-art { font-size: 30px; line-height: 1; height: 34px; display: grid; place-items: center; }
-.pets-art img { width: 34px; height: 34px; object-fit: contain; }
-.pets-name { font-size: 12.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pets-count-badge { position: absolute; top: 6px; right: 6px; padding: 0 6px; height: 18px; line-height: 18px; border-radius: 9px; background: var(--control); color: var(--ink-2); font: 500 11px var(--mono); }
 .pets-req { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 13px; }
 .pets-req strong { font-weight: 500; }
 .pets-req-acts { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
@@ -146,25 +126,7 @@ const COLLECTION_CSS: &str = "
 .pets-gv-state.ok { color: var(--live); }
 .pets-gv-state.bad { color: var(--held); }
 .pets-foot { font-size: 12px; }
-@media (max-width: 820px) {
-  .pets-hero { grid-template-columns: 1fr; gap: 24px; }
-}
 ";
-
-fn collection_tile(p: &Pet, count: i64) -> Markup {
-    html! {
-        div.pets-tile.missing[count == 0] title=(p.name) {
-            @if count > 0 { span.pets-count-badge { "×" (count) } }
-            span.pets-art aria-hidden="true" {
-                @match p.image_url() {
-                    Some(src) => img src=(src) alt="" loading="lazy";,
-                    None => (p.icon()),
-                }
-            }
-            span.pets-name { (p.name) }
-        }
-    }
-}
 
 /// `"in 2 h"` style for a giveaway's expiry, read as "2 h left".
 fn left_text(expires_at: Option<i64>) -> String {
@@ -189,17 +151,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
     let week = store::first_added_since(&ctx, guild, now_ms() - 7 * DAY_MS)?;
     let find = |id: &str| catalog.iter().find(|p| p.id == id).cloned().unwrap_or_else(|| missing_pet(id));
 
-    let total = catalog.len() as i64;
-    let collected = counts.len() as i64;
-    let pct = if total > 0 { collected * 100 / total } else { 0 };
-    // Categories in the order the catalog lists them, each with its pets.
-    let mut groups: Vec<(String, Vec<&Pet>)> = Vec::new();
-    for p in &catalog {
-        match groups.iter_mut().find(|(c, _)| *c == p.category) {
-            Some((_, list)) => list.push(p),
-            None => groups.push((p.category.clone(), vec![p])),
-        }
-    }
+    let groups = view::groups(&catalog);
     let actions = html! {
         a.btn.small href={ "/p/" (guild) "/pets" } target="_blank" rel="noopener" { "Public page" (ui::icon(Icon::External)) }
     };
@@ -209,39 +161,13 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
         (tabs(&page, "Collection", waiting))
         div.with-rail {
             div.stack.pets-main {
-                div.pets-hero {
-                    div.pets-ring-wrap {
-                        div.pets-ring {
-                            svg viewBox="0 0 36 36" aria-hidden="true" {
-                                circle cx="18" cy="18" r="15.915" pathLength="100" fill="none" style="stroke: var(--control)" stroke-width="3" {}
-                                circle cx="18" cy="18" r="15.915" pathLength="100" fill="none" style="stroke: var(--data)" stroke-width="3" stroke-linecap="round"
-                                    stroke-dasharray=(format!("{pct} 100")) {}
-                            }
-                            span { (pct) "%" }
-                        }
-                        div.pets-count {
-                            span.big-num { (collected) " of " (total) }
-                            span.muted { "companions collected" }
-                            @if week > 0 { span.small { "+" (week) " this week" } }
-                        }
-                    }
-                    div.pets-cats {
-                        @for (name, list) in &groups {
-                            @let got = list.iter().filter(|p| counts.contains_key(&p.id)).count();
-                            div.pets-cat {
-                                span.clip { (name) }
-                                span.meter { span style={ "width:" (if list.is_empty() { 0 } else { got * 100 / list.len() }) "%" } {} }
-                                span.mono { (got) "/" (list.len()) }
-                            }
-                        }
-                    }
-                }
+                (view::collection_hero(&groups, &counts, week))
 
                 @for (i, (name, list)) in groups.iter().enumerate() {
                     (ui::section(name, if i == 0 { Some("Faded ones aren't in the collection yet") } else { None }, html! {
                         div.pets-grid {
                             @for p in list {
-                                (collection_tile(p, counts.get(&p.id).copied().unwrap_or(0)))
+                                (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0)))
                             }
                         }
                     }))

@@ -1,7 +1,7 @@
 //! Public pages, no sign-in: the collection, giveaways and giveaway stats. Served only for
 //! servers where the feature is on.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bot_core::axum::Router;
 use bot_core::axum::extract::{Path, Query, State};
@@ -11,7 +11,7 @@ use bot_core::maud::{Markup, html};
 use bot_core::web::auth::MaybeUser;
 use bot_core::web::ui;
 use bot_core::web::{Level, WebError, WebResult};
-use bot_core::{Ctx, Icon, jiff, text};
+use bot_core::{Ctx, Icon, jiff, now_ms, text};
 use serde::Deserialize;
 
 use crate::store::{self, Giveaway, Pet, Status};
@@ -70,51 +70,37 @@ async fn collection(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path
     let total: i64 = counts.values().sum();
     let only_owned = q.owned.is_some();
     let legendary: i64 = catalog.iter().filter(|p| p.rarity == "legendary").map(|p| counts.get(&p.id).copied().unwrap_or(0)).sum();
-    let cats = store::categories(&ctx, guild)?;
+    let week = store::first_added_since(&ctx, guild, now_ms() - 7 * 86_400_000)?;
+    let groups = view::groups(&catalog);
+    let link = "color:var(--ink);text-decoration:underline;text-underline-offset:3px";
     let body = html! {
         (nav(guild, "Collection"))
-        (ui::readings(&[
-            ("pets in the collection", text::num(total)),
-            ("companions collected", format!("{} of {}", counts.len(), catalog.len())),
-            ("legendary", text::num(legendary)),
-        ]))
+        (view::collection_hero(&groups, &counts, week))
+        p.small.muted {
+            (text::num(total)) " " (if total == 1 { "pet" } else { "pets" }) " in the collection"
+            @if legendary > 0 { ", " (text::num(legendary)) " legendary" }
+            ". "
+            @if only_owned {
+                "Showing the pets the server has. " a href={ "/p/" (guild) "/pets" } style=(link) { "Show every companion" }
+            } @else {
+                "Faded pets aren't in the collection yet. " a href={ "/p/" (guild) "/pets?owned=1" } style=(link) { "Show only owned" }
+            }
+        }
         @if total == 0 {
             (ui::empty(Icon::Paw, "The collection is empty", "Members add pets with /pet add in Discord, and they show here once staff approve them."))
         }
-        p.small.muted {
-            @if only_owned {
-                "Showing pets the server owns. " a href={ "/p/" (guild) "/pets" } style="color:var(--ink);text-decoration:underline;text-underline-offset:3px" { "Show every companion" }
-            } @else {
-                "Faded pets aren't in the collection yet. " a href={ "/p/" (guild) "/pets?owned=1" } style="color:var(--ink);text-decoration:underline;text-underline-offset:3px" { "Show only owned" }
-            }
-        }
-        @for cat in &cats {
-            @let pets: Vec<&Pet> = catalog.iter().filter(|p| &p.category == cat && (!only_owned || counts.contains_key(&p.id))).collect();
-            @let all = catalog.iter().filter(|p| &p.category == cat).count();
-            @let have = catalog.iter().filter(|p| &p.category == cat && counts.contains_key(&p.id)).count();
+        @for (cat, list) in &groups {
+            @let pets: Vec<&&Pet> = list.iter().filter(|p| !only_owned || counts.contains_key(&p.id)).collect();
+            @let have = list.iter().filter(|p| counts.contains_key(&p.id)).count();
             @if !pets.is_empty() {
-                (ui::section(cat, Some(&format!("{have} of {all} collected")), html! {
-                    div.pgrid {
-                        @for p in &pets {
-                            @let n = counts.get(&p.id).copied().unwrap_or(0);
-                            div.pcard.missing[n == 0] {
-                                (view::pet_tile(p, true))
-                                div.t {
-                                    div.n {
-                                        span.clip { (p.name) }
-                                        @if n > 0 { b title={ (n) " in the collection" } { "×" (n) } } @else { i { "Not yet" } }
-                                    }
-                                    (view::rarity(&p.rarity))
-                                    @if !p.description.is_empty() { p { (p.description) } }
-                                    @if !p.bonus.is_empty() { p.bonus { (p.bonus) } }
-                                }
-                            }
-                        }
+                (ui::section(cat, Some(&format!("{have} of {} collected", list.len())), html! {
+                    div.pets-grid {
+                        @for p in &pets { (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0))) }
                     }
                 }))
             }
         }
-        (footer(&ctx, &viewer, guild, "pets/catalog"))
+        (footer(&ctx, &viewer, guild, "pets"))
     };
     page(&ctx, guild, "Pet collection", body)
 }
@@ -125,7 +111,7 @@ fn giveaway_row(ctx: &Ctx, guild: u64, g: &Giveaway) -> Markup {
             (view::tile(g.icon(), None, false))
             div.t {
                 span { b { (g.pet_name) } " " (view::rarity(&g.pet_rarity)) }
-                span.who { (ctx.display_name(guild, g.giver_id)) " to " (ctx.display_name(guild, g.winner_id)) }
+                (view::pair(ctx, guild, g.giver_id, g.winner_id))
             }
             div.gv-side {
                 @if g.status == Status::Pending {
@@ -146,13 +132,13 @@ async fn giveaways(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<
     let active = store::active_giveaways(&ctx, guild)?;
     let past = store::past_giveaways(&ctx, guild, 30)?;
     let s = store::stats(&store::all_giveaways(&ctx, guild)?);
+    let mut readings = vec![("waiting for a hand-over", text::num(s.active)), ("confirmed", text::num(s.confirmed))];
+    if let Some(r) = s.confirmation_rate() {
+        readings.push(("confirmation rate", format!("{r}%")));
+    }
     let body = html! {
         (nav(guild, "Giveaways"))
-        (ui::readings(&[
-            ("waiting for a hand-over", text::num(s.active)),
-            ("confirmed", text::num(s.confirmed)),
-            ("confirmation rate", s.confirmation_rate().map(|r| format!("{r}%")).unwrap_or_else(|| "–".into())),
-        ]))
+        (ui::readings(&readings))
         (ui::section("Waiting for a hand-over", Some("The giver passes the pet in game, then staff confirm it. Unconfirmed giveaways are cancelled when they expire."), html! {
             @if active.is_empty() {
                 (ui::empty(Icon::Gift, "Nothing waiting", "Giveaways show here from the moment staff record them until they're confirmed."))
@@ -178,26 +164,25 @@ async fn stats(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>
     let s = store::stats(&all);
     let catalog = store::catalog(&ctx, guild)?;
     let counts = store::owned_counts(&ctx, guild)?;
-    let distinct_given = {
-        let mut ids: Vec<&str> = all.iter().filter(|g| g.status == Status::Confirmed).map(|g| g.pet_id.as_str()).collect();
-        ids.sort_unstable();
-        ids.dedup();
-        ids.len()
-    };
+    let confirmed: Vec<&Giveaway> = all.iter().filter(|g| g.status == Status::Confirmed).collect();
+    let distinct_given = confirmed.iter().map(|g| g.pet_id.as_str()).collect::<HashSet<_>>().len();
+    // Every giver, not the stats' top ten.
+    let givers = confirmed.iter().map(|g| g.giver_id).collect::<HashSet<_>>().len();
     let series = daily(&all, 30);
     let collection_rarity: Vec<(Markup, i64)> = store::RARITIES
         .iter()
         .rev()
         .map(|r| (view::rarity(r), catalog.iter().filter(|p| p.rarity == *r).map(|p| counts.get(&p.id).copied().unwrap_or(0)).sum::<i64>()))
         .collect();
+    let mut readings = vec![("giveaways confirmed", text::num(s.confirmed))];
+    if let Some(r) = s.confirmation_rate() {
+        readings.push(("confirmation rate", format!("{r}%")));
+    }
+    readings.push(("givers", text::num(givers as i64)));
+    readings.push(("different pets given", text::num(distinct_given as i64)));
     let body = html! {
         (nav(guild, "Stats"))
-        (ui::readings(&[
-            ("giveaways confirmed", text::num(s.confirmed)),
-            ("confirmation rate", s.confirmation_rate().map(|r| format!("{r}%")).unwrap_or_else(|| "–".into())),
-            ("givers", text::num(s.top_givers.len() as i64)),
-            ("different pets given", text::num(distinct_given as i64)),
-        ]))
+        (ui::readings(&readings))
         @if s.confirmed == 0 {
             (ui::empty(Icon::Chart, "No confirmed giveaways yet", "Stats fill in as staff confirm pet giveaways."))
         } @else {
