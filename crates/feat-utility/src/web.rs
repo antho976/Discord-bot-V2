@@ -19,26 +19,37 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/utility/afk/{user}/clear", post(clear_afk))
 }
 
-/// Members of this server with a timezone, by what their clock reads, earliest first.
-fn member_times(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<Vec<(u64, String, zones::Local)>> {
+/// Members of this server with a timezone, by what their clock reads, earliest first. Then
+/// the members whose saved zone the bot no longer knows (a zone renamed in a tz update).
+type MemberTimes = (Vec<(u64, String, zones::Local)>, Vec<u64>);
+
+fn member_times(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<MemberTimes> {
     let members: HashSet<u64> = ctx
         .cache
         .guild_members(Id::new(guild))
         .map(|set| set.iter().map(|u| u.get()).collect())
         .unwrap_or_default();
     let now = Timestamp::now();
-    let mut rows: Vec<_> = tz_all(ctx)?
-        .into_iter()
-        .filter(|(u, _)| members.contains(u))
-        .filter_map(|(u, zone)| zones::local(&zone, now).map(|l| (u, zone, l)))
-        .collect();
+    let (mut rows, mut unknown) = (Vec::new(), Vec::new());
+    for (u, zone) in tz_all(ctx)?.into_iter().filter(|(u, _)| members.contains(u)) {
+        match zones::local(&zone, now) {
+            Some(l) => rows.push((u, zone, l)),
+            None => unknown.push(u),
+        }
+    }
     rows.sort_by(|a, b| a.2.offset_secs.cmp(&b.2.offset_secs).then_with(|| a.1.cmp(&b.1)));
-    Ok(rows)
+    Ok((rows, unknown))
 }
 
-/// "Europe/Warsaw" -> "Warsaw", "America/New_York" -> "New York".
-fn city(zone: &str) -> String {
-    zone.rsplit('/').next().unwrap_or(zone).replace('_', " ")
+/// "Mira", "Mira and Teo", "Mira, Teo and 3 others".
+fn names_line(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [a, b] => format!("{a} and {b}"),
+        [a, b, c] => format!("{a}, {b} and {c}"),
+        [a, b, rest @ ..] => format!("{a}, {b} and {} others", rest.len()),
+    }
 }
 
 /// Daytime is 06:00 to 18:00 on the member's clock.
@@ -83,7 +94,8 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let away = afk_list(&ctx, guild)?;
-    let times = member_times(&ctx, guild)?;
+    let (times, unknown) = member_times(&ctx, guild)?;
+    let unknown: Vec<String> = unknown.into_iter().map(|u| ctx.display_name(guild, u)).collect();
     const SHOWN: usize = 200;
     let who = |u: u64| ctx.display_name(guild, u);
 
@@ -92,16 +104,16 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
         div.with-rail.au {
             div.stack.au-main {
                 (ui::section("Where everyone is right now", None, html! {
-                    @if times.is_empty() {
+                    @if times.is_empty() && unknown.is_empty() {
                         (ui::empty(Icon::Clock, "Nobody has set a timezone", "Members add theirs with /timezone set, and their local time shows here."))
-                    } @else {
+                    } @else if !times.is_empty() {
                         div.au-grid {
                             @for (u, zone, l) in times.iter().take(SHOWN) {
                                 div.au-card title={ (zone) " · " (l.offset) } {
                                     img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="40" height="40" loading="lazy";
                                     div.au-who {
                                         strong.clip { (who(*u)) }
-                                        span.clip { (city(zone)) }
+                                        span.clip { (zones::place(zone, &l.offset)) }
                                     }
                                     span.au-time {
                                         @if is_day(l.hour) {
@@ -116,6 +128,12 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                         }
                         p.muted.small { (member_line(times.len())) }
                         @if times.len() > SHOWN { p.muted.small { "Showing the first " (SHOWN) " of " (times.len()) "." } }
+                    }
+                    @if !unknown.is_empty() {
+                        p.muted.small {
+                            (names_line(&unknown)) " saved a timezone the bot no longer recognizes, so "
+                            (if unknown.len() == 1 { "it's" } else { "they're" }) " left out. /timezone set fixes it."
+                        }
                     }
                 }))
             }
@@ -211,3 +229,17 @@ const CSS: &str = r#"
 .au-opt .help { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
 .au-opt .switch { flex: none; }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_join_and_count() {
+        let n = |v: &[&str]| names_line(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(n(&["Mira"]), "Mira");
+        assert_eq!(n(&["Mira", "Teo"]), "Mira and Teo");
+        assert_eq!(n(&["Mira", "Teo", "Lu"]), "Mira, Teo and Lu");
+        assert_eq!(n(&["Mira", "Teo", "Lu", "Kai"]), "Mira, Teo and 2 others");
+    }
+}

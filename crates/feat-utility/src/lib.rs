@@ -292,13 +292,19 @@ impl Feature for Utility {
                 }
                 let target = call.opts().user("member").map(|u| u.get()).unwrap_or(user);
                 let name = ctx.display_name(guild, target);
-                let local = tz_get(ctx, target)?.and_then(|z| zones::local(&z, Timestamp::now()).map(|l| (z, l)));
-                let reply = match local {
-                    Some((zone, l)) => Reply::text(format!("**{name}**: {} ({}, {zone})", l.time, l.offset)),
-                    None if target == user => {
+                let zone = tz_get(ctx, target)?;
+                let local = zone.as_deref().and_then(|z| zones::local(z, Timestamp::now()));
+                let reply = match (zone, local) {
+                    (Some(zone), Some(l)) => Reply::text(format!("**{name}**: {} ({}, {zone})", l.time, l.offset)),
+                    // Saved, but the bundled tz database no longer has it.
+                    (Some(_), None) if target == user => {
+                        Reply::text("Your saved timezone isn't one I know anymore. Use /timezone set to pick it again.").ephemeral()
+                    }
+                    (Some(_), None) => Reply::text(format!("{name}'s saved timezone isn't one I know anymore.")).ephemeral(),
+                    (None, _) if target == user => {
                         Reply::text("You haven't set a timezone. Use /timezone set and pick your city.").ephemeral()
                     }
-                    None => Reply::text(format!("{name} hasn't set a timezone.")).ephemeral(),
+                    (None, _) => Reply::text(format!("{name} hasn't set a timezone.")).ephemeral(),
                 };
                 ctx.reply(&call.interaction, reply).await?;
             }

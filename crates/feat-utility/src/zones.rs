@@ -82,6 +82,30 @@ pub fn offset_label(secs: i32) -> String {
     if m == 0 { format!("UTC{sign}{h}") } else { format!("UTC{sign}{h}:{m:02}") }
 }
 
+/// Old country prefixes whose second part isn't a city: `US/Eastern` reads "Eastern (US)".
+const COUNTRY_PREFIXES: &[&str] = &["US", "Canada", "Brazil", "Chile", "Mexico"];
+
+/// A short place name for a zone, for a card under someone's name. "Europe/Warsaw" is
+/// "Warsaw" and "America/Argentina/Buenos_Aires" is "Buenos Aires". Zones that don't name a
+/// place (`UTC`, `Etc/GMT-2`, `EST5EDT`) read as their offset, which `offset` gives.
+pub fn place(zone: &str, offset: &str) -> String {
+    let utc = ["UTC", "UCT", "GMT", "GMT0", "GMT+0", "GMT-0", "Greenwich", "Universal", "Zulu"];
+    let bare = zone.strip_prefix("Etc/").unwrap_or(zone);
+    if utc.contains(&bare) {
+        return "UTC".into();
+    }
+    if zone.starts_with("Etc/") {
+        return offset.into();
+    }
+    match zone.split_once('/') {
+        Some((country, rest)) if COUNTRY_PREFIXES.contains(&country) => format!("{} ({country})", rest.replace('_', " ")),
+        Some(_) => zone.rsplit('/').next().unwrap_or(zone).replace('_', " "),
+        // "Japan" and "Singapore" are places; "EST5EDT", "CET" and "PRC" aren't.
+        None if zone.bytes().any(|b| b.is_ascii_digit()) || (zone.len() <= 4 && zone.bytes().all(|b| b.is_ascii_uppercase())) => offset.into(),
+        None => zone.replace('_', " "),
+    }
+}
+
 /// What the clock reads in a zone right now.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Local {
@@ -151,6 +175,21 @@ mod tests {
         assert_eq!(offset_label(-10_800), "UTC-3");
         assert_eq!(offset_label(19_800), "UTC+5:30");
         assert_eq!(offset_label(-12_600), "UTC-3:30");
+    }
+
+    #[test]
+    fn places_read_as_places() {
+        assert_eq!(place("Europe/Warsaw", "UTC+1"), "Warsaw");
+        assert_eq!(place("America/New_York", "UTC-5"), "New York");
+        assert_eq!(place("America/Argentina/Buenos_Aires", "UTC-3"), "Buenos Aires");
+        assert_eq!(place("US/Eastern", "UTC-5"), "Eastern (US)");
+        assert_eq!(place("Canada/Newfoundland", "UTC-3:30"), "Newfoundland (Canada)");
+        assert_eq!(place("UTC", "UTC"), "UTC");
+        assert_eq!(place("Etc/UTC", "UTC"), "UTC");
+        assert_eq!(place("Etc/GMT-2", "UTC+2"), "UTC+2");
+        assert_eq!(place("EST5EDT", "UTC-5"), "UTC-5");
+        assert_eq!(place("CET", "UTC+1"), "UTC+1");
+        assert_eq!(place("Japan", "UTC+9"), "Japan");
     }
 
     #[test]
