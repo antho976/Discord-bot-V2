@@ -24,6 +24,7 @@ feat-embeds = { path = "../feat-embeds" }
 feat-modmail = { path = "../feat-modmail" }
 feat-rules = { path = "../feat-rules" }
 feat-commands = { path = "../feat-commands" }
+feat-reviews = { path = "../feat-reviews" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true
