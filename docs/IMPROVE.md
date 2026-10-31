@@ -76,7 +76,7 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
 
 ### C: keen-hare
 `crates/feat-levels`, `crates/feat-welcome`, `crates/feat-tickets` (tickets and starboard).
-- [ ] Tickets: "Waiting on staff" depends on the message cache. Store the last message author
+- [x] Tickets: "Waiting on staff" depends on the message cache. Store the last message author
       per open ticket thread (one small write per message in ticket threads only) so it survives
       restarts, and bring back "no staff reply yet".
 - [ ] Starboard: images. Discord image links expire, so fetch a fresh one when the page loads

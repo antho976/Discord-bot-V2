@@ -9,7 +9,7 @@ use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 use serde::Deserialize;
 
-use crate::tickets::{self, Filter, Ticket};
+use crate::tickets::{self, Filter, Ticket, Turn};
 use crate::{DEFAULT_PANEL_TEXT, DEFAULT_PANEL_TITLE, KEY, Settings, starboard};
 
 const DAY_MS: i64 = 86_400_000;
@@ -54,15 +54,16 @@ struct ListQuery {
     status: Option<String>,
 }
 
-/// What the thread says, read from the message cache: the last reply, and whether it's the
-/// member's turn or staff's. Empty when the thread's messages aren't cached (after a restart,
-/// or a thread nobody has spoken in).
+/// What the thread says: the last reply, and whether it's the member's turn or staff's. The turn
+/// comes from what the bot stored; the quote, and the turn for tickets opened before the bot kept
+/// it, come from the message cache, which is empty after a restart.
 #[derive(Default)]
 struct Activity {
     last_reply_at: Option<i64>,
     /// `(who, what they wrote)` for the latest reply from someone other than the opener.
     staff_reply: Option<(String, String)>,
-    waiting: Option<String>,
+    /// The badge, and whether staff owes the reply.
+    waiting: Option<(String, bool)>,
 }
 
 fn activity(ctx: &Ctx, guild: u64, t: &Ticket) -> Activity {
@@ -89,9 +90,16 @@ fn activity(ctx: &Ctx, guild: u64, t: &Ticket) -> Activity {
         .iter()
         .find(|(author, _)| *author != t.opener_id)
         .map(|(author, said)| (ctx.display_name(guild, *author), text::clip(said, 180)));
-    act.waiting = messages.first().map(|(author, _)| {
-        if *author == t.opener_id { "Waiting on staff".to_owned() } else { format!("Waiting on {}", ctx.display_name(guild, t.opener_id)) }
-    });
+    let on_member = || (format!("Waiting on {}", ctx.display_name(guild, t.opener_id)), false);
+    act.waiting = match t.waiting_on() {
+        Some(Turn::NoReplyYet) => Some(("No staff reply yet".to_owned(), true)),
+        Some(Turn::Staff) => Some(("Waiting on staff".to_owned(), true)),
+        Some(Turn::Member) => Some(on_member()),
+        None => messages.first().map(|(author, _)| if *author == t.opener_id { ("Waiting on staff".to_owned(), true) } else { on_member() }),
+    };
+    if let Some(at) = t.last_message_at {
+        act.last_reply_at = Some(act.last_reply_at.map_or(at, |cached| cached.max(at)));
+    }
     act
 }
 
@@ -158,6 +166,7 @@ async fn tickets_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 div.stack.tk-main {
                     (ui::readings(&[
                         ("open now", stats.open.to_string()),
+                        ("waiting on staff", stats.waiting.to_string()),
                         ("opened this week", stats.this_week.to_string()),
                         ("usual time to close", stats.median_close_secs.map(span).unwrap_or_else(|| "none yet".into())),
                     ]))
@@ -215,7 +224,7 @@ fn ticket_row(ctx: &Ctx, page: &Page, guild: u64, t: &Ticket, now: i64) -> Marku
             }
             div.tk-side {
                 @if t.is_open() {
-                    @if let Some(w) = &act.waiting { (ui::badge(w, Tone::Warn)) }
+                    @if let Some((w, staff)) = &act.waiting { (ui::badge(w, if *staff { Tone::Warn } else { Tone::Muted })) }
                 } @else {
                     (ui::badge(label, tone))
                 }
