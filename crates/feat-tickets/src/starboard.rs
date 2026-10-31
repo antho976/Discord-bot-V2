@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 
 use bot_core::rusqlite::{Connection, OptionalExtension, params};
 use bot_core::twilight_http::error::ErrorType;
@@ -257,7 +258,15 @@ async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Setti
         }
         None if stars >= threshold => {
             let embed = build_embed(guild, &message);
-            let post = ctx.http.create_message(Id::new(star_channel)).content(&line).embeds(&[embed]).allowed_mentions(Some(&none)).await?.model().await?;
+            let sent = ctx.http.create_message(Id::new(star_channel)).content(&line).embeds(&[embed]).allowed_mentions(Some(&none)).await;
+            let post = match sent {
+                Ok(r) => r.model().await?,
+                Err(e) => {
+                    let text = format!("Starred messages aren't reaching the starboard. {}", why_refused(&e));
+                    notify_failure(ctx, guild, text, format!("/g/{guild}/{KEY}/starboard?view=settings"));
+                    return Err(e.into());
+                }
+            };
             ctx.db.with(|c| {
                 insert(
                     c,
@@ -284,6 +293,31 @@ async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Setti
 
 fn is_not_found(e: &bot_core::twilight_http::Error) -> bool {
     matches!(e.kind(), ErrorType::Response { status, .. } if status.get() == 404)
+}
+
+/// Why Discord refused a post, in words a server owner can act on.
+fn why_refused(e: &bot_core::twilight_http::Error) -> String {
+    match e.kind() {
+        bot_core::twilight_http::error::ErrorType::Response { status, .. } if status.get() == 403 => {
+            "The bot can't post in that channel. Check it can see the channel and send messages there.".into()
+        }
+        bot_core::twilight_http::error::ErrorType::Response { status, .. } if status.get() == 404 => "The channel was deleted. Pick another one.".into(),
+        _ => format!("Discord refused the message: {e}"),
+    }
+}
+
+/// Put a failed post behind the dashboard bell, at most once a day per server, so a broken channel
+/// gets noticed without a notice for every post.
+fn notify_failure(ctx: &Ctx, guild: u64, text: String, link: String) {
+    static LAST: std::sync::LazyLock<Mutex<HashMap<u64, Instant>>> = std::sync::LazyLock::new(Default::default);
+    {
+        let mut last = LAST.lock().unwrap();
+        if last.get(&guild).is_some_and(|t| t.elapsed().as_secs() < 86_400) {
+            return;
+        }
+        last.insert(guild, Instant::now());
+    }
+    ctx.notify(Some(guild), KEY, text, Some(link));
 }
 
 /// A 4xx answer other than a rate limit: asking again gets the same answer.

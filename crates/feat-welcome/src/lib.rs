@@ -5,6 +5,10 @@ pub mod invites;
 pub mod roles;
 mod web;
 
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
+
 use bot_core::anyhow::{Result, anyhow};
 use bot_core::rusqlite::params;
 use bot_core::twilight_model::channel::message::AllowedMentions;
@@ -213,6 +217,7 @@ impl Welcome {
             let avatar = bot_core::discord::avatar_url(user, m.user.avatar.map(|a| a.to_string()).as_deref());
             if let Err(e) = post_welcome(ctx, &s, guild, user, &name, &m.user.name, &avatar).await {
                 bot_core::tracing::warn!(guild, user, error = %e, "couldn't post a welcome");
+                notify_failure(ctx, guild, "welcome", format!("New members aren't being welcomed. {e}"));
             }
         }
         Ok(())
@@ -246,6 +251,7 @@ impl Welcome {
             let text = fill_message(ctx, &s.goodbye_text, DEFAULT_GOODBYE, guild, &name, &name, count);
             if let Err(e) = ctx.say(channel, &text).await {
                 bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post a goodbye");
+                notify_failure(ctx, guild, "goodbye", format!("Goodbyes aren't being posted. {}", why_refused(&e)));
             }
         }
         Ok(())
@@ -291,8 +297,36 @@ pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: 
         .attachments(&files)
         .allowed_mentions(Some(&mentions))
         .await
-        .map_err(|e| anyhow!("Discord refused the message: {e}"))?;
+        .map_err(|e| anyhow!(why_refused(&e.into())))?;
     Ok(())
+}
+
+/// Why Discord refused a post, in words a server owner can act on.
+fn why_refused(e: &bot_core::anyhow::Error) -> String {
+    use bot_core::twilight_http::error::ErrorType;
+    let status = e.downcast_ref::<bot_core::twilight_http::Error>().and_then(|e| match e.kind() {
+        ErrorType::Response { status, .. } => Some(status.get()),
+        _ => None,
+    });
+    match status {
+        Some(403) => "The bot can't post in that channel. Check it can see the channel, send messages and attach files.".into(),
+        Some(404) => "The channel was deleted. Pick another one.".into(),
+        _ => format!("Discord refused the message: {e}"),
+    }
+}
+
+/// Put a failed post behind the dashboard bell, at most once a day per server and kind, so a
+/// broken channel gets noticed without a notice for every member.
+fn notify_failure(ctx: &Ctx, guild: u64, kind: &'static str, text: String) {
+    static LAST: LazyLock<Mutex<HashMap<(u64, &'static str), Instant>>> = LazyLock::new(Default::default);
+    {
+        let mut last = LAST.lock().unwrap();
+        if last.get(&(guild, kind)).is_some_and(|t| t.elapsed().as_secs() < 86_400) {
+            return;
+        }
+        last.insert((guild, kind), Instant::now());
+    }
+    ctx.notify(Some(guild), KEY, text, Some(format!("/g/{guild}/{KEY}")));
 }
 
 /// Auto-roles, plus the roles a returning member left with. Each role is tried on its own so

@@ -607,8 +607,38 @@ async fn announce(ctx: &Ctx, s: &Settings, guild: u64, user: u64, level: u32, he
     let mentions = AllowedMentions { users: if s.announce_ping { vec![Id::new(user)] } else { vec![] }, ..Default::default() };
     if let Err(e) = ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&mentions)).await {
         bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post a level-up");
+        // Only the chosen channel is worth a notice; a member's own channel may simply be closed to the bot.
+        if s.announce_channel.is_some() {
+            notify_failure(ctx, guild, format!("Level-ups aren't being posted. {}", why_refused(&e)), format!("/g/{guild}/{KEY}/settings"));
+        }
     }
 }
+
+/// Why Discord refused a post, in words a server owner can act on.
+fn why_refused(e: &bot_core::twilight_http::Error) -> String {
+    match e.kind() {
+        bot_core::twilight_http::error::ErrorType::Response { status, .. } if status.get() == 403 => {
+            "The bot can't post in that channel. Check it can see the channel and send messages there.".into()
+        }
+        bot_core::twilight_http::error::ErrorType::Response { status, .. } if status.get() == 404 => "The channel was deleted. Pick another one.".into(),
+        _ => format!("Discord refused the message: {e}"),
+    }
+}
+
+/// Put a failed post behind the dashboard bell, at most once a day per server, so a broken channel
+/// gets noticed without a notice for every post.
+fn notify_failure(ctx: &Ctx, guild: u64, text: String, link: String) {
+    static LAST: std::sync::LazyLock<Mutex<HashMap<u64, Instant>>> = std::sync::LazyLock::new(Default::default);
+    {
+        let mut last = LAST.lock().unwrap();
+        if last.get(&guild).is_some_and(|t| t.elapsed().as_secs() < 86_400) {
+            return;
+        }
+        last.insert(guild, Instant::now());
+    }
+    ctx.notify(Some(guild), KEY, text, Some(link));
+}
+
 
 pub(crate) fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
     let s = Settings::default();
