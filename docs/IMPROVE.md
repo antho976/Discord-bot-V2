@@ -82,6 +82,11 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
 - [x] Found: with the [AFK] nickname prefix, notices, "Welcome back" and the dashboard showed
       "[AFK] Mira". Turning AFK off left everyone already away stuck AFK with the prefix.
 - [x] Found: `/time` said "hasn't set a timezone" when the saved zone was unknown.
+- [x] Twitch tab shows EventSub state: each subscription's status as of the last check, the last
+      event, and a quiet warning when Twitch has a stream that no event arrived for (one Helix
+      call on page load, push mode only). Polling mode shows when the last check ran.
+- [x] Found: on a phone the "Twitch connected · instant alerts" pill overlapped the page title.
+      The detail now drops below 600 px.
 - [ ] For core (brisk-heron): on a phone the page title wraps beside a header status pill
       ("Stream alerts" next to "Twitch not connected"). The header could drop the pill under the
       title below ~480 px.

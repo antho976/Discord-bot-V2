@@ -273,6 +273,14 @@ pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
         tracing::info!(id = %s.id, kind = %s.kind, status = %s.status, "removing a Twitch subscription");
         let _ = request(ctx, Method::DELETE, "eventsub/subscriptions", &[("id", s.id.clone())], None).await;
     }
+    // What each wanted subscription ended up as, for the Twitch tab.
+    let mut states: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for s in subs.iter().filter(|s| s.transport.callback.as_deref() == Some(callback.as_str())) {
+        let bid = s.condition["broadcaster_user_id"].as_str().unwrap_or_default();
+        if have.contains(&(s.kind.clone(), bid.to_owned())) {
+            states.entry(bid.to_owned()).or_default().insert(s.kind.clone(), s.status.clone());
+        }
+    }
     for bid in &wanted {
         for (kind, version) in TYPES {
             if have.contains(&((*kind).to_owned(), bid.clone())) {
@@ -284,16 +292,60 @@ pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
                 "transport": { "method": "webhook", "callback": callback, "secret": secret },
             });
             let res = request(ctx, Method::POST, "eventsub/subscriptions", &[], Some(&body)).await?;
-            if res.status().is_success() {
+            let state = if res.status().is_success() {
                 tracing::info!(kind, broadcaster = %bid, "subscribed to Twitch events");
+                let v: Value = res.json().await.unwrap_or_default();
+                v["data"][0]["status"].as_str().unwrap_or("webhook_callback_verification_pending").to_owned()
             } else {
                 let status = res.status();
                 let text = res.text().await.unwrap_or_default();
                 tracing::warn!(kind, broadcaster = %bid, %status, body = %text, "Twitch refused a subscription");
-            }
+                format!("refused ({})", status.as_u16())
+            };
+            states.entry(bid.clone()).or_default().insert((*kind).to_owned(), state);
         }
     }
+    save_sub_states(ctx, &states);
     Ok(())
+}
+
+// ---- what the Twitch tab shows about EventSub ----
+
+/// Broadcaster id -> subscription type -> Twitch's status, as of the last check.
+pub type SubStates = HashMap<String, HashMap<String, String>>;
+
+fn save_sub_states(ctx: &Ctx, states: &SubStates) {
+    state_set(ctx, "subs", &serde_json::to_string(states).unwrap_or_default());
+    state_set(ctx, "subs_at", &now_ms().to_string());
+}
+
+/// The subscription states from the last check, and when that was.
+pub fn sub_states(ctx: &Ctx) -> (SubStates, Option<i64>) {
+    let states = state_get(ctx, "subs").and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+    (states, state_get(ctx, "subs_at").and_then(|v| v.parse().ok()))
+}
+
+/// When the last event for a broadcaster arrived, and its type.
+pub fn last_event(ctx: &Ctx, bid: &str) -> Option<(i64, String)> {
+    let v = state_get(ctx, &format!("event:{bid}"))?;
+    let (at, kind) = v.split_once(' ')?;
+    Some((at.parse().ok()?, kind.to_owned()))
+}
+
+/// When Twitch's newest VOD of a broadcaster started, if it has one. One Helix call, given up
+/// after 3 seconds so a slow Twitch doesn't hold the page.
+pub async fn latest_vod_start(ctx: &Ctx, bid: &str) -> Option<i64> {
+    let q = [("user_id", bid.to_owned()), ("type", "archive".into()), ("first", "1".into())];
+    let call = get::<List<HVideo>>(ctx, "videos", &q);
+    let list = bot_core::tokio::time::timeout(std::time::Duration::from_secs(3), call).await.ok()?.ok()??;
+    list.data.first()?.created_at.parse::<jiff::Timestamp>().ok().map(|t| t.as_millisecond())
+}
+
+/// Push mode looks broken for a stream when Twitch shows it started more than 15 minutes ago,
+/// no event has arrived since it started, and the bot has no record of it.
+pub fn missed_stream(vod_start: Option<i64>, last_event: Option<i64>, recorded: bool, now: i64) -> bool {
+    let Some(start) = vod_start else { return false };
+    now - start > 15 * 60_000 && last_event.is_none_or(|e| e < start) && !recorded
 }
 
 /// When a message older than this arrives, it's refused (Twitch's replay advice).
@@ -349,10 +401,18 @@ pub async fn webhook(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) ->
             let sub = &v["subscription"];
             let (t, status) = (sub["type"].as_str().unwrap_or("?"), sub["status"].as_str().unwrap_or("?"));
             tracing::warn!(kind = t, status, "Twitch revoked a subscription");
+            if let Some(bid) = sub["condition"]["broadcaster_user_id"].as_str() {
+                let (mut states, _) = sub_states(&ctx);
+                states.entry(bid.to_owned()).or_default().insert(t.to_owned(), status.to_owned());
+                state_set(&ctx, "subs", &serde_json::to_string(&states).unwrap_or_default());
+            }
             ctx.notify(None, KEY, format!("Twitch stopped sending {t} events ({status}). The bot subscribes again within a day."), None);
             StatusCode::NO_CONTENT.into_response()
         }
         "notification" => {
+            let bid = v["event"]["broadcaster_user_id"].as_str().unwrap_or_default();
+            let kind = v["subscription"]["type"].as_str().unwrap_or_default();
+            state_set(&ctx, &format!("event:{bid}"), &format!("{now} {kind}"));
             bot_core::tokio::spawn(async move {
                 if let Err(e) = handle_event(&ctx, &v).await {
                     tracing::warn!(error = %e, "couldn't handle a Twitch event");
@@ -938,6 +998,21 @@ mod tests {
         assert_eq!(video_id("https://www.twitch.tv/videos/2283"), Some("2283"));
         assert_eq!(video_id("https://www.twitch.tv/antho"), None);
         assert_eq!(video_id("https://www.twitch.tv/videos/"), None);
+    }
+
+    #[test]
+    fn missed_streams_need_all_three_signs() {
+        let min = 60_000;
+        let now = 1_000 * min;
+        let start = now - 60 * min;
+        // Twitch has a stream from an hour ago, nothing arrived, nothing recorded.
+        assert!(missed_stream(Some(start), None, false, now));
+        assert!(missed_stream(Some(start), Some(start - min), false, now));
+        // An event after it started, a recorded stream, or a fresh one: fine.
+        assert!(!missed_stream(Some(start), Some(start + min), false, now));
+        assert!(!missed_stream(Some(start), None, true, now));
+        assert!(!missed_stream(Some(now - 5 * min), None, false, now));
+        assert!(!missed_stream(None, None, false, now));
     }
 
     #[test]

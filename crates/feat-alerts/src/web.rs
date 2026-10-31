@@ -92,12 +92,16 @@ const WEEKS: i64 = 12;
 
 /// The Twitch connection and how fast alerts arrive, at the right of the header.
 fn status_pill(ctx: &Ctx) -> Markup {
-    let (live, label) = match twitch::mode(ctx) {
-        Mode::Off => (false, "Twitch not connected"),
-        Mode::Poll => (true, "Twitch connected · checks every 2 min"),
-        Mode::Push => (true, "Twitch connected · instant alerts"),
+    let (live, label, more) = match twitch::mode(ctx) {
+        Mode::Off => (false, "Twitch not connected", ""),
+        Mode::Poll => (true, "Twitch connected", " · checks every 2 min"),
+        Mode::Push => (true, "Twitch connected", " · instant alerts"),
     };
-    html! { span.status { span.dot.live[live] {} (label) } }
+    // The detail drops on a phone so the pill doesn't crowd the page title.
+    html! {
+        style { "@media (max-width: 600px) { .sa-pill-more { display: none; } }" }
+        span.status { span.dot.live[live] {} (label) span.sa-pill-more { (more) } }
+    }
 }
 
 /// How alerts reach Discord, under the preview. Empty when Twitch isn't connected.
@@ -338,6 +342,68 @@ fn week_block(tz: &TimeZone, has_channel: bool, week: &[schedule::Segment], cfg:
     }
 }
 
+/// The subscriptions the Twitch tab reports on, with what they do.
+const EVENT_KINDS: &[(&str, &str)] = &[("stream.online", "Going live"), ("stream.offline", "Going offline"), ("channel.update", "Title and category")];
+
+/// A subscription status in words, and how it reads: 0 working, 1 waiting, 2 broken.
+fn sub_status(status: Option<&str>) -> (u8, String) {
+    match status {
+        Some("enabled") => (0, "Active".into()),
+        Some("webhook_callback_verification_pending") => (1, "Waiting for Twitch to check the address".into()),
+        Some("webhook_callback_verification_failed") => (2, "Twitch couldn't reach the bot".into()),
+        Some("notification_failures_exceeded") => (2, "Twitch stopped after failed deliveries".into()),
+        Some("authorization_revoked" | "user_removed" | "moderator_removed") => (2, "Revoked by Twitch".into()),
+        Some(other) => (2, format!("Not working: {other}")),
+        None => (2, "Not set up yet".into()),
+    }
+}
+
+/// The rail's "Twitch events" in push mode: each subscription's state and the last event.
+/// In polling mode, when the last check ran.
+fn events_block(ctx: &Ctx, mode: Mode, bs: &[Broadcaster]) -> Markup {
+    let (states, checked) = twitch::sub_states(ctx);
+    html! {
+        @if mode == Mode::Push && !bs.is_empty() {
+            div.rail-block {
+                h2 { "Twitch events" }
+                @for b in bs {
+                    @if bs.len() > 1 { p.small.sa-who { (b.name) } }
+                    @for (kind, label) in EVENT_KINDS {
+                        @let (tone, text) = sub_status(states.get(&b.user_id).and_then(|m| m.get(*kind)).map(String::as_str));
+                        div.mini {
+                            span.dot.live[tone == 0].waiting[tone == 1].sa-bad[tone == 2] {}
+                            span.grow { span { (label) } span.muted { (text) } }
+                        }
+                    }
+                    p.muted.small {
+                        @match twitch::last_event(ctx, &b.user_id) {
+                            Some((at, _)) => { "Last event " (text::ago(at)) "." }
+                            None => { "No event has arrived yet." }
+                        }
+                        @if let Some(at) = checked { " Checked " (text::ago(at)) "." }
+                    }
+                }
+            }
+        } @else if mode == Mode::Poll && !bs.is_empty() {
+            div.rail-block {
+                h2 { "Twitch checks" }
+                div.mini {
+                    span.dot.live {}
+                    span.grow {
+                        span { "Every 2 minutes" }
+                        span.muted {
+                            @match crate::state_get(ctx, "at:poll").and_then(|v| v.parse::<i64>().ok()) {
+                                Some(at) => { "Last check " (text::ago(at)) }
+                                None => { "No check yet" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The rail's "Hours streamed": this week's hours, stream count and average peak, then the bars.
 fn hours_block(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Markup {
     let monday = day_ms(this_monday(tz), tz);
@@ -415,6 +481,10 @@ const CSS: &str = r#"
 .sa-stream { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .sa-vt { flex: none; width: 64px; height: 36px; border-radius: 4px; object-fit: cover; background: var(--well); display: grid; place-items: center; color: var(--ink-3); }
 .sa-vt .icon { width: 16px; height: 16px; }
+.sa-bad { background: var(--held); }
+.sa-who { font-weight: 500; margin-top: 4px; }
+.sa-note.sa-warn { color: var(--ink-2); }
+.sa-note.sa-warn > .icon { color: var(--waiting); }
 .sa-bars svg { display: block; width: 100%; height: 52px; overflow: visible; }
 "#;
 
@@ -460,6 +530,17 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         thumb: shown.and_then(StreamRow::thumb_640),
     };
     let line = twitch::fill_live(&s.live_message, &sample, preview.title, preview.game);
+    // Push mode with nothing arriving looks like it works. One Helix call says whether Twitch
+    // has a stream the bot never heard about.
+    let missed = match (mode, bs.first()) {
+        (Mode::Push, Some(b)) => {
+            let start = twitch::latest_vod_start(&ctx, &b.user_id).await;
+            let recorded = start.is_some_and(|st| recent.iter().any(|r| r.broadcaster_id == b.user_id && (r.started_at - st).abs() < 15 * 60_000));
+            let last = twitch::last_event(&ctx, &b.user_id).map(|e| e.0);
+            start.filter(|st| twitch::missed_stream(Some(*st), last, recorded, now)).map(|st| (st, last))
+        }
+        _ => None,
+    };
     let role = role_name(&ctx, guild, s.live_role);
 
     let body = html! {
@@ -474,6 +555,19 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         div {
                             p { "Twitch isn't connected. Set " code { "TWITCH_CLIENT_ID" } " and " code { "TWITCH_CLIENT_SECRET" } " in the bot's environment and restart it. Live alerts, viewer counts and the schedule all need them." }
                             p { "Add " code { "TWITCH_EVENTSUB_SECRET" } " and an https " code { "PUBLIC_URL" } " to get alerts the moment you go live instead of within 2 minutes." }
+                        }
+                    }
+                }
+                @if let Some((start, last)) = missed {
+                    div.sa-note.sa-warn role="status" {
+                        (ui::icon(Icon::Plug))
+                        div {
+                            p {
+                                "Twitch shows a stream that started " (text::ago(start)) ", but no event about it reached the bot"
+                                @match last { Some(at) => { " (the last one came " (text::ago(at)) ")" } None => {} }
+                                ", so no alert was posted."
+                            }
+                            p { "Twitch has to reach " code { (twitch::callback_url(&ctx)) } " from the internet. Check the address and that the bot is reachable there." }
                         }
                     }
                 }
@@ -513,6 +607,7 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
             aside.rail {
                 (week_block(&tz, !bs.is_empty(), &week, &s, now))
                 (hours_block(&rows, &tz, now))
+                (events_block(&ctx, mode, &bs))
             }
         }
     };
@@ -1045,6 +1140,14 @@ mod tests {
         assert_eq!(parse_minutes("15m").unwrap(), vec![15]);
         assert!(parse_minutes("0").is_err());
         assert!(parse_minutes("soon").is_err());
+    }
+
+    #[test]
+    fn statuses_read_plainly() {
+        assert_eq!(sub_status(Some("enabled")).0, 0);
+        assert_eq!(sub_status(Some("webhook_callback_verification_pending")).0, 1);
+        assert_eq!(sub_status(Some("notification_failures_exceeded")), (2, "Twitch stopped after failed deliveries".into()));
+        assert_eq!(sub_status(None), (2, "Not set up yet".into()));
     }
 
     #[test]
