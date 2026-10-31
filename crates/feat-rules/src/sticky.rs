@@ -3,7 +3,7 @@
 //! get a copy between every two messages.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use bot_core::rusqlite::{Connection, OptionalExtension, params};
@@ -65,6 +65,24 @@ impl State {
         self.new = 0;
         self.due_since = None;
     }
+
+    /// The waiter's turn at `now`: what to do, with the state moved on for it. `quiet_ms` is
+    /// None when the rule (or the feature) is gone.
+    pub fn step(&mut self, now: i64, quiet_ms: Option<i64>) -> Next {
+        let next = match quiet_ms {
+            Some(q) => self.next(now, q),
+            None => Next::Idle,
+        };
+        match next {
+            Next::Post => self.posted(),
+            Next::Idle if quiet_ms.is_none() => *self = State::default(),
+            // Messages that came in while the last copy was posting stay counted; the next one
+            // starts a new waiter.
+            Next::Idle => self.waiting = false,
+            Next::Wait(_) => {}
+        }
+        next
+    }
 }
 
 pub type States = Arc<Mutex<HashMap<u64, State>>>;
@@ -93,20 +111,8 @@ pub fn on_message(states: &States, ctx: &Ctx, guild: u64, rule: &Rule) {
 async fn wait_and_post(states: States, ctx: Ctx, guild: u64, channel: u64) {
     loop {
         let rule = ctx.settings::<Settings>(guild, KEY).ok().and_then(|s| s.rule(channel).cloned()).filter(Rule::has_sticky);
-        let next = {
-            let mut all = states.lock().unwrap();
-            let st = all.entry(channel).or_default();
-            let next = match &rule {
-                Some(r) if ctx.enabled(guild, KEY) => st.next(now_ms(), r.sticky_quiet_mins * 60_000),
-                _ => Next::Idle,
-            };
-            match next {
-                Next::Idle => *st = State::default(),
-                Next::Post => st.posted(),
-                Next::Wait(_) => {}
-            }
-            next
-        };
+        let quiet_ms = rule.as_ref().filter(|_| ctx.enabled(guild, KEY)).map(|r| r.sticky_quiet_mins * 60_000);
+        let next = states.lock().unwrap().entry(channel).or_default().step(now_ms(), quiet_ms);
         match (next, rule) {
             (Next::Wait(ms), _) => bot_core::tokio::time::sleep(Duration::from_millis(ms.max(50) as u64)).await,
             (Next::Post, Some(r)) => post(&ctx, guild, channel, &r.sticky).await,
@@ -129,8 +135,22 @@ fn set_current(conn: &Connection, guild: u64, channel: u64, message: u64, now: i
     Ok(())
 }
 
+/// One poster per channel at a time, shared by the waiters and the dashboard's save, so two
+/// can't both read the same previous copy and leave one of their own behind.
+static POSTING: LazyLock<Mutex<HashMap<u64, Arc<bot_core::tokio::sync::Mutex<()>>>>> = LazyLock::new(Default::default);
+
+fn posting(channel: u64) -> Arc<bot_core::tokio::sync::Mutex<()>> {
+    let mut all = POSTING.lock().unwrap();
+    if all.len() > 100 {
+        all.retain(|_, m| Arc::strong_count(m) > 1);
+    }
+    all.entry(channel).or_default().clone()
+}
+
 /// Post the sticky message and delete the copy before it.
 pub async fn post(ctx: &Ctx, guild: u64, channel: u64, text: &str) {
+    let turn = posting(channel);
+    let _turn = turn.lock().await;
     let old = ctx.db.with(|c| current(c, channel)).ok().flatten();
     match ctx.say(channel, text).await {
         Ok(id) => {
@@ -151,6 +171,8 @@ pub async fn post(ctx: &Ctx, guild: u64, channel: u64, text: &str) {
 
 /// Take a channel's sticky message down, when its rule loses it.
 pub async fn remove(ctx: &Ctx, channel: u64) {
+    let turn = posting(channel);
+    let _turn = turn.lock().await;
     let old = ctx.db.with(|c| {
         let old = current(c, channel)?;
         c.execute("DELETE FROM rules_sticky WHERE channel_id = ?1", [channel as i64])?;
@@ -208,6 +230,28 @@ mod tests {
             st.note(t * 100, 50);
         }
         assert_eq!(st.next(4_900 + LULL_MS, 60_000), Next::Post);
+    }
+
+    #[test]
+    fn messages_during_a_repost_stay_counted() {
+        let mut st = State { waiting: true, ..State::default() };
+        for t in 0..3 {
+            st.note(t * 100, 3);
+        }
+        assert_eq!(st.step(200 + LULL_MS, Some(0)), Next::Post);
+        assert_eq!(st.new, 0);
+        // Two arrive while the copy is being posted: not due yet, so the waiter stops...
+        st.note(4_000, 3);
+        st.note(4_100, 3);
+        assert_eq!(st.step(4_200, Some(0)), Next::Idle);
+        // ...but keeps them, so the next message makes it due.
+        assert_eq!((st.new, st.waiting), (2, false));
+        st.note(5_000, 3);
+        assert_eq!(st.due_since, Some(5_000));
+        assert_eq!(st.next(5_000 + LULL_MS, 0), Next::Post);
+        // A rule that went away clears everything.
+        assert_eq!(st.step(9_000, None), Next::Idle);
+        assert_eq!(st, State::default());
     }
 
     #[test]

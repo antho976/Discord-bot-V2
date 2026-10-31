@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bot_core::anyhow::Result;
+use bot_core::discord::is_not_found;
 use bot_core::twilight_model::channel::Message;
 use bot_core::twilight_model::channel::message::{AllowedMentions, MessageType};
 use bot_core::twilight_model::gateway::event::Event;
@@ -166,6 +167,8 @@ impl Rules {
             let name = thread_name(&rule.thread_name, &author_name(m), &bot_core::today(), &m.content);
             match ctx.http.create_thread_from_message(m.channel_id, m.id, &name).await {
                 Ok(_) => ctx.count(guild, "rules_threads", 1),
+                // Another feature (scam protection runs first) already deleted the message.
+                Err(e) if is_not_found(&e) => {}
                 Err(e) => {
                     bot_core::tracing::warn!(guild, channel = m.channel_id.get(), error = %e, "couldn't start a thread");
                     ctx.notify_once(guild, KEY, "thread", "Auto-thread couldn't start a thread. The bot needs Create Public Threads in that channel.", Some(format!("/g/{guild}/rules")), Duration::from_secs(86_400));
@@ -177,6 +180,10 @@ impl Rules {
 
     async fn remove_for_media(&self, ctx: &Ctx, guild: u64, m: &Message, notice: bool) -> Result<()> {
         if let Err(e) = ctx.http.delete_message(m.channel_id, m.id).await {
+            // Already gone: another feature deleted it first, so there's nothing to say.
+            if is_not_found(&e) {
+                return Ok(());
+            }
             bot_core::tracing::warn!(guild, channel = m.channel_id.get(), error = %e, "couldn't remove a message from a media-only channel");
             ctx.notify_once(guild, KEY, "media", "A media-only channel couldn't remove a message. The bot needs Manage Messages there.", Some(format!("/g/{guild}/rules")), Duration::from_secs(86_400));
             return Ok(());
