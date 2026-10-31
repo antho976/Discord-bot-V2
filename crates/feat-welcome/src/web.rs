@@ -79,15 +79,16 @@ fn left_since(ctx: &Ctx, guild: u64, start: i64) -> i64 {
         .unwrap_or(0)
 }
 
-/// The bot's name and avatar, as a member sees them in the channel.
-fn bot_identity(ctx: &Ctx) -> (String, String) {
-    let Some(bot) = ctx.bot_id() else { return ("Bot".into(), bot_core::discord::avatar_url(0, None)) };
-    match ctx.cache.user(Id::new(bot)) {
-        Some(u) => (
+/// The bot as members see it in a channel: its name, and its avatar or the dashboard's mark
+/// while the bot isn't connected.
+fn bot_identity(ctx: &Ctx) -> (String, Markup) {
+    let user = ctx.bot_id().and_then(|b| ctx.cache.user(Id::new(b)).map(|u| (b, u)));
+    match user {
+        Some((id, u)) => (
             u.global_name.clone().unwrap_or_else(|| u.name.clone()),
-            bot_core::discord::avatar_url(bot, u.avatar.map(|a| a.to_string()).as_deref()),
+            html! { img.wl-dc-av src=(bot_core::discord::avatar_url(id, u.avatar.map(|a| a.to_string()).as_deref())) alt=""; },
         ),
-        None => ("Bot".into(), bot_core::discord::avatar_url(bot, None)),
+        None => ("Bot".into(), html! { span.wl-dc-av.mark { img src="/static/icon.svg" alt=""; } }),
     }
 }
 
@@ -98,75 +99,258 @@ fn clock(page: &Page, ms: i64) -> String {
     format!("{}:{m:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" })
 }
 
-const CSS: &str = "
+const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/// "October 31, 2026": the line Discord draws between days.
+fn long_date(page: &Page, ms: i64) -> String {
+    let z = page.user.local(ms);
+    format!("{} {}, {}", MONTHS[(z.month() - 1).clamp(0, 11) as usize], z.day(), z.year())
+}
+
+/// Reading cards whose figures count up as they come into view.
+fn readings(items: &[(&str, String)]) -> Markup {
+    html! { div.readings { @for (label, value) in items { div.reading { b data-count { (value) } span { (label) } } } } }
+}
+
+/// A section headed by an icon tile in the group's hue.
+fn section(ic: Icon, title: &str, hint: Option<&str>, body: Markup) -> Markup {
+    html! {
+        section.block.wl-sec {
+            div.wl-sec-head {
+                span.wl-sec-ic { (ui::icon(ic)) }
+                div { h2 { (title) } @if let Some(h) = hint { p.muted { (h) } } }
+            }
+            (body)
+        }
+    }
+}
+
+/// `(name, colour)` for roles that still exist, in the order given.
+fn role_list(ctx: &Ctx, guild: u64, ids: &[u64]) -> Vec<(String, String)> {
+    let known = ctx.roles(guild);
+    ids.iter()
+        .filter_map(|id| known.iter().find(|(r, _, _)| r == id))
+        .map(|(_, name, color)| (name.clone(), if *color == 0 { "var(--ink-3)".to_owned() } else { format!("#{color:06x}") }))
+        .collect()
+}
+
+/// Role pills with their colour dots.
+fn role_pills(roles: &[(String, String)]) -> Markup {
+    html! { span.wl-roles { @for (name, color) in roles { span.wl-role style={ "--c:" (color) } { i {} (name) } } } }
+}
+
+/// A Discord channel's header bar. `id` names the label so the page's script can rename it.
+fn channel_bar(id: &str, name: &str) -> Markup {
+    html! { div.wl-dc-head { (ui::icon(Icon::Hash)) span id=(id) { (name) } } }
+}
+
+/// A message from the bot as Discord draws it: avatar, name with the APP tag, the time, `body`.
+fn bot_message(bot: &(String, Markup), time: &str, id: &str, off: bool, body: Markup) -> Markup {
+    html! {
+        div.wl-dc-msg.off[off] id=(id) {
+            (bot.1)
+            div.wl-dc-main {
+                div.wl-dc-name { strong { (bot.0) } span.wl-dc-app { "APP" } span.wl-dc-time { "Today at " (time) } }
+                (body)
+            }
+        }
+    }
+}
+
+/// A message template as Discord shows it: `{user}` becomes a mention when `mention` is on, the
+/// rest is filled like the bot fills it.
+fn preview_text(template: &str, name: &str, server: &str, count: &str, mention: bool) -> Markup {
+    let vars = [("name", name), ("server", server), ("count", count)];
+    html! {
+        @for (i, part) in template.split("{user}").enumerate() {
+            @if i > 0 { @if mention { span.wl-mention { "@" (name) } } @else { (name) } }
+            (crate::fill(part, &vars))
+        }
+    }
+}
+
+/// A member's profile card as Discord shows it, with the roles they hold.
+fn popout(avatar: &str, name: &str, username: &str, roles: &[(String, String)], tone: &str) -> Markup {
+    html! {
+        div.wl-pop {
+            div class={ "wl-pop-banner " (tone) } {}
+            img.wl-pop-av src=(avatar) alt="";
+            div.wl-pop-body {
+                strong.wl-pop-name { (name) }
+                @if !username.is_empty() { span.wl-pop-user { (username) } }
+                div.wl-pop-sec {
+                    h3 { "Roles" }
+                    div.wl-pop-roles {
+                        @if roles.is_empty() { span.wl-pop-none { "No roles" } }
+                        @for (n, c) in roles { span.wl-pop-role style={ "--c:" (c) } { i {} (n) } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+const CSS: &str = r#"
 .wl-main { gap: 30px; }
 .wl-block { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .wl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
-.wl-faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 18px 10px; }
-.wl-face { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; min-width: 0; }
-.wl-face .avatar { width: 56px; height: 56px; margin-bottom: 6px; }
-.wl-face strong { font-weight: 500; font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wl-face .muted { font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wl-more { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 6px; border-radius: 50%; background: var(--control); color: var(--ink-2); font: 500 15px var(--mono); }
-.wl-preview { display: flex; flex-direction: column; gap: 18px; padding: 18px 20px; border-radius: var(--r-card); background: var(--veil); border: 1px solid var(--edge-1); }
-.wl-msg { display: flex; gap: 12px; align-items: flex-start; font-size: 14px; line-height: 1.45; min-width: 0; overflow-wrap: anywhere; }
-.wl-msg.off { opacity: .45; }
-.wl-msg > .avatar { width: 40px; height: 40px; margin-top: 2px; }
-.wl-msg-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
-.wl-msg-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.wl-msg-head strong { font-weight: 600; }
-.wl-app { display: inline-flex; align-items: center; height: 16px; padding: 0 5px; border-radius: 4px; background: var(--data); color: var(--ground); font: 600 10px var(--sans); letter-spacing: .02em; }
-.wl-msg-text { color: var(--ink); }
-.wl-mention { background: var(--data-wash); color: var(--data); border-radius: 3px; padding: 0 3px; }
-.wl-bye { font-size: 13px; color: var(--ink-2); }
-.wl-bye .avatar { width: 28px; height: 28px; }
-.wl-card { display: block; width: 100%; max-width: 440px; height: auto; border-radius: 10px; margin-top: 4px; }
-.wl-label { font-size: 12px; color: var(--ink-3); }
-.wl-inv { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13px; }
+.wl-sec { gap: 14px; }
+.wl-sec-head { display: flex; align-items: flex-start; gap: 12px; }
+.wl-sec-ic { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; flex: none; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 24%, transparent); }
+.wl-sec-ic .icon { width: 17px; height: 17px; }
+.wl-sec-head h2 { padding-top: 6px; }
+.wl-sec-head p { font-size: 13px; margin-top: 3px; max-width: 68ch; }
+
+/* Joined today: one card per face. */
+.wl-faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 10px; }
+.wl-face { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 16px 8px 13px; border-radius: 14px; text-align: center; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
+.wl-face:hover { transform: translateY(-3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
+.wl-face .avatar { width: 56px; height: 56px; margin-bottom: 9px; box-shadow: 0 0 0 2px var(--page), 0 0 0 4px color-mix(in oklab, var(--hue) 60%, transparent), 0 10px 22px -10px var(--hue); }
+.wl-face.back .avatar { box-shadow: 0 0 0 2px var(--page), 0 0 0 4px color-mix(in oklab, var(--data) 70%, transparent), 0 10px 22px -10px var(--data); }
+.wl-face strong { font-weight: 600; font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-face .muted { font-size: 11.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-face.back .muted { color: var(--data); }
+.wl-more { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 9px; border-radius: 50%; background: color-mix(in oklab, var(--hue) 14%, transparent); color: var(--hue); font: 600 16px var(--sans); }
+
+/* Discord, drawn the way members see it. */
+.wl-dc { border-radius: 14px; overflow: hidden; background: #313338; color: #dbdee1; font-size: 15px; box-shadow: 0 30px 60px -28px rgba(0, 0, 0, 0.95), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+.wl-dc-head { display: flex; align-items: center; gap: 7px; height: 46px; padding: 0 16px; color: #f2f3f5; font-weight: 600; font-size: 15px; box-shadow: 0 1px 0 rgba(4, 4, 5, 0.2), 0 1.5px 0 rgba(6, 6, 7, 0.05), 0 2px 0 rgba(4, 4, 5, 0.05); position: relative; z-index: 1; }
+.wl-dc-head .icon { color: #80848e; width: 20px; height: 20px; }
+.wl-dc-body { padding: 10px 0 18px; }
+.wl-dc-day { display: flex; align-items: center; gap: 8px; margin: 6px 16px 10px; color: #949ba4; font-size: 12px; font-weight: 600; }
+.wl-dc-day::before, .wl-dc-day::after { content: ""; flex: 1; height: 1px; background: #3f4147; }
+.wl-dc-msg { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 0 16px; padding: 4px 16px 6px; transition: opacity 0.3s, filter 0.3s, background 0.15s; }
+.wl-dc-msg:hover { background: #2e3035; }
+.wl-dc-msg.off { opacity: 0.35; filter: saturate(0.3); }
+.wl-dc-av { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; margin-top: 2px; }
+span.wl-dc-av { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
+span.wl-dc-av img { width: 22px; height: 22px; }
+.wl-dc-main { min-width: 0; }
+.wl-dc-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.375; }
+.wl-dc-name strong { color: #f2f3f5; font-weight: 600; font-size: 15px; }
+.wl-dc-app { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font: 600 10px/1 var(--sans); }
+.wl-dc-time { color: #949ba4; font-size: 12px; margin-left: 2px; }
+.wl-dc-text { line-height: 1.375; overflow-wrap: anywhere; white-space: pre-wrap; }
+.wl-mention { background: rgba(88, 101, 242, 0.3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; font-weight: 500; }
+/* The card arrives: it rises out of a blur, then a light passes over it once. */
+.wl-card { position: relative; display: block; width: 100%; max-width: 440px; margin-top: 8px; border-radius: 8px; overflow: hidden; aspect-ratio: 3 / 1; background: #2b2d31; animation: wl-arrive 0.9s var(--ease) both 0.5s; }
+.wl-card[hidden] { display: none; }
+.wl-card img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.wl-card::after { content: ""; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.22) 50%, transparent 65%); transform: translateX(-110%); animation: wl-sheen 1.3s var(--ease) both 1.25s; pointer-events: none; }
+.wl-dc + .wl-dc { margin-top: 12px; }
+.wl-send { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.wl-settings .settings { gap: 22px; }
+
+/* Rail. */
+.wl-inv { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 11px; align-items: center; font-size: 13px; }
+.wl-inv .avatar { width: 30px; height: 30px; }
 .wl-inv .grow { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .wl-inv .grow > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wl-inv .mono { color: var(--ink-2); }
 .wl-back { display: flex; align-items: center; gap: 12px; }
 .wl-back p { font-size: 13px; color: var(--ink-2); }
-.wl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.wl-chip { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px; border-radius: 13px; background: var(--control); color: var(--ink-2); font-size: 12px; }
-.wl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; }
-.wl-send { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.wl-settings { display: flex; flex-direction: column; gap: 22px; }
-.wl-settings .settings { gap: 22px; }
-.wl-big { display: flex; flex-direction: column; gap: 2px; }
-.wl-big .big-num { font-size: 26px; }
-.wl-invite .input { width: 200px; flex: none; }
-@media (max-width: 560px) { .wl-invite { flex-wrap: wrap; } .wl-invite .input { width: 100%; } }
-";
+.wl-back .avatars .avatar { width: 32px; height: 32px; }
+.wl-roles { display: flex; flex-wrap: wrap; gap: 6px; }
+.wl-role { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px; border-radius: 13px; background: color-mix(in oklab, var(--c) 13%, transparent); color: var(--ink); font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+.wl-role i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+.wl-big { display: flex; flex-direction: column; gap: 4px; }
 
-const SCRIPT: &str = r#"
+/* Roles: two profile cards, a newcomer's and a returning member's. */
+.wl-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.wl-pair > div { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.wl-cap { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.wl-cap b { color: var(--ink); font-weight: 600; }
+.wl-pop { position: relative; border-radius: 12px; overflow: hidden; background: #232428; color: #dbdee1; box-shadow: 0 26px 50px -24px rgba(0, 0, 0, 0.95), inset 0 0 0 1px rgba(255, 255, 255, 0.06); animation: wl-arrive 0.8s var(--ease) both 0.3s; }
+.wl-pair > div + div .wl-pop { animation-delay: 0.45s; }
+.wl-pop-banner { height: 64px; background: linear-gradient(120deg, color-mix(in oklab, var(--hue) 75%, #000), color-mix(in oklab, var(--hue) 35%, #000)); }
+.wl-pop-banner.back { background: linear-gradient(120deg, color-mix(in oklab, var(--data-2) 80%, #000), color-mix(in oklab, var(--data) 40%, #000)); }
+.wl-pop-av { position: absolute; top: 22px; left: 14px; width: 76px; height: 76px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 6px #232428; }
+.wl-pop-body { display: flex; flex-direction: column; margin: 46px 12px 12px; padding: 12px; border-radius: 8px; background: #111214; }
+.wl-pop-name { color: #f2f3f5; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+.wl-pop-user { color: #b5bac1; font-size: 13px; }
+.wl-pop-sec { margin-top: 12px; padding-top: 12px; border-top: 1px solid #2e2f34; }
+.wl-pop-sec h3 { font-size: 12px; font-weight: 700; color: #f2f3f5; }
+.wl-pop-roles { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.wl-pop-role { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border-radius: 4px; background: #2b2d31; font-size: 12px; font-weight: 500; color: #dbdee1; animation: pop-in 0.4s var(--spring) both; animation-delay: 0.9s; }
+.wl-pop-role i { width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
+.wl-pop-none { font-size: 12px; color: #949ba4; }
+.wl-rows { display: flex; flex-direction: column; gap: 8px; }
+.wl-row { display: flex; align-items: center; gap: 13px; padding: 11px 14px; border-radius: 14px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; min-width: 0; }
+.wl-row:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
+.wl-row > .avatar { width: 38px; height: 38px; }
+.wl-row .grow { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.wl-row strong { font-weight: 600; font-size: 13.5px; }
+.wl-row .meta { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+.wl-list { padding: 4px 16px; }
+.wl-list .wl-row { padding: 11px 0; border-radius: 0; background: none; box-shadow: none; }
+.wl-list .wl-row:hover { transform: none; box-shadow: none; }
+.wl-list .wl-row + .wl-row { border-top: 1px solid var(--edge-1); }
+.wl-list .wl-row > .avatar { width: 34px; height: 34px; }
+.wl-row.gone > .avatar { filter: grayscale(1); opacity: 0.6; }
+.wl-row.gone strong { color: var(--ink-2); font-weight: 500; }
+.wl-via { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 12.5px; min-width: 0; flex-wrap: wrap; }
+.wl-via .avatar { width: 18px; height: 18px; }
+.wl-via .wl-tag { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; background: color-mix(in oklab, var(--hue) 14%, transparent); color: var(--hue); font-size: 11.5px; font-weight: 600; }
+
+/* Invites. */
+.wl-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
+.wl-status .status { background: var(--control); backdrop-filter: none; }
+.wl-links { padding: 4px 18px; }
+.wl-link { display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(120px, 200px) 220px; gap: 14px; align-items: center; padding: 13px 0; }
+.wl-link + .wl-link { border-top: 1px solid var(--edge-1); }
+.wl-link-ic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; color: var(--hue); background: color-mix(in oklab, var(--hue) 13%, transparent); }
+.wl-link-ic .icon { width: 18px; height: 18px; }
+.wl-link .grow { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.wl-code { font: 600 13.5px var(--mono); color: var(--ink); }
+.wl-link .wl-via { color: var(--ink-3); }
+.wl-uses { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--ink-3); }
+.wl-uses b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.wl-uses .meter { height: 5px; }
+.wl-link .input { width: 100%; }
+.wl-links-foot { display: flex; justify-content: flex-end; padding: 4px 0 12px; }
+.wl-chart { padding: 18px 20px 14px; }
+@keyframes wl-arrive { from { opacity: 0; transform: translateY(16px) scale(0.96); filter: blur(8px); } }
+@keyframes wl-sheen { to { transform: translateX(110%); } }
+@media (max-width: 1180px) { .wl-link { grid-template-columns: 40px minmax(0, 1fr) 170px; } .wl-uses { display: none; } }
+@media (max-width: 920px) {
+  .wl-pair { grid-template-columns: 1fr; }
+  .wl-link { grid-template-columns: 40px minmax(0, 1fr); }
+  .wl-link .input { grid-column: 1 / -1; }
+  .wl-faces { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+  .wl-row { flex-wrap: wrap; }
+}
+"#;
+
+const SCRIPT: &str = r##"
 (() => {
   const box = document.getElementById("wl-preview");
   if (!box) return;
-  const v = { name: box.dataset.name, server: box.dataset.server, count: box.dataset.count };
+  const v = { name: box.dataset.name, server: box.dataset.server, count: box.dataset.members };
   const $ = (id) => document.getElementById(id);
   const draw = (el, tpl, mention) => {
     el.textContent = "";
-    tpl.split(/(\{user\})/).forEach((part) => {
-      if (part === "{user}") {
+    tpl.split("{user}").forEach((part, i) => {
+      if (i > 0) {
         if (mention) { const s = document.createElement("span"); s.className = "wl-mention"; s.textContent = "@" + v.name; el.append(s); }
         else el.append(v.name);
-      } else el.append(part.replace(/\{(name|server|count)\}/g, (_, k) => v[k]));
+      }
+      el.append(part.replace(/\{(name|server|count)\}/g, (_, k) => v[k]));
     });
   };
+  const chan = (sel, label) => { const o = $(sel).selectedOptions[0]; $(label).textContent = o && o.value ? o.text.replace(/^#/, "") : "pick a channel"; };
   const sync = () => {
     draw($("wl-welcome-text"), $("welcome_text").value.trim() || box.dataset.defaultWelcome, true);
     draw($("wl-goodbye-text"), $("goodbye_text").value.trim() || box.dataset.defaultGoodbye, false);
     $("wl-card").hidden = !$("welcome_card").checked;
     $("wl-goodbye").classList.toggle("off", !$("goodbye_on").checked);
     $("wl-welcome").classList.toggle("off", !$("welcome_on").checked);
+    chan("welcome_channel", "wl-chan-welcome");
+    chan("goodbye_channel", "wl-chan-goodbye");
   };
-  ["welcome_text", "goodbye_text", "welcome_card", "goodbye_on", "welcome_on"].forEach((id) => {
+  ["welcome_text", "goodbye_text", "welcome_card", "goodbye_on", "welcome_on", "welcome_channel", "goodbye_channel"].forEach((id) => {
     $(id).addEventListener("input", sync);
     $(id).addEventListener("change", sync);
   });
-  sync();
   const url = new URL(location.href);
   if (url.searchParams.has("sent")) {
     window.botToast && window.botToast("Test sent");
@@ -174,7 +358,7 @@ const SCRIPT: &str = r#"
     history.replaceState(null, "", url.pathname + url.search + url.hash);
   }
 })();
-"#;
+"##;
 
 async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
@@ -187,18 +371,13 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let left = left_since(&ctx, guild, today);
     let top: Vec<(u64, i64, i64)> = invites::top_inviters(&ctx, guild, now - 30 * DAY_MS, 6)?.into_iter().filter(|t| t.1 > 0).take(4).collect();
     let back: Vec<roles::Restored> = roles::recently_restored(&ctx, guild, 25)?.into_iter().filter(|r| r.at >= now - 7 * DAY_MS).collect();
-    let known_roles = ctx.roles(guild);
-    let given: Vec<(String, String)> = s
-        .autoroles
-        .iter()
-        .filter_map(|id| known_roles.iter().find(|(r, _, _)| r == id))
-        .map(|(_, name, color)| (name.clone(), if *color == 0 { "var(--ink-3)".to_owned() } else { format!("#{color:06x}") }))
-        .collect();
-    let (bot_name, bot_avatar) = bot_identity(&ctx);
+    let given = role_list(&ctx, guild, &s.autoroles);
+    let bot = bot_identity(&ctx);
     let max_recent = top.iter().map(|t| t.1).max().unwrap_or(1).max(1);
     let more = joins - shown.len() as i64;
     let names = invites::names(&ctx, guild)?;
-    let faces: Vec<(u64, String, String)> = shown
+    let server = ctx.guild_name(guild);
+    let faces: Vec<(u64, String, String, bool)> = shown
         .iter()
         .map(|(j, came_back)| {
             let mut parts = vec![short_ago(j.at)];
@@ -209,15 +388,23 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
             } else if let Some(i) = j.inviter {
                 parts.push(format!("via {}", ctx.display_name(guild, i)));
             }
-            (j.user, ctx.display_name(guild, j.user), parts.join(" · "))
+            (j.user, ctx.display_name(guild, j.user), parts.join(" · "), *came_back)
         })
         .collect();
+    let channel = |id: Option<u64>| id.and_then(|c| ctx.text_channels(guild).into_iter().find(|x| x.0 == c)).map(|(_, n)| n).unwrap_or_else(|| "pick a channel".into());
+    let welcome_tpl = if s.welcome_text.trim().is_empty() { DEFAULT_WELCOME } else { s.welcome_text.as_str() };
+    let goodbye_tpl = if s.goodbye_text.trim().is_empty() { DEFAULT_GOODBYE } else { s.goodbye_text.as_str() };
 
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Messages"))
         div.with-rail {
             div.stack.wl-main {
+                (readings(&[
+                    ("joined today", text::num(joins)),
+                    ("left today", text::num(left)),
+                    ("came back this week", text::num(back.len() as i64)),
+                ]))
                 div.wl-block {
                     div.wl-head {
                         h2 { "Joined today" }
@@ -227,8 +414,8 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                         (ui::empty(Icon::Door, "Nobody has joined yet today", "New members show up here with how long ago they came in and who invited them."))
                     } @else {
                         div.wl-faces {
-                            @for (user_id, name, detail) in &faces {
-                                div.wl-face {
+                            @for (user_id, name, detail, came_back) in &faces {
+                                div.wl-face.back[*came_back] {
                                     img.avatar src=(ctx.member_avatar(guild, *user_id)) alt="" loading="lazy";
                                     strong { (name) }
                                     span.muted { (detail) }
@@ -246,34 +433,37 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 }
 
                 div.wl-block {
-                    h2 { "What new members see" }
-                    div.wl-preview id="wl-preview" data-name=(user.name) data-server=(ctx.guild_name(guild)) data-count=(count)
+                    div.wl-head {
+                        h2 { "What new members see" }
+                        span.muted.small { "Your own name and card, as a newcomer gets theirs" }
+                    }
+                    div #wl-preview data-name=(user.name) data-server=(server) data-members=(count)
                         data-default-welcome=(DEFAULT_WELCOME) data-default-goodbye=(DEFAULT_GOODBYE) {
-                        div.wl-msg id="wl-welcome" {
-                            img.avatar src=(bot_avatar) alt="" loading="lazy";
-                            div.wl-msg-body {
-                                div.wl-msg-head {
-                                    strong { (bot_name) }
-                                    span.wl-app { "APP" }
-                                    span.muted.small { "Today at " (clock(&page, now)) }
-                                }
-                                div.wl-msg-text id="wl-welcome-text" {}
-                                img.wl-card id="wl-card" src=(page.path("welcome/card.png")) alt="The welcome card" width="960" height="320";
+                        div.wl-dc {
+                            (channel_bar("wl-chan-welcome", &channel(s.welcome_channel)))
+                            div.wl-dc-body {
+                                div.wl-dc-day { span { (long_date(&page, now)) } }
+                                (bot_message(&bot, &clock(&page, now), "wl-welcome", !s.welcome_on, html! {
+                                    div.wl-dc-text #wl-welcome-text { (preview_text(welcome_tpl, &user.name, &server, &count, true)) }
+                                    span.wl-card #wl-card hidden[!s.welcome_card] {
+                                        img src=(page.path("welcome/card.png")) alt="The welcome card, drawn for you" width="960" height="320";
+                                    }
+                                }))
                             }
                         }
-                        div.wl-label { "When someone leaves" }
-                        div.wl-msg.wl-bye id="wl-goodbye" {
-                            img.avatar src=(bot_avatar) alt="" loading="lazy";
-                            div.wl-msg-body {
-                                div.wl-msg-head { strong { (bot_name) } span.wl-app { "APP" } }
-                                div id="wl-goodbye-text" {}
+                        div.wl-dc {
+                            (channel_bar("wl-chan-goodbye", &channel(s.goodbye_channel)))
+                            div.wl-dc-body {
+                                (bot_message(&bot, &clock(&page, now), "wl-goodbye", !s.goodbye_on, html! {
+                                    div.wl-dc-text #wl-goodbye-text { (preview_text(goodbye_tpl, &user.name, &server, &count, false)) }
+                                }))
                             }
                         }
                     }
                     @if page.can_edit() && s.welcome_channel.is_some() {
                         div.wl-send {
                             form.inline method="post" action=(page.path("welcome/test")) {
-                                button.btn.small type="submit" { "Send a test" }
+                                button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send a test" }
                             }
                             span.muted.small { "Posts the welcome for you in " (channel_name(&ctx, guild, s.welcome_channel)) ", using the saved settings." }
                         }
@@ -284,17 +474,17 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
 
                 div.wl-settings {
                     (ui::settings_form(&page, &page.path("welcome"), html! {
-                        (ui::card(html! {
+                        (section(Icon::Wave, "Welcome", None, ui::card(html! {
                             (ui::field_toggle("welcome_on", "Welcome new members", None, s.welcome_on))
                             (ui::field_channel(&ctx, guild, "welcome_channel", "Post in", None, s.welcome_channel))
                             (ui::field_textarea("welcome_text", "Message", Some("{user} mentions them, {name} is their name, {server} the server and {count} their member number. Only they are mentioned."), &s.welcome_text, DEFAULT_WELCOME))
                             (ui::field_toggle("welcome_card", "Attach the welcome card", Some("An image with their avatar, name and member number."), s.welcome_card))
-                        }))
-                        (ui::card(html! {
+                        })))
+                        (section(Icon::Door, "Goodbye", None, ui::card(html! {
                             (ui::field_toggle("goodbye_on", "Say goodbye", Some("Posts when someone leaves."), s.goodbye_on))
                             (ui::field_channel(&ctx, guild, "goodbye_channel", "Goodbye in", None, s.goodbye_channel))
                             (ui::field_textarea("goodbye_text", "Goodbye message", Some("{name}, {server} and {count} work here. Nobody is mentioned."), &s.goodbye_text, DEFAULT_GOODBYE))
-                        }))
+                        })))
                     }))
                 }
                 script { (PreEscaped(SCRIPT)) }
@@ -308,7 +498,7 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     }
                     @for (inviter, recent, _) in &top {
                         div.wl-inv {
-                            img.avatar src=(ctx.member_avatar(guild, *inviter)) alt="" width="28" height="28" loading="lazy";
+                            img.avatar src=(ctx.member_avatar(guild, *inviter)) alt="" width="30" height="30" loading="lazy";
                             div.grow {
                                 span { (ctx.display_name(guild, *inviter)) }
                                 span.meter { span style={ "width:" (*recent * 100 / max_recent) "%" } {} }
@@ -333,11 +523,7 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     @if given.is_empty() {
                         p.muted.small { "Nothing is given on join. Pick auto-roles on the Roles tab." }
                     }
-                    div.wl-chips {
-                        @for (name, color) in &given {
-                            span.wl-chip { span.wl-dot style={ "background:" (color) } {} (name) }
-                        }
-                    }
+                    (role_pills(&given))
                 }
             }
         }
@@ -395,66 +581,126 @@ async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
 async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
+    let now = now_ms();
     let days = s.rejoin_days.max(1);
     let waiting = roles::waiting_count(&ctx, guild, days)?;
+    let waiting_list = roles::waiting_members(&ctx, guild, days, 5)?;
     let restored = roles::recently_restored(&ctx, guild, 25)?;
+    let this_week = restored.iter().filter(|r| r.at >= now - 7 * DAY_MS).count() as i64;
     let exists = |r: &u64| ctx.cache.role(Id::new(*r)).is_some();
     let stuck: Vec<u64> = s.autoroles.iter().copied().filter(|r| exists(r) && !roles::assignable(&ctx, guild, *r)).collect();
     let deleted = s.autoroles.iter().filter(|r| !exists(r)).count() as i64;
+    let given = role_list(&ctx, guild, &s.autoroles);
+    // The newest member stands in for every newcomer; without one, the viewer does.
+    let newest = invites::recent_joins(&ctx, guild, 1)?.into_iter().next().map(|j| j.user).filter(|u| ctx.known_name(guild, *u).is_some());
+    let (new_face, new_name, new_user) = match newest {
+        Some(u) => (ctx.member_avatar(guild, u), ctx.display_name(guild, u), username(&ctx, u)),
+        None => (user.avatar_url(), user.name.clone(), username(&ctx, user.id)),
+    };
 
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Roles"))
         div.with-rail {
             div.stack.wl-main {
-                @if !stuck.is_empty() {
-                    p.small { (ui::badge("Can't give", Tone::Warn)) " " (role_names(&ctx, guild, &stuck)) ". These sit above the bot's own role, or the server manages them." }
+                (readings(&[
+                    ("given on join", text::num(given.len() as i64)),
+                    ("waiting to come back", text::num(waiting)),
+                    ("restored this week", text::num(this_week)),
+                ]))
+                @if !stuck.is_empty() || deleted > 0 {
+                    div.ov-rows {
+                        @if !stuck.is_empty() {
+                            div.need.alert {
+                                span.need-icon.alert { (ui::icon(Icon::Shield)) }
+                                div.grow {
+                                    strong { "The bot can't give " (role_names(&ctx, guild, &stuck)) }
+                                    p.muted.small { "These sit above the bot's own role, or the server manages them. Move the bot's role higher in Discord." }
+                                }
+                            }
+                        }
+                        @if deleted > 0 {
+                            div.need {
+                                span.need-icon { (ui::icon(Icon::Trash)) }
+                                div.grow {
+                                    strong { (counted(deleted, "auto-role was", "auto-roles were")) " deleted in Discord" }
+                                    p.muted.small { "Save this tab to take " (if deleted == 1 { "it" } else { "them" }) " off the list." }
+                                }
+                            }
+                        }
+                    }
                 }
-                @if deleted > 0 {
-                    p.small {
-                        (ui::badge("Deleted", Tone::Warn)) " "
-                        (counted(deleted, "auto-role was", "auto-roles were")) " deleted in Discord. Save this tab to take "
-                        (if deleted == 1 { "it" } else { "them" }) " off the list."
+                div.wl-pair {
+                    div {
+                        p.wl-cap { b { "A new member" } " gets these when they join" }
+                        (popout(&new_face, &new_name, &new_user, &given, ""))
+                    }
+                    div {
+                        @match restored.first() {
+                            Some(r) => {
+                                p.wl-cap { b { (ctx.display_name(guild, r.user)) } " came back " (text::ago(r.at)) }
+                                (popout(&ctx.member_avatar(guild, r.user), &ctx.display_name(guild, r.user), &username(&ctx, r.user), &role_list(&ctx, guild, &r.roles), "back"))
+                            },
+                            None => {
+                                p.wl-cap { b { "A member coming back" } " gets the roles they left with" }
+                                (ui::empty(Icon::Users, "Nobody has come back yet", "When someone leaves and returns, their profile shows here with the roles they got back."))
+                            },
+                        }
                     }
                 }
                 (ui::settings_form(&page, &page.path("welcome/roles"), html! {
-                    (ui::section("Auto-roles", None, ui::card(html! {
+                    (section(Icon::Users, "Auto-roles", None, ui::card(html! {
                         (ui::field_roles(&ctx, guild, "autoroles", "Roles for new members", Some("The bot can only give roles below its own role."), &s.autoroles))
                         (ui::field_toggle("autorole_bots", "Include bots", Some("Off: bots that join get no auto-roles."), s.autorole_bots))
                     })))
-                    (ui::section("Roles back on rejoin", None, ui::card(html! {
+                    (section(Icon::Door, "Roles back on rejoin", None, ui::card(html! {
                         (ui::field_toggle("rejoin_on", "Give roles back", Some("A member who leaves and returns gets the roles they left with."), s.rejoin_on))
                         (ui::field_number("rejoin_days", "Keep for", Some("After this long, a leaver's saved roles are deleted."), days, 1, 3650, Some("days")))
                         (ui::field_roles(&ctx, guild, "rejoin_exclude", "Never give back", Some("Useful for staff or punishment roles."), &s.rejoin_exclude))
                     })))
                 }))
-                div.block-head {
-                    h2 { "Recently restored" }
-                    p.muted { "Members who came back and got their roles." }
-                }
-                @if restored.is_empty() {
-                    (ui::empty(Icon::Users, "Nobody restored yet", "Members who leave and return show up here with the roles they got back."))
-                } @else {
-                    div.list {
-                        @for r in &restored {
-                            div.list-item {
-                                img.avatar src=(ctx.member_avatar(guild, r.user)) alt="" width="32" height="32" loading="lazy";
-                                div.grow {
-                                    strong.clip { (ctx.display_name(guild, r.user)) }
-                                    div.muted.small.clip { (role_names(&ctx, guild, &r.roles)) }
+                (section(Icon::Activity, "Recently restored", Some("Members who came back and got their roles."), html! {
+                    @if restored.is_empty() {
+                        (ui::empty(Icon::Users, "Nobody restored yet", "Members who leave and return show up here with the roles they got back."))
+                    } @else {
+                        div.wl-rows {
+                            @for r in &restored {
+                                div.wl-row {
+                                    img.avatar src=(ctx.member_avatar(guild, r.user)) alt="" loading="lazy";
+                                    div.grow {
+                                        strong.clip { (ctx.display_name(guild, r.user)) }
+                                        (role_pills(&role_list(&ctx, guild, &r.roles)))
+                                    }
+                                    span.meta { (text::ago(r.at)) }
                                 }
-                                span.meta { (text::ago(r.at)) }
                             }
                         }
                     }
-                }
+                }))
             }
             aside.rail {
                 div.rail-block {
                     h2 { "Waiting to come back" }
                     div.wl-big {
-                        span.big-num { (text::num(waiting)) }
+                        div.big-num { b data-count { (text::num(waiting)) } }
                         span.muted.small { (if waiting == 1 { "member" } else { "members" }) " left with roles saved, in the last " (days) " days" }
+                    }
+                    @for (u, left_at) in &waiting_list {
+                        div.mini {
+                            img.avatar src=(ctx.member_avatar(guild, *u)) alt="" loading="lazy";
+                            div.grow {
+                                span { (ctx.known_name(guild, *u).unwrap_or_else(|| "A former member".into())) }
+                                span.muted { "Left " (text::ago(*left_at)) }
+                            }
+                        }
+                    }
+                }
+                div.rail-block {
+                    h2 { "Never given back" }
+                    @if s.rejoin_exclude.is_empty() {
+                        p.muted.small { "Every saved role comes back. Exclude staff or punishment roles in the form." }
+                    } @else {
+                        (role_pills(&role_list(&ctx, guild, &s.rejoin_exclude)))
                     }
                 }
             }
@@ -491,6 +737,26 @@ async fn save_roles(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
 
 // ---- invites ----
 
+/// Joins on each of the last 30 days in the viewer's timezone, oldest first, labelled "Oct 2".
+fn joins_by_day(ctx: &Ctx, guild: u64, page: &Page) -> Vec<(String, i64)> {
+    use bot_core::jiff;
+    let today = page.user.local(now_ms()).date();
+    let days: Vec<jiff::civil::Date> = (0..30i64).rev().filter_map(|b| today.checked_sub(jiff::Span::new().days(b)).ok()).collect();
+    let since = day_start(page) - 31 * DAY_MS;
+    let ats: Vec<i64> = ctx
+        .db
+        .with(|c| {
+            let mut s = c.prepare_cached("SELECT joined_at FROM welcome_joins WHERE guild_id = ?1 AND joined_at >= ?2")?;
+            s.query_map(bot_core::rusqlite::params![guild as i64, since], |r| r.get(0))?.collect()
+        })
+        .unwrap_or_default();
+    let mut per: std::collections::HashMap<jiff::civil::Date, i64> = std::collections::HashMap::new();
+    for at in ats {
+        *per.entry(page.user.local(at).date()).or_default() += 1;
+    }
+    days.iter().map(|d| (format!("{} {}", &MONTHS[(d.month() - 1).clamp(0, 11) as usize][..3], d.day()), per.get(d).copied().unwrap_or(0))).collect()
+}
+
 async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
@@ -502,17 +768,20 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let state = invites::state(&ctx, guild)?;
     let live = invites::load(&ctx, guild)?;
     let names = invites::names(&ctx, guild)?;
+    let series = joins_by_day(&ctx, guild, &page);
+    let most_uses = live.iter().map(|i| i.uses).max().unwrap_or(1).max(1);
+    let top_recent = top.iter().map(|t| t.1).max().unwrap_or(1).max(1);
 
     let status = if !s.track_invites {
-        html! { (ui::badge("Off", Tone::Muted)) " " span.muted.small { "Invites aren't being read. Joins are still listed, without who invited them." } }
+        html! { (ui::status(ui::Dot::Off, "Not tracking")) span.muted { "Invites aren't being read. Joins are still listed, without who invited them." } }
     } else {
         match &state {
-            None => html! { (ui::badge("Not read yet", Tone::Muted)) " " span.muted.small { "The bot reads the invites soon after it starts, then every hour." } },
-            Some(st) if st.ok => html! { (ui::badge("Reading invites", Tone::Ok)) " " span.muted.small { (st.codes) " invites, last read " (text::ago(st.checked_at)) "." } },
+            None => html! { (ui::status(ui::Dot::Waiting, "Not read yet")) span.muted { "The bot reads the invites soon after it starts, then every hour." } },
+            Some(st) if st.ok => html! { (ui::status(ui::Dot::Live, "Reading invites")) span.muted { (st.codes) " invites, last read " (text::ago(st.checked_at)) "." } },
             Some(st) => html! {
-                (ui::badge("Can't read invites", Tone::Bad)) " "
-                span.small { (st.error.as_deref().unwrap_or("Discord didn't say why.")) }
-                " " span.muted.small { "Tried " (text::ago(st.checked_at)) ". It tries again every hour." }
+                (ui::badge("Can't read invites", Tone::Bad))
+                span { (st.error.as_deref().unwrap_or("Discord didn't say why.")) }
+                span.muted { "Tried " (text::ago(st.checked_at)) ". It tries again every hour." }
             },
         }
     };
@@ -522,75 +791,75 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         (tabs(&page, "Invites"))
         div.with-rail {
             div.stack.wl-main {
-                p { (status) }
-                (ui::settings_form(&page, &page.path("welcome/invites"), ui::card(html! {
-                    (ui::field_toggle("track_invites", "Track invites", Some("Works out which invite each new member used. The bot needs the Manage Server permission to read invites."), s.track_invites))
-                })))
-                (ui::section("Invites", Some("Name a link to see where members come from, like \"Twitch link\". The name shows on Joined today and in recent joins."), html! {
+                div.wl-status { (status) }
+                (readings(&[
+                    ("joins in 30 days", text::num(joins)),
+                    ("matched to an invite", if joins > 0 { format!("{}%", known * 100 / joins) } else { "None yet".into() }),
+                    ("invites watched", text::num(state.as_ref().map(|s| s.codes).unwrap_or(0))),
+                ]))
+                (section(Icon::Chart, "Joins per day", Some("The last 30 days, in your timezone."), html! {
+                    @if joins == 0 {
+                        (ui::empty(Icon::Door, "Nobody has joined in 30 days", "Each join lands here on its day, whether or not an invite is matched."))
+                    } @else {
+                        div.card.wl-chart { (ui::area_chart(&series, "joins")) }
+                    }
+                }))
+                (section(Icon::Door, "Invite links", Some("Name a link to see where members come from, like \"Twitch link\". The name shows on Joined today and in recent joins."), html! {
                     @if live.is_empty() {
                         (ui::empty(Icon::Door, "No invites read yet", "The server's invites show up here once the bot has read them."))
                     } @else {
                         form method="post" action=(page.path("welcome/invites/names")) {
-                            div.list {
+                            div.card.wl-links {
                                 @for inv in &live {
-                                    div.list-item.wl-invite {
+                                    @let name = names.get(&inv.code).map(String::as_str).unwrap_or_default();
+                                    div.wl-link {
+                                        span.wl-link-ic { (ui::icon(Icon::Enter)) }
                                         div.grow {
-                                            strong { code { (inv.code) } }
-                                            div.muted.small.clip {
-                                                @match inv.inviter { Some(u) => { "by " (ctx.display_name(guild, u)) " · " }, None => {} }
-                                                (counted(inv.uses, "use", "uses"))
-                                                @if inv.max_uses > 0 { " of " (inv.max_uses) }
+                                            span.wl-code { (inv.code) }
+                                            span.wl-via {
+                                                @match inv.inviter {
+                                                    Some(u) => { img.avatar src=(ctx.member_avatar(guild, u)) alt="" loading="lazy"; "by " (ctx.display_name(guild, u)) },
+                                                    None => { "made by the server" },
+                                                }
+                                                @if !name.is_empty() && !page.can_edit() { span.wl-tag { (name) } }
                                             }
                                         }
-                                        @let name = names.get(&inv.code).map(String::as_str).unwrap_or_default();
+                                        div.wl-uses {
+                                            span { b { (text::num(inv.uses)) } (if inv.uses == 1 { " use" } else { " uses" }) @if inv.max_uses > 0 { " of " (inv.max_uses) } }
+                                            @let pct = if inv.max_uses > 0 { inv.uses * 100 / inv.max_uses } else { inv.uses * 100 / most_uses };
+                                            span.meter { span style={ "width:" (pct.clamp(0, 100)) "%" } {} }
+                                        }
                                         @if page.can_edit() {
                                             input type="hidden" name="code" value=(inv.code);
                                             input.input type="text" name={ "name-" (inv.code) } value=(name) maxlength="40" placeholder="Name this link" aria-label={ "Name for invite " (inv.code) };
-                                        } @else if !name.is_empty() {
-                                            span.meta { (name) }
                                         }
                                     }
                                 }
-                            }
-                            @if page.can_edit() {
-                                div.wl-send { button.btn.small type="submit" { "Save names" } }
-                            }
-                        }
-                    }
-                }))
-                (ui::section("Top inviters", Some("Members whose invites brought people in."), html! {
-                    @if top.is_empty() {
-                        (ui::empty(Icon::Users, "No invited joins yet", "Joins through a member's invite are counted here once tracking has taken its first reading."))
-                    } @else {
-                        div.list {
-                            @for (inviter, recent, all) in &top {
-                                div.list-item {
-                                    img.avatar src=(ctx.member_avatar(guild, *inviter)) alt="" width="32" height="32" loading="lazy";
-                                    div.grow { strong.clip { (ctx.display_name(guild, *inviter)) } }
-                                    span.meta { (text::num(*recent)) " in 30 days · " (text::num(*all)) " all time" }
+                                @if page.can_edit() {
+                                    div.wl-links-foot { button.btn.small type="submit" { "Save names" } }
                                 }
                             }
                         }
                     }
                 }))
-                (ui::section("Recent joins", None, html! {
+                (section(Icon::Users, "Recent joins", None, html! {
                     @if recent.is_empty() {
                         (ui::empty(Icon::Door, "No joins recorded", "New members appear here with the invite they came through."))
                     } @else {
-                        div.list {
+                        div.card.wl-list {
                             @for j in &recent {
-                                div.list-item {
-                                    img.avatar src=(ctx.member_avatar(guild, j.user)) alt="" width="32" height="32" loading="lazy";
+                                @let here = ctx.known_name(guild, j.user);
+                                div.wl-row.gone[here.is_none()] {
+                                    img.avatar src=(ctx.member_avatar(guild, j.user)) alt="" loading="lazy";
                                     div.grow {
-                                        strong.clip { (ctx.display_name(guild, j.user)) }
-                                        div.muted.small.clip {
+                                        strong.clip { (here.unwrap_or_else(|| "Left the server".into())) }
+                                        span.wl-via {
                                             @match j.inviter {
-                                                Some(i) => { "invited by " (ctx.display_name(guild, i)) },
+                                                Some(i) => { img.avatar src=(ctx.member_avatar(guild, i)) alt="" loading="lazy"; "invited by " (ctx.display_name(guild, i)) },
                                                 None => { "invite unknown" },
                                             }
                                             @if let Some(c) = &j.code {
-                                                " · "
-                                                @match names.get(c) { Some(n) => { (n) }, None => { code { (c) } } }
+                                                @match names.get(c) { Some(n) => { span.wl-tag { (n) } }, None => { code { (c) } } }
                                             }
                                         }
                                     }
@@ -603,29 +872,25 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             }
             aside.rail {
                 div.rail-block {
-                    h2 { "Joins, 30 days" }
-                    div.wl-big {
-                        span.big-num { (text::num(joins)) }
-                        span.muted.small { "members came in" }
-                    }
+                    h2 { "Tracking" }
+                    (ui::settings_form(&page, &page.path("welcome/invites"), ui::switch_row("track_invites", "Track invites", Some("Works out which invite each new member used. The bot needs the Manage Server permission to read invites."), s.track_invites)))
                 }
                 div.rail-block {
-                    h2 { "With a known inviter" }
-                    @if joins > 0 {
-                        div.wl-big {
-                            span.big-num { (known * 100 / joins) "%" }
-                            span.muted.small { "of joins matched to an invite" }
+                    h2 { "Top inviters" }
+                    @if top.is_empty() {
+                        p.muted.small { "Joins through a member's invite are counted here once tracking has taken its first reading." }
+                    }
+                    @for (inviter, recent, all) in &top {
+                        div.wl-inv {
+                            img.avatar src=(ctx.member_avatar(guild, *inviter)) alt="" width="30" height="30" loading="lazy";
+                            div.grow {
+                                span { (ctx.display_name(guild, *inviter)) }
+                                span.meter { span style={ "width:" (*recent * 100 / top_recent) "%" } {} }
+                            }
+                            span.mono data-tip={ "30 days: " (text::num(*recent)) " · all time " (text::num(*all)) } { (text::num(*recent)) }
                         }
-                    } @else {
-                        p.muted.small { "Nobody has joined in the last 30 days." }
                     }
-                }
-                div.rail-block {
-                    h2 { "Invites watched" }
-                    div.wl-big {
-                        span.big-num { (state.as_ref().map(|s| s.codes).unwrap_or(0)) }
-                        span.muted.small { "invites the bot reads each hour" }
-                    }
+                    @if !top.is_empty() { p.muted.small { "Joins in the last 30 days. Hover a figure for all time." } }
                 }
             }
         }
