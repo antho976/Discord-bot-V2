@@ -1,9 +1,10 @@
 // The dashboard's only script: the "Saved" toast, two-click deletes, the phone menu, marking
-// the current page in the sidebar, and the timezone cookie.
+// the current page in the sidebar, closing popovers, and the timezone cookie.
 (() => {
   const toast = (text) => {
     const t = document.createElement("div");
     t.className = "toast";
+    t.setAttribute("role", "status");
     t.textContent = text;
     document.body.append(t);
     requestAnimationFrame(() => t.classList.add("show"));
@@ -11,12 +12,15 @@
   };
   window.botToast = toast;
 
-  // Tell the server the browser's timezone so times read in local time.
+  // Tell the server the browser's timezone so times read in local time. Reload only once the
+  // cookie has stuck, so a browser that refuses cookies doesn't reload forever.
   try {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (tz && !document.cookie.split("; ").includes("tz=" + encodeURIComponent(tz))) {
-      document.cookie = "tz=" + encodeURIComponent(tz) + "; path=/; max-age=31536000; samesite=lax";
-      if (document.querySelector("[data-local]")) location.reload();
+    const want = "tz=" + encodeURIComponent(tz);
+    const has = () => document.cookie.split("; ").includes(want);
+    if (tz && !has()) {
+      document.cookie = want + "; path=/; max-age=31536000; samesite=lax";
+      if (has() && document.querySelector("[data-local]")) location.reload();
     }
   } catch (_) {}
 
@@ -34,18 +38,29 @@
     if ((location.pathname === p || location.pathname.startsWith(p + "/")) && (!best || p.length > best.dataset.path.length)) best = a;
   });
   if (best) {
-    document.querySelectorAll(".nav.on").forEach((a) => a.classList.remove("on"));
+    document.querySelectorAll(".nav.on").forEach((a) => { a.classList.remove("on"); a.removeAttribute("aria-current"); });
     best.classList.add("on");
+    best.setAttribute("aria-current", "page");
   }
+
+  // Popovers and the server switcher close on a click outside them or on Escape.
+  const closeOpen = (except) => document.querySelectorAll(".switcher[open], .pop[open]").forEach((d) => { if (!d.contains(except)) d.removeAttribute("open"); });
 
   document.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-confirm]");
     if (btn && !btn.classList.contains("armed")) {
       e.preventDefault();
-      const label = btn.textContent;
+      // Keep the markup, not just the text, so icon buttons get their icon back.
+      const html = btn.innerHTML;
+      const aria = btn.getAttribute("aria-label");
       btn.classList.add("armed");
       btn.textContent = btn.dataset.confirm;
-      setTimeout(() => { btn.classList.remove("armed"); btn.textContent = label; }, 3000);
+      if (aria) btn.setAttribute("aria-label", btn.dataset.confirm);
+      setTimeout(() => {
+        btn.classList.remove("armed");
+        btn.innerHTML = html;
+        if (aria) btn.setAttribute("aria-label", aria);
+      }, 3000);
       return;
     }
     const menu = e.target.closest(".menu-btn");
@@ -54,7 +69,15 @@
       side.classList.toggle("open");
       menu.setAttribute("aria-expanded", side.classList.contains("open"));
     }
-    if (!e.target.closest(".switcher")) document.querySelectorAll(".switcher[open]").forEach((d) => d.removeAttribute("open"));
+    closeOpen(e.target);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const open = document.querySelector(".switcher[open], .pop[open]");
+    if (!open) return;
+    open.removeAttribute("open");
+    open.querySelector("summary")?.focus();
   });
 
   // Switches marked data-autosubmit save as soon as they're flipped.

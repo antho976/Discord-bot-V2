@@ -60,13 +60,14 @@ impl FormData {
         self.get(name)?.parse().ok()
     }
 
-    /// A Discord id from a channel/role/user select. Empty means none.
+    /// A Discord id from a channel/role/user select. Empty means none. Never 0, which isn't an
+    /// id and makes twilight's `Id::new` panic.
     pub fn id(&self, name: &str) -> Option<u64> {
-        self.get(name)?.parse().ok()
+        self.get(name)?.parse().ok().filter(|id| *id != 0)
     }
 
     pub fn ids(&self, name: &str) -> Vec<u64> {
-        self.all(name).into_iter().filter_map(|v| v.parse().ok()).collect()
+        self.all(name).into_iter().filter_map(|v| v.parse().ok()).filter(|id| *id != 0).collect()
     }
 
     /// A channel select, kept only when the channel belongs to `guild`.
@@ -89,5 +90,18 @@ impl FormData {
     pub fn roles(&self, ctx: &crate::Ctx, guild: u64, name: &str) -> Vec<u64> {
         let known: Vec<u64> = ctx.roles(guild).into_iter().map(|(r, _, _)| r).collect();
         self.ids(name).into_iter().filter(|r| known.contains(r)).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FormData;
+
+    #[test]
+    fn ids_are_never_zero() {
+        let f = FormData::parse(b"channel=0&roles=0&roles=12&roles=x&user=%2042%20");
+        assert_eq!(f.id("channel"), None);
+        assert_eq!(f.ids("roles"), vec![12]);
+        assert_eq!(f.id("user"), Some(42));
     }
 }

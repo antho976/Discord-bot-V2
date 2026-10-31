@@ -25,6 +25,7 @@ pub(super) fn routes() -> Router<Ctx> {
         .route("/users", get(users_page).post(add_user))
         .route("/users/{id}", get(user_page).post(save_user))
         .route("/users/{id}/delete", post(delete_user))
+        .route("/users/{id}/copy", post(copy_access))
         .route("/activity", get(activity))
 }
 
@@ -57,23 +58,33 @@ fn any_guild(ctx: &Ctx, user: &User) -> WebResult<u64> {
 }
 
 fn daily(ctx: &Ctx, guild: u64, key: &str, days: i64) -> Vec<(String, i64)> {
+    daily_keys(ctx, guild, &[key], days).remove(0)
+}
+
+/// [`daily`] for several keys in one query, in the order asked.
+fn daily_keys(ctx: &Ctx, guild: u64, keys: &[&str], days: i64) -> Vec<Vec<(String, i64)>> {
     let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
-    let rows: Vec<(String, i64)> = ctx
+    let start = today.checked_sub(jiff::Span::new().days(days - 1)).unwrap_or(today).to_string();
+    let rows: HashMap<(String, String), i64> = ctx
         .db
         .with(|c| {
-            let mut s = c.prepare("SELECT day, value FROM daily_stats WHERE guild_id = ?1 AND key = ?2 AND day >= ?3")?;
-            let start = today.checked_sub(jiff::Span::new().days(days - 1)).unwrap_or(today).to_string();
-            let rows = s.query_map(params![guild as i64, key, start], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            // The primary key is (guild, key, day), so naming the keys keeps this to an index range.
+            let marks = (3..keys.len() + 3).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", ");
+            let mut s = c.prepare(&format!("SELECT key, day, value FROM daily_stats WHERE guild_id = ?1 AND day >= ?2 AND key IN ({marks})"))?;
+            let mut args: Vec<rusqlite::types::Value> = vec![(guild as i64).into(), start.clone().into()];
+            args.extend(keys.iter().map(|k| k.to_string().into()));
+            let rows = s
+                .query_map(rusqlite::params_from_iter(args), |r| Ok(((r.get(0)?, r.get(1)?), r.get(2)?)))?
+                .collect::<rusqlite::Result<HashMap<_, _>>>()?;
             Ok(rows)
         })
         .unwrap_or_default();
-    (0..days)
-        .rev()
-        .map(|back| {
-            let d = today.checked_sub(jiff::Span::new().days(back)).unwrap_or(today);
-            let key = d.to_string();
-            let v = rows.iter().find(|(k, _)| *k == key).map(|(_, v)| *v).unwrap_or(0);
-            (d.strftime("%b %-d").to_string(), v)
+    let days: Vec<jiff::civil::Date> = (0..days).rev().map(|back| today.checked_sub(jiff::Span::new().days(back)).unwrap_or(today)).collect();
+    keys.iter()
+        .map(|key| {
+            days.iter()
+                .map(|d| (d.strftime("%b %-d").to_string(), rows.get(&(key.to_string(), d.to_string())).copied().unwrap_or(0)))
+                .collect()
         })
         .collect()
 }
@@ -91,11 +102,12 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let page = super::Page { user: user.clone(), guild_id: guild, key: "overview", level: Level::View };
     let days: i64 = if q.get("days").map(String::as_str) == Some("7") { 7 } else { 30 };
     let show = q.get("show").map(String::as_str).unwrap_or("messages");
-    let messages = daily(&ctx, guild, "messages", days);
-    let joins = daily(&ctx, guild, "joins", 14);
-    let leaves = daily(&ctx, guild, "leaves", 7);
-    let active = daily(&ctx, guild, "active", days);
-    let voice = daily(&ctx, guild, "voice_minutes", days.max(14));
+    // Every series in one read of the last 30 days, then cut to length.
+    let [messages, joins, leaves, active, voice]: [Vec<(String, i64)>; 5] =
+        daily_keys(&ctx, guild, &["messages", "joins", "leaves", "active", "voice_minutes"], 30).try_into().unwrap_or_default();
+    let tail = |s: &[(String, i64)], n: i64| s[s.len().saturating_sub(n as usize)..].to_vec();
+    let joins_long = joins.clone();
+    let (messages, joins, leaves, active, voice) = (tail(&messages, days), tail(&joins, 14), tail(&leaves, 7), tail(&active, days), tail(&voice, days.max(14)));
     let last = |s: &[(String, i64)]| s.last().map(|d| d.1).unwrap_or(0);
     let sum_last = |s: &[(String, i64)], n: usize| s.iter().rev().take(n).map(|d| d.1).sum::<i64>();
     let members = ctx.member_count(guild).map(|n| n as i64);
@@ -104,6 +116,13 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let now = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC);
     let day_share = (now.hour() as f64 * 60.0 + now.minute() as f64) / 1440.0;
     let pace = if day_share > 0.08 { Some((today_msgs as f64 / day_share) as i64) } else { None };
+    // Daily numbers are counted per UTC day. Anyone in another timezone is told where it starts.
+    let day_starts = now
+        .start_of_day()
+        .ok()
+        .map(|m| user.local(m.timestamp().as_millisecond()))
+        .filter(|l| l.offset() != jiff::tz::Offset::UTC)
+        .map(|l| l.strftime("%H:%M").to_string());
     let active_today = last(&active);
     let voice_week = sum_last(&voice, 7);
     let voice_prev = voice.iter().rev().skip(7).take(7).map(|d| d.1).sum::<i64>();
@@ -113,7 +132,16 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     struct Stat { key: &'static str, label: &'static str, value: String, note: String, up: bool }
     let stats = [
         Stat { key: "members", label: "Members", value: members.map(text::num).unwrap_or_else(|| "…".into()), note: signed(net, "this week"), up: net > 0 },
-        Stat { key: "messages", label: "Messages today", value: text::num(today_msgs), note: pace.map(|p| format!("On pace for {}", text::num(p))).unwrap_or_else(|| "Since midnight UTC".into()), up: false },
+        Stat {
+            key: "messages",
+            label: "Messages today",
+            value: text::num(today_msgs),
+            note: match pace {
+                Some(p) if today_msgs > 0 => format!("On pace for {}", text::num(p)),
+                _ => "Since midnight UTC".into(),
+            },
+            up: false,
+        },
         Stat {
             key: "active",
             label: "Active today",
@@ -130,7 +158,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         },
     ];
     let (series, unit, caption): (Vec<(String, i64)>, &str, &str) = match show {
-        "members" => (daily(&ctx, guild, "joins", days), "joins", "Joins per day"),
+        "members" => (tail(&joins_long, days), "joins", "Joins per day"),
         "active" => (active.clone(), "members", "Active members per day"),
         "voice" => (voice.iter().rev().take(days as usize).rev().map(|(l, m)| (l.clone(), m / 60)).collect(), "hours", "Voice hours per day"),
         _ => (messages.clone(), "messages", "Messages per day"),
@@ -140,24 +168,24 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
 
     // What the features add, for the features this person can see.
     let mut needs = Vec::new();
-    let mut feed = Vec::new();
+    let mut feeds = Vec::new();
     let mut panel = Vec::new();
+    let levels = ctx.levels(&user, guild);
     for f in ctx.features() {
         let key = f.meta().key;
-        let level = ctx.level(&user, guild, key);
+        let level = levels.get(key);
         if !ctx.enabled(guild, key) || level == Level::None {
             continue;
         }
         let fp = super::Page { user: user.clone(), guild_id: guild, key, level };
         let o = f.overview(&ctx, &fp);
         needs.extend(o.needs);
-        feed.extend(o.feed);
+        feeds.push(o.feed);
         panel.extend(o.panel);
     }
     // Alerts first, then whatever has waited longest.
     needs.sort_by_key(|n| (!n.alert, n.since));
-    feed.sort_by_key(|h| -h.at);
-    feed.truncate(6);
+    let feed = mix_feed(feeds, 6);
     panel.sort_by_key(|p| p.0);
     let on = ctx.features().iter().filter(|f| ctx.enabled(guild, f.meta().key)).count();
 
@@ -184,13 +212,20 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         }
         div.ov-chart {
             div.ov-chart-head {
-                span.muted.small { (caption) " · " (text::num(avg)) " on average" }
+                span.muted.small {
+                    (caption) " · " (text::num(avg)) " on average"
+                    @if let Some(t) = &day_starts { " · days start at " (t) " your time" }
+                }
                 div.seg {
                     a.on[days == 7] href=(link(show, 7)) { "7 days" }
                     a.on[days == 30] href=(link(show, 30)) { "30 days" }
                 }
             }
-            (ui::area_chart(&series, unit))
+            @if series.iter().all(|d| d.1 == 0) {
+                (ui::empty(Icon::Chart, "Nothing counted in these days", "The bot counts as things happen, and the chart fills in day by day."))
+            } @else {
+                (ui::area_chart(&series, unit))
+            }
         }
         section.ov-block {
             h2 { "Needs you" @if !needs.is_empty() { " " span.count-pill { (needs.len()) } } }
@@ -246,11 +281,11 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             }
             div.ov-top {
                 @if ctx.cfg.preview {
-                    span.status { span.dot.waiting {} "Preview" }
+                    (ui::status(ui::Dot::Waiting, "Preview"))
                 } @else if ctx.bot_id().is_some() {
-                    span.status { span.dot.live {} "Online" }
+                    (ui::status(ui::Dot::Live, "Online"))
                 } @else {
-                    span.status { span.dot.waiting {} "Connecting" }
+                    (ui::status(ui::Dot::Waiting, "Connecting"))
                 }
                 (ui::bell(&ctx, &page))
             }
@@ -283,6 +318,29 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     Ok(ui::layout_custom(&ctx, &page, &name, body).into_response())
 }
 
+/// Up to `n` happenings, newest first, taken from each source in turn so one busy feature (a run
+/// of level-ups) can't push the others out. Sources with the freshest news go first in a round.
+fn mix_feed(mut sources: Vec<Vec<crate::Happening>>, n: usize) -> Vec<crate::Happening> {
+    // Oldest first, so pop() gives each source's newest.
+    for s in &mut sources {
+        s.sort_by_key(|h| h.at);
+    }
+    sources.retain(|s| !s.is_empty());
+    sources.sort_by_key(|s| std::cmp::Reverse(s.last().map(|h| h.at)));
+    let mut out = Vec::new();
+    while out.len() < n && !sources.is_empty() {
+        for s in &mut sources {
+            if out.len() == n {
+                break;
+            }
+            out.extend(s.pop());
+        }
+        sources.retain(|s| !s.is_empty());
+    }
+    out.sort_by_key(|h| std::cmp::Reverse(h.at));
+    out
+}
+
 /// "12 min", "3 h", "2 d" for the overview's feed.
 fn short_ago(ms: i64) -> String {
     let secs = ((crate::now_ms() - ms) / 1000).max(0);
@@ -306,9 +364,10 @@ struct Note {
 /// server-less notices (app connections) only for admins.
 fn recent_notifications(ctx: &Ctx, user: &User, guild: u64, limit: i64) -> Vec<Note> {
     let mut notes = all_notifications(ctx, guild, limit * 4);
+    let levels = ctx.levels(user, guild);
     notes.retain(|n| match n.global {
         true => user.admin,
-        false => ctx.level(user, guild, &n.feature) >= Level::View,
+        false => levels.get(&n.feature) >= Level::View,
     });
     notes.truncate(limit as usize);
     notes
@@ -330,16 +389,25 @@ fn all_notifications(ctx: &Ctx, guild: u64, limit: i64) -> Vec<Note> {
         .unwrap_or_default()
 }
 
-fn notification_row(n: &Note) -> Markup {
+/// One notice: the feature's icon, the text, the feature and time under it, a dot while it's
+/// new. The whole row opens the notice's link.
+fn notification_row(ctx: &Ctx, user: &User, n: &Note, new: bool) -> Markup {
+    let feature = ctx.feature(&n.feature);
+    let ic = feature.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Bell);
+    let name = feature.map(|f| f.meta().name).unwrap_or("Dashboard");
+    let inner = html! {
+        span.note-icon { (ui::icon(ic)) }
+        span.grow {
+            span.note-text { (n.text) }
+            span.muted.small { (name) " · " (user.local(n.at).strftime("%H:%M")) }
+        }
+        @if new { span.unread title="New" {} span.sr { "New" } }
+        @if n.link.is_some() { span.go { (ui::icon(Icon::Chevron)) } }
+    };
     html! {
-        div.list-item {
-            span.grow {
-                @match &n.link {
-                    Some(l) => a href=(l) { (n.text) },
-                    None => (n.text),
-                }
-            }
-            span.meta { (n.feature) " · " (text::ago(n.at)) }
+        @match &n.link {
+            Some(l) => a.note.new[new] href=(l) { (inner) },
+            None => div.note.new[new] { (inner) },
         }
     }
 }
@@ -349,17 +417,49 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         return Err(WebError::Forbidden);
     }
     let page = super::Page { user: user.clone(), guild_id: guild, key: "notifications", level: Level::View };
+    let seen = ui::notifications_seen(&ctx, user.id, guild);
+    let global_seen = ui::notifications_seen_anywhere(&ctx, user.id);
     let notes = recent_notifications(&ctx, &user, guild, 100);
+    let is_new = |n: &Note| n.at > if n.global { global_seen } else { seen };
+    let fresh = notes.iter().filter(|n| is_new(n)).count();
     let body = html! {
         @if notes.is_empty() {
-            (ui::empty(Icon::Bell, "No notifications", "Features post here when something needs you."))
+            (ui::empty(Icon::Bell, "No notifications", "Features post here when something needs you: a caught scam, a new ticket, a pet request."))
         } @else {
-            div.list { @for n in &notes { (notification_row(n)) } }
+            // No data-local: its one-time reload for the timezone would count as a second visit
+            // and clear the new marks. The overview, where everyone lands, sets the timezone.
+            div.timeline.notes {
+                @for (i, n) in notes.iter().enumerate() {
+                    @let label = day_label(&user, n.at);
+                    @if i == 0 || day_label(&user, notes[i - 1].at) != label { h2.day { (label) } }
+                    (notification_row(&ctx, &user, n, is_new(n)))
+                }
+            }
         }
     };
-    let markup = ui::layout(&ctx, &page, "Notifications", None, body);
-    ctx.db.with(|c| c.execute("UPDATE dash_users SET notif_seen = ?2 WHERE id = ?1", params![user.id as i64, crate::now_ms()]))?;
-    Ok(markup.into_response())
+    // Seen from now on, so the bell on this page is already clear.
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO dash_notif_seen (user_id, guild_id, seen_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT (user_id, guild_id) DO UPDATE SET seen_at = excluded.seen_at",
+            params![user.id as i64, guild as i64, crate::now_ms()],
+        )
+    })?;
+    let actions = (fresh > 0).then(|| ui::badge(&format!("{fresh} new"), Tone::Accent));
+    Ok(ui::layout(&ctx, &page, "Notifications", actions, body).into_response())
+}
+
+/// "Today", "Yesterday", a weekday for the last week, then "Oct 3": a day heading in the
+/// viewer's timezone.
+fn day_label(user: &User, at: i64) -> String {
+    let today = user.local(crate::now_ms()).date();
+    let d = user.local(at).date();
+    match (today - d).get_days() {
+        0 => "Today".to_owned(),
+        1 => "Yesterday".to_owned(),
+        2..=6 => d.strftime("%A").to_string(),
+        _ => d.strftime("%b %-d").to_string(),
+    }
 }
 
 // ---- features ----
@@ -472,18 +572,13 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
     let page = admin_page(&ctx, &user, guild, "users")?;
     let list = people(&ctx);
     let owner = ctx.cfg.owner_id;
-    let add = html! {
-        details.pop {
-            summary.btn.primary { (ui::icon(Icon::Plus)) "Add someone" }
-            div.pop-body {
-                form.inline-form method="post" action="/users" {
-                    input.input.mono type="text" name="id" placeholder="Discord user ID" inputmode="numeric" pattern="[0-9]{15,21}" required autofocus;
-                    button.btn.primary type="submit" { "Add" }
-                }
-                p.muted.small { "In Discord: Settings, Advanced, turn on Developer Mode, then right-click their name and Copy User ID. People who try to sign in see their ID too. Until you give them pages, they see nothing." }
-            }
+    let add = ui::pop("", "Add someone", Some(Icon::Plus), "primary", html! {
+        form.inline-form method="post" action="/users" {
+            input.input.mono type="text" name="id" placeholder="Discord user ID" inputmode="numeric" pattern="[0-9]{15,21}" required autofocus;
+            button.btn.primary type="submit" { "Add" }
         }
-    };
+        p.muted.small { "In Discord: Settings, Advanced, turn on Developer Mode, then right-click their name and Copy User ID. People who try to sign in see their ID too. Until you give them pages, they see nothing." }
+    });
     let body = html! {
         div.people {
             @for p in &list {
@@ -495,7 +590,7 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
                 div.prow {
                     img.avatar src=(crate::discord::avatar_url(p.id, p.avatar.as_deref())) alt="" width="36" height="36" loading="lazy";
                     div.grow {
-                        strong { (if p.name.is_empty() { p.id.to_string() } else { p.name.clone() }) }
+                        strong { (name_or_id(p)) }
                         p.muted.small { (seen) @if let Some(by) = p.added_by.as_ref().filter(|_| p.id != owner) { " · added by " (by) } }
                     }
                     @if p.id == owner { (ui::badge("Owner", Tone::Accent)) }
@@ -550,6 +645,13 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
     let level_of = |g: u64, key: &str| grants.iter().find(|(gg, k, _)| *gg == g && k == key).map(|x| x.2).unwrap_or(0);
     let is_owner = id == ctx.cfg.owner_id;
     let display = if person.name.is_empty() { "Not signed in yet".to_owned() } else { person.name.clone() };
+    let grantable = |g: u64| ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key) && !f.admin_only()).collect::<Vec<_>>();
+    // People whose pages can be copied over: not admins (they have no grants to copy), not this one.
+    let others: Vec<(String, String)> = people(&ctx)
+        .into_iter()
+        .filter(|p| p.id != id && !p.admin && p.id != ctx.cfg.owner_id && p.grants > 0)
+        .map(|p| (p.id.to_string(), format!("{} · {} {}", name_or_id(&p), p.grants, if p.grants == 1 { "page" } else { "pages" })))
+        .collect();
 
     let body = html! {
         form.settings.narrow method="post" action={ "/users/" (id) } {
@@ -561,27 +663,37 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                 }
             }))
             @if !person.admin && !is_owner {
+                p.muted.small { "Per server: None hides a page, View shows it read-only, Edit lets them change it." }
                 @for g in ctx.guild_ids() {
-                    (ui::section(&ctx.guild_name(g), Some("No access hides the page. View shows it read-only. Edit lets them change it."), ui::card(html! {
-                        @for f in ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key) && !f.admin_only()) {
+                    @let feats = grantable(g);
+                    @let given = feats.iter().filter(|f| level_of(g, f.meta().key) > 0).count();
+                    section.block {
+                        div.access-head {
+                            (ui::guild_avatar(&ctx, g))
+                            h2.grow { (ctx.guild_name(g)) }
+                            @if !feats.is_empty() { span.muted.small { (given) " of " (feats.len()) " pages" } }
+                        }
+                        (ui::card(html! {
+                        @for f in &feats {
                             @let m = f.meta();
                             @let name = format!("p:{}:{}", g, m.key);
                             @let cur = level_of(g, m.key);
                             (ui::field_custom(m.name, None, html! {
                                 div.seg role="radiogroup" aria-label=(m.name) {
                                     @for (v, label) in [(0, "None"), (1, "View"), (2, "Edit")] {
-                                        label.on[cur == v] {
-                                            input type="radio" name=(name) value=(v) checked[cur == v] style="display:none" onchange="this.closest('.seg').querySelectorAll('label').forEach(t=>t.classList.toggle('on',t.contains(this)))";
+                                        label {
+                                            input type="radio" name=(name) value=(v) checked[cur == v];
                                             (label)
                                         }
                                     }
                                 }
                             }))
                         }
-                        @if ctx.features().iter().all(|f| !ctx.enabled(g, f.meta().key) || f.admin_only()) {
+                        @if feats.is_empty() {
                             (ui::empty(Icon::Toggle, "No features on here", "Turn features on for this server first."))
                         }
-                    })))
+                        }))
+                    }
                 }
             }
             div.save-bar { button.btn.primary type="submit" { "Save" } }
@@ -594,7 +706,19 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
         }
     };
     let title = if person.name.is_empty() { "Access".to_owned() } else { format!("{display}'s access") };
-    Ok(ui::layout(&ctx, &page, &title, Some(html! { a.btn.small.outline href="/users" { "All people" } }), body).into_response())
+    let actions = html! {
+        @if !is_owner && !person.admin && !others.is_empty() {
+            (ui::pop("", "Same as…", None, "small outline", html! {
+                form.stack method="post" action={ "/users/" (id) "/copy" } {
+                    (ui::select("from", &others, ""))
+                    p.muted.small { "Replaces their pages on every server with that person's. Admin stays as it is." }
+                    div { button.btn.primary.small type="submit" { "Copy access" } }
+                }
+            }))
+        }
+        a.btn.small.outline.wide-only href="/users" { "All people" }
+    };
+    Ok(ui::layout(&ctx, &page, &title, Some(actions), body).into_response())
 }
 
 async fn save_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>, form: FormData) -> WebResult {
@@ -622,8 +746,42 @@ async fn save_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>, form
     }
     tx.commit()?;
     drop(conn);
-    ctx.audit(&user, None, "users", format!("Changed access for {id}"));
+    ctx.audit(&user, None, "users", format!("Changed {}'s access", person_name(&ctx, id)));
     Ok(saved(&format!("/users/{id}")))
+}
+
+/// Give someone exactly the pages another person has, on every server.
+async fn copy_access(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>, form: FormData) -> WebResult {
+    let guild = any_guild(&ctx, &user)?;
+    admin_page(&ctx, &user, guild, "users")?;
+    let list = people(&ctx);
+    let target = list.iter().find(|p| p.id == id).ok_or(WebError::NotFound)?;
+    let from = form.id("from").and_then(|f| list.iter().find(|p| p.id == f)).ok_or_else(|| WebError::Bad("Pick whose access to copy.".into()))?;
+    if from.id == id || id == ctx.cfg.owner_id {
+        return Err(WebError::Bad("Pick someone else to copy from.".into()));
+    }
+    let mut conn = ctx.db.lock();
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM dash_perms WHERE user_id = ?1", [id as i64])?;
+    tx.execute(
+        "INSERT INTO dash_perms (user_id, guild_id, page, level) SELECT ?1, guild_id, page, level FROM dash_perms WHERE user_id = ?2",
+        params![id as i64, from.id as i64],
+    )?;
+    tx.commit()?;
+    drop(conn);
+    ctx.audit(&user, None, "users", format!("Gave {} the same access as {}", name_or_id(target), name_or_id(from)));
+    Ok(saved(&format!("/users/{id}")))
+}
+
+fn name_or_id(p: &Person) -> String {
+    if p.name.is_empty() { p.id.to_string() } else { p.name.clone() }
+}
+
+/// A dashboard person's name for the activity log; their id until they've signed in.
+fn person_name(ctx: &Ctx, id: u64) -> String {
+    ctx.db
+        .with(|c| c.query_row("SELECT name FROM dash_users WHERE id = ?1 AND name != ''", [id as i64], |r| r.get::<_, String>(0)))
+        .unwrap_or_else(|_| id.to_string())
 }
 
 async fn delete_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> WebResult {
@@ -632,12 +790,13 @@ async fn delete_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) ->
     if id == ctx.cfg.owner_id {
         return Err(WebError::Bad("The owner can't be removed.".into()));
     }
+    let name = person_name(&ctx, id);
     ctx.db.with(|c| {
         c.execute("DELETE FROM dash_perms WHERE user_id = ?1", [id as i64])?;
         c.execute("DELETE FROM dash_sessions WHERE user_id = ?1", [id as i64])?;
         c.execute("DELETE FROM dash_users WHERE id = ?1", [id as i64])
     })?;
-    ctx.audit(&user, None, "users", format!("Removed {id}"));
+    ctx.audit(&user, None, "users", format!("Removed {name} from the dashboard"));
     Ok(saved("/users"))
 }
 
@@ -685,17 +844,7 @@ async fn activity(State(ctx): State<Ctx>, user: User) -> WebResult<Response> {
     }
     week.sort_by_key(|w| -w.3);
     let top = week.first().map(|w| w.3).unwrap_or(1).max(1);
-    let today = user.local(crate::now_ms()).date();
-    let day_label = |at: i64| {
-        let d = user.local(at).date();
-        let back = (today - d).get_days();
-        match back {
-            0 => "Today".to_owned(),
-            1 => "Yesterday".to_owned(),
-            2..=6 => d.strftime("%A").to_string(),
-            _ => d.strftime("%b %-d").to_string(),
-        }
-    };
+    let day_label = |at: i64| day_label(&user, at);
     let page_name = |key: &str| match key {
         "features" => "Features",
         "users" => "People",
@@ -747,5 +896,34 @@ fn lower_first(s: &str) -> String {
     match c.next() {
         Some(f) if !c.as_str().starts_with(|x: char| x.is_uppercase()) => f.to_lowercase().chain(c).collect(),
         _ => s.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mix_feed;
+    use crate::Happening;
+
+    fn h(at: i64, who: &str) -> Happening {
+        Happening { at, avatar: String::new(), who: who.into(), text: String::new() }
+    }
+
+    #[test]
+    fn a_busy_source_shares_the_feed() {
+        let levels: Vec<_> = (0..10).map(|i| h(100 + i, "levels")).collect();
+        let welcome = vec![h(5, "welcome"), h(3, "welcome")];
+        let pets = vec![h(1, "pets")];
+        let feed = mix_feed(vec![levels, welcome, pets, vec![]], 6);
+        let who: Vec<_> = feed.iter().map(|h| h.who.as_str()).collect();
+        assert_eq!(feed.len(), 6);
+        assert_eq!(who.iter().filter(|w| **w == "levels").count(), 3);
+        assert!(who.contains(&"pets") && who.contains(&"welcome"));
+        assert!(feed.windows(2).all(|w| w[0].at >= w[1].at), "newest first");
+    }
+
+    #[test]
+    fn short_feeds_are_kept_whole() {
+        let feed = mix_feed(vec![vec![h(2, "a")], vec![h(1, "b")]], 6);
+        assert_eq!(feed.len(), 2);
     }
 }

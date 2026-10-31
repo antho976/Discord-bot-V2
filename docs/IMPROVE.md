@@ -47,22 +47,54 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
 
 ### Core: brisk-heron
 `crates/core`, `crates/app`, `crates/render`, `app.css`, `app.js`, the preview seed.
-- [ ] Move repeated helpers into the kit: the status pill, the header popover (`details.pop`
+- [x] Move repeated helpers into the kit: the status pill, the header popover (`details.pop`
       with a button), tabs with counts, a compact switch row for rails, a mini bar chart, and
       "account made N ago" (duplicated in guard and audit). Then point the features at them, in
       small commits that coordinate with each area's session.
-- [ ] `ui::action_button` with `data-confirm` replaces the button text, which breaks icon-only
+      Kit: `ui::status`, `ui::pop`, `ui::tabs_counted`, `ui::switch_row`, `ui::mini_bars`,
+      `discord::snowflake_ms`, `text::made_ago`. The core pages use them; each feature session
+      has a message listing the swaps for its crates.
+- [x] `ui::action_button` with `data-confirm` replaces the button text, which breaks icon-only
       buttons.
-- [ ] Overview: the feed takes the 6 newest items, so a busy feature hides the others. Mix the
+- [x] Overview: the feed takes the 6 newest items, so a busy feature hides the others. Mix the
       sources fairly.
-- [ ] Overview: "Messages today" and "On pace" use the UTC day while the page shows local time.
-      Say so or align them.
-- [ ] Notifications page in the new style (icons per feature, links, read/unread).
-- [ ] Edit access page: group by server, and make it quick to give someone the same access as
-      another person.
-- [ ] Accessibility pass: `aria-current` on the active nav item, focus rings everywhere, labels
-      on icon buttons, contrast of `--ink-3` text on veils.
-- [ ] Cost of one overview load: count the queries and keep it small.
+- [x] Overview: "Messages today" and "On pace" use the UTC day while the page shows local time.
+      Say so or align them. (Said: "days start at 20:00 your time" under the chart.)
+- [x] Notifications page in the new style (icons per feature, links, read/unread).
+- [x] Edit access page: group by server, and make it quick to give someone the same access as
+      another person. ("Same as…" copies another person's pages.)
+- [x] Accessibility pass: `aria-current` on the active nav item, focus rings everywhere, labels
+      on icon buttons, contrast of `--ink-3` text on veils. (`--ink-3` passes at 4.77:1 or
+      better everywhere; the focus ring didn't and now does.)
+- [x] Cost of one overview load: count the queries and keep it small. (Admin 21 to 16 round
+      trips, 15 of them feature panels; non-admins no longer pay one query per feature and per
+      unread notice.)
+
+Found and fixed along the way:
+- [x] Reading one server's notifications cleared the other server's bell (one seen time for
+      all servers). Now per server, new migration `002_notif_seen`.
+- [x] Chips and the None/View/Edit choice couldn't be reached by keyboard.
+- [x] Popovers didn't close on a click outside or Escape.
+- [x] A browser that refuses cookies reloaded forever trying to set the timezone; "Etc/GMT+5"
+      style zones fell back to UTC.
+- [x] `parse_duration` accepted 0 and negative spans and overflowed on huge numbers.
+- [x] A form id of 0 panicked the request (twilight `Id::new(0)`).
+- [x] Buttons of a switched-off feature got no answer ("This interaction failed").
+- [x] Two quick feature toggles could register commands out of order.
+- [x] Activity log entries showed people's ids ("Changed access for 2000…").
+- [x] Overview: the 7/30 days switch wrapped at phone width; an empty server showed "On pace
+      for 0" over a flat line.
+- [x] `display_name` fell back to "User 123…" for members not in the cache, so ids rendered
+      on the leaderboard and in notices. Now "Unknown member" (flagged by keen-hare).
+- [x] Page headers at phone width squeezed the title beside a status pill (flagged by
+      brisk-otter). Actions that don't fit now drop under the title.
+- [x] `ui::rail_numbers` for the three-figure rail grid (community, pets; flagged by
+      teal-marten).
+- [x] `Ctx::notify_once` and `discord::why_refused` / `why_refused_any`, copied into levels,
+      welcome and starboard (asked by the lead for keen-hare).
+- [x] From keen-tapir's review of #3: header popovers opened off the left edge at 390 px;
+      notices with no server had to be cleared once per server; `Ctx::known_name` so stored
+      names don't become "Unknown member".
 
 ### B: brisk-otter
 `crates/feat-alerts`, `crates/feat-utility`, `crates/feat-embeds`.

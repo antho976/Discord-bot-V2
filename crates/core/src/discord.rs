@@ -15,6 +15,8 @@ use twilight_model::application::interaction::modal::{ModalInteractionComponent,
 use twilight_model::application::interaction::{Interaction, InteractionData, InteractionType};
 use twilight_model::channel::message::component::{ActionRow, Button, ButtonStyle, Component};
 use twilight_model::channel::message::{AllowedMentions, Embed, MessageFlags};
+use twilight_model::gateway::payload::incoming::GuildCreate;
+use twilight_model::gateway::payload::outgoing::RequestGuildMembers;
 use twilight_model::http::interaction::{InteractionResponse, InteractionResponseData, InteractionResponseType};
 use twilight_model::id::Id;
 use twilight_model::id::marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker};
@@ -49,6 +51,7 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
     let config = GatewayConfig::new(ctx.cfg.discord_token.clone(), intents());
     let mut shard = Shard::with_config(twilight_gateway::ShardId::ONE, config);
     let registered: Arc<Mutex<HashSet<u64>>> = Default::default();
+    let mut members = MemberRequests::default();
 
     loop {
         tokio::select! {
@@ -71,9 +74,15 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
                 match &event {
                     Event::Ready(ready) => {
                         ctx.set_bot_id(ready.user.id.get());
+                        members.session_started();
                         tracing::info!(user = %ready.user.name, guilds = ready.guilds.len(), "connected to Discord");
                     }
                     Event::GuildCreate(g) => {
+                        // The shard paces its commands (120 a minute, heartbeats kept aside),
+                        // so this queues behind anything else it has to send.
+                        if let Some(ask) = members.for_guild(g) {
+                            shard.command(&ask);
+                        }
                         let id = g.id().get();
                         if registered.lock().unwrap().insert(id) {
                             let ctx = ctx.clone();
@@ -92,6 +101,31 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
         }
     }
     Ok(())
+}
+
+/// Which servers' full member lists were asked for in this gateway session. A server over 50
+/// members comes with only the members Discord counts as online, so everyone else would be
+/// "Unknown member" with a default avatar until they did something. The rest are asked for
+/// once per server per session (an empty query with no limit, under the GUILD_MEMBERS intent)
+/// and the cache fills from the chunks Discord sends back.
+#[derive(Default)]
+struct MemberRequests(HashSet<u64>);
+
+impl MemberRequests {
+    /// A new session (Ready, not a resume) sends every server again: ask again.
+    fn session_started(&mut self) {
+        self.0.clear();
+    }
+
+    /// The request for a server that just arrived, once per session, and only when its
+    /// GuildCreate didn't already bring every member.
+    fn for_guild(&mut self, g: &GuildCreate) -> Option<RequestGuildMembers> {
+        let GuildCreate::Available(g) = g else { return None };
+        if g.member_count.is_some_and(|n| g.members.len() as u64 >= n) || !self.0.insert(g.id.get()) {
+            return None;
+        }
+        Some(RequestGuildMembers::builder(g.id).query("", None))
+    }
 }
 
 /// A message as the cache had it just before an edit or delete event.
@@ -243,8 +277,12 @@ fn track_member_count(ctx: &Ctx, event: &Event) {
     }
 }
 
-/// Replace a server's slash commands with those of the features switched on there.
+/// Replace a server's slash commands with those of the features switched on there. One at a
+/// time, reading the switches once it's this call's turn, so two quick toggles can't finish out
+/// of order and leave the older set registered.
 pub async fn register_commands(ctx: &Ctx, guild_id: u64) -> Result<()> {
+    static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _turn = ONE_AT_A_TIME.lock().await;
     let commands: Vec<_> = ctx
         .features()
         .iter()
@@ -288,6 +326,14 @@ async fn dispatch(ctx: Ctx, event: Event) {
 async fn route_interaction(ctx: &Ctx, i: &Interaction) {
     let guild = i.guild_id.map(|g| g.get());
     let usable = |key: &str| guild.is_none_or(|g| ctx.enabled(g, key));
+    // A button or form from a feature that has since been switched off (or a command Discord
+    // hasn't dropped yet) still gets an answer, rather than Discord's "interaction failed".
+    let off = || async {
+        if i.kind != InteractionType::ApplicationCommandAutocomplete {
+            let _ = ctx.reply(i, Reply::text("That's switched off in this server.").ephemeral()).await;
+        }
+        Ok(())
+    };
     let result = match (&i.kind, &i.data) {
         (InteractionType::ApplicationCommand | InteractionType::ApplicationCommandAutocomplete, Some(InteractionData::ApplicationCommand(data))) => {
             let owner = ctx
@@ -304,7 +350,7 @@ async fn route_interaction(ctx: &Ctx, i: &Interaction) {
                     };
                     res.map_err(|e| (f.meta().key, e))
                 }
-                _ => Ok(()),
+                _ => off().await,
             }
         }
         (InteractionType::MessageComponent, Some(InteractionData::MessageComponent(data))) => {
@@ -314,7 +360,7 @@ async fn route_interaction(ctx: &Ctx, i: &Interaction) {
                     let call = ComponentCall { interaction: i.clone(), data: (**data).clone() };
                     f.on_component(ctx, &call).await.map_err(|e| (prefix, e))
                 }
-                _ => Ok(()),
+                _ => off().await,
             }
         }
         (InteractionType::ModalSubmit, Some(InteractionData::ModalSubmit(data))) => {
@@ -324,7 +370,7 @@ async fn route_interaction(ctx: &Ctx, i: &Interaction) {
                     let call = ModalCall { interaction: i.clone(), data: (**data).clone() };
                     f.on_modal(ctx, &call).await.map_err(|e| (prefix, e))
                 }
-                _ => Ok(()),
+                _ => off().await,
             }
         }
         _ => Ok(()),
@@ -370,6 +416,32 @@ impl CommandCall {
             .as_ref()
             .and_then(|m| m.permissions)
             .is_some_and(|p| p.contains(twilight_model::guild::Permissions::ADMINISTRATOR) || p.intersects(perms))
+    }
+}
+
+/// Why Discord refused a post, in words a server owner can act on: a missing permission, a
+/// deleted channel, or Discord's own message.
+pub fn why_refused(e: &twilight_http::Error) -> String {
+    let status = match e.kind() {
+        twilight_http::error::ErrorType::Response { status, .. } => Some(status.get()),
+        _ => None,
+    };
+    refusal(status, e)
+}
+
+/// [`why_refused`] for an error that may wrap a Discord one.
+pub fn why_refused_any(e: &anyhow::Error) -> String {
+    match e.downcast_ref::<twilight_http::Error>() {
+        Some(http) => why_refused(http),
+        None => refusal(None, e),
+    }
+}
+
+fn refusal(status: Option<u16>, e: &dyn std::fmt::Display) -> String {
+    match status {
+        Some(403) => "The bot can't post in that channel. Check it can see the channel and send messages there, and attach files if it posts images.".into(),
+        Some(404) => "The channel was deleted. Pick another one.".into(),
+        _ => format!("Discord refused the message: {e}"),
     }
 }
 
@@ -746,17 +818,22 @@ impl Ctx {
         }
     }
 
-    /// A member's display name from the cache, falling back to the user id.
+    /// A member's display name from the cache, or "Unknown member" for someone the cache hasn't
+    /// seen (left, or not loaded in a large server). Ids never render on the dashboard. For
+    /// display only: to store a name, use [`Ctx::known_name`] and keep the event's own name
+    /// (or the one saved before) when it's None.
     pub fn display_name(&self, guild_id: u64, user_id: u64) -> String {
+        self.known_name(guild_id, user_id).unwrap_or_else(|| "Unknown member".to_owned())
+    }
+
+    /// A member's server nickname, else their global name, else their username, when the cache
+    /// has them. None means the cache doesn't know them, not that they have no name.
+    pub fn known_name(&self, guild_id: u64, user_id: u64) -> Option<String> {
         let (g, u) = (Id::<GuildMarker>::new(guild_id), Id::<UserMarker>::new(user_id));
-        if let Some(m) = self.cache.member(g, u)
-            && let Some(nick) = m.nick() {
-                return nick.to_owned();
-            }
-        match self.cache.user(u) {
-            Some(user) => user.global_name.clone().unwrap_or_else(|| user.name.clone()),
-            None => format!("User {user_id}"),
+        if let Some(nick) = self.cache.member(g, u).and_then(|m| m.nick().map(str::to_owned)) {
+            return Some(nick);
         }
+        self.cache.user(u).map(|user| user.global_name.clone().unwrap_or_else(|| user.name.clone()))
     }
 
     /// Text channels of a server as `(id, name)`, in sidebar order.
@@ -891,10 +968,70 @@ impl Ctx {
     }
 }
 
+/// When a Discord id was made, in epoch milliseconds: an account's creation, a message's send.
+pub fn snowflake_ms(id: u64) -> i64 {
+    ((id >> 22) + 1_420_070_400_000) as i64
+}
+
 /// Avatar URL for a user, or Discord's default avatar.
 pub fn avatar_url(user_id: u64, avatar: Option<&str>) -> String {
     match avatar {
         Some(hash) => format!("https://cdn.discordapp.com/avatars/{user_id}/{hash}.png?size=128"),
         None => format!("https://cdn.discordapp.com/embed/avatars/{}.png", (user_id >> 22) % 6),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refusal;
+
+    #[test]
+    fn refusals_say_what_to_fix() {
+        assert!(refusal(Some(403), &"x").starts_with("The bot can't post in that channel."));
+        assert_eq!(refusal(Some(404), &"x"), "The channel was deleted. Pick another one.");
+        assert_eq!(refusal(Some(500), &"Response error: status code 500"), "Discord refused the message: Response error: status code 500");
+        assert_eq!(refusal(None, &"timed out"), "Discord refused the message: timed out");
+    }
+
+    fn guild(id: u64, members: u64) -> super::GuildCreate {
+        let mut v = crate::preview::guild_json(id, "x", members);
+        // The preview server lists 10 members; say how many it really has.
+        v["member_count"] = members.into();
+        super::GuildCreate::Available(serde_json::from_value(v).unwrap())
+    }
+
+    #[test]
+    fn member_lists_are_asked_for_once_per_session() {
+        let mut m = super::MemberRequests::default();
+        let ask = m.for_guild(&guild(1, 266)).expect("a large server is asked for its members");
+        assert_eq!((ask.d.guild_id.get(), ask.d.query.as_deref(), ask.d.limit, ask.d.presences), (1, Some(""), Some(0), None));
+        // A second GuildCreate in the same session (an outage ending) doesn't ask again.
+        assert!(m.for_guild(&guild(1, 266)).is_none());
+        // A server whose GuildCreate listed everyone has nothing more to ask for.
+        assert!(m.for_guild(&guild(2, 10)).is_none());
+        // A new session asks again.
+        m.session_started();
+        assert!(m.for_guild(&guild(1, 266)).is_some());
+        // A server that's down for Discord isn't asked.
+        let down: super::GuildCreate = serde_json::from_value(serde_json::json!({"id": "3", "unavailable": true})).unwrap();
+        assert!(m.for_guild(&down).is_none());
+    }
+
+    #[tokio::test]
+    async fn names_known_and_unknown() {
+        use crate::preview::{GUILD_A, MEMBERS};
+        let ctx = crate::Ctx::new(crate::Config::preview(0), crate::Db::memory().unwrap()).unwrap();
+        crate::preview::seed(&ctx).unwrap();
+        let (mira, _) = MEMBERS[0];
+        assert_eq!(ctx.known_name(GUILD_A, mira).as_deref(), Some("Mira"));
+        assert_eq!(ctx.display_name(GUILD_A, mira), "Mira");
+        // Someone the cache never saw: nothing to store, and no id on the page.
+        assert_eq!(ctx.known_name(GUILD_A, 1_234_567_890_123), None);
+        assert_eq!(ctx.display_name(GUILD_A, 1_234_567_890_123), "Unknown member");
+    }
+
+    #[test]
+    fn errors_that_arent_discords_keep_their_words() {
+        assert_eq!(super::why_refused_any(&anyhow::anyhow!("no link")), "Discord refused the message: no link");
     }
 }

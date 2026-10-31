@@ -176,11 +176,12 @@ fn identity(ctx: &Ctx, page: &Page, title: &str) -> (Icon, Option<&'static str>)
 fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Markup {
     let guild = page.guild_id;
     let guilds = ctx.guilds_for(&page.user);
+    let levels = ctx.levels(&page.user, guild);
     type Link = (&'static str, &'static str, Icon, &'static str);
     let mut groups: Vec<(Group, Vec<Link>)> = Vec::new();
     for f in ctx.features() {
         let meta = f.meta();
-        if !ctx.enabled(guild, meta.key) || ctx.level(&page.user, guild, meta.key) == Level::None {
+        if !ctx.enabled(guild, meta.key) || levels.get(meta.key) == Level::None {
             continue;
         }
         let items: Vec<_> = meta.nav.iter().map(|n| (n.label, n.path, n.icon, meta.key)).collect();
@@ -200,6 +201,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
         html lang="en" {
             head { (head(title)) }
             body {
+                a.skip href="#main" { "Skip to the page" }
                 div.shell {
                     nav.side aria-label="Dashboard" {
                         div.side-top {
@@ -222,7 +224,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
                             button.icon-btn.menu-btn type="button" aria-label="Menu" aria-expanded="false" { (icon(Icon::Menu)) }
                         }
                         div.side-links {
-                            a.nav.on[current == "overview"] href={ "/g/" (guild) } { (icon(Icon::Home)) span { "Overview" } }
+                            a.nav.on[current == "overview"] aria-current=[(current == "overview").then_some("page")] href={ "/g/" (guild) } { (icon(Icon::Home)) span { "Overview" } }
                             @for (group, items) in &groups {
                                 div.nav-group { (group.label()) }
                                 @for (label, path, ic, _key) in items {
@@ -233,9 +235,9 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
                             }
                             @if page.user.admin {
                                 div.nav-group { "Admin" }
-                                a.nav.on[current == "features"] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
-                                a.nav.on[current == "users"] href="/users" { (icon(Icon::Users)) span { "People" } }
-                                a.nav.on[current == "activity"] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
+                                a.nav.on[current == "features"] aria-current=[(current == "features").then_some("page")] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
+                                a.nav.on[current == "users"] aria-current=[(current == "users").then_some("page")] href="/users" { (icon(Icon::Users)) span { "People" } }
+                                a.nav.on[current == "activity"] aria-current=[(current == "activity").then_some("page")] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
                             }
                         }
                         div.side-foot {
@@ -246,7 +248,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
                             }
                         }
                     }
-                    main.page {
+                    main.page #main tabindex="-1" {
                         (top)
                         (body)
                     }
@@ -276,22 +278,54 @@ pub fn public_layout(title: &str, subtitle: Option<&str>, body: Markup) -> Marku
 }
 
 fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
+    let seen = notifications_seen(ctx, page.user.id, page.guild_id);
+    let global_seen = notifications_seen_anywhere(ctx, page.user.id);
     let rows: Vec<(String, bool)> = ctx
         .db
         .with(|c| {
             let mut s = c.prepare(
-                "SELECT n.feature, n.guild_id IS NULL FROM notifications n, dash_users u
-                 WHERE u.id = ?1 AND n.at > u.notif_seen AND (n.guild_id IS NULL OR n.guild_id = ?2) LIMIT 500",
+                "SELECT n.feature, n.guild_id IS NULL FROM notifications n
+                 WHERE (n.guild_id = ?1 AND n.at > ?2) OR (n.guild_id IS NULL AND n.at > ?3) LIMIT 500",
             )?;
             let rows = s
-                .query_map(rusqlite::params![page.user.id as i64, page.guild_id as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .query_map(rusqlite::params![page.guild_id as i64, seen, global_seen], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
         .unwrap_or_default();
+    let levels = ctx.levels(&page.user, page.guild_id);
     rows.iter()
-        .filter(|(feature, global)| if *global { page.user.admin } else { ctx.level(&page.user, page.guild_id, feature) >= Level::View })
+        .filter(|(feature, global)| if *global { page.user.admin } else { levels.get(feature) >= Level::View })
         .count() as i64
+}
+
+/// When this person last opened any server's notifications. Notices with no server (app
+/// connections, Twitch) show on every server's bell, so reading them once clears them all.
+pub(super) fn notifications_seen_anywhere(ctx: &Ctx, user: u64) -> i64 {
+    ctx.db
+        .with(|c| {
+            c.query_row(
+                "SELECT MAX(COALESCE((SELECT MAX(seen_at) FROM dash_notif_seen WHERE user_id = ?1), 0),
+                            COALESCE((SELECT notif_seen FROM dash_users WHERE id = ?1), 0))",
+                [user as i64],
+                |r| r.get(0),
+            )
+        })
+        .unwrap_or(0)
+}
+
+/// When this person last opened the server's notifications, in epoch milliseconds.
+pub(super) fn notifications_seen(ctx: &Ctx, user: u64, guild: u64) -> i64 {
+    ctx.db
+        .with(|c| {
+            c.query_row(
+                "SELECT COALESCE((SELECT seen_at FROM dash_notif_seen WHERE user_id = ?1 AND guild_id = ?2),
+                                 (SELECT notif_seen FROM dash_users WHERE id = ?1), 0)",
+                rusqlite::params![user as i64, guild as i64],
+                |r| r.get(0),
+            )
+        })
+        .unwrap_or(0)
 }
 
 pub fn guild_avatar(ctx: &Ctx, guild: u64) -> Markup {
@@ -485,6 +519,18 @@ pub fn readings(items: &[(&str, String)]) -> Markup {
     }
 }
 
+/// Up to three small figures side by side in a rail block: `(label, value)`, like
+/// ("companions", "61"). The page's own answer goes in [`readings`]; these are the rail's.
+pub fn rail_numbers(items: &[(&str, String)]) -> Markup {
+    html! {
+        div.rail-nums {
+            @for (label, value) in items {
+                div { b.mono { (value) } span { (label) } }
+            }
+        }
+    }
+}
+
 /// What an empty list looks like: the section's own icon and one line on how it fills.
 pub fn empty(ic: Icon, title: &str, text: &str) -> Markup {
     html! {
@@ -532,10 +578,93 @@ pub fn action_button(action: &str, label: &str, tone: Tone, destructive: bool) -
 
 /// Sub-page switcher inside a feature: `(label, href)`.
 pub fn tabs(items: &[(&str, String)], active: &str) -> Markup {
+    let items: Vec<_> = items.iter().map(|(l, h)| (*l, h.clone(), None)).collect();
+    tabs_counted(&items, active)
+}
+
+/// [`tabs`] with a count after a label where something waits: `(label, href, count)`, e.g.
+/// ("Running", href, Some(3)). `active` is the open tab's label, without the count.
+pub fn tabs_counted(items: &[(&str, String, Option<i64>)], active: &str) -> Markup {
     html! {
         nav.tabs {
-            @for (label, href) in items {
-                a.tab.on[*label == active] href=(href) { (label) }
+            @for (label, href, count) in items {
+                a.tab.on[*label == active] href=(href) aria-current=[(*label == active).then_some("page")] {
+                    (label)
+                    @if let Some(n) = count { span.tab-count { (crate::text::num(*n)) } }
+                }
+            }
+        }
+    }
+}
+
+/// How a [`status`] pill's dot reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dot {
+    /// Green: connected, running, live.
+    Live,
+    /// Amber: partly on, connecting, waiting.
+    Waiting,
+    /// Grey: off.
+    Off,
+}
+
+/// A state pill for a page header or a rail heading: "Twitch connected · instant alerts".
+pub fn status(dot: Dot, label: &str) -> Markup {
+    let class = match dot {
+        Dot::Live => "dot live",
+        Dot::Waiting => "dot waiting",
+        Dot::Off => "dot",
+    };
+    html! { span.status { span class=(class) {} (label) } }
+}
+
+/// A button that opens a small form under it, for a header or a row action. `button` is the
+/// button's classes after `btn` ("primary", "small outline"); `class` goes on the popover for
+/// a feature's own styling ("" for none). With an icon the label hides on a phone and stays
+/// the button's name. app.js closes it on a click outside or Escape.
+pub fn pop(class: &str, label: &str, ic: Option<Icon>, button: &str, body: Markup) -> Markup {
+    html! {
+        details class={ "pop " (class) } {
+            summary class={ "btn " (button) } aria-label=[ic.is_some().then_some(label)] {
+                @if let Some(i) = ic { (icon(i)) span.pop-label { (label) } } @else { (label) }
+            }
+            div.pop-body { (body) }
+        }
+    }
+}
+
+/// A switch with its label and help, for a rail or a short list of options outside a card.
+/// Submits with the form around it, like [`field_toggle`].
+pub fn switch_row(name: &str, label: &str, help: Option<&str>, on: bool) -> Markup {
+    html! {
+        div.switch-row {
+            div.grow {
+                label for=(name) { (label) }
+                @if let Some(h) = help { p.help { (h) } }
+            }
+            label.switch {
+                input type="checkbox" id=(name) name=(name) checked[on];
+                span.track { span.thumb {} }
+            }
+        }
+    }
+}
+
+/// Small bars for a short series in a rail, `(label, value)`, oldest first: the latest in lilac,
+/// the rest dimmer. Hovering a bar shows its label and value with `unit`. `about` names the
+/// chart for screen readers ("Hours streamed in each of the last 12 weeks").
+pub fn mini_bars(series: &[(String, i64)], unit: &str, about: &str) -> Markup {
+    let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
+    let n = series.len();
+    html! {
+        div.mini-bars {
+            svg viewBox={ "0 0 " ((n * 10).saturating_sub(4)) " 48" } preserveAspectRatio="none" role="img" aria-label=(about) {
+                @for (i, (label, v)) in series.iter().enumerate() {
+                    @let h = (*v as f64 / max * 46.0).max(if *v > 0 { 2.0 } else { 0.0 });
+                    rect x=(i * 10) y=(48.0 - h) width="6" height=(h) fill=(if i + 1 == n { "var(--data)" } else { "var(--data-dim)" }) {
+                        title { (label) ": " (crate::text::num(*v)) " " (unit) }
+                    }
+                }
             }
         }
     }

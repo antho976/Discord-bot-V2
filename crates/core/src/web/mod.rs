@@ -16,7 +16,7 @@ use maud::{DOCTYPE, html};
 
 use crate::Ctx;
 
-pub use auth::{Level, Page, User};
+pub use auth::{Level, Levels, Page, User};
 pub use form::FormData;
 
 pub type WebResult<T = Response> = Result<T, WebError>;

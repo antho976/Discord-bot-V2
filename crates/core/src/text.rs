@@ -31,6 +31,19 @@ pub fn ago(ms: i64) -> String {
     }
 }
 
+/// "today", "yesterday", "12 days ago", "5 months ago", "3 years ago": how long ago something
+/// was made, such as an account (`made_ago(discord::snowflake_ms(user))`).
+pub fn made_ago(ms: i64) -> String {
+    let days = ((crate::now_ms() - ms) / 86_400_000).max(0);
+    match days {
+        0 => "today".into(),
+        1 => "yesterday".into(),
+        2..60 => format!("{days} days ago"),
+        60..730 => format!("{} months ago", days / 30),
+        _ => format!("{} years ago", days / 365),
+    }
+}
+
 /// "1 h 25 min" for a duration in seconds.
 pub fn duration(secs: i64) -> String {
     let (h, m) = (secs / 3600, (secs % 3600) / 60);
@@ -42,11 +55,12 @@ pub fn duration(secs: i64) -> String {
     }
 }
 
-/// Parse "10m", "2h", "1d 12h", "90" (minutes) into seconds.
+/// Parse "10m", "2h", "1d 12h", "90" (minutes) into seconds. Zero, negative and absurdly
+/// large spans are None.
 pub fn parse_duration(s: &str) -> Option<i64> {
     let s = s.trim().to_lowercase();
     if let Ok(n) = s.parse::<i64>() {
-        return Some(n * 60);
+        return n.checked_mul(60).filter(|t| *t > 0);
     }
     let mut total = 0i64;
     let mut num = String::new();
@@ -58,7 +72,7 @@ pub fn parse_duration(s: &str) -> Option<i64> {
         } else {
             let n: i64 = num.parse().ok()?;
             num.clear();
-            total += n * match ch {
+            let unit = match ch {
                 's' => 1,
                 'm' => 60,
                 'h' => 3600,
@@ -66,6 +80,7 @@ pub fn parse_duration(s: &str) -> Option<i64> {
                 'w' => 604800,
                 _ => return None,
             };
+            total = total.checked_add(n.checked_mul(unit)?)?;
         }
     }
     if !num.is_empty() {
@@ -98,6 +113,23 @@ mod tests {
         assert_eq!(parse_duration("90"), Some(5400));
         assert_eq!(parse_duration("abc"), None);
         assert_eq!(parse_duration("5x"), None);
+        assert_eq!(parse_duration("0"), None);
+        assert_eq!(parse_duration("-5"), None);
+        assert_eq!(parse_duration("99999999999999999d"), None);
+    }
+
+    #[test]
+    fn ages_read_in_the_right_unit() {
+        let day = 86_400_000;
+        let now = crate::now_ms();
+        assert_eq!(made_ago(now - 1000), "today");
+        assert_eq!(made_ago(now - day - 1000), "yesterday");
+        assert_eq!(made_ago(now - 12 * day), "12 days ago");
+        assert_eq!(made_ago(now - 150 * day), "5 months ago");
+        assert_eq!(made_ago(now - 1100 * day), "3 years ago");
+        assert_eq!(made_ago(now + day), "today");
+        // 2020-01-01T00:00:00Z as a Discord id.
+        assert_eq!(crate::discord::snowflake_ms((1_577_836_800_000 - 1_420_070_400_000) << 22), 1_577_836_800_000);
     }
 
     #[test]

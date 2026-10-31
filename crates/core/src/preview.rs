@@ -25,7 +25,8 @@ pub const MEMBERS: &[(u64, &str)] = &[
     (2_000_000_000_000_000_010, "Pavel"),
 ];
 
-fn guild(id: u64, name: &str, members: u64) -> serde_json::Value {
+/// A sample server as the gateway's GuildCreate would carry it, with the 10 [`MEMBERS`] listed.
+pub(crate) fn guild_json(id: u64, name: &str, members: u64) -> serde_json::Value {
     let ch = |n: u64, name: &str, kind: u8, pos: i64| {
         json!({"id": (id + n * 10).to_string(), "type": kind, "name": name, "position": pos, "guild_id": id.to_string(), "permission_overwrites": []})
     };
@@ -60,7 +61,7 @@ fn guild(id: u64, name: &str, members: u64) -> serde_json::Value {
 /// little history so charts aren't empty.
 pub fn seed(ctx: &Ctx) -> Result<()> {
     for (id, name, members) in [(GUILD_A, "Antho's server", 1284u64), (GUILD_B, "Idleon guild", 212)] {
-        let g: GuildCreate = serde_json::from_value(guild(id, name, members))?;
+        let g: GuildCreate = serde_json::from_value(guild_json(id, name, members))?;
         ctx.cache.update(&Event::GuildCreate(Box::new(g)));
     }
     for f in ctx.features() {
@@ -137,6 +138,24 @@ pub fn seed(ctx: &Ctx) -> Result<()> {
             rusqlite::params![now - back, id, name, GUILD_A as i64, feature, action],
         )?;
     }
+    // Notices behind the bell: the newest are unread.
+    let g = GUILD_A;
+    let notices = [
+        (h / 6, Some(g), "guard", "Caught kaiden.trades: link imitates steamcommunity.com", Some("guard")),
+        (h / 2, Some(g), "tickets", "New ticket 0004 from bramble: Report: spam in #general", Some("tickets")),
+        (2 * h, Some(g), "pets", "Pavel submitted 2× Cryosnake for approval", Some("pets/approvals")),
+        (h / 3, None, "connect", "Avex on Galaxy Tab asks to connect (code 4821). No approver could be DMed, so answer it here.", Some("connect")),
+        (27 * h, Some(g), "levels", "Imported XP from the old bot: 261 members, 26 reward roles", Some("levels/members")),
+        (30 * h, None, "alerts", "Twitch stopped sending stream.online events (revoked). The bot subscribes again within a day.", None),
+        (75 * h, Some(g), "pets", "juniper.fern submitted Glimmerkit for approval", Some("pets/approvals")),
+    ];
+    for (back, guild, feature, text, link) in notices {
+        tx.execute(
+            "INSERT INTO notifications (at, guild_id, feature, text, link) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![now - back, guild.map(|g| g as i64), feature, text, link.map(|l| format!("/g/{g}/{l}"))],
+        )?;
+    }
+    tx.execute("UPDATE dash_users SET notif_seen = ?2 WHERE id = ?1", rusqlite::params![owner, now - 3 * h])?;
     tx.commit()?;
     Ok(())
 }
@@ -167,7 +186,7 @@ pub fn main(features: Vec<std::sync::Arc<dyn crate::Feature>>) -> Result<()> {
 mod tests {
     #[test]
     fn sample_guild_parses() {
-        let v = super::guild(super::GUILD_A, "x", 1);
+        let v = super::guild_json(super::GUILD_A, "x", 1);
         let r: Result<twilight_model::guild::Guild, _> = serde_json::from_value(v);
         r.unwrap();
     }
