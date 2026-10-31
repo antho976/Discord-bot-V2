@@ -372,9 +372,14 @@ fn full_text(m: &Message) -> String {
     t
 }
 
+/// When a Discord id was made: for a user, when the account was; for a message, when it was sent.
+fn snowflake_ms(id: u64) -> i64 {
+    ((id >> 22) + 1_420_070_400_000) as i64
+}
+
 /// When a Discord account was made, from its id.
 pub fn account_created_ms(user: u64) -> i64 {
-    ((user >> 22) + 1_420_070_400_000) as i64
+    snowflake_ms(user)
 }
 
 /// "made today", "3 days old", "8 months old", "4 years old".
@@ -420,7 +425,7 @@ fn cached_messages_of(ctx: &Ctx, guild: u64, user: u64, now: i64) -> Vec<(u64, u
     for channel in channels {
         let Some(ids) = ctx.cache.channel_messages(channel).map(|q| q.iter().copied().collect::<Vec<_>>()) else { continue };
         for id in ids {
-            let sent = account_created_ms(id.get());
+            let sent = snowflake_ms(id.get());
             if now - sent > recent::KEEP_MS {
                 continue;
             }
@@ -799,11 +804,25 @@ pub fn recent_unhandled(ctx: &Ctx, guild: u64, since: i64, limit: i64) -> Result
     })
 }
 
-pub fn recent_catches(ctx: &Ctx, guild: u64, limit: i64) -> Result<Vec<Catch>> {
+/// The newest catches, all of them or only those with one of `outcomes`.
+pub fn recent_catches(ctx: &Ctx, guild: u64, outcomes: &[Outcome], limit: i64) -> Result<Vec<Catch>> {
+    // The keys are fixed words from `Outcome::key`, so they can go in as text.
+    let only = if outcomes.is_empty() {
+        String::new()
+    } else {
+        format!(" AND outcome IN ({})", outcomes.iter().map(|o| format!("'{}'", o.key())).collect::<Vec<_>>().join(", "))
+    };
     ctx.db.with(|c| {
-        let mut st = c.prepare_cached(&format!("SELECT {CATCH_COLS} FROM guard_catches WHERE guild_id = ?1 ORDER BY at DESC LIMIT ?2"))?;
+        let mut st = c.prepare_cached(&format!("SELECT {CATCH_COLS} FROM guard_catches WHERE guild_id = ?1{only} ORDER BY at DESC LIMIT ?2"))?;
         let rows = st.query_map(params![guild as i64, limit], row_to_catch)?.collect::<bot_core::rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    })
+}
+
+/// Catches nobody has released or banned yet, however old.
+pub fn count_open(ctx: &Ctx, guild: u64) -> Result<i64> {
+    ctx.db.with(|c| {
+        c.query_row("SELECT COUNT(*) FROM guard_catches WHERE guild_id = ?1 AND outcome IN ('timed_out', 'not_timed_out')", [guild as i64], |r| r.get(0))
     })
 }
 

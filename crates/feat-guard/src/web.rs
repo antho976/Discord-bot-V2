@@ -42,8 +42,58 @@ fn status(ctx: &Ctx, guild: u64, s: &Settings) -> Markup {
     html! { span.status { span class=(dot) {} (label) } }
 }
 
+/// Which catches the list shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Show {
+    All,
+    Waiting,
+    Banned,
+    Released,
+}
+
+impl Show {
+    const ALL: [Show; 4] = [Show::All, Show::Waiting, Show::Banned, Show::Released];
+
+    fn key(self) -> &'static str {
+        match self {
+            Show::All => "",
+            Show::Waiting => "waiting",
+            Show::Banned => "banned",
+            Show::Released => "released",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Show::All => "All",
+            Show::Waiting => "Waiting",
+            Show::Banned => "Banned",
+            Show::Released => "Released",
+        }
+    }
+
+    fn outcomes(self) -> &'static [Outcome] {
+        match self {
+            Show::All => &[],
+            Show::Waiting => &[Outcome::TimedOut, Outcome::NotTimedOut],
+            Show::Banned => &[Outcome::Banned],
+            Show::Released => &[Outcome::Released],
+        }
+    }
+
+    fn empty(self) -> (&'static str, &'static str) {
+        match self {
+            Show::All => ("Nothing caught yet", "Catches show up here when someone posts a scam or writes in the honeypot channel."),
+            Show::Waiting => ("Nothing waiting", "Every catch has been released or banned."),
+            Show::Banned => ("Nobody banned", "Catches you ban, here or in Discord, show up here."),
+            Show::Released => ("Nobody released", "Catches you release as mistakes show up here."),
+        }
+    }
+}
+
 #[derive(Deserialize, Default)]
 struct TestQuery {
+    show: Option<String>,
     test: Option<String>,
     new: Option<String>,
     repeat: Option<String>,
@@ -54,7 +104,9 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let week = crate::week(&ctx, guild)?;
-    let catches = crate::recent_catches(&ctx, guild, 50)?;
+    let show = Show::ALL.into_iter().find(|s| Some(s.key()) == q.show.as_deref()).unwrap_or(Show::All);
+    let catches = crate::recent_catches(&ctx, guild, show.outcomes(), 50)?;
+    let waiting = crate::count_open(&ctx, guild)?;
     let test = q.test.as_deref().map(|t| text::clip(t, 2000)).filter(|t| !t.trim().is_empty());
 
     let body = html! {
@@ -79,15 +131,24 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
                     }
                 }
                 (ui::section("Recent catches", Some("Release lifts the timeout and marks the catch as a mistake. Ban also deletes their messages from the last day."), html! {
+                    nav.seg.gd-show aria-label="Show" {
+                        @for sh in Show::ALL {
+                            a.on[sh == show] href={ (page.path(KEY)) @if !sh.key().is_empty() { "?show=" (sh.key()) } } aria-current=[(sh == show).then_some("true")] {
+                                (sh.label())
+                                @if sh == Show::Waiting && waiting > 0 { " " span.gd-count { (waiting) } }
+                            }
+                        }
+                    }
                     @if catches.is_empty() {
-                        (ui::empty(Icon::Shield, "Nothing caught yet", "Catches show up here when someone posts a scam or writes in the honeypot channel."))
+                        @let (title, line) = show.empty();
+                        (ui::empty(Icon::Shield, title, line))
                     } @else {
                         div.gd-list { @for c in &catches { (catch_row(&ctx, &page, guild, c)) } }
                     }
                 }))
             }
             aside.rail {
-                (test_rail(&page, &s, test.as_deref(), q.new.is_some(), q.repeat.is_some(), if test.is_some() { q.ads.is_some() } else { s.catch_ads }))
+                (test_rail(&page, &s, Some(show.key()).filter(|k| !k.is_empty()), test.as_deref(), q.new.is_some(), q.repeat.is_some(), if test.is_some() { q.ads.is_some() } else { s.catch_ads }))
             }
         }
     };
@@ -296,7 +357,7 @@ fn decided(ctx: &Ctx, guild: u64, c: &Catch) -> Markup {
 }
 
 /// The score, the threshold on a bar, and each signal with its points.
-fn test_rail(page: &Page, s: &Settings, test: Option<&str>, new: bool, repeat: bool, ads: bool) -> Markup {
+fn test_rail(page: &Page, s: &Settings, show: Option<&str>, test: Option<&str>, new: bool, repeat: bool, ads: bool) -> Markup {
     // A new account is one a day old, or made today when the setting counts only that.
     let young = if s.new_account_days > 1 { 1.0 } else { 0.5 };
     let checks_age = s.new_account_days > 0;
@@ -315,6 +376,7 @@ fn test_rail(page: &Page, s: &Settings, test: Option<&str>, new: bool, repeat: b
         h2 { "Test a message" }
         p.muted.small { "See how the bot would score it. Nothing is posted or stored." }
         form.stack id="test" method="get" action={ (page.path(KEY)) "#test" } {
+            @if let Some(show) = show { input type="hidden" name="show" value=(show); }
             textarea.input name="test" rows="4" placeholder="free nitro for everyone https://..." { (test.unwrap_or_default()) }
             div.chips {
                 @if checks_age {
@@ -481,6 +543,9 @@ const STYLE: &str = r#"
 .gd-bars rect { fill: var(--signal); opacity: 0.32; }
 .gd-bars rect.now { opacity: 1; }
 .gd-bars figcaption { font-size: 12px; color: var(--ink-3); }
+.gd-show { align-self: flex-start; width: max-content; max-width: 100%; margin-bottom: 12px; }
+.gd-show a { text-decoration: none; }
+.gd-count { color: var(--signal); font-family: var(--mono); }
 .gd-list { display: flex; flex-direction: column; }
 .gd-catch { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; grid-template-areas: "av head out" "av body body"; column-gap: 14px; row-gap: 10px; align-items: start; padding: 16px 0; border-top: 1px solid var(--edge-1); }
 .gd-catch:last-child { border-bottom: 1px solid var(--edge-1); }
