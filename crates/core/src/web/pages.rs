@@ -375,16 +375,25 @@ fn all_notifications(ctx: &Ctx, guild: u64, limit: i64) -> Vec<Note> {
         .unwrap_or_default()
 }
 
-fn notification_row(n: &Note) -> Markup {
+/// One notice: the feature's icon, the text, the feature and time under it, a dot while it's
+/// new. The whole row opens the notice's link.
+fn notification_row(ctx: &Ctx, user: &User, n: &Note, new: bool) -> Markup {
+    let feature = ctx.feature(&n.feature);
+    let ic = feature.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Bell);
+    let name = feature.map(|f| f.meta().name).unwrap_or("Dashboard");
+    let inner = html! {
+        span.note-icon { (ui::icon(ic)) }
+        span.grow {
+            span.note-text { (n.text) }
+            span.muted.small { (name) " · " (user.local(n.at).strftime("%H:%M")) }
+        }
+        @if new { span.unread title="New" {} span.sr { "New" } }
+        @if n.link.is_some() { span.go { (ui::icon(Icon::Chevron)) } }
+    };
     html! {
-        div.list-item {
-            span.grow {
-                @match &n.link {
-                    Some(l) => a href=(l) { (n.text) },
-                    None => (n.text),
-                }
-            }
-            span.meta { (n.feature) " · " (text::ago(n.at)) }
+        @match &n.link {
+            Some(l) => a.note.new[new] href=(l) { (inner) },
+            None => div.note.new[new] { (inner) },
         }
     }
 }
@@ -394,17 +403,47 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         return Err(WebError::Forbidden);
     }
     let page = super::Page { user: user.clone(), guild_id: guild, key: "notifications", level: Level::View };
+    let seen = ui::notifications_seen(&ctx, user.id, guild);
     let notes = recent_notifications(&ctx, &user, guild, 100);
+    let fresh = notes.iter().filter(|n| n.at > seen).count();
     let body = html! {
         @if notes.is_empty() {
-            (ui::empty(Icon::Bell, "No notifications", "Features post here when something needs you."))
+            (ui::empty(Icon::Bell, "No notifications", "Features post here when something needs you: a caught scam, a new ticket, a pet request."))
         } @else {
-            div.list { @for n in &notes { (notification_row(n)) } }
+            // No data-local: its one-time reload for the timezone would count as a second visit
+            // and clear the new marks. The overview, where everyone lands, sets the timezone.
+            div.timeline.notes {
+                @for (i, n) in notes.iter().enumerate() {
+                    @let label = day_label(&user, n.at);
+                    @if i == 0 || day_label(&user, notes[i - 1].at) != label { h2.day { (label) } }
+                    (notification_row(&ctx, &user, n, n.at > seen))
+                }
+            }
         }
     };
-    let markup = ui::layout(&ctx, &page, "Notifications", None, body);
-    ctx.db.with(|c| c.execute("UPDATE dash_users SET notif_seen = ?2 WHERE id = ?1", params![user.id as i64, crate::now_ms()]))?;
-    Ok(markup.into_response())
+    // Seen from now on, so the bell on this page is already clear.
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO dash_notif_seen (user_id, guild_id, seen_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT (user_id, guild_id) DO UPDATE SET seen_at = excluded.seen_at",
+            params![user.id as i64, guild as i64, crate::now_ms()],
+        )
+    })?;
+    let actions = (fresh > 0).then(|| ui::badge(&format!("{fresh} new"), Tone::Accent));
+    Ok(ui::layout(&ctx, &page, "Notifications", actions, body).into_response())
+}
+
+/// "Today", "Yesterday", a weekday for the last week, then "Oct 3": a day heading in the
+/// viewer's timezone.
+fn day_label(user: &User, at: i64) -> String {
+    let today = user.local(crate::now_ms()).date();
+    let d = user.local(at).date();
+    match (today - d).get_days() {
+        0 => "Today".to_owned(),
+        1 => "Yesterday".to_owned(),
+        2..=6 => d.strftime("%A").to_string(),
+        _ => d.strftime("%b %-d").to_string(),
+    }
 }
 
 // ---- features ----
@@ -730,17 +769,7 @@ async fn activity(State(ctx): State<Ctx>, user: User) -> WebResult<Response> {
     }
     week.sort_by_key(|w| -w.3);
     let top = week.first().map(|w| w.3).unwrap_or(1).max(1);
-    let today = user.local(crate::now_ms()).date();
-    let day_label = |at: i64| {
-        let d = user.local(at).date();
-        let back = (today - d).get_days();
-        match back {
-            0 => "Today".to_owned(),
-            1 => "Yesterday".to_owned(),
-            2..=6 => d.strftime("%A").to_string(),
-            _ => d.strftime("%b %-d").to_string(),
-        }
-    };
+    let day_label = |at: i64| day_label(&user, at);
     let page_name = |key: &str| match key {
         "features" => "Features",
         "users" => "People",

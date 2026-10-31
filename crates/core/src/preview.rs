@@ -137,6 +137,24 @@ pub fn seed(ctx: &Ctx) -> Result<()> {
             rusqlite::params![now - back, id, name, GUILD_A as i64, feature, action],
         )?;
     }
+    // Notices behind the bell: the newest are unread.
+    let g = GUILD_A;
+    let notices = [
+        (h / 6, Some(g), "guard", "Caught kaiden.trades: link imitates steamcommunity.com", Some("guard")),
+        (h / 2, Some(g), "tickets", "New ticket 0004 from bramble: Report: spam in #general", Some("tickets")),
+        (2 * h, Some(g), "pets", "Pavel submitted 2× Cryosnake for approval", Some("pets/approvals")),
+        (5 * h, None, "connect", "Avex on Galaxy Tab asks to connect (code 4821). No approver could be DMed, so answer it here.", Some("connect")),
+        (27 * h, Some(g), "levels", "Imported XP from the old bot: 261 members, 26 reward roles", Some("levels/members")),
+        (30 * h, None, "alerts", "Twitch stopped sending stream.online events (revoked). The bot subscribes again within a day.", None),
+        (75 * h, Some(g), "pets", "juniper.fern submitted Glimmerkit for approval", Some("pets/approvals")),
+    ];
+    for (back, guild, feature, text, link) in notices {
+        tx.execute(
+            "INSERT INTO notifications (at, guild_id, feature, text, link) VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![now - back, guild.map(|g| g as i64), feature, text, link.map(|l| format!("/g/{g}/{l}"))],
+        )?;
+    }
+    tx.execute("UPDATE dash_users SET notif_seen = ?2 WHERE id = ?1", rusqlite::params![owner, now - 3 * h])?;
     tx.commit()?;
     Ok(())
 }

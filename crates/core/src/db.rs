@@ -120,9 +120,10 @@ impl Db {
     }
 }
 
-const CORE_MIGRATIONS: &[Migration] = &[Migration {
-    name: "001_core",
-    sql: "
+const CORE_MIGRATIONS: &[Migration] = &[
+    Migration {
+        name: "001_core",
+        sql: "
         CREATE TABLE guild_settings (
             guild_id INTEGER NOT NULL, feature TEXT NOT NULL, json TEXT NOT NULL,
             updated_at INTEGER NOT NULL, PRIMARY KEY (guild_id, feature));
@@ -152,4 +153,17 @@ const CORE_MIGRATIONS: &[Migration] = &[Migration {
             guild_id INTEGER NOT NULL, day TEXT NOT NULL, key TEXT NOT NULL, value INTEGER NOT NULL,
             PRIMARY KEY (guild_id, key, day));
     ",
-}];
+    },
+    // When each person last opened a server's notifications. dash_users.notif_seen was one
+    // time for every server, so reading one server's notices cleared the other's bell; it
+    // stays as the fallback for servers with no row yet.
+    Migration {
+        name: "002_notif_seen",
+        sql: "
+        CREATE TABLE dash_notif_seen (
+            user_id INTEGER NOT NULL REFERENCES dash_users(id) ON DELETE CASCADE,
+            guild_id INTEGER NOT NULL, seen_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, guild_id));
+    ",
+    },
+];

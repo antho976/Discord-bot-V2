@@ -277,15 +277,16 @@ pub fn public_layout(title: &str, subtitle: Option<&str>, body: Markup) -> Marku
 }
 
 fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
+    let seen = notifications_seen(ctx, page.user.id, page.guild_id);
     let rows: Vec<(String, bool)> = ctx
         .db
         .with(|c| {
             let mut s = c.prepare(
-                "SELECT n.feature, n.guild_id IS NULL FROM notifications n, dash_users u
-                 WHERE u.id = ?1 AND n.at > u.notif_seen AND (n.guild_id IS NULL OR n.guild_id = ?2) LIMIT 500",
+                "SELECT n.feature, n.guild_id IS NULL FROM notifications n
+                 WHERE n.at > ?2 AND (n.guild_id IS NULL OR n.guild_id = ?1) LIMIT 500",
             )?;
             let rows = s
-                .query_map(rusqlite::params![page.user.id as i64, page.guild_id as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .query_map(rusqlite::params![page.guild_id as i64, seen], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
@@ -294,6 +295,20 @@ fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
     rows.iter()
         .filter(|(feature, global)| if *global { page.user.admin } else { levels.get(feature) >= Level::View })
         .count() as i64
+}
+
+/// When this person last opened the server's notifications, in epoch milliseconds.
+pub(super) fn notifications_seen(ctx: &Ctx, user: u64, guild: u64) -> i64 {
+    ctx.db
+        .with(|c| {
+            c.query_row(
+                "SELECT COALESCE((SELECT seen_at FROM dash_notif_seen WHERE user_id = ?1 AND guild_id = ?2),
+                                 (SELECT notif_seen FROM dash_users WHERE id = ?1), 0)",
+                rusqlite::params![user as i64, guild as i64],
+                |r| r.get(0),
+            )
+        })
+        .unwrap_or(0)
 }
 
 pub fn guild_avatar(ctx: &Ctx, guild: u64) -> Markup {
