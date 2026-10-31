@@ -165,7 +165,7 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                     @if can_edit {
                         div.eb-foot {
                             div.eb-chan {
-                                label for="channel" { "Channel" }
+                                label for="channel" { @if v.editing.is_some() { "Send as new to" } @else { "Channel" } }
                                 (ui::select("channel", &options, &selected))
                             }
                             div.eb-btns {
@@ -217,12 +217,17 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                 div.table-wrap { table.table.eb-tbl {
                     thead { tr { th { "Channel" } th { "Message" } th.m-hide { "Sent" } th {} } }
                     tbody { @for s in &sent {
-                        tr {
+                        @let current = v.editing.is_some_and(|e| e.id == s.id);
+                        tr.eb-cur[current] {
                             td { (channel_name(s.channel_id)) }
                             td { span.clip.cell { (s.summary) } @if let Some(t) = &s.template { " " span.muted.small { "from " (t) } } }
                             td.muted.m-hide { (text::ago(s.edited_at.unwrap_or(s.sent_at))) @if s.edited_at.is_some() { " (edited)" } }
                             td.actions {
-                                a.btn.small href=(page.path(&format!("embeds?sent={}", s.id))) { "Edit in Discord" }
+                                @if current {
+                                    span.muted.small { "Editing" }
+                                } @else {
+                                    a.btn.small href=(page.path(&format!("embeds?sent={}", s.id))) { "Edit" }
+                                }
                                 a.btn.small href={ "https://discord.com/channels/" (guild) "/" (s.channel_id) "/" (s.message_id) } target="_blank" rel="noreferrer noopener" { "Open" }
                                 @if can_edit { (ui::action_button(&page.path(&format!("embeds/sent/{}/delete", s.id)), "Forget", Tone::Bad, true)) }
                             }
@@ -288,7 +293,10 @@ fn explain(e: &bot_core::twilight_http::Error) -> String {
                 .ok()
                 .and_then(|v| v.get("message").and_then(|m| m.as_str().map(str::to_owned)))
                 .unwrap_or_default();
-            format!("Discord rejected the embed. {detail} Check the image and link addresses.")
+            match detail.trim().trim_end_matches('.') {
+                "" => "Discord rejected the embed. Check the image and link addresses.".into(),
+                d => format!("Discord rejected the embed: {d}. Check the image and link addresses."),
+            }
         }
         _ => format!("Discord refused it: {e}"),
     }
@@ -399,6 +407,8 @@ const CSS: &str = r##"
 .eb-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .eb-chip-wrap { display: inline-flex; align-items: center; gap: 2px; }
 .eb-chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 13px; border-radius: 15px; background: var(--control); color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+a.eb-chip:not(.new) { display: inline-block; line-height: 30px; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
+.eb-chip-wrap { min-width: 0; max-width: 100%; }
 .eb-chip:hover { background: var(--hover); color: var(--ink); }
 .eb-chip.on { background: var(--ink); color: var(--ground); font-weight: 500; }
 .eb-chip.new { background: transparent; box-shadow: inset 0 0 0 1px var(--edge-2); }
@@ -410,7 +420,7 @@ const CSS: &str = r##"
 .eb-chip-wrap:hover .eb-x { opacity: 1; }
 @media (hover: none) { .eb-x { opacity: 1; } }
 
-fieldset.eb { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); gap: 24px; align-items: start; }
+fieldset.eb { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: start; }
 .eb-card { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 20px; border-radius: var(--r-card); background: var(--veil); border: 1px solid var(--edge-1); }
 .eb-f { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .eb-lab { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -445,13 +455,15 @@ fieldset.eb { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gri
 .eb-note strong { font-weight: 500; }
 .eb-error { padding: 10px 14px; border-radius: var(--r-key); background: rgba(236, 106, 94, 0.1); border: 1px solid rgba(236, 106, 94, 0.35); color: var(--ink); font-size: 13px; }
 .eb-foot { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-top: 16px; border-top: 1px solid var(--edge-1); }
-.eb-chan { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; max-width: 220px; }
+.eb-chan { display: flex; flex-direction: column; gap: 6px; min-width: 160px; flex: 1; max-width: 220px; }
 .eb-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .eb-savetpl .pop-body { width: 290px; }
 .eb-savetpl .pop-body .eb-btns { justify-content: flex-end; }
 .eb-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .eb-total { align-self: flex-start; }
 td .cell { display: inline-block; max-width: 38ch; vertical-align: bottom; }
+.eb-tbl tr.eb-cur td { background: var(--selected); }
+.eb-tbl td.actions .muted { display: inline-block; padding: 0 10px; }
 
 .dc { display: flex; gap: 14px; color: #dbdee1; font: 15px/1.4 var(--sans); min-width: 0; }
 .dc-av { flex: none; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
@@ -473,6 +485,7 @@ td .cell { display: inline-block; max-width: 38ch; vertical-align: bottom; }
 .dc-fields { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px; }
 .dc-field { grid-column: span 12; }
 .dc-field.in { grid-column: span 4; }
+.dc-embed.th .dc-field.in { grid-column: span 6; }
 .dc-fn { font-weight: 600; color: #f2f3f5; }
 .dc-fv { white-space: pre-wrap; }
 .dc-embed > .dc-img { margin-top: 16px; max-width: 100%; max-height: 300px; border-radius: 4px; }
@@ -490,6 +503,7 @@ td .cell { display: inline-block; max-width: 38ch; vertical-align: bottom; }
 }
 @media (max-width: 520px) {
   .eb-2 { grid-template-columns: minmax(0, 1fr); }
+  .eb-hex { margin-left: 0; }
   .eb-card { padding: 16px; }
   .eb-chan { max-width: none; }
   .eb-foot { flex-direction: column; align-items: stretch; }
@@ -542,7 +556,7 @@ const JS: &str = r##"
     const hex = /^#?[0-9a-f]{6}$/i.test(val("color")) ? "#" + val("color").replace("#", "").toLowerCase() : "";
     let h = "";
     if (has) {
-      h += '<div class="dc-embed"' + (hex ? ' style="--c:' + hex + '"' : "") + ">";
+      h += '<div class="dc-embed' + (thumb ? " th" : "") + '"' + (hex ? ' style="--c:' + hex + '"' : "") + ">";
       if (thumb) h += '<img class="dc-th" alt="" src="' + esc(thumb) + '">';
       if (author) h += '<div class="dc-author">' + esc(author) + "</div>";
       if (title) h += '<div class="dc-title">' + (link ? '<a href="' + esc(link) + '" target="_blank" rel="noreferrer noopener">' + esc(title) + "</a>" : esc(title)) + "</div>";
