@@ -185,11 +185,11 @@ fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broad
     })
 }
 
-/// The closest reminder before a stream, as Discord shows it. Discord fills the relative time
-/// and the start time in for each reader.
-fn reminder_post(ctx: &Ctx, page: &Page, role: Option<String>, b: &Broadcaster, seg: Option<&schedule::Segment>, minutes: i64) -> Markup {
+/// The closest reminder before a stream, as Discord shows it. Discord fills the start time in for
+/// each reader; the preview gives it in the schedule's zone, like the rest of the tab.
+fn reminder_post(ctx: &Ctx, page: &Page, tz: &TimeZone, role: Option<String>, b: &Broadcaster, seg: Option<&schedule::Segment>, minutes: i64) -> Markup {
     let start = seg.map(|g| g.starts_at).unwrap_or_else(|| now_ms() + minutes * 60_000);
-    let at = page.user.local(start).strftime("%-I:%M %p").to_string();
+    let at = zoned(start, tz).map(|z| z.strftime("%-I:%M %p").to_string()).unwrap_or_default();
     let (title, game) = seg.map(|g| (g.title.as_str(), g.game.as_str())).unwrap_or(("Your stream title", "Just Chatting"));
     let when = in_minutes(minutes);
     bot_message(ctx, page, html! {
@@ -369,7 +369,9 @@ fn sub_status(status: Option<&str>) -> (u8, String) {
         Some("webhook_callback_verification_failed") => (2, "Twitch couldn't reach the bot".into()),
         Some("notification_failures_exceeded") => (2, "Twitch stopped after failed deliveries".into()),
         Some("authorization_revoked" | "user_removed" | "moderator_removed") => (2, "Revoked by Twitch".into()),
-        Some(other) => (2, format!("Not working: {other}")),
+        Some("version_removed") => (2, "Twitch retired this event; the bot subscribes again within a day".into()),
+        Some(s) if s.starts_with("refused") => (2, "Twitch refused the subscription".into()),
+        Some(_) => (2, "Stopped by Twitch".into()),
         None => (2, "Not set up yet".into()),
     }
 }
@@ -732,7 +734,7 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 }))
                 section.block {
                     div.sa-sechead { h2 { "What members see before a stream" } }
-                    (reminder_post(&ctx, &page, role, &sample, next, closest))
+                    (reminder_post(&ctx, &page, &tz, role, &sample, next, closest))
                     p.muted.small {
                         (reminder_line(&s))
                         @if let Some(c) = channel_name(&ctx, guild, s.reminder_channel).filter(|_| s.reminders) { " Posted in " (c) "." }
@@ -1192,6 +1194,10 @@ mod tests {
         assert_eq!(sub_status(Some("webhook_callback_verification_pending")).0, 1);
         assert_eq!(sub_status(Some("notification_failures_exceeded")), (2, "Twitch stopped after failed deliveries".into()));
         assert_eq!(sub_status(None), (2, "Not set up yet".into()));
+        // Nothing Twitch can send renders as a machine word.
+        assert_eq!(sub_status(Some("refused (400)")).1, "Twitch refused the subscription");
+        assert_eq!(sub_status(Some("beta_maintenance")).1, "Stopped by Twitch");
+        assert!(!sub_status(Some("version_removed")).1.contains('_'));
     }
 
     fn toronto() -> TimeZone {
