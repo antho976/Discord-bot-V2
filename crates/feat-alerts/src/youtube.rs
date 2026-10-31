@@ -216,6 +216,15 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
     }
 }
 
+/// The dashboard's "Send a test post": the post for a stored video, with nobody pinged.
+pub async fn test_post(ctx: &Ctx, channel: u64, s: &Settings, v: &Video) -> Result<()> {
+    let text = fill_video(&s.youtube_message, &v.author, &v.title, &v.url());
+    let content = format!("{text}\n-# Test post. Nobody was pinged.");
+    let none = AllowedMentions::default();
+    ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&none)).await?;
+    Ok(())
+}
+
 /// Insert videos not seen before and return them. Keeps the newest 50 per channel.
 fn store(ctx: &Ctx, feed: &str, f: &Feed) -> Result<Vec<Video>> {
     let now = now_ms();

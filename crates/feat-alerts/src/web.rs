@@ -24,6 +24,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/alerts/schedule", get(schedule_page).post(save_schedule))
         .route("/g/{guild}/alerts/schedule.png", get(schedule_png))
         .route("/g/{guild}/alerts/youtube", get(youtube_page).post(save_youtube))
+        .route("/g/{guild}/alerts/youtube/test", post(send_youtube_test))
         .route("/g/{guild}/alerts/streams", get(streams_page))
         .route("/webhooks/twitch", post(twitch::webhook))
 }
@@ -838,7 +839,7 @@ async fn schedule_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 
 // ---- YouTube ----
 
-async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<HashMap<String, String>>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let videos = youtube::recent(&ctx, &s.youtube_ids, 10);
@@ -853,14 +854,21 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "YouTube"))
+        (toast_if(&q, "sent", "Test post sent"))
         div.with-rail {
             div.stack.sa-main {
                 section.block {
-                    div.sa-sechead { h2 { "What members see when you upload" } }
+                    div.sa-sechead {
+                        h2 { "What members see when you upload" }
+                        @if page.can_edit() && !videos.is_empty() { (ui::action_button(&page.path("alerts/youtube/test"), "Send a test post", Tone::Muted, false)) }
+                    }
                     (video_post(&ctx, &page, role, &s.youtube_message, &sample))
                     p.muted.small {
                         @match channel_name(&ctx, guild, s.youtube_channel) {
-                            Some(c) => { "Posted in " (c) " within 5 minutes of the upload." }
+                            Some(c) => {
+                                "Posted in " (c) " within 5 minutes of the upload."
+                                @if page.can_edit() && !videos.is_empty() { " The test posts your newest video there without pinging anyone." }
+                            }
                             None => { "Pick a channel below and save to start posting." }
                         }
                     }
@@ -949,6 +957,23 @@ async fn save_youtube(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed YouTube alert settings");
     Ok(saved(&page.path("alerts/youtube")))
+}
+
+async fn send_youtube_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let Some(channel) = s.youtube_channel else {
+        return Err(WebError::Bad("Pick a channel for new videos and save first.".into()));
+    };
+    let Some(v) = youtube::recent(&ctx, &s.youtube_ids, 1).into_iter().next() else {
+        return Err(WebError::Bad("There's no video to post yet. Uploads show up after the first check.".into()));
+    };
+    if let Err(e) = youtube::test_post(&ctx, channel, &s, &v).await {
+        tracing::warn!(guild, error = %e, "YouTube test post failed");
+        return Err(WebError::Bad("Discord refused the post. Check that the bot can send messages in that channel.".into()));
+    }
+    ctx.audit(&page.user, Some(guild), KEY, "Sent a test YouTube post");
+    Ok(bot_core::axum::response::Redirect::to(&page.path("alerts/youtube?sent=1")).into_response())
 }
 
 // ---- Streams ----
