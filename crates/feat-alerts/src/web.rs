@@ -109,9 +109,19 @@ fn mode_line(mode: Mode) -> &'static str {
     }
 }
 
+/// What the preview of the live post shows.
+struct Sample<'a> {
+    title: &'a str,
+    game: &'a str,
+    /// "just now", or how long ago a live stream started.
+    started: String,
+    /// A real picture of the stream when one is stored, else a placeholder is drawn.
+    thumb: Option<String>,
+}
+
 /// The live post as Discord shows it: the bot with its APP tag, the ping and the message, the
-/// embed with its coral edge, and Watch. The thumbnail is a placeholder; nothing is fetched.
-fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broadcaster, title: &str, game: &str) -> Markup {
+/// embed with its coral edge, its fields, picture and footer, and the Watch on Twitch button.
+fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broadcaster, sample: &Sample) -> Markup {
     let bot = ctx.cache.current_user();
     let bot_name = bot.as_ref().map(|u| u.name.clone()).unwrap_or_else(|| "Bot".into());
     let bot_avatar = bot.as_ref().map(|u| bot_core::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref()));
@@ -134,12 +144,22 @@ fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broad
                     (line)
                 }
                 div.sa-embed style="--embed:#f0806a" {
-                    div.sa-author { (b.name) " on Twitch" }
-                    div.sa-title { (title) }
-                    @if !game.is_empty() { div.sa-game { "Playing " (game) } }
-                    div.sa-thumb { (ui::icon(Icon::Live)) span { "Stream thumbnail" } }
+                    div.sa-author {
+                        @if !b.avatar.is_empty() { img src=(b.avatar) alt="" width="24" height="24" loading="lazy"; }
+                        (b.name)
+                    }
+                    div.sa-title { @if sample.title.is_empty() { (b.name) " is live" } @else { (sample.title) } }
+                    div.sa-fields {
+                        @if !sample.game.is_empty() { div { b { "Playing" } span { (sample.game) } } }
+                        div { b { "Started" } span { (sample.started) } }
+                    }
+                    @match &sample.thumb {
+                        Some(src) => { img.sa-thumb src=(src) alt="" width="640" height="360" loading="lazy"; }
+                        None => { div.sa-thumb { (ui::icon(Icon::Live)) span { "Stream thumbnail" } } }
+                    }
+                    div.sa-foot { "Twitch" }
                 }
-                a.sa-watch href=(b.url()) target="_blank" rel="noopener" { "Watch" }
+                a.sa-watch href=(b.url()) target="_blank" rel="noopener" { "Watch on Twitch" (ui::icon(Icon::External)) }
             }
         }
     }
@@ -295,12 +315,18 @@ const CSS: &str = r#"
 .sa-line { overflow-wrap: anywhere; max-width: 100%; }
 .sa-ping { background: rgba(88, 101, 242, 0.3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; }
 .sa-embed { align-self: stretch; max-width: 480px; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 12px 16px 16px 14px; background: #2b2d31; border-left: 4px solid var(--embed, #1e1f22); border-radius: 4px; }
-.sa-author { font-size: 12.5px; font-weight: 600; color: #f2f3f5; }
+.sa-author { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #f2f3f5; }
+.sa-author img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
 .sa-title { font-size: 15px; font-weight: 600; color: #00a8fc; overflow-wrap: anywhere; }
-.sa-game { font-size: 13.5px; color: #dbdee1; }
-.sa-thumb { margin-top: 4px; aspect-ratio: 16 / 9; border-radius: 4px; background: linear-gradient(160deg, #3a3d44, #1e1f22); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #80848e; font-size: 12px; }
+.sa-fields { display: flex; flex-wrap: wrap; gap: 8px 32px; font-size: 13.5px; }
+.sa-fields div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sa-fields b { color: #f2f3f5; font-weight: 600; }
+.sa-fields span { overflow-wrap: anywhere; }
+.sa-thumb { width: 100%; height: auto; margin-top: 4px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; background: linear-gradient(160deg, #3a3d44, #1e1f22); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #80848e; font-size: 12px; }
 .sa-thumb .icon { width: 26px; height: 26px; }
-.sa-watch { display: inline-flex; align-items: center; height: 32px; padding: 0 16px; border-radius: 4px; background: #4e5058; color: #fff; font-size: 14px; font-weight: 500; }
+.sa-foot { font-size: 12px; color: #b5bac1; }
+.sa-watch { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 16px; border-radius: 4px; background: #4e5058; color: #fff; font-size: 14px; font-weight: 500; }
+.sa-watch .icon { width: 14px; height: 14px; }
 .sa-watch:hover { background: #6d6f78; }
 .sa-note { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: var(--ink-3); max-width: 72ch; }
 .sa-note > .icon { margin-top: 3px; flex: none; }
@@ -319,6 +345,9 @@ const CSS: &str = r#"
 .sa-seg.on .day, .sa-seg.on .when { color: var(--ink); }
 .sa-seg.off .what { text-decoration: line-through; color: var(--ink-3); }
 .sa-seg.off .when { font-family: var(--sans); color: var(--ink-3); }
+.sa-stream { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.sa-vt { flex: none; width: 64px; height: 36px; border-radius: 4px; object-fit: cover; background: var(--well); display: grid; place-items: center; color: var(--ink-3); }
+.sa-vt .icon { width: 16px; height: 16px; }
 .sa-bars svg { display: block; width: 100%; height: 52px; overflow: visible; }
 "#;
 
@@ -349,9 +378,16 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         name: s.twitch_logins.first().cloned().unwrap_or_else(|| "You".into()),
         avatar: String::new(),
     });
-    let sample_title = last.map(|r| r.title.clone()).unwrap_or_else(|| "Your stream title".into());
-    let sample_game = last.map(|r| r.game.clone()).unwrap_or_else(|| "Just Chatting".into());
-    let line = twitch::fill_live(&s.live_message, &sample, &sample_title, &sample_game);
+    // While live, the preview is the stream that's on; otherwise the last one, with its VOD's
+    // picture when Twitch has made one.
+    let shown = live.as_ref().or(last);
+    let preview = Sample {
+        title: shown.map(|r| r.title.as_str()).unwrap_or("Your stream title"),
+        game: shown.map(|r| r.game.as_str()).unwrap_or("Just Chatting"),
+        started: live.as_ref().map(|r| text::ago(r.started_at)).unwrap_or_else(|| "just now".into()),
+        thumb: shown.and_then(StreamRow::thumb_640),
+    };
+    let line = twitch::fill_live(&s.live_message, &sample, preview.title, preview.game);
     let role = role_name(&ctx, guild, s.live_role);
 
     let body = html! {
@@ -381,7 +417,7 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         h2 { "What members see when you go live" }
                         @if page.can_edit() { (ui::action_button(&page.path("alerts/test"), "Send a test alert", Tone::Muted, false)) }
                     }
-                    (live_post(&ctx, &page, role, &line, &sample, &sample_title, &sample_game))
+                    (live_post(&ctx, &page, role, &line, &sample, &preview))
                     p.muted.small {
                         @if page.can_edit() {
                             @match channel_name(&ctx, guild, s.live_channel) {
@@ -744,12 +780,20 @@ async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                 tr {
                                     td style="white-space:nowrap" { (zoned(r.started_at, &tz).map(|z| z.strftime("%b %-d").to_string()).unwrap_or_default()) }
                                     td {
-                                        div { (r.title) }
-                                        @if !r.game.is_empty() { div.muted.small { (r.game) } }
+                                        div.sa-stream {
+                                            @match r.thumbnail.is_empty() {
+                                                false => { img.sa-vt.wide-only src=(twitch::sized(&r.thumbnail, 320, 180)) alt="" width="64" height="36" loading="lazy"; }
+                                                true => { span.sa-vt.wide-only { (ui::icon(Icon::Live)) } }
+                                            }
+                                            div {
+                                                div { @if r.title.is_empty() { "Untitled stream" } @else { (r.title) } }
+                                                @if !r.game.is_empty() { div.muted.small { (r.game) } }
+                                            }
+                                        }
                                     }
                                     td.num style="white-space:nowrap" { @if r.ended_at.is_some() { (text::duration(r.duration_secs)) } @else { (ui::badge("Live", Tone::Ok)) } }
-                                    td.num { @if r.samples > 0 { (text::num(r.peak)) } @else { span.muted { "–" } } }
-                                    td.num.wide-only { @if r.samples > 0 { (text::num(r.average)) } @else { span.muted { "–" } } }
+                                    td.num { @if r.samples > 0 { (text::num(r.peak)) } }
+                                    td.num.wide-only { @if r.samples > 0 { (text::num(r.average)) } }
                                     td.actions.wide-only { @if let Some(v) = &r.vod_url { a.btn.small href=(v) target="_blank" rel="noopener" { "VOD" } } }
                                 }
                             } }
@@ -831,7 +875,7 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
                 @if thumb.is_empty() {
                     span.stream-ph { (ui::icon(Icon::Live)) }
                 } @else {
-                    img src=(thumb.replace("{width}", "640").replace("{height}", "360")) alt="" loading="lazy";
+                    img src=(twitch::sized(thumb, 640, 360)) alt="" loading="lazy";
                 }
                 div.stream-cap {
                     span { (if live { "Live now" } else { "Last stream" }) }

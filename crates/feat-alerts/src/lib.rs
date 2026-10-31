@@ -177,6 +177,11 @@ impl Feature for Alerts {
             {
                 bot_core::tracing::warn!(error = %e, "schedule refresh failed");
             }
+            if due(ctx, "thumbs", 15 * 60_000)
+                && let Err(e) = twitch::fill_thumbnails(ctx).await
+            {
+                bot_core::tracing::warn!(error = %e, "couldn't fill VOD pictures");
+            }
         }
         schedule::send_reminders(ctx, &guilds).await;
         schedule::weekly_posts(ctx, &guilds).await;

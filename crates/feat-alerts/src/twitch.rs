@@ -132,6 +132,9 @@ pub struct HStream {
     pub viewer_count: i64,
     #[serde(default)]
     pub started_at: String,
+    /// The live preview, with `{width}` and `{height}` to fill in.
+    #[serde(default)]
+    pub thumbnail_url: String,
 }
 
 /// Live streams among these broadcaster ids.
@@ -400,9 +403,24 @@ pub struct StreamRow {
     /// Last time viewers were read (or the stream was checked).
     pub last_sample: i64,
     pub vod_url: Option<String>,
+    /// A picture of the stream with `{width}` and `{height}` to fill in: the live preview while
+    /// live, the VOD's once Twitch has made one, or empty.
+    pub thumbnail: String,
 }
 
-const COLS: &str = "id, broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, last_sample, vod_url";
+impl StreamRow {
+    /// The thumbnail at 640x360, or `None` when there isn't one.
+    pub fn thumb_640(&self) -> Option<String> {
+        (!self.thumbnail.is_empty()).then(|| sized(&self.thumbnail, 640, 360))
+    }
+}
+
+/// Fill a Twitch image template. Live previews use `{width}`, VODs `%{width}`.
+pub fn sized(template: &str, w: u32, h: u32) -> String {
+    template.replace("%{width}", "{width}").replace("%{height}", "{height}").replace("{width}", &w.to_string()).replace("{height}", &h.to_string())
+}
+
+const COLS: &str = "id, broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, last_sample, vod_url, thumbnail";
 
 fn stream_row(r: &Row) -> bot_core::rusqlite::Result<StreamRow> {
     Ok(StreamRow {
@@ -419,6 +437,7 @@ fn stream_row(r: &Row) -> bot_core::rusqlite::Result<StreamRow> {
         samples: r.get(10)?,
         last_sample: r.get(11)?,
         vod_url: r.get(12)?,
+        thumbnail: r.get(13)?,
     })
 }
 
@@ -476,11 +495,12 @@ pub async fn on_online(ctx: &Ctx, b: &Broadcaster, stream_id: &str, started_at: 
         Some(i) => (i.title.clone(), i.game_name.clone()),
         None => channel_info(ctx, &b.user_id).await.unwrap_or_default(),
     };
+    let thumbnail = info.as_ref().map(|i| i.thumbnail_url.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| live_thumbnail(&b.login));
     let now = now_ms();
     let id = ctx.db.with(|c| {
         c.execute(
-            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, last_sample) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![b.user_id, stream_id, started_at, title, game, now],
+            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, last_sample, thumbnail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![b.user_id, stream_id, started_at, title, game, now, thumbnail],
         )?;
         Ok(c.last_insert_rowid())
     })?;
@@ -522,17 +542,25 @@ pub async fn on_offline(ctx: &Ctx, bid: &str, ended: i64) -> Result<()> {
     finish(ctx, row, ended).await
 }
 
-/// Close a stream: duration, VOD link, and the live posts edited to say it ended.
+/// The live preview Twitch serves for a login while they're live.
+fn live_thumbnail(login: &str) -> String {
+    format!("https://static-cdn.jtvnw.net/previews-ttv/live_user_{login}-{{width}}x{{height}}.jpg")
+}
+
+/// Close a stream: duration, VOD link and picture, and the live posts edited to say it ended.
+/// The live preview stops working when the stream ends, so it's dropped; the VOD's picture
+/// takes its place now or, while Twitch is still making it, from `fill_thumbnails`.
 async fn finish(ctx: &Ctx, row: StreamRow, ended: i64) -> Result<()> {
     let duration = ((ended - row.started_at) / 1000).max(0);
-    let vod = vod_url(ctx, &row).await.unwrap_or_else(|e| {
+    let vod = vod(ctx, &row).await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "couldn't look up the VOD");
         None
     });
+    let (vod_url, thumbnail) = vod.map(|v| (Some(v.url), v.thumbnail_url)).unwrap_or_default();
     ctx.db.with(|c| {
         c.execute(
-            "UPDATE alerts_streams SET ended_at = ?2, duration_secs = ?3, vod_url = ?4 WHERE id = ?1",
-            params![row.id, ended, duration, vod],
+            "UPDATE alerts_streams SET ended_at = ?2, duration_secs = ?3, vod_url = ?4, thumbnail = ?5 WHERE id = ?1",
+            params![row.id, ended, duration, vod_url, thumbnail],
         )
     })?;
     MISSING.lock().unwrap().remove(&row.broadcaster_id);
@@ -540,28 +568,63 @@ async fn finish(ctx: &Ctx, row: StreamRow, ended: i64) -> Result<()> {
     edit_posts(ctx, row.id).await
 }
 
-async fn vod_url(ctx: &Ctx, row: &StreamRow) -> Result<Option<String>> {
-    #[derive(Deserialize)]
-    struct HVideo {
-        url: String,
-        #[serde(default)]
-        stream_id: Option<String>,
-        #[serde(default)]
-        created_at: String,
-    }
+#[derive(Deserialize)]
+struct HVideo {
+    #[serde(default)]
+    id: String,
+    url: String,
+    #[serde(default)]
+    stream_id: Option<String>,
+    #[serde(default)]
+    created_at: String,
+    /// Empty while Twitch is still processing the VOD.
+    #[serde(default)]
+    thumbnail_url: String,
+}
+
+async fn vod(ctx: &Ctx, row: &StreamRow) -> Result<Option<HVideo>> {
     let q = [("user_id", row.broadcaster_id.clone()), ("type", "archive".into()), ("first", "5".into())];
     let videos = get::<List<HVideo>>(ctx, "videos", &q).await?.map(|l| l.data).unwrap_or_default();
     let created = |v: &HVideo| v.created_at.parse::<jiff::Timestamp>().map(|t| t.as_millisecond()).unwrap_or(0);
-    Ok(videos
-        .iter()
-        .find(|v| {
-            if row.stream_id.is_empty() {
-                created(v) >= row.started_at - 15 * 60_000
-            } else {
-                v.stream_id.as_deref() == Some(row.stream_id.as_str())
+    Ok(videos.into_iter().find(|v| {
+        if row.stream_id.is_empty() {
+            created(v) >= row.started_at - 15 * 60_000
+        } else {
+            v.stream_id.as_deref() == Some(row.stream_id.as_str())
+        }
+    }))
+}
+
+/// Streams that ended in the last two days with a VOD but no picture yet: ask Twitch for the
+/// VODs' pictures, all in one call.
+pub async fn fill_thumbnails(ctx: &Ctx) -> Result<()> {
+    let since = now_ms() - 2 * 86_400_000;
+    let rows: Vec<(i64, String)> = ctx.db.with(|c| {
+        let mut s = c.prepare_cached(
+            "SELECT id, vod_url FROM alerts_streams WHERE ended_at >= ?1 AND thumbnail = '' AND vod_url IS NOT NULL LIMIT 100",
+        )?;
+        s.query_map([since], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+    })?;
+    let ids: Vec<(i64, String)> = rows.into_iter().filter_map(|(id, url)| video_id(&url).map(|v| (id, v.to_owned()))).collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let q: Vec<(&str, String)> = ids.iter().map(|(_, v)| ("id", v.clone())).collect();
+    let videos = get::<List<HVideo>>(ctx, "videos", &q).await?.map(|l| l.data).unwrap_or_default();
+    ctx.db.with(|c| {
+        for v in videos.iter().filter(|v| !v.thumbnail_url.is_empty()) {
+            if let Some((row, _)) = ids.iter().find(|(_, id)| *id == v.id) {
+                c.execute("UPDATE alerts_streams SET thumbnail = ?2 WHERE id = ?1", params![row, v.thumbnail_url])?;
             }
-        })
-        .map(|v| v.url.clone()))
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// "https://www.twitch.tv/videos/123" -> "123".
+fn video_id(url: &str) -> Option<&str> {
+    url.trim_end_matches('/').rsplit_once("/videos/").map(|(_, id)| id).filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Title or game changed while live: edit the live posts.
@@ -851,6 +914,21 @@ mod tests {
         let fields: Vec<_> = p.embed.fields.iter().map(|f| (f.name.as_str(), f.value.as_str())).collect();
         assert!(fields.contains(&("Peak viewers", "48")));
         assert!(p.mentions.roles.is_empty());
+    }
+
+    #[test]
+    fn thumbnails_fill_both_templates() {
+        assert_eq!(sized(&live_thumbnail("antho"), 640, 360), "https://static-cdn.jtvnw.net/previews-ttv/live_user_antho-640x360.jpg");
+        assert_eq!(sized("https://x/thumb0-%{width}x%{height}.jpg", 320, 180), "https://x/thumb0-320x180.jpg");
+        let row = StreamRow::default();
+        assert_eq!(row.thumb_640(), None);
+    }
+
+    #[test]
+    fn vod_ids_come_from_links() {
+        assert_eq!(video_id("https://www.twitch.tv/videos/2283"), Some("2283"));
+        assert_eq!(video_id("https://www.twitch.tv/antho"), None);
+        assert_eq!(video_id("https://www.twitch.tv/videos/"), None);
     }
 
     #[test]
