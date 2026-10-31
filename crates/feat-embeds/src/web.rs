@@ -235,8 +235,9 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                                 } @else {
                                     a.btn.small href=(page.path(&format!("embeds?sent={}", s.id))) { "Edit" }
                                 }
-                                @if can_edit { a.btn.small href=(page.path(&format!("embeds?sent={}&copy=1", s.id))) title="Start a new embed from this one" { "Duplicate" } }
-                                a.btn.small href={ "https://discord.com/channels/" (guild) "/" (s.channel_id) "/" (s.message_id) } target="_blank" rel="noreferrer noopener" { "Open" }
+                                // On a phone the row keeps Edit and Forget; Duplicate and Open would stack four high.
+                                @if can_edit { a.btn.small.m-hide href=(page.path(&format!("embeds?sent={}&copy=1", s.id))) title="Start a new embed from this one" { "Duplicate" } }
+                                a.btn.small.m-hide href={ "https://discord.com/channels/" (guild) "/" (s.channel_id) "/" (s.message_id) } target="_blank" rel="noreferrer noopener" { "Open" }
                                 @if can_edit { (ui::action_button(&page.path(&format!("embeds/sent/{}/delete", s.id)), "Forget", Tone::Bad, true)) }
                             }
                         }

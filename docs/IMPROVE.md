@@ -107,6 +107,10 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       belong to another instance sharing the Twitch app, so removing them needs the owner's
       call). AFK still runs one indexed DELETE per message to end someone's AFK; an in-memory
       set of AFK people would avoid it if that ever matters.
+- [x] From teal-marten's review: the AFK list and timezone grid no longer depend on the member
+      cache (names are kept with the command); no "missed stream" warning for streams from before
+      push mode worked, and the VOD lookup is cached; the reminder preview uses the schedule's
+      zone; EventSub statuses read as words; Sent rows keep two buttons on a phone.
 - [ ] For core (brisk-heron): on a phone the page title wraps beside a header status pill
       ("Stream alerts" next to "Twitch not connected"). The header could drop the pill under the
       title below ~480 px.
