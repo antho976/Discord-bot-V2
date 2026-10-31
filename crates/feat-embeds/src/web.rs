@@ -330,13 +330,20 @@ async fn send(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     if !data.content.is_empty() {
         req = req.content(&data.content);
     }
-    let message = match req.await {
-        Ok(r) => r.model().await?,
+    let res = match req.await {
+        Ok(r) => r,
         Err(e) => return rerender(&ctx, &page, failed(data, &form, None, explain(&e))),
     };
-    let name = form.string("template_name");
-    let template = crate::templates(&ctx, guild)?.into_iter().find(|t| t.name == name).map(|t| t.name);
-    crate::sent_add(&ctx, guild, channel, message.id.get(), template.as_deref(), &data, &page.user.name)?;
+    // The message is out even if its reply can't be read; an error page here invites a second
+    // copy. It just can't be listed for editing.
+    match res.model().await {
+        Ok(message) => {
+            let name = form.string("template_name");
+            let template = crate::templates(&ctx, guild)?.into_iter().find(|t| t.name == name).map(|t| t.name);
+            crate::sent_add(&ctx, guild, channel, message.id.get(), template.as_deref(), &data, &page.user.name)?;
+        }
+        Err(e) => bot_core::tracing::warn!(guild, channel, error = %e, "sent an embed but couldn't read Discord's reply; it won't be listed"),
+    }
     ctx.audit(&page.user, Some(guild), KEY, format!("Sent an embed to #{}", channel_label(&ctx, guild, channel)));
     Ok(saved(&page.path("embeds")))
 }
