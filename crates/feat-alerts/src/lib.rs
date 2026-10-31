@@ -357,7 +357,8 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         "Back to the Underworld",
     ];
     for i in 0..44i64 {
-        if i % 7 == 4 || i % 11 == 9 {
+        // A few nights off, and a week's break about six weeks back that the charts leave blank.
+        if i % 7 == 4 || i % 11 == 9 || (21..=24).contains(&i) {
             continue;
         }
         let started = now - (i * 2 + 1) * day - (i % 3) * hour - 4 * hour;

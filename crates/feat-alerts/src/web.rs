@@ -318,22 +318,10 @@ fn reminder_line(cfg: &Settings) -> String {
     }
 }
 
-/// Hours a week as bars, oldest first. The latest week is lilac and the rest are dimmer.
+/// Hours a week as the rail's bars, oldest first: the latest week lilac, the rest dimmer.
 fn week_bars(series: &[(String, i64)]) -> Markup {
-    let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
-    let n = series.len();
-    html! {
-        div.sa-bars {
-            svg viewBox={ "0 0 " ((n * 10).saturating_sub(4)) " 48" } preserveAspectRatio="none" role="img" aria-label={ "Hours streamed in each of the last " (n) " weeks" } {
-                @for (i, (label, v)) in series.iter().enumerate() {
-                    @let h = (*v as f64 / max * 46.0).max(if *v > 0 { 2.0 } else { 0.0 });
-                    rect x=(i * 10) y=(48.0 - h) width="6" height=(h) fill=(if i + 1 == n { "var(--data)" } else { "var(--data-dim)" }) {
-                        title { (label) ": " (v) " h" }
-                    }
-                }
-            }
-        }
-    }
+    let bars: Vec<(String, Option<i64>)> = series.iter().map(|(label, v)| (label.clone(), Some(*v))).collect();
+    ui::mini_bars(&bars, "h", &format!("Hours streamed in each of the last {} weeks", series.len()))
 }
 
 /// The rail's "This week": the week's segments with the next one picked out, then the reminders.
@@ -511,7 +499,6 @@ const CSS: &str = r#"
 .sa-who { font-weight: 500; margin-top: 4px; }
 .sa-note.sa-warn { color: var(--ink-2); }
 .sa-note.sa-warn > .icon { color: var(--waiting); }
-.sa-bars svg { display: block; width: 100%; height: 52px; overflow: visible; }
 "#;
 
 /// Columns marked `.wide-only` drop on a phone so tables fit without scrolling sideways.
@@ -1169,17 +1156,17 @@ fn avg_viewers<'a>(rows: impl IntoIterator<Item = &'a StreamRow>) -> Option<i64>
     (samples > 0).then(|| (sum + samples / 2) / samples)
 }
 
-/// Average viewers in each of the last twelve weeks that had a viewer count, oldest first,
-/// labelled by their Monday. Weeks without one are left out rather than drawn as a drop to 0.
-fn weekly_viewers(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Vec<(String, i64)> {
+/// Average viewers in each of the last twelve weeks, oldest first, labelled by their Monday.
+/// A week without a viewer count is `None`, drawn blank rather than as a drop to 0.
+fn weekly_viewers(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Vec<(String, Option<i64>)> {
     let first = first_monday(tz, now);
     (0..WEEKS)
-        .filter_map(|w| {
+        .map(|w| {
             let start = first.checked_add(Span::new().days(7 * w)).unwrap_or(first);
             let end = start.checked_add(Span::new().days(7)).unwrap_or(start);
             let (a, b) = (day_ms(start, tz), day_ms(end, tz));
-            let avg = avg_viewers(rows.iter().filter(|r| r.started_at >= a && r.started_at < b))?;
-            Some((start.strftime("%b %-d").to_string(), avg))
+            let avg = avg_viewers(rows.iter().filter(|r| r.started_at >= a && r.started_at < b));
+            (start.strftime("%b %-d").to_string(), avg)
         })
         .collect()
 }
@@ -1272,12 +1259,10 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                         h2 { "Average viewers" }
                         span.muted.small { "Each week, from counts read while you're live" }
                     }
-                    @if viewers.is_empty() {
+                    @if viewers.iter().all(|(_, v)| v.is_none()) {
                         (ui::empty(Icon::Chart, "No viewer counts yet", "The bot reads viewers every few minutes while you're live, and the chart fills in week by week."))
-                    } @else if viewers.len() == 1 {
-                        (ui::empty(Icon::Chart, "One week of viewer counts so far", "The chart starts once a second week has them."))
                     } @else {
-                        (ui::area_chart(&viewers, "average viewers"))
+                        (ui::column_bars(&viewers, "average viewers", &format!("Average viewers in each of the last {} weeks", viewers.len())))
                     }
                 }
                 @if table.is_empty() {
@@ -1512,7 +1497,7 @@ mod tests {
     }
 
     #[test]
-    fn weekly_viewers_leave_out_weeks_without_counts() {
+    fn weekly_viewers_leave_weeks_without_counts_blank() {
         let tz = toronto();
         let now = local_ms("2026-11-04T12:00:00");
         let row = |at: &str, sum| StreamRow { started_at: local_ms(at), viewer_sum: sum, samples: 10, ..Default::default() };
@@ -1523,10 +1508,12 @@ mod tests {
             StreamRow { started_at: local_ms("2026-10-26T19:00:00"), ..Default::default() },
         ];
         let series = weekly_viewers(&rows, &tz, now);
-        assert_eq!(series, vec![("Oct 12".to_owned(), 20), ("Nov 2".to_owned(), 30)]);
+        assert_eq!(series.len(), WEEKS as usize);
+        assert_eq!(series[0], ("Aug 17".to_owned(), None));
+        assert_eq!(&series[8..], &[("Oct 12".to_owned(), Some(20)), ("Oct 19".to_owned(), None), ("Oct 26".to_owned(), None), ("Nov 2".to_owned(), Some(30))]);
         // A stream with counts that were all zero is a real zero.
         let series = weekly_viewers(&[row("2026-11-02T19:00:00", 0)], &tz, now);
-        assert_eq!(series, vec![("Nov 2".to_owned(), 0)]);
+        assert_eq!(series[11], ("Nov 2".to_owned(), Some(0)));
     }
 
     #[test]

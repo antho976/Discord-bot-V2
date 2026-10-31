@@ -703,18 +703,38 @@ pub fn switch_row(name: &str, label: &str, help: Option<&str>, on: bool) -> Mark
 }
 
 /// Small bars for a short series in a rail, `(label, value)`, oldest first: the latest in lilac,
-/// the rest dimmer. Hovering a bar shows its label and value with `unit`. `about` names the
+/// the rest dimmer. Hovering a bar shows its label and value with `unit`. A `None` value leaves
+/// its bar blank and says nothing was read, so a gap doesn't pass for a zero. `about` names the
 /// chart for screen readers ("Hours streamed in each of the last 12 weeks").
-pub fn mini_bars(series: &[(String, i64)], unit: &str, about: &str) -> Markup {
-    let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
+pub fn mini_bars(series: &[(String, Option<i64>)], unit: &str, about: &str) -> Markup {
+    html! { div.mini-bars { (bars_svg(series, unit, about)) } }
+}
+
+/// [`mini_bars`] sized for a page's main column, with the first, middle and last labels under it.
+pub fn column_bars(series: &[(String, Option<i64>)], unit: &str, about: &str) -> Markup {
     let n = series.len();
     html! {
-        div.mini-bars {
-            svg viewBox={ "0 0 " ((n * 10).saturating_sub(4)) " 48" } preserveAspectRatio="none" role="img" aria-label=(about) {
-                @for (i, (label, v)) in series.iter().enumerate() {
-                    @let h = (*v as f64 / max * 46.0).max(if *v > 0 { 2.0 } else { 0.0 });
-                    rect x=(i * 10) y=(48.0 - h) width="6" height=(h) fill=(if i + 1 == n { "var(--data)" } else { "var(--data-dim)" }) {
-                        title { (label) ": " (crate::text::num(*v)) " " (unit) }
+        figure.chart {
+            (bars_svg(series, unit, about))
+            @if n > 1 {
+                div.axis { span { (series[0].0) } span { (series[n / 2].0) } span { (series[n - 1].0) } }
+            }
+        }
+    }
+}
+
+fn bars_svg(series: &[(String, Option<i64>)], unit: &str, about: &str) -> Markup {
+    let max = series.iter().filter_map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
+    let n = series.len();
+    html! {
+        svg viewBox={ "0 0 " ((n * 10).saturating_sub(4)) " 48" } preserveAspectRatio="none" role="img" aria-label=(about) {
+            @for (i, (label, v)) in series.iter().enumerate() {
+                @let v = *v;
+                @let h = v.map_or(0.0, |v| (v as f64 / max * 46.0).max(if v > 0 { 2.0 } else { 0.0 }));
+                rect x=(i * 10) y=(48.0 - h) width="6" height=(h) fill=(if i + 1 == n { "var(--data)" } else { "var(--data-dim)" }) {
+                    title {
+                        (label) ": "
+                        @match v { Some(v) => { (crate::text::num(v)) " " (unit) } None => { "nothing read" } }
                     }
                 }
             }
@@ -753,7 +773,8 @@ pub fn bar_chart(series: &[(String, i64)], color: &str, unit: &str) -> Markup {
 }
 
 /// A smooth area chart for a daily series, `(label, value)`, oldest first, in the data colour.
-/// Hovering a day shows its value. Labels the first, middle and last day under it.
+/// Hovering a day shows its value. Labels the first and middle day under it, and the last one
+/// "Today", so the series must end today (the overview's do).
 pub fn area_chart(series: &[(String, i64)], unit: &str) -> Markup {
     let n = series.len();
     let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
