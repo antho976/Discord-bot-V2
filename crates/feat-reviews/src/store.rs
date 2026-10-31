@@ -24,6 +24,26 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
             access_token TEXT, refresh_token TEXT, expires_at INTEGER NOT NULL DEFAULT 0,
             scopes TEXT NOT NULL DEFAULT '', synced_at INTEGER, error TEXT);
     ",
+}, Migration {
+    name: "002_reviews_sources",
+    // Every post (kind 'thread') and redemption (kind 'redemption') that joined a request, so a
+    // merged one is never added again and Complete reaches all of a request's redemptions.
+    // twitch is the status the bot set on Twitch for a redemption (FULFILLED or CANCELED), NULL
+    // while it's untouched; twitch_pending is 1 until Twitch accepted it.
+    sql: "
+        CREATE TABLE reviews_sources (
+            guild_id INTEGER NOT NULL, kind TEXT NOT NULL, ext_id TEXT NOT NULL,
+            review_id INTEGER NOT NULL, reward_id TEXT,
+            twitch TEXT, twitch_pending INTEGER NOT NULL DEFAULT 0,
+            UNIQUE (guild_id, kind, ext_id));
+        CREATE INDEX reviews_sources_by_review ON reviews_sources(review_id);
+        CREATE INDEX reviews_sources_pending ON reviews_sources(guild_id) WHERE twitch_pending = 1;
+        INSERT INTO reviews_sources (guild_id, kind, ext_id, review_id)
+            SELECT guild_id, 'thread', CAST(thread_id AS TEXT), id FROM reviews WHERE thread_id IS NOT NULL;
+        INSERT INTO reviews_sources (guild_id, kind, ext_id, review_id, reward_id, twitch, twitch_pending)
+            SELECT guild_id, 'redemption', redemption_id, id, reward_id, CASE status WHEN 'done' THEN 'FULFILLED' END, status = 'done'
+            FROM reviews WHERE redemption_id IS NOT NULL;
+    ",
 }];
 
 /// Names at least this alike are the same request, like the old bot.
@@ -126,28 +146,26 @@ pub enum Added {
 }
 
 /// Add a request unless it's already here. A thread or redemption is never added twice, even
-/// after it was finished or removed. Among open requests, the same member, the same Twitch
-/// viewer or a name at least [`SAME_NAME`] alike is the same request.
+/// after it was finished or removed, or merged into another request. Among open requests, the
+/// same member, the same Twitch viewer or a name at least [`SAME_NAME`] alike is the same request.
 pub fn add(ctx: &Ctx, guild: u64, r: &Request) -> Result<Added> {
     let mut conn = ctx.db.lock();
     let tx = conn.transaction()?;
-    let seen = |col: &str, v: Option<String>| -> bot_core::rusqlite::Result<bool> {
-        let Some(v) = v else { return Ok(false) };
-        tx.query_row(&format!("SELECT 1 FROM reviews WHERE guild_id = ?1 AND {col} = ?2"), params![guild as i64, v], |_| Ok(()))
-            .optional()
-            .map(|o| o.is_some())
-    };
-    // thread_id is an integer column; compare it as one.
-    let thread_seen = match r.thread_id {
-        Some(t) => tx.query_row("SELECT 1 FROM reviews WHERE guild_id = ?1 AND thread_id = ?2", params![guild as i64, t as i64], |_| Ok(())).optional()?.is_some(),
-        None => false,
-    };
-    if thread_seen || seen("redemption_id", r.redemption_id.clone())? {
-        return Ok(Added::Known);
+    let sources: Vec<(&str, String)> = r.thread_id.map(|t| ("thread", t.to_string())).into_iter().chain(r.redemption_id.clone().map(|d| ("redemption", d))).collect();
+    for (kind, ext) in &sources {
+        let seen = tx
+            .query_row("SELECT 1 FROM reviews_sources WHERE guild_id = ?1 AND kind = ?2 AND ext_id = ?3", params![guild as i64, kind, ext], |_| Ok(()))
+            .optional()?
+            .is_some();
+        if seen {
+            return Ok(Added::Known);
+        }
     }
     let open = open_in(&tx, guild)?;
-    let added = match duplicate_of(&open, r) {
+    let (id, added) = match duplicate_of(&open, r) {
         Some(d) => {
+            // The request keeps its first post and redemption for links; the rest are in
+            // reviews_sources.
             tx.execute(
                 "UPDATE reviews SET thread_id = COALESCE(thread_id, ?3), user_id = COALESCE(user_id, ?4),
                  twitch_user = COALESCE(twitch_user, ?5), reward_id = COALESCE(reward_id, ?6),
@@ -160,14 +178,13 @@ pub fn add(ctx: &Ctx, guild: u64, r: &Request) -> Result<Added> {
                     r.thread_id.map(|t| t as i64),
                     r.user_id.map(|u| u as i64),
                     r.twitch_user,
-                    // A redemption only moves over with its reward, so Complete can fulfil it.
                     r.redemption_id.as_ref().filter(|_| d.redemption_id.is_none()).and(r.reward_id.clone()),
                     r.redemption_id.as_ref().filter(|_| d.redemption_id.is_none()),
                     r.redeemed_at,
                     r.notes,
                 ],
             )?;
-            Added::Merged(d.id)
+            (d.id, Added::Merged(d.id))
         }
         None => {
             tx.execute(
@@ -187,11 +204,53 @@ pub fn add(ctx: &Ctx, guild: u64, r: &Request) -> Result<Added> {
                     r.source,
                 ],
             )?;
-            Added::New(tx.last_insert_rowid())
+            let id = tx.last_insert_rowid();
+            (id, Added::New(id))
         }
     };
+    for (kind, ext) in &sources {
+        add_source(&tx, guild, kind, ext, id, r.reward_id.as_deref().filter(|_| *kind == "redemption"))?;
+    }
     tx.commit()?;
     Ok(added)
+}
+
+/// Record a post or redemption as part of a request.
+pub fn add_source(c: &Connection, guild: u64, kind: &str, ext_id: &str, review: i64, reward_id: Option<&str>) -> bot_core::rusqlite::Result<()> {
+    c.execute(
+        "INSERT OR IGNORE INTO reviews_sources (guild_id, kind, ext_id, review_id, reward_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![guild as i64, kind, ext_id, review, reward_id],
+    )?;
+    Ok(())
+}
+
+/// A channel points redemption the bot is setting on Twitch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Redemption {
+    pub id: String,
+    pub reward_id: String,
+    /// FULFILLED or CANCELED.
+    pub status: String,
+}
+
+/// Set every redemption of a request that's still untouched on Twitch, or waiting for Twitch,
+/// to `status` (FULFILLED or CANCELED), pending until [`twitch_settled`]. Returns them.
+pub fn set_twitch(ctx: &Ctx, guild: u64, review: i64, status: &str) -> Result<Vec<Redemption>> {
+    ctx.db.with(|c| {
+        c.execute(
+            "UPDATE reviews_sources SET twitch = ?3, twitch_pending = 1
+             WHERE guild_id = ?1 AND review_id = ?2 AND kind = 'redemption' AND reward_id IS NOT NULL AND (twitch IS NULL OR twitch_pending = 1)",
+            params![guild as i64, review, status],
+        )?;
+        let mut st = c.prepare("SELECT ext_id, reward_id, twitch FROM reviews_sources WHERE guild_id = ?1 AND review_id = ?2 AND kind = 'redemption' AND twitch_pending = 1")?;
+        st.query_map(params![guild as i64, review], |r| Ok(Redemption { id: r.get(0)?, reward_id: r.get(1)?, status: r.get(2)? }))?.collect()
+    })
+}
+
+/// Twitch took the status, or the redemption is gone from its queue.
+pub fn twitch_settled(ctx: &Ctx, guild: u64, redemption: &str) -> Result<()> {
+    ctx.db.with(|c| c.execute("UPDATE reviews_sources SET twitch_pending = 0 WHERE guild_id = ?1 AND kind = 'redemption' AND ext_id = ?2", params![guild as i64, redemption]))?;
+    Ok(())
 }
 
 /// The open request this one repeats, if any. Two similar names from two different known
@@ -358,6 +417,55 @@ mod tests {
         assert_eq!(add(&ctx, 1, &thread).unwrap(), Added::Known);
         assert_eq!(add(&ctx, 1, &points).unwrap(), Added::Known);
         assert!(open(&ctx, 1).unwrap().is_empty());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn merged_posts_and_redemptions_are_remembered() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        // A second post from the same member merges, and stays known after Complete.
+        let post = |thread: u64| Request { name: "AnthoMain".into(), user_id: Some(10), thread_id: Some(thread), requested_at: 1, source: "thread", ..Request::default() };
+        let Added::New(id) = add(&ctx, 1, &post(500)).unwrap() else { panic!("first post is new") };
+        assert_eq!(add(&ctx, 1, &post(501)).unwrap(), Added::Merged(id));
+        set_status(&ctx, 1, id, "done", "Antho").unwrap();
+        assert_eq!(add(&ctx, 1, &post(501)).unwrap(), Added::Known);
+        assert!(open(&ctx, 1).unwrap().is_empty());
+        // A second redemption from the same viewer merges, is known on the next sync, and is
+        // fulfilled with the first.
+        let points = |rd: &str| Request { name: "Moonfrost".into(), twitch_user: Some("pavel_tv".into()), reward_id: Some("rw".into()), redemption_id: Some(rd.into()), redeemed_at: Some(5), requested_at: 5, source: "twitch", ..Request::default() };
+        let Added::New(id) = add(&ctx, 1, &points("rd1")).unwrap() else { panic!("first redemption is new") };
+        assert_eq!(add(&ctx, 1, &points("rd2")).unwrap(), Added::Merged(id));
+        assert_eq!(add(&ctx, 1, &points("rd2")).unwrap(), Added::Known);
+        let ids = |list: Vec<Redemption>| list.into_iter().map(|r| (r.id, r.status)).collect::<Vec<_>>();
+        let f = |id: &str| (id.to_owned(), "FULFILLED".to_owned());
+        assert_eq!(ids(set_twitch(&ctx, 1, id, "FULFILLED").unwrap()), [f("rd1"), f("rd2")]);
+        // One Twitch took stays done; the other is still pending.
+        twitch_settled(&ctx, 1, "rd1").unwrap();
+        assert_eq!(ids(set_twitch(&ctx, 1, id, "FULFILLED").unwrap()), [f("rd2")]);
+        twitch_settled(&ctx, 1, "rd2").unwrap();
+        assert!(set_twitch(&ctx, 1, id, "FULFILLED").unwrap().is_empty());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn existing_requests_fill_the_sources() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", &MIGRATIONS[..1]).unwrap();
+        ctx.db
+            .with(|c| {
+                c.execute_batch(
+                    "INSERT INTO reviews (guild_id, name, thread_id, reward_id, redemption_id, requested_at, status, source) VALUES
+                     (1, 'Kasia', 500, 'rw', 'rd1', 1, 'done', 'thread'), (1, 'Teo', 501, NULL, NULL, 2, 'open', 'thread')",
+                )
+            })
+            .unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        let req = |thread: Option<u64>, rd: Option<&str>| Request { name: "Someone new".into(), thread_id: thread, redemption_id: rd.map(Into::into), source: "thread", ..Request::default() };
+        assert_eq!(add(&ctx, 1, &req(Some(500), None)).unwrap(), Added::Known);
+        assert_eq!(add(&ctx, 1, &req(Some(501), None)).unwrap(), Added::Known);
+        assert_eq!(add(&ctx, 1, &req(None, Some("rd1"))).unwrap(), Added::Known);
+        // A done request's redemption is retried once in case its fulfil failed.
+        let pending: i64 = ctx.db.with(|c| c.query_row("SELECT twitch_pending FROM reviews_sources WHERE ext_id = 'rd1'", [], |r| r.get(0))).unwrap();
+        assert_eq!(pending, 1);
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]

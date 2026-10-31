@@ -13,7 +13,7 @@ use bot_core::serde_json::{Value, json};
 use bot_core::{Ctx, now_ms, text};
 use serde::Deserialize;
 
-use crate::store::{self, Added, Request};
+use crate::store::{self, Added, Redemption, Request};
 
 const HELIX: &str = "https://api.twitch.tv/helix";
 const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";
@@ -98,10 +98,30 @@ struct Tokens {
 
 /// Twitch's own words from an error body, or the status.
 async fn twitch_error(res: bot_core::reqwest::Response) -> String {
+    helix_error(res).await.msg
+}
+
+/// A Helix call Twitch refused, with its status so callers can tell "gone" from "try again".
+#[derive(Debug)]
+struct HelixError {
+    status: StatusCode,
+    msg: String,
+}
+
+impl std::fmt::Display for HelixError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.msg)
+    }
+}
+
+impl std::error::Error for HelixError {}
+
+async fn helix_error(res: bot_core::reqwest::Response) -> HelixError {
     let status = res.status();
     let body: Value = res.json().await.unwrap_or(Value::Null);
     let msg = body["message"].as_str().unwrap_or_default();
-    if msg.is_empty() { format!("Twitch answered {status}") } else { format!("Twitch said: {}", text::clip(msg, 200)) }
+    let msg = if msg.is_empty() { format!("Twitch answered {status}") } else { format!("Twitch said: {}", text::clip(msg, 200)) };
+    HelixError { status, msg }
 }
 
 /// Finish the sign-in: trade the code for tokens, look up who signed in, and store it.
@@ -208,7 +228,7 @@ async fn helix(ctx: &Ctx, guild: u64, method: Method, path: &str, query: &[(&str
             continue;
         }
         if !res.status().is_success() {
-            bail!(twitch_error(res).await);
+            return Err(helix_error(res).await.into());
         }
         return Ok(if res.status() == StatusCode::NO_CONTENT { Value::Null } else { res.json().await.unwrap_or(Value::Null) });
     }
@@ -313,10 +333,31 @@ fn request_from(r: &Value, reward_id: &str) -> Option<Request> {
     })
 }
 
-/// Mark a redemption fulfilled, so the points stay spent and it leaves Twitch's queue.
-pub async fn fulfill(ctx: &Ctx, guild: u64, reward_id: &str, redemption_id: &str) -> Result<()> {
-    helix(ctx, guild, Method::PATCH, "channel_points/custom_rewards/redemptions", &[("id", redemption_id), ("reward_id", reward_id)], Some(json!({ "status": "FULFILLED" }))).await?;
-    Ok(())
+/// Set redemptions on Twitch: FULFILLED keeps the points spent, CANCELED gives them back.
+/// Either way they leave Twitch's queue. One Twitch no longer has as unfulfilled is settled
+/// too. One that fails stays pending for the next sync, and the page shows why. Returns how
+/// many failed.
+pub async fn settle(ctx: &Ctx, guild: u64, list: &[Redemption]) -> usize {
+    let mut failed = 0;
+    for r in list {
+        let res = if ctx.cfg.preview {
+            Ok(Value::Null)
+        } else {
+            helix(ctx, guild, Method::PATCH, "channel_points/custom_rewards/redemptions", &[("id", &r.id), ("reward_id", &r.reward_id)], Some(json!({ "status": r.status }))).await
+        };
+        match res {
+            Err(e) if !e.downcast_ref::<HelixError>().is_some_and(|h| h.status == StatusCode::NOT_FOUND) => {
+                failed += 1;
+                bot_core::tracing::warn!(guild, error = %e, "couldn't set a redemption's status");
+                let what = if r.status == "CANCELED" { "cancel" } else { "fulfil" };
+                note_error(ctx, guild, Some(&format!("Couldn't {what} a channel points redemption. {e}")));
+            }
+            _ => {
+                let _ = store::twitch_settled(ctx, guild, &r.id);
+            }
+        }
+    }
+    failed
 }
 
 /// Servers due for their automatic sync: connected, with a reward, and not synced for 5 min.

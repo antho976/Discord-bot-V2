@@ -171,9 +171,9 @@ fn result_note(q: &QueueQuery) -> Option<String> {
             plural(q.skipped.unwrap_or(0), "post was", "posts were")
         )),
         "sync" => Some(format!(
-            "Twitch sync added {} and moved {} up for channel points.",
+            "Twitch sync added {}; {} requests already waiting.",
             plural(q.added.unwrap_or(0), "request", "requests"),
-            plural(q.moved.unwrap_or(0), "request", "requests")
+            plural(q.moved.unwrap_or(0), "redemption joined", "redemptions joined")
         )),
         _ => None,
     }
@@ -365,13 +365,8 @@ async fn complete(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u
     }
     store::set_status(&ctx, guild, id, "done", &page.user.name)?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Completed {}'s account review", r.name));
-    if let (Some(reward), Some(redemption)) = (&r.reward_id, &r.redemption_id)
-        && !ctx.cfg.preview
-        && let Err(e) = twitch::fulfill(&ctx, guild, reward, redemption).await
-    {
-        bot_core::tracing::warn!(guild, error = %e, "couldn't fulfil a redemption");
-        twitch::note_error(&ctx, guild, Some(&format!("Couldn't mark {}'s redemption fulfilled. {e}", r.name)));
-    }
+    let redemptions = store::set_twitch(&ctx, guild, id, "FULFILLED")?;
+    twitch::settle(&ctx, guild, &redemptions).await;
     Ok(saved(&page.path("reviews")))
 }
 
@@ -657,6 +652,8 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
     ];
     for (name, user, thread, viewer, redeemed, ago, status, notes, pinged, closed, by) in rows {
         let asked = now - ago * h;
+        let thread = thread.map(|t| guild as i64 + t);
+        let redemption = redeemed.then(|| format!("preview-{name}"));
         tx.execute(
             "INSERT INTO reviews (guild_id, name, user_id, thread_id, twitch_user, reward_id, redemption_id, redeemed_at, requested_at, status, notes, source, pinged_at, closed_at, closed_by)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
@@ -664,10 +661,10 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
                 guild as i64,
                 name,
                 user,
-                thread.map(|t| guild as i64 + t),
+                thread,
                 viewer,
                 redeemed.then_some("preview-reward"),
-                redeemed.then(|| format!("preview-{name}")),
+                redemption,
                 redeemed.then_some(asked),
                 asked,
                 status,
@@ -678,6 +675,13 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
                 by,
             ],
         )?;
+        let id = tx.last_insert_rowid();
+        if let Some(t) = thread {
+            store::add_source(&tx, guild, "thread", &t.to_string(), id, None)?;
+        }
+        if let Some(d) = &redemption {
+            store::add_source(&tx, guild, "redemption", d, id, Some("preview-reward"))?;
+        }
     }
     tx.execute(
         "INSERT OR REPLACE INTO reviews_twitch (guild_id, broadcaster_id, login, access_token, refresh_token, expires_at, scopes, synced_at) VALUES (?1, '1', 'antho', NULL, 'preview', 0, ?2, ?3)",
@@ -739,7 +743,7 @@ mod tests {
         let q = QueueQuery { from: Some("scan".into()), added: Some(1), skipped: Some(3), ..QueueQuery::default() };
         assert_eq!(result_note(&q).as_deref(), Some("The scan added 1 request; 3 posts were already here."));
         let q = QueueQuery { from: Some("sync".into()), added: Some(0), moved: Some(1), ..QueueQuery::default() };
-        assert_eq!(result_note(&q).as_deref(), Some("Twitch sync added 0 requests and moved 1 request up for channel points."));
+        assert_eq!(result_note(&q).as_deref(), Some("Twitch sync added 0 requests; 1 redemption joined requests already waiting."));
         assert_eq!(result_note(&QueueQuery::default()), None);
     }
 
