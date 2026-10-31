@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bot_core::axum::Router;
 use bot_core::axum::extract::{Path, State};
@@ -11,7 +11,7 @@ use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, User, WebResult, saved};
 use bot_core::{Ctx, Icon, text};
 
-use crate::{KEY, Settings, afk_clear, afk_list, name_of, restore_nick, tz_all, zones};
+use crate::{KEY, Settings, afk_clear, afk_list, name_of, name_or_stored, restore_nick, tz_all, tz_guild_users, zones};
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
@@ -21,6 +21,8 @@ pub fn routes() -> Router<Ctx> {
 
 /// Members of this server with a timezone, by what their clock reads, earliest first. Then
 /// the members whose saved zone the bot no longer knows (a zone renamed in a tz update).
+/// A member counts when the cache has them or they set their zone in this server, so the grid
+/// doesn't shrink to whoever has spoken since a restart.
 type MemberTimes = (Vec<(u64, String, zones::Local)>, Vec<u64>);
 
 /// Everyone in the server, from the gateway cache.
@@ -28,10 +30,10 @@ fn members(ctx: &Ctx, guild: u64) -> HashSet<u64> {
     ctx.cache.guild_members(Id::new(guild)).map(|set| set.iter().map(|u| u.get()).collect()).unwrap_or_default()
 }
 
-fn member_times(ctx: &Ctx, members: &HashSet<u64>) -> bot_core::anyhow::Result<MemberTimes> {
+fn member_times(ctx: &Ctx, members: &HashSet<u64>, set_here: &HashMap<u64, String>) -> bot_core::anyhow::Result<MemberTimes> {
     let now = Timestamp::now();
     let (mut rows, mut unknown) = (Vec::new(), Vec::new());
-    for (u, zone) in tz_all(ctx)?.into_iter().filter(|(u, _)| members.contains(u)) {
+    for (u, zone) in tz_all(ctx)?.into_iter().filter(|(u, _)| members.contains(u) || set_here.contains_key(u)) {
         match zones::local(&zone, now) {
             Some(l) => rows.push((u, zone, l)),
             None => unknown.push(u),
@@ -93,13 +95,13 @@ fn opt_switch(name: &str, label: &str, help: &str, on: bool) -> bot_core::maud::
 async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let members = members(&ctx, guild);
-    // Someone who left while the bot was offline keeps a row until they're back; don't list them.
-    let away: Vec<_> = afk_list(&ctx, guild)?.into_iter().filter(|a| members.contains(&a.user_id)).collect();
-    let (times, unknown) = member_times(&ctx, &members)?;
-    let unknown: Vec<String> = unknown.into_iter().map(|u| name_of(&ctx, guild, u)).collect();
+    // Leaving clears someone's AFK, so every row is someone in the server, cached or not.
+    let away = afk_list(&ctx, guild)?;
+    let set_here = tz_guild_users(&ctx, guild)?;
+    let (times, unknown) = member_times(&ctx, &members(&ctx, guild), &set_here)?;
+    let who = |u: u64| name_or_stored(&ctx, guild, u, set_here.get(&u).map(String::as_str).unwrap_or_default());
+    let unknown: Vec<String> = unknown.into_iter().map(who).collect();
     const SHOWN: usize = 200;
-    let who = |u: u64| name_of(&ctx, guild, u);
 
     let body = html! {
         style { (PreEscaped(CSS)) }
@@ -151,7 +153,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                                     img.avatar src=(ctx.member_avatar(guild, a.user_id)) alt="" width="28" height="28" loading="lazy";
                                     div.grow {
                                         span {
-                                            strong { (who(a.user_id)) }
+                                            strong { (name_or_stored(&ctx, guild, a.user_id, &a.name)) }
                                             @if !a.reason.is_empty() { span.muted { " · " (a.reason) } }
                                         }
                                         span.muted.small { "since " (text::ago(a.since_ms)) }

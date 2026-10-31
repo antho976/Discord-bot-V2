@@ -53,6 +53,8 @@ pub struct Afk {
     /// The nickname to put back, when the prefix was added. `None` means they had no nickname.
     pub prev_nick: Option<String>,
     pub prefixed: bool,
+    /// Their name when they went away, for when the member cache doesn't have them.
+    pub name: String,
 }
 
 #[derive(Default)]
@@ -69,6 +71,17 @@ const MIGRATIONS: &[Migration] = &[Migration {
             PRIMARY KEY (guild_id, user_id));
         CREATE TABLE utility_timezones (
             user_id INTEGER NOT NULL PRIMARY KEY, zone TEXT NOT NULL, updated_at INTEGER NOT NULL DEFAULT 0);
+    ",
+}, Migration {
+    // The dashboard can't rely on the member cache, which only holds members seen since a restart:
+    // keep the name people had when they used a command, and which servers someone set their
+    // timezone in (a zone belongs to the person, not the server).
+    name: "002_utility_names",
+    sql: "
+        ALTER TABLE utility_afk ADD COLUMN name TEXT NOT NULL DEFAULT '';
+        CREATE TABLE utility_tz_guilds (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (guild_id, user_id));
     ",
 }];
 
@@ -127,6 +140,25 @@ fn notice_line(name: &str, a: &Afk) -> String {
 pub(crate) fn name_of(ctx: &Ctx, guild: u64, user: u64) -> String {
     let name = ctx.display_name(guild, user);
     name.strip_prefix(NICK_PREFIX).map(str::to_owned).unwrap_or(name)
+}
+
+/// The name of whoever ran a command, as the server shows it, without the AFK prefix.
+fn caller_name(call: &CommandCall) -> String {
+    let member = call.interaction.member.as_ref();
+    let user = member.and_then(|m| m.user.as_ref()).or(call.interaction.user.as_ref());
+    let name = member
+        .and_then(|m| m.nick.clone())
+        .or_else(|| user.and_then(|u| u.global_name.clone()))
+        .or_else(|| user.map(|u| u.name.clone()))
+        .unwrap_or_default();
+    name.strip_prefix(NICK_PREFIX).map(str::to_owned).unwrap_or(name)
+}
+
+/// A name for the dashboard: from the cache when it knows them, else the one stored with their
+/// command, else whatever the cache can say.
+pub(crate) fn name_or_stored(ctx: &Ctx, guild: u64, user: u64, stored: &str) -> String {
+    let cached = ctx.cache.member(Id::new(guild), Id::new(user)).is_some() || ctx.cache.user(Id::new(user)).is_some();
+    if cached || stored.is_empty() { name_of(ctx, guild, user) } else { stored.to_owned() }
 }
 
 /// The nickname while away, kept inside Discord's 32 characters.
@@ -235,6 +267,7 @@ impl Feature for Utility {
             }
             Event::MemberRemove(r) => {
                 afk_clear(ctx, r.guild_id.get(), r.user.id.get())?;
+                tz_forget_guild(ctx, r.guild_id.get(), r.user.id.get())?;
             }
             _ => {}
         }
@@ -259,7 +292,7 @@ impl Feature for Utility {
                     _ => (s.nick_prefix && can_edit_nick(ctx, guild, user), current_nick.clone()),
                 };
                 let since_ms = before.as_ref().map(|b| b.since_ms).unwrap_or_else(bot_core::now_ms);
-                afk_set(ctx, guild, &Afk { user_id: user, reason: reason.clone(), since_ms, prev_nick, prefixed })?;
+                afk_set(ctx, guild, &Afk { user_id: user, reason: reason.clone(), since_ms, prev_nick, prefixed, name: caller_name(call) })?;
                 let msg = if reason.is_empty() {
                     "You're AFK. Your next message ends it.".to_owned()
                 } else {
@@ -280,6 +313,7 @@ impl Feature for Utility {
                     "set" => match zones::normalize(opts.str("zone").unwrap_or_default()) {
                         Some(zone) => {
                             tz_set(ctx, user, &zone)?;
+                            tz_seen(ctx, guild, user, &caller_name(call))?;
                             let there = zones::local(&zone, Timestamp::now()).map(|l| format!(" It's {} there ({}).", l.time, l.offset));
                             format!("Your timezone is {zone}.{}", there.unwrap_or_default())
                         }
@@ -345,7 +379,7 @@ impl Feature for Utility {
             (6, "Exam week, slow replies", 26 * 3_600_000),
         ];
         for (i, reason, ago) in away {
-            afk_set(ctx, guild, &Afk { user_id: members[i].0, reason: reason.into(), since_ms: now - ago, prev_nick: None, prefixed: false })?;
+            afk_set(ctx, guild, &Afk { user_id: members[i].0, reason: reason.into(), since_ms: now - ago, prev_nick: None, prefixed: false, name: members[i].1.into() })?;
         }
         let zones = [
             "Europe/Warsaw", "America/New_York", "Asia/Tokyo", "Europe/London", "Australia/Sydney",
@@ -367,10 +401,11 @@ fn afk_from_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<A
         since_ms: r.get(2)?,
         prev_nick: r.get(3)?,
         prefixed: r.get::<_, i64>(4)? != 0,
+        name: r.get(5)?,
     })
 }
 
-const AFK_COLUMNS: &str = "user_id, reason, since_ms, prev_nick, prefixed";
+const AFK_COLUMNS: &str = "user_id, reason, since_ms, prev_nick, prefixed, name";
 
 pub fn afk_get(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<Afk>> {
     ctx.db.with(|c| {
@@ -386,8 +421,8 @@ pub fn afk_get(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<Afk>> {
 pub fn afk_set(ctx: &Ctx, guild: u64, a: &Afk) -> Result<()> {
     ctx.db.with(|c| {
         c.execute(
-            "INSERT OR REPLACE INTO utility_afk (guild_id, user_id, reason, since_ms, prev_nick, prefixed) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![guild as i64, a.user_id as i64, a.reason, a.since_ms, a.prev_nick, a.prefixed as i64],
+            "INSERT OR REPLACE INTO utility_afk (guild_id, user_id, reason, since_ms, prev_nick, prefixed, name) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![guild as i64, a.user_id as i64, a.reason, a.since_ms, a.prev_nick, a.prefixed as i64, a.name],
         )
     })?;
     Ok(())
@@ -482,6 +517,31 @@ pub fn tz_clear(ctx: &Ctx, user: u64) -> Result<()> {
     Ok(())
 }
 
+/// Remember that someone set their timezone in this server, with their name there.
+pub fn tz_seen(ctx: &Ctx, guild: u64, user: u64, name: &str) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO utility_tz_guilds (guild_id, user_id, name) VALUES (?1, ?2, ?3)
+             ON CONFLICT (guild_id, user_id) DO UPDATE SET name = excluded.name",
+            params![guild as i64, user as i64, name],
+        )
+    })?;
+    Ok(())
+}
+
+fn tz_forget_guild(ctx: &Ctx, guild: u64, user: u64) -> Result<()> {
+    ctx.db.with(|c| c.execute("DELETE FROM utility_tz_guilds WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64]))?;
+    Ok(())
+}
+
+/// The people who set their timezone in this server, with the name they had then.
+pub fn tz_guild_users(ctx: &Ctx, guild: u64) -> Result<HashMap<u64, String>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare_cached("SELECT user_id, name FROM utility_tz_guilds WHERE guild_id = ?1")?;
+        st.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect::<Result<HashMap<_, _>, _>>()
+    })
+}
+
 pub fn tz_all(ctx: &Ctx) -> Result<Vec<(u64, String)>> {
     ctx.db.with(|c| {
         let mut st = c.prepare_cached("SELECT user_id, zone FROM utility_timezones")?;
@@ -530,7 +590,7 @@ mod tests {
 
     #[test]
     fn notice_reads_plainly() {
-        let a = Afk { user_id: 1, reason: "lunch".into(), since_ms: 1_700_000_000_000, prev_nick: None, prefixed: false };
+        let a = Afk { user_id: 1, reason: "lunch".into(), since_ms: 1_700_000_000_000, prev_nick: None, prefixed: false, name: String::new() };
         assert_eq!(notice_line("Mira", &a), "Mira is AFK: lunch (since <t:1700000000:R>)");
         let bare = Afk { reason: String::new(), ..a };
         assert_eq!(notice_line("Mira", &bare), "Mira is AFK (since <t:1700000000:R>)");
