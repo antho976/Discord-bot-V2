@@ -93,8 +93,11 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       a warning on rewards the bot can no longer give (deleted role, or above the bot's role).
 - [x] Welcome: previews and cards with long names, other scripts and no avatar; the Roles tab with
       a deleted saved role.
-- [ ] Code review of all three crates: unwraps on Discord data, silent errors that matter, missing
+- [x] Code review of all three crates: unwraps on Discord data, silent errors that matter, missing
       tests (curve maths, invite attribution when two invites tick at once, ticket numbering).
+      Found: XP sums overflowed past level ~215 (`/xp set-level`), imported settings unchecked,
+      invites guessed when two ticked at once, `<#0>` on a double press, user 0 on a missing
+      author, and refused welcome/level-up/starboard posts reaching only the log.
 
 ### D: keen-tapir
 `crates/feat-guard`, `crates/feat-audit`, `crates/feat-connect`.
