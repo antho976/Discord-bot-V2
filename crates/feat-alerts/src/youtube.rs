@@ -140,6 +140,25 @@ pub fn find_channel_id(s: &str) -> Option<String> {
     None
 }
 
+/// Where to look up what someone typed, when it isn't a channel id: their handle's page, or
+/// the youtube.com link they pasted (`/c/Name` and `/user/Name` links name no handle).
+pub fn lookup_url(input: &str) -> Option<String> {
+    let input = input.trim();
+    let handle = match input.rfind('@') {
+        // "@Antho", "youtube.com/@Antho/videos?x=1"
+        Some(at) => input[at + 1..].split(['/', '?', '#']).next().unwrap_or_default(),
+        None if input.contains("youtube.com/") => {
+            let rest = input.split_once("youtube.com/")?.1.split(['?', '#']).next().unwrap_or_default();
+            return (!rest.is_empty()).then(|| format!("https://www.youtube.com/{}", rest.trim_end_matches('/')));
+        }
+        // A bare name is taken as a handle.
+        None if !input.contains('/') => input,
+        None => return None,
+    };
+    let ok = !handle.is_empty() && handle.chars().all(|c| c.is_alphanumeric() || "._-".contains(c));
+    ok.then(|| format!("https://www.youtube.com/@{handle}"))
+}
+
 /// What someone typed into the settings: an id, a channel URL, or a handle (`@name`, which is
 /// looked up on youtube.com).
 pub async fn resolve_input(ctx: &Ctx, input: &str) -> Option<String> {
@@ -150,11 +169,7 @@ pub async fn resolve_input(ctx: &Ctx, input: &str) -> Option<String> {
     if let Some(id) = find_channel_id(input) {
         return Some(id);
     }
-    let handle = input.rsplit('/').next().unwrap_or(input).trim_start_matches('@');
-    if handle.is_empty() || !handle.chars().all(|c| c.is_alphanumeric() || "._-".contains(c)) {
-        return None;
-    }
-    let page = ctx.web.get(format!("https://www.youtube.com/@{handle}")).send().await.ok()?.error_for_status().ok()?.text().await.ok()?;
+    let page = ctx.web.get(lookup_url(input)?).send().await.ok()?.error_for_status().ok()?.text().await.ok()?;
     find_channel_id(&page)
 }
 
@@ -341,6 +356,19 @@ mod tests {
         assert_eq!(find_channel_id("https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv/videos").as_deref(), Some("UCabcdefghijklmnopqrstuv"));
         assert_eq!(find_channel_id(r#"..."externalId":"UC_x5XG1OV2P6uZZ5FSM9Ttw","#).as_deref(), Some("UC_x5XG1OV2P6uZZ5FSM9Ttw"));
         assert_eq!(find_channel_id("nothing here"), None);
+    }
+
+    #[test]
+    fn lookups_find_the_handle() {
+        let u = |s: &str| lookup_url(s);
+        assert_eq!(u("@Antho").as_deref(), Some("https://www.youtube.com/@Antho"));
+        assert_eq!(u("Antho").as_deref(), Some("https://www.youtube.com/@Antho"));
+        assert_eq!(u("https://www.youtube.com/@Antho/videos?view=0").as_deref(), Some("https://www.youtube.com/@Antho"));
+        assert_eq!(u("https://youtube.com/c/AnthoPlays/").as_deref(), Some("https://www.youtube.com/c/AnthoPlays"));
+        assert_eq!(u("https://www.youtube.com/user/antho").as_deref(), Some("https://www.youtube.com/user/antho"));
+        assert_eq!(u("https://example.com/antho"), None);
+        assert_eq!(u("@"), None);
+        assert_eq!(u("@bad name"), None);
     }
 
     #[test]

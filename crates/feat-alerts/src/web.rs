@@ -634,7 +634,8 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
 fn parse_logins(raw: &str) -> Result<Vec<String>, WebError> {
     let mut out: Vec<String> = Vec::new();
     for part in raw.split([',', ' ', '\n']).map(str::trim).filter(|p| !p.is_empty()) {
-        let login = part.trim_end_matches('/').rsplit('/').next().unwrap_or(part).trim_start_matches('@').to_lowercase();
+        let path = part.split(['?', '#']).next().unwrap_or(part);
+        let login = path.trim_end_matches('/').rsplit('/').next().unwrap_or(path).trim_start_matches('@').to_lowercase();
         if !(3..=25).contains(&login.len()) || !login.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(WebError::Bad(format!("\"{part}\" isn't a Twitch channel name.")));
         }
@@ -1170,6 +1171,8 @@ mod tests {
     #[test]
     fn logins_parse() {
         assert_eq!(parse_logins("https://www.twitch.tv/Antho/, other_one").unwrap(), vec!["antho", "other_one"]);
+        assert_eq!(parse_logins("https://twitch.tv/antho?sr=a, @Other_One, antho").unwrap(), vec!["antho", "other_one"]);
+        assert!(matches!(parse_logins("aaa, bbb, ccc, ddd, eee, fff"), Err(WebError::Bad(m)) if m.starts_with("Up to 5")));
         assert!(parse_logins("not a name!").is_err());
         assert!(parse_logins("").unwrap().is_empty());
     }
