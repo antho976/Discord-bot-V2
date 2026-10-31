@@ -6,6 +6,8 @@ use bot_core::axum::response::IntoResponse;
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::rusqlite::{Connection, params};
+use bot_core::twilight_model::channel::ChannelType;
+use bot_core::twilight_model::id::Id;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
@@ -22,6 +24,12 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/rules", get(list_page))
         .route("/g/{guild}/rules/edit", get(edit_page).post(save))
         .route("/g/{guild}/rules/{channel}/remove", post(remove))
+}
+
+/// Channels that can take rules: text and announcement channels. Forums hold posts, not
+/// messages, so sticky and media-only rules have nothing to act on there.
+fn rule_channels(ctx: &Ctx, guild: u64) -> Vec<(u64, String)> {
+    ctx.text_channels(guild).into_iter().filter(|(id, _)| ctx.cache.channel(Id::new(*id)).is_some_and(|c| c.kind != ChannelType::GuildForum)).collect()
 }
 
 fn channel_name(ctx: &Ctx, guild: u64, channel: u64) -> String {
@@ -164,7 +172,7 @@ async fn edit_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
     let r = existing.clone().unwrap_or_default();
     let mut channels = vec![(String::new(), "Pick a channel".to_owned())];
     channels.extend(
-        ctx.text_channels(guild)
+        rule_channels(&ctx, guild)
             .into_iter()
             .filter(|(id, _)| *id == r.channel || s.rule(*id).is_none())
             .map(|(id, n)| (id.to_string(), format!("#{n}"))),
@@ -202,6 +210,9 @@ async fn edit_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
 async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let channel = form.channel(&ctx, guild, "channel").ok_or_else(|| WebError::Bad("Pick a channel.".into()))?;
+    if !rule_channels(&ctx, guild).iter().any(|(id, _)| *id == channel) {
+        return Err(WebError::Bad("Forums can't take channel rules. Pick a text or announcement channel.".into()));
+    }
     let was = form.id("was");
     let mut s = (*ctx.settings::<Settings>(guild, KEY)?).clone();
     if was != Some(channel) && s.rule(channel).is_some() {

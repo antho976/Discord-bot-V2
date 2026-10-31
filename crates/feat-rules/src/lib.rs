@@ -213,13 +213,18 @@ impl Rules {
     }
 }
 
-/// A message with an attachment or a link.
+/// A message with an attachment or a link, or one forwarding a message that has them. Stickers
+/// alone don't count.
 fn has_media(m: &Message) -> bool {
-    !m.attachments.is_empty() || has_link(&m.content)
+    !m.attachments.is_empty()
+        || has_link(&m.content)
+        || m.message_snapshots.iter().any(|s| !s.message.attachments.is_empty() || has_link(&s.message.content))
 }
 
 fn has_link(content: &str) -> bool {
     content.split_whitespace().any(|w| {
+        // A masked link, `[text](https://…)`, has its address after the "](".
+        let w = w.split_once("](").map_or(w, |(_, url)| url);
         let w = w.trim_start_matches(['<', '(', '|']);
         w.len() > 8 && (w.starts_with("https://") || w.starts_with("http://"))
     })
@@ -286,6 +291,38 @@ mod tests {
         assert!(!has_link("https:// nope"));
         assert!(!has_link("just words, no link"));
         assert!(!has_link("http"));
+        assert!(has_link("[my build](https://example.com/b.png)"));
+        assert!(has_link("see [this](<https://example.com/x>)"));
+        assert!(!has_link("[not a link](nope)"));
+    }
+
+    fn message(content: &str, forwarded: Option<(&str, bool)>) -> Message {
+        let snapshots: Vec<_> = forwarded
+            .map(|(text, file)| {
+                let attachments = if file {
+                    vec![bot_core::serde_json::json!({"id": "9", "filename": "a.png", "size": 1, "url": "https://cdn/a.png", "proxy_url": "https://cdn/a.png"})]
+                } else {
+                    Vec::new()
+                };
+                bot_core::serde_json::json!({"message": {"attachments": attachments, "content": text, "edited_timestamp": null, "embeds": [], "type": 0, "timestamp": "2026-01-01T00:00:00.000000+00:00"}})
+            })
+            .into_iter()
+            .collect();
+        bot_core::serde_json::from_value(bot_core::serde_json::json!({
+            "id": "1", "channel_id": "2", "guild_id": "3", "type": 0, "content": content, "timestamp": "2026-01-01T00:00:00.000000+00:00",
+            "author": {"id": "4", "username": "mira", "discriminator": "0", "avatar": null},
+            "attachments": [], "embeds": [], "mentions": [], "mention_roles": [], "mention_everyone": false, "pinned": false, "tts": false,
+            "message_snapshots": snapshots
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn forwarded_media_counts() {
+        assert!(!has_media(&message("hello", None)));
+        assert!(has_media(&message("", Some(("", true)))));
+        assert!(has_media(&message("", Some(("https://youtu.be/abc", false)))));
+        assert!(!has_media(&message("", Some(("just text", false)))));
     }
 
     #[test]
