@@ -90,6 +90,19 @@ const MIGRATIONS: &[Migration] = &[Migration {
         CREATE INDEX starboard_by_stars ON starboard_posts(guild_id, stars DESC);
         CREATE INDEX starboard_by_post ON starboard_posts(guild_id, post_id);
     ",
+}, Migration {
+    // Who wrote last in each ticket thread and when staff first answered, so "Waiting on staff"
+    // survives a restart instead of depending on the message cache.
+    name: "002_ticket_replies",
+    sql: "
+        ALTER TABLE tickets ADD COLUMN last_author_id INTEGER;
+        ALTER TABLE tickets ADD COLUMN last_message_at INTEGER;
+        ALTER TABLE tickets ADD COLUMN first_reply_at INTEGER;
+    ",
+}, Migration {
+    // The picture a starboard post carries, as Discord gave it. NULL: not looked up yet; '': none.
+    name: "003_starboard_images",
+    sql: "ALTER TABLE starboard_posts ADD COLUMN image TEXT;",
 }];
 
 #[derive(Default)]
@@ -141,10 +154,22 @@ impl Feature for Tickets {
                 if r.member.as_ref().is_some_and(|m| m.user.bot) {
                     return Ok(());
                 }
-                starboard::on_reaction(self, ctx, r.guild_id, r.channel_id, r.message_id, &r.emoji).await?;
+                starboard::on_reaction(self, ctx, r.guild_id, r.channel_id, r.message_id, Some(&r.emoji)).await?;
             }
             Event::ReactionRemove(r) => {
-                starboard::on_reaction(self, ctx, r.guild_id, r.channel_id, r.message_id, &r.emoji).await?;
+                starboard::on_reaction(self, ctx, r.guild_id, r.channel_id, r.message_id, Some(&r.emoji)).await?;
+            }
+            // A moderator clearing reactions changes the count too.
+            Event::ReactionRemoveEmoji(r) => {
+                starboard::on_reaction(self, ctx, Some(r.guild_id), r.channel_id, r.message_id, Some(&r.emoji)).await?;
+            }
+            Event::ReactionRemoveAll(r) => {
+                starboard::on_reaction(self, ctx, r.guild_id, r.channel_id, r.message_id, None).await?;
+            }
+            Event::MessageCreate(m) => {
+                if let Some(guild) = m.guild_id {
+                    tickets::on_message(ctx, guild.get(), m.channel_id.get(), m.author.id.get(), m.author.bot, m.timestamp.as_micros() / 1000)?;
+                }
             }
             Event::MessageDelete(m) => starboard::on_message_delete(ctx, m.guild_id, m.channel_id, m.id)?,
             Event::ThreadDelete(t) => tickets::on_thread_gone(ctx, t.guild_id.get(), t.id.get(), "The thread was deleted")?,
@@ -194,17 +219,23 @@ impl Feature for Tickets {
     fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> Overview {
         let guild = page.guild_id;
         let now = now_ms();
-        let open = ctx.db.with(|c| tickets::open_before(c, guild, now - DAY_MS, 3)).unwrap_or_default();
-        let needs = open
+        let waiting = ctx.db.with(|c| tickets::waiting_on_staff(c, guild, now - DAY_MS, 3)).unwrap_or_default();
+        let needs = waiting
             .into_iter()
             .map(|t| {
-                let days = (now - t.opened_at) / DAY_MS;
+                let since = t.last_message_at.unwrap_or(t.opened_at);
+                let days = (now - since) / DAY_MS;
                 let span = if days == 1 { "1 day".to_owned() } else { format!("{days} days") };
+                let title = match t.waiting_on() {
+                    Some(tickets::Turn::Staff) => format!("Ticket {:04} waiting on staff for {span}", t.number),
+                    Some(_) => format!("Ticket {:04} has no staff reply after {span}", t.number),
+                    None => format!("Ticket {:04} open for {span}", t.number),
+                };
                 Need {
-                    since: t.opened_at,
+                    since,
                     people: vec![ctx.member_avatar(guild, t.opener_id)],
                     icon: Icon::Ticket,
-                    title: format!("Ticket {:04} open for {span}", t.number),
+                    title,
                     detail: format!("{} · {}", ctx.display_name(guild, t.opener_id), text::clip(&t.subject, 60)),
                     href: page.path("tickets?status=open"),
                     action: "Open",

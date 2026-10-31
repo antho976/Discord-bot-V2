@@ -35,15 +35,41 @@ pub struct Ticket {
     pub closed_at: Option<i64>,
     pub closed_by: Option<u64>,
     pub reason: Option<String>,
+    /// Who wrote last in the thread, bots aside. None on tickets opened before this was kept.
+    pub last_author: Option<u64>,
+    pub last_message_at: Option<i64>,
+    /// When someone other than the opener first wrote in the thread.
+    pub first_reply_at: Option<i64>,
 }
 
 impl Ticket {
     pub fn is_open(&self) -> bool {
         self.status == OPEN
     }
+
+    /// Whose turn it is, from what the bot stored. None when it doesn't know.
+    pub fn waiting_on(&self) -> Option<Turn> {
+        let last = self.last_author?;
+        Some(match (last == self.opener_id, self.first_reply_at) {
+            (true, None) => Turn::NoReplyYet,
+            (true, Some(_)) => Turn::Staff,
+            (false, _) => Turn::Member,
+        })
+    }
 }
 
-const COLUMNS: &str = "number, opener_id, subject, status, thread_id, opened_at, closed_at, closed_by, close_reason, details";
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Turn {
+    /// The member wrote and nobody else has said anything yet.
+    NoReplyYet,
+    /// The member wrote last, after staff had answered before.
+    Staff,
+    /// Staff wrote last.
+    Member,
+}
+
+const COLUMNS: &str =
+    "number, opener_id, subject, status, thread_id, opened_at, closed_at, closed_by, close_reason, details, last_author_id, last_message_at, first_reply_at";
 
 fn from_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<Ticket> {
     Ok(Ticket {
@@ -57,6 +83,9 @@ fn from_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<Ticke
         closed_by: r.get::<_, Option<i64>>(7)?.map(|u| u as u64),
         reason: r.get(8)?,
         details: r.get(9)?,
+        last_author: r.get::<_, Option<i64>>(10)?.map(|u| u as u64),
+        last_message_at: r.get(11)?,
+        first_reply_at: r.get(12)?,
     })
 }
 
@@ -77,8 +106,8 @@ pub fn reserve(conn: &mut Connection, guild: u64, user: u64, subject: &str, deta
     }
     let number: i64 = tx.query_row("SELECT COALESCE(MAX(number), 0) + 1 FROM tickets WHERE guild_id = ?1", [guild as i64], |r| r.get(0))?;
     tx.execute(
-        "INSERT INTO tickets (guild_id, number, opener_id, subject, details, status, thread_id, opened_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'open', 0, ?6)",
+        "INSERT INTO tickets (guild_id, number, opener_id, subject, details, status, thread_id, opened_at, last_author_id, last_message_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'open', 0, ?6, ?3, ?6)",
         params![guild as i64, number, user as i64, subject, details, now],
     )?;
     tx.commit()?;
@@ -130,6 +159,27 @@ pub fn mark_closed(conn: &Connection, guild: u64, number: i64, by: Option<u64>, 
     Ok(n > 0)
 }
 
+/// Staff can reopen a ticket for this long after it closed.
+pub const REOPEN_DAYS: i64 = 7;
+
+impl Ticket {
+    /// Whether staff can still reopen it: closed in the last [`REOPEN_DAYS`], with a thread to go back to.
+    pub fn can_reopen(&self, now: i64) -> bool {
+        !self.is_open() && self.thread_id != 0 && self.closed_at.is_some_and(|at| now - at <= REOPEN_DAYS * DAY_MS)
+    }
+}
+
+/// Set a closed ticket open again. False when it was already open. The waiting clock starts at
+/// `now`, so the days it spent closed don't count as waiting on staff.
+pub fn mark_reopened(conn: &Connection, guild: u64, number: i64, now: i64) -> bot_core::rusqlite::Result<bool> {
+    let n = conn.execute(
+        "UPDATE tickets SET status = 'open', closed_at = NULL, closed_by = NULL, close_reason = NULL, last_message_at = ?3
+         WHERE guild_id = ?1 AND number = ?2 AND status != 'open'",
+        params![guild as i64, number, now],
+    )?;
+    Ok(n > 0)
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum Filter {
     Open,
@@ -151,23 +201,55 @@ pub fn recently_closed(conn: &Connection, guild: u64, limit: i64) -> bot_core::r
     stmt.query_map(params![guild as i64, limit], from_row)?.collect()
 }
 
-/// Who closed the most tickets since `since`: `(member, closed)`, busiest first.
+/// Who closed the most tickets since `since`: `(member, closed)`, busiest first. A member closing
+/// their own ticket isn't answering anyone, so those don't count.
 pub fn closers(conn: &Connection, guild: u64, since: i64, limit: i64) -> bot_core::rusqlite::Result<Vec<(u64, i64)>> {
     let mut stmt = conn.prepare(
-        "SELECT closed_by, COUNT(*) FROM tickets WHERE guild_id = ?1 AND closed_by IS NOT NULL AND closed_at >= ?2
+        "SELECT closed_by, COUNT(*) FROM tickets WHERE guild_id = ?1 AND closed_by IS NOT NULL AND closed_by != opener_id AND closed_at >= ?2
          GROUP BY closed_by ORDER BY 2 DESC, 1 LIMIT ?3",
     )?;
     stmt.query_map(params![guild as i64, since, limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
 }
 
-/// Open tickets opened before `before`, oldest first: the ones nobody has come back to.
-pub fn open_before(conn: &Connection, guild: u64, before: i64, limit: i64) -> bot_core::rusqlite::Result<Vec<Ticket>> {
-    let mut stmt = conn.prepare(&format!("SELECT {COLUMNS} FROM tickets WHERE guild_id = ?1 AND status = 'open' AND opened_at < ?2 ORDER BY opened_at LIMIT ?3"))?;
+/// Open tickets where the member has been waiting on staff since before `before`, longest wait
+/// first. A ticket from before the bot kept the last author counts from when it opened.
+pub fn waiting_on_staff(conn: &Connection, guild: u64, before: i64, limit: i64) -> bot_core::rusqlite::Result<Vec<Ticket>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {COLUMNS} FROM tickets WHERE guild_id = ?1 AND status = 'open'
+           AND (last_author_id IS NULL OR last_author_id = opener_id) AND COALESCE(last_message_at, opened_at) < ?2
+         ORDER BY COALESCE(last_message_at, opened_at) LIMIT ?3"
+    ))?;
     stmt.query_map(params![guild as i64, before, limit], from_row)?.collect()
+}
+
+/// A message in a ticket thread: note who wrote it, and when staff first answered.
+pub fn record_message(conn: &Connection, guild: u64, thread: u64, author: u64, at: i64) -> bot_core::rusqlite::Result<bool> {
+    let n = conn.execute(
+        "UPDATE tickets SET last_author_id = ?3, last_message_at = ?4,
+           first_reply_at = COALESCE(first_reply_at, CASE WHEN ?3 != opener_id THEN ?4 END)
+         WHERE guild_id = ?1 AND thread_id = ?2 AND status = 'open'",
+        params![guild as i64, thread as i64, author as i64, at],
+    )?;
+    Ok(n > 0)
+}
+
+/// Every message in a server goes through here, so only private threads reach the database.
+pub fn on_message(ctx: &Ctx, guild: u64, channel: u64, author: u64, bot: bool, at: i64) -> bot_core::anyhow::Result<()> {
+    if bot {
+        return Ok(());
+    }
+    let private_thread = ctx.cache.channel(Id::new(channel)).is_some_and(|c| c.kind == ChannelType::PrivateThread);
+    if private_thread {
+        ctx.db.with(|c| record_message(c, guild, channel, author, at))?;
+    }
+    Ok(())
 }
 
 pub struct Stats {
     pub open: i64,
+    /// Open tickets where the member wrote last, counted like [`waiting_on_staff`]: a ticket
+    /// from before the bot kept the last author counts as waiting.
+    pub waiting: i64,
     pub this_week: i64,
     /// Median seconds from opening to closing, over tickets closed in the last 30 days.
     pub median_close_secs: Option<i64>,
@@ -175,14 +257,18 @@ pub struct Stats {
 
 pub fn stats(conn: &Connection, guild: u64, now: i64) -> bot_core::rusqlite::Result<Stats> {
     let g = guild as i64;
-    let open = conn.query_row("SELECT COUNT(*) FROM tickets WHERE guild_id = ?1 AND status = 'open'", [g], |r| r.get(0))?;
+    let (open, waiting) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(SUM(last_author_id IS NULL OR last_author_id = opener_id), 0) FROM tickets WHERE guild_id = ?1 AND status = 'open'",
+        [g],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
     let this_week = conn.query_row("SELECT COUNT(*) FROM tickets WHERE guild_id = ?1 AND opened_at > ?2", params![g, now - 7 * DAY_MS], |r| r.get(0))?;
     let mut stmt = conn.prepare(
         "SELECT (closed_at - opened_at) / 1000 FROM tickets
          WHERE guild_id = ?1 AND status = 'closed' AND closed_at > ?2 ORDER BY 1",
     )?;
     let secs: Vec<i64> = stmt.query_map(params![g, now - 30 * DAY_MS], |r| r.get(0))?.collect::<Result<_, _>>()?;
-    Ok(Stats { open, this_week, median_close_secs: median(&secs) })
+    Ok(Stats { open, waiting, this_week, median_close_secs: median(&secs) })
 }
 
 /// The middle of a sorted list; the mean of the two middle values when there is an even count.
@@ -221,9 +307,11 @@ fn is_not_found(e: &bot_core::twilight_http::Error) -> bool {
 
 // ---- who is allowed ----
 
-fn user_of(i: &Interaction) -> (u64, String, String) {
+/// Who is behind an interaction: id, name and avatar. None in the odd case Discord leaves the
+/// author out, which would otherwise become user 0.
+fn user_of(i: &Interaction) -> Option<(u64, String, String)> {
     let user = i.author();
-    let id = user.map(|u| u.id.get()).unwrap_or_default();
+    let id = user.map(|u| u.id.get())?;
     let name = i
         .member
         .as_ref()
@@ -232,7 +320,17 @@ fn user_of(i: &Interaction) -> (u64, String, String) {
         .or_else(|| user.map(|u| u.name.clone()))
         .unwrap_or_else(|| "Member".into());
     let avatar = bot_core::discord::avatar_url(id, user.and_then(|u| u.avatar.map(|a| a.to_string())).as_deref());
-    (id, name, avatar)
+    Some((id, name, avatar))
+}
+
+/// What to tell a member who is at their open-ticket limit. Thread 0 is a ticket still being
+/// opened: they pressed the button twice.
+fn already_open(thread: u64) -> String {
+    if thread == 0 {
+        "Your ticket is still being opened. It shows up in a moment.".into()
+    } else {
+        format!("You already have an open ticket: <#{thread}>. Close it before opening another.")
+    }
 }
 
 fn has_perm(i: &Interaction, perms: Permissions) -> bool {
@@ -324,8 +422,7 @@ pub async fn on_component(ctx: &Ctx, call: &ComponentCall) -> bot_core::anyhow::
                 return ctx.reply(&call.interaction, Reply::text("Tickets aren't set up on this server yet.").ephemeral()).await;
             }
             if let Some(thread) = ctx.db.with(|c| full_thread(c, guild, call.user_id(), s.max_open))? {
-                let msg = format!("You already have an open ticket: <#{thread}>. Close it before opening another.");
-                return ctx.reply(&call.interaction, Reply::text(msg).ephemeral()).await;
+                return ctx.reply(&call.interaction, Reply::text(already_open(thread)).ephemeral()).await;
             }
             ctx.modal(
                 &call.interaction,
@@ -382,8 +479,8 @@ async fn open_ticket(ctx: &Ctx, call: &ModalCall, guild: u64, s: &Settings) -> b
     let Some(channel) = s.ticket_channel else {
         return ctx.reply(&call.interaction, Reply::text("Tickets aren't set up on this server yet.").ephemeral()).await;
     };
+    let Some((user, name, avatar)) = user_of(&call.interaction) else { return Ok(()) };
     ctx.defer(&call.interaction, true).await?;
-    let (user, name, avatar) = user_of(&call.interaction);
     let subject = text::clip(call.value("subject").unwrap_or_default().trim(), 200);
     let details = text::clip(call.value("details").unwrap_or_default().trim(), 2000);
     let subject = if subject.is_empty() { "No subject".to_owned() } else { subject };
@@ -394,10 +491,7 @@ async fn open_ticket(ctx: &Ctx, call: &ModalCall, guild: u64, s: &Settings) -> b
     };
     let number = match reserved {
         Reserved::Number(n) => n,
-        Reserved::Full(thread) => {
-            let msg = format!("You already have an open ticket: <#{thread}>. Close it before opening another.");
-            return ctx.edit_original(&call.interaction, Reply::text(msg)).await;
-        }
+        Reserved::Full(thread) => return ctx.edit_original(&call.interaction, Reply::text(already_open(thread))).await,
     };
 
     let thread_name = format!("ticket-{number:04} {}", text::clip(&name, 60));
@@ -456,7 +550,7 @@ fn closing_text(by: u64, reason: Option<&str>) -> String {
 
 /// Close from a button, modal or command: say so in the thread, then archive and lock it.
 async fn close_from_interaction(ctx: &Ctx, i: &Interaction, guild: u64, t: &Ticket, reason: Option<&str>) -> bot_core::anyhow::Result<()> {
-    let by = i.author_id().map(|u| u.get()).unwrap_or_default();
+    let Some(by) = i.author_id().map(|u| u.get()) else { return Ok(()) };
     let reason = reason.map(|r| text::clip(r, 300));
     if !ctx.db.with(|c| mark_closed(c, guild, t.number, Some(by), reason.as_deref(), CLOSED, now_ms()))? {
         return ctx.reply(i, Reply::text("This ticket is already closed.").ephemeral()).await;
@@ -477,6 +571,29 @@ pub async fn close_from_dashboard(ctx: &Ctx, guild: u64, number: i64, by: u64) -
         archive(ctx, t.thread_id).await;
     }
     Ok(true)
+}
+
+/// The dashboard's Reopen button: unarchive the thread, then count the ticket as open again.
+pub async fn reopen_from_dashboard(ctx: &Ctx, guild: u64, number: i64, by: u64) -> Result<(), String> {
+    let t = ctx.db.with(|c| by_number(c, guild, number)).map_err(|e| e.to_string())?.ok_or("That ticket doesn't exist.")?;
+    if t.is_open() {
+        return Ok(());
+    }
+    if !t.can_reopen(now_ms()) {
+        return Err(format!("Only tickets closed in the last {REOPEN_DAYS} days can be reopened."));
+    }
+    // Discord first: if the thread can't come back, the ticket stays closed.
+    if let Err(e) = ctx.http.update_thread(Id::new(t.thread_id)).archived(false).locked(false).await {
+        bot_core::tracing::warn!(guild, thread = t.thread_id, error = %e, "couldn't reopen a ticket thread");
+        return Err(if is_not_found(&e) {
+            "The ticket's thread was deleted, so it can't be reopened.".into()
+        } else {
+            "Couldn't unarchive the thread. The bot needs the Manage Threads permission in the ticket channel.".into()
+        });
+    }
+    ctx.db.with(|c| mark_reopened(c, guild, number, now_ms())).map_err(|e| e.to_string())?;
+    let _ = ctx.say(t.thread_id, &format!("Reopened by <@{by}>.")).await;
+    Ok(())
 }
 
 async fn archive(ctx: &Ctx, thread: u64) {
@@ -551,16 +668,27 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
         (12 * DAY_MS, CLOSED, 3 * h, 3, "Duplicate of an older ticket", "Bot offline during the stream"),
     ];
     let people = [2usize, 4, 5, 6, 7, 8, 9, 3];
+    // For the open ones: (minutes since the last message, whether staff wrote it, whether staff has answered at all).
+    let turns: [(i64, bool, bool); 3] = [(18, false, false), (50, true, true), (26 * 60, false, true)];
     for (i, (ago, status, took, by, reason, subject)) in rows.iter().enumerate() {
         let number = i as i64 + 1;
         let opener = bot_core::preview::MEMBERS[people[i % people.len()]].0;
         let closer = bot_core::preview::MEMBERS[*by].0;
         let opened = now - ago;
         let closed = (*status != OPEN).then_some(opened + took);
+        let (last_author, last_at, first_reply) = match turns.get(i).filter(|_| *status == OPEN) {
+            Some((mins, staff_last, answered)) => {
+                let staff = bot_core::preview::MEMBERS[1].0;
+                let at = now - mins * m;
+                (Some(if *staff_last { staff } else { opener }), Some(at), answered.then_some(opened + (now - opened - mins * m) / 2))
+            }
+            None => (None, None, None),
+        };
         ctx.db.with(|c| {
             c.execute(
-                "INSERT OR REPLACE INTO tickets (guild_id, number, opener_id, subject, details, status, thread_id, opened_at, closed_at, closed_by, close_reason)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT OR REPLACE INTO tickets (guild_id, number, opener_id, subject, details, status, thread_id, opened_at, closed_at, closed_by, close_reason,
+                   last_author_id, last_message_at, first_reply_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     guild as i64,
                     number,
@@ -572,7 +700,10 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
                     opened,
                     closed,
                     (*status == CLOSED).then_some(closer as i64),
-                    (!reason.is_empty()).then_some(*reason)
+                    (!reason.is_empty()).then_some(*reason),
+                    last_author.map(|u| u as i64),
+                    last_at,
+                    first_reply
                 ],
             )
         })?;
@@ -633,6 +764,33 @@ mod tests {
     }
 
     #[test]
+    fn numbers_are_never_reused_once_a_ticket_has_a_thread() {
+        let db = db();
+        let mut c = db.lock();
+        for (user, thread) in [(10u64, 501u64), (11, 502), (12, 503)] {
+            let Reserved::Number(n) = reserve(&mut c, 1, user, "a", "", 1, 1000).unwrap() else { panic!("full") };
+            set_thread(&c, 1, n, thread).unwrap();
+        }
+        // Closing, or releasing a ticket that already has its thread, frees nothing.
+        mark_closed(&c, 1, 3, None, None, IDLE, 2000).unwrap();
+        release(&c, 1, 3).unwrap();
+        assert!(by_number(&c, 1, 3).unwrap().is_some());
+        assert!(matches!(reserve(&mut c, 1, 13, "b", "", 1, 3000).unwrap(), Reserved::Number(4)));
+        assert!(by_number(&c, 1, 99).unwrap().is_none());
+    }
+
+    #[test]
+    fn pressing_twice_finds_the_ticket_still_being_opened() {
+        let db = db();
+        let mut c = db.lock();
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap(), Reserved::Number(1)));
+        // No thread yet: the second press is told to wait, not sent to <#0>.
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap(), Reserved::Full(0)));
+        assert_eq!(already_open(0), "Your ticket is still being opened. It shows up in a moment.");
+        assert!(already_open(555).contains("<#555>"));
+    }
+
+    #[test]
     fn a_failed_thread_gives_the_number_back() {
         let db = db();
         let mut c = db.lock();
@@ -656,6 +814,85 @@ mod tests {
         let s = stats(&c, 1, now).unwrap();
         assert_eq!((s.open, s.this_week), (1, 3));
         assert_eq!(s.median_close_secs, Some(3600));
+    }
+
+    #[test]
+    fn replies_set_whose_turn_it_is() {
+        let db = db();
+        let mut c = db.lock();
+        reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
+        set_thread(&c, 1, 1, 555).unwrap();
+        let turn = |c: &Connection| by_number(c, 1, 1).unwrap().unwrap().waiting_on();
+        // Opening counts as the member's message.
+        assert_eq!(turn(&c), Some(Turn::NoReplyYet));
+        record_message(&c, 1, 555, 10, 2000).unwrap();
+        assert_eq!(turn(&c), Some(Turn::NoReplyYet));
+        record_message(&c, 1, 555, 99, 3000).unwrap();
+        assert_eq!(turn(&c), Some(Turn::Member));
+        record_message(&c, 1, 555, 10, 4000).unwrap();
+        assert_eq!(turn(&c), Some(Turn::Staff));
+        let t = by_number(&c, 1, 1).unwrap().unwrap();
+        assert_eq!((t.first_reply_at, t.last_message_at), (Some(3000), Some(4000)));
+        assert_eq!(stats(&c, 1, 5000).unwrap().waiting, 1);
+        // A ticket from before the last author was kept counts as waiting, as on the overview.
+        c.execute("UPDATE tickets SET last_author_id = NULL WHERE number = 1", []).unwrap();
+        assert_eq!(stats(&c, 1, 5000).unwrap().waiting, 1);
+        // Another thread, or a closed ticket, isn't touched.
+        assert!(!record_message(&c, 1, 556, 10, 5000).unwrap());
+        mark_closed(&c, 1, 1, Some(99), None, CLOSED, 6000).unwrap();
+        assert!(!record_message(&c, 1, 555, 10, 7000).unwrap());
+    }
+
+    #[test]
+    fn waiting_on_staff_skips_tickets_staff_answered_last() {
+        let db = db();
+        let mut c = db.lock();
+        for (user, thread) in [(10u64, 555u64), (11, 556), (12, 557)] {
+            reserve(&mut c, 1, user, "a", "", 1, 1000).unwrap();
+            let n = number_opened_by(&c, user);
+            set_thread(&c, 1, n, thread).unwrap();
+        }
+        record_message(&c, 1, 556, 99, 2000).unwrap(); // staff answered 11
+        record_message(&c, 1, 557, 12, 9000).unwrap(); // 12 wrote recently
+        let numbers: Vec<i64> = waiting_on_staff(&c, 1, 5000, 10).unwrap().iter().map(|t| t.number).collect();
+        assert_eq!(numbers, vec![1]);
+    }
+
+    fn number_opened_by(c: &Connection, user: u64) -> i64 {
+        c.query_row("SELECT number FROM tickets WHERE opener_id = ?1", [user as i64], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn closing_your_own_ticket_is_not_answering() {
+        let db = db();
+        let mut c = db.lock();
+        reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
+        reserve(&mut c, 1, 11, "b", "", 1, 1000).unwrap();
+        mark_closed(&c, 1, 1, Some(10), None, CLOSED, 2000).unwrap();
+        mark_closed(&c, 1, 2, Some(99), None, CLOSED, 2000).unwrap();
+        assert_eq!(closers(&c, 1, 0, 5).unwrap(), vec![(99, 1)]);
+    }
+
+    #[test]
+    fn reopening_is_for_recent_closes_with_a_thread() {
+        let db = db();
+        let mut c = db.lock();
+        reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
+        set_thread(&c, 1, 1, 555).unwrap();
+        mark_closed(&c, 1, 1, Some(99), Some("done"), CLOSED, 2000).unwrap();
+        let t = by_number(&c, 1, 1).unwrap().unwrap();
+        assert!(t.can_reopen(2000 + REOPEN_DAYS * DAY_MS));
+        assert!(!t.can_reopen(2001 + REOPEN_DAYS * DAY_MS));
+        assert!(mark_reopened(&c, 1, 1, 9 * DAY_MS).unwrap());
+        assert!(!mark_reopened(&c, 1, 1, 9 * DAY_MS).unwrap());
+        let t = by_number(&c, 1, 1).unwrap().unwrap();
+        assert_eq!((t.status.as_str(), t.closed_at, t.closed_by, t.reason.as_deref()), (OPEN, None, None, None));
+        // The days it was closed aren't counted as waiting.
+        assert_eq!(t.last_message_at, Some(9 * DAY_MS));
+        assert!(waiting_on_staff(&c, 1, 9 * DAY_MS, 10).unwrap().is_empty());
+        assert!(!t.can_reopen(3000));
+        // The member is at their limit again.
+        assert!(matches!(reserve(&mut c, 1, 10, "b", "", 1, 4000).unwrap(), Reserved::Full(555)));
     }
 
     #[test]

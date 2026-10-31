@@ -1,5 +1,9 @@
 //! The starboard: keep a post per popular message and its star count up to date.
 
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
+
 use bot_core::rusqlite::{Connection, OptionalExtension, params};
 use bot_core::twilight_http::error::ErrorType;
 use bot_core::twilight_http::request::channel::reaction::RequestReactionType;
@@ -72,9 +76,11 @@ pub struct Post {
     pub preview: String,
     pub created_at: i64,
     pub removed: bool,
+    /// The message's picture. None until it has been looked up; empty when there is none.
+    pub image: Option<String>,
 }
 
-const COLUMNS: &str = "message_id, channel_id, author_id, post_channel_id, post_id, stars, preview, created_at, removed";
+const COLUMNS: &str = "message_id, channel_id, author_id, post_channel_id, post_id, stars, preview, created_at, removed, image";
 
 fn from_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<Post> {
     Ok(Post {
@@ -87,6 +93,7 @@ fn from_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<Post>
         preview: r.get(6)?,
         created_at: r.get(7)?,
         removed: r.get::<_, i64>(8)? != 0,
+        image: r.get(9)?,
     })
 }
 
@@ -96,8 +103,8 @@ pub fn get(conn: &Connection, guild: u64, message: u64) -> bot_core::rusqlite::R
 
 pub fn insert(conn: &Connection, guild: u64, p: &Post) -> bot_core::rusqlite::Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO starboard_posts (guild_id, message_id, channel_id, author_id, post_channel_id, post_id, stars, preview, created_at, removed)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT OR REPLACE INTO starboard_posts (guild_id, message_id, channel_id, author_id, post_channel_id, post_id, stars, preview, created_at, removed, image)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             guild as i64,
             p.message_id as i64,
@@ -108,9 +115,15 @@ pub fn insert(conn: &Connection, guild: u64, p: &Post) -> bot_core::rusqlite::Re
             p.stars,
             p.preview,
             p.created_at,
-            p.removed as i64
+            p.removed as i64,
+            p.image
         ],
     )?;
+    Ok(())
+}
+
+fn set_image(conn: &Connection, guild: u64, message: u64, image: &str) -> bot_core::rusqlite::Result<()> {
+    conn.execute("UPDATE starboard_posts SET image = ?3 WHERE guild_id = ?1 AND message_id = ?2", params![guild as i64, message as i64, image])?;
     Ok(())
 }
 
@@ -183,7 +196,8 @@ pub async fn on_reaction(
     guild: Option<Id<GuildMarker>>,
     channel: Id<ChannelMarker>,
     message: Id<MessageMarker>,
-    emoji: &EmojiReactionType,
+    // None when a moderator cleared every reaction from the message.
+    emoji: Option<&EmojiReactionType>,
 ) -> bot_core::anyhow::Result<()> {
     let Some(guild) = guild.map(|g| g.get()) else { return Ok(()) };
     let s = ctx.settings::<Settings>(guild, KEY)?;
@@ -192,7 +206,7 @@ pub async fn on_reaction(
         return Ok(());
     }
     let Some(wanted) = parse_emoji(&s.star_emoji) else { return Ok(()) };
-    if !wanted.matches(emoji) {
+    if emoji.is_some_and(|e| !wanted.matches(e)) {
         return Ok(());
     }
     let _one_at_a_time = feature.star_lock.lock().await;
@@ -244,7 +258,15 @@ async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Setti
         }
         None if stars >= threshold => {
             let embed = build_embed(guild, &message);
-            let post = ctx.http.create_message(Id::new(star_channel)).content(&line).embeds(&[embed]).allowed_mentions(Some(&none)).await?.model().await?;
+            let sent = ctx.http.create_message(Id::new(star_channel)).content(&line).embeds(&[embed]).allowed_mentions(Some(&none)).await;
+            let post = match sent {
+                Ok(r) => r.model().await?,
+                Err(e) => {
+                    let text = format!("Starred messages aren't reaching the starboard. {}", why_refused(&e));
+                    notify_failure(ctx, guild, text, format!("/g/{guild}/{KEY}/starboard?view=settings"));
+                    return Err(e.into());
+                }
+            };
             ctx.db.with(|c| {
                 insert(
                     c,
@@ -259,6 +281,7 @@ async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Setti
                         preview: preview_of(&message),
                         created_at: now_ms(),
                         removed: false,
+                        image: Some(image_of(&message).unwrap_or_default()),
                     },
                 )
             })?;
@@ -270,6 +293,36 @@ async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Setti
 
 fn is_not_found(e: &bot_core::twilight_http::Error) -> bool {
     matches!(e.kind(), ErrorType::Response { status, .. } if status.get() == 404)
+}
+
+/// Why Discord refused a post, in words a server owner can act on.
+fn why_refused(e: &bot_core::twilight_http::Error) -> String {
+    match e.kind() {
+        bot_core::twilight_http::error::ErrorType::Response { status, .. } if status.get() == 403 => {
+            "The bot can't post in that channel. Check it can see the channel and send messages there.".into()
+        }
+        bot_core::twilight_http::error::ErrorType::Response { status, .. } if status.get() == 404 => "The channel was deleted. Pick another one.".into(),
+        _ => format!("Discord refused the message: {e}"),
+    }
+}
+
+/// Put a failed post behind the dashboard bell, at most once a day per server, so a broken channel
+/// gets noticed without a notice for every post.
+fn notify_failure(ctx: &Ctx, guild: u64, text: String, link: String) {
+    static LAST: std::sync::LazyLock<Mutex<HashMap<u64, Instant>>> = std::sync::LazyLock::new(Default::default);
+    {
+        let mut last = LAST.lock().unwrap();
+        if last.get(&guild).is_some_and(|t| t.elapsed().as_secs() < 86_400) {
+            return;
+        }
+        last.insert(guild, Instant::now());
+    }
+    ctx.notify(Some(guild), KEY, text, Some(link));
+}
+
+/// A 4xx answer other than a rate limit: asking again gets the same answer.
+fn is_final(e: &bot_core::twilight_http::Error) -> bool {
+    matches!(e.kind(), ErrorType::Response { status, .. } if (400..500).contains(&status.get()) && status.get() != 429)
 }
 
 /// Whether the message's author reacted with the emoji. Looks through up to 500 reactors.
@@ -306,6 +359,15 @@ fn is_image(a: &bot_core::twilight_model::channel::Attachment) -> bool {
         || [".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().any(|ext| a.filename.to_lowercase().ends_with(ext))
 }
 
+/// The first image attachment, or else an embed's image or thumbnail.
+fn image_of(m: &Message) -> Option<String> {
+    m.attachments
+        .iter()
+        .find(|a| is_image(a))
+        .map(|a| a.url.clone())
+        .or_else(|| m.embeds.iter().find_map(|e| e.image.as_ref().map(|i| i.url.clone()).or_else(|| e.thumbnail.as_ref().map(|t| t.url.clone()))))
+}
+
 /// A short line for the dashboard table.
 fn preview_of(m: &Message) -> String {
     let content = m.content.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -331,13 +393,7 @@ fn build_embed(guild: u64, m: &Message) -> bot_core::twilight_model::channel::me
     if !m.content.trim().is_empty() {
         embed = embed.description(text::clip(m.content.trim(), 3500));
     }
-    let image = m
-        .attachments
-        .iter()
-        .find(|a| is_image(a))
-        .map(|a| a.url.clone())
-        .or_else(|| m.embeds.iter().find_map(|e| e.image.as_ref().map(|i| i.url.clone()).or_else(|| e.thumbnail.as_ref().map(|t| t.url.clone()))));
-    if let Some(Ok(source)) = image.map(ImageSource::url) {
+    if let Some(Ok(source)) = image_of(m).map(ImageSource::url) {
         embed = embed.image(source);
     }
     let files: Vec<String> = m.attachments.iter().filter(|a| !is_image(a)).take(5).map(|a| format!("[{}]({})", text::clip(&a.filename, 60), a.url)).collect();
@@ -346,6 +402,116 @@ fn build_embed(guild: u64, m: &Message) -> bot_core::twilight_model::channel::me
     }
     embed = embed.field(EmbedFieldBuilder::new("Source", format!("[Jump to message](https://discord.com/channels/{guild}/{}/{})", m.channel_id, m.id)));
     embed.build()
+}
+
+// ---- pictures on the dashboard ----
+
+/// Discord signs attachment links and they stop working after about a day. These need a fresh
+/// signature before they can be shown; any other link is shown as stored.
+fn is_discord_attachment(url: &str) -> bool {
+    ["https://cdn.discordapp.com/attachments/", "https://media.discordapp.net/attachments/"].iter().any(|p| url.starts_with(p))
+}
+
+/// The link without its signature, which is what stays the same between refreshes.
+fn unsigned(url: &str) -> &str {
+    url.split('?').next().unwrap_or(url)
+}
+
+/// Freshly signed links last about a day, so one refresh is good for an hour of page loads.
+const FRESH_MS: i64 = 3_600_000;
+static FRESH: LazyLock<Mutex<HashMap<String, (String, i64)>>> = LazyLock::new(Default::default);
+
+/// Look up the pictures of posts from before the bot kept them, a few per page load, so each
+/// message is fetched once.
+pub async fn fill_missing_images(ctx: &Ctx, guild: u64, posts: &mut [Post]) {
+    for p in posts.iter_mut().filter(|p| p.image.is_none()).take(6) {
+        let image = match ctx.http.message(Id::new(p.channel_id), Id::new(p.message_id)).await {
+            Ok(r) => match r.model().await {
+                Ok(m) => image_of(&m).unwrap_or_default(),
+                Err(_) => continue,
+            },
+            // Gone, or the bot can't read the channel: that won't change by asking again.
+            Err(e) if is_final(&e) => String::new(),
+            Err(_) => continue,
+        };
+        if ctx.db.with(|c| set_image(c, guild, p.message_id, &image)).is_ok() {
+            p.image = Some(image);
+        }
+    }
+}
+
+/// A link to show for each stored picture, keyed by the stored link. Discord attachments get a
+/// fresh signature, all of them in one request; one that can't be refreshed is left out rather
+/// than shown broken.
+pub async fn shown_images(ctx: &Ctx, posts: &[Post]) -> HashMap<String, String> {
+    let now = now_ms();
+    let mut out = HashMap::new();
+    let mut stale = Vec::new();
+    {
+        let mut fresh = FRESH.lock().unwrap();
+        fresh.retain(|_, (_, at)| now - *at < FRESH_MS);
+        for url in posts.iter().filter_map(|p| p.image.as_deref()).filter(|u| !u.is_empty()) {
+            if !is_discord_attachment(url) {
+                out.insert(url.to_owned(), url.to_owned());
+            } else if let Some((signed, _)) = fresh.get(unsigned(url)) {
+                out.insert(url.to_owned(), signed.clone());
+            } else {
+                stale.push(url.to_owned());
+            }
+        }
+    }
+    if stale.is_empty() {
+        return out;
+    }
+    let refreshed = refresh_urls(ctx, &stale).await;
+    let mut fresh = FRESH.lock().unwrap();
+    for url in stale {
+        if let Some(signed) = refreshed.get(unsigned(&url)) {
+            fresh.insert(unsigned(&url).to_owned(), (signed.clone(), now));
+            out.insert(url, signed.clone());
+        }
+    }
+    out
+}
+
+/// Ask Discord to sign attachment links again: unsigned link -> signed link.
+async fn refresh_urls(ctx: &Ctx, urls: &[String]) -> HashMap<String, String> {
+    #[derive(serde::Deserialize)]
+    struct Refreshed {
+        original: String,
+        refreshed: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Answer {
+        refreshed_urls: Vec<Refreshed>,
+    }
+    let mut out = HashMap::new();
+    let Some(token) = ctx.http.token() else { return out };
+    // Discord takes up to 50 links per request.
+    for chunk in urls.chunks(50) {
+        let sent = ctx
+            .web
+            .post("https://discord.com/api/v10/attachments/refresh-urls")
+            .header("Authorization", token)
+            .json(&bot_core::serde_json::json!({ "attachment_urls": chunk }))
+            .send()
+            .await;
+        let answer = match sent {
+            Ok(r) if r.status().is_success() => r.json::<Answer>().await,
+            Ok(r) => {
+                bot_core::tracing::warn!(status = %r.status(), "couldn't refresh starboard image links");
+                break;
+            }
+            Err(e) => {
+                bot_core::tracing::warn!(error = %e, "couldn't refresh starboard image links");
+                break;
+            }
+        };
+        if let Ok(a) = answer {
+            out.extend(a.refreshed_urls.into_iter().map(|r| (unsigned(&r.original).to_owned(), r.refreshed)));
+        }
+    }
+    out
 }
 
 // ---- preview ----
@@ -367,6 +533,8 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
     ];
     for (i, (channel, author, stars, ago, preview)) in rows.iter().enumerate() {
         let n = i as u64 + 1;
+        // The attachment-only post shows a picture: the welcome card, which the preview draws itself.
+        let image = if *preview == "Attachment" { format!("/g/{guild}/welcome/card.png") } else { String::new() };
         ctx.db.with(|c| {
             insert(
                 c,
@@ -381,6 +549,7 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
                     preview: (*preview).to_owned(),
                     created_at: now - ago * h,
                     removed: false,
+                    image: Some(image),
                 },
             )
         })?;
@@ -405,6 +574,16 @@ mod tests {
     }
 
     #[test]
+    fn attachment_links_are_told_apart() {
+        let signed = "https://cdn.discordapp.com/attachments/1/2/cat.png?ex=65&is=64&hm=ab";
+        assert!(is_discord_attachment(signed));
+        assert!(is_discord_attachment("https://media.discordapp.net/attachments/1/2/cat.png"));
+        assert!(!is_discord_attachment("https://media.tenor.com/x.gif"));
+        assert!(!is_discord_attachment("https://cdn.discordapp.com/avatars/1/a.png"));
+        assert_eq!(unsigned(signed), "https://cdn.discordapp.com/attachments/1/2/cat.png");
+    }
+
+    #[test]
     fn emoji_matching() {
         let star = Emoji::Unicode("⭐".into());
         assert!(star.matches(&EmojiReactionType::Unicode { name: "⭐".into() }));
@@ -419,7 +598,7 @@ mod tests {
     }
 
     fn post(message: u64, stars: i64, created: i64) -> Post {
-        Post { message_id: message, channel_id: 1, author_id: 2, post_channel_id: 3, post_id: message + 1000, stars, preview: "hi".into(), created_at: created, removed: false }
+        Post { message_id: message, channel_id: 1, author_id: 2, post_channel_id: 3, post_id: message + 1000, stars, preview: "hi".into(), created_at: created, removed: false, image: None }
     }
 
     #[test]

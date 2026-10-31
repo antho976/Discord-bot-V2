@@ -108,15 +108,28 @@ Found and fixed along the way:
 
 ### C: keen-hare
 `crates/feat-levels`, `crates/feat-welcome`, `crates/feat-tickets` (tickets and starboard).
-- [ ] Tickets: "Waiting on staff" depends on the message cache. Store the last message author
+- [x] Tickets: "Waiting on staff" depends on the message cache. Store the last message author
       per open ticket thread (one small write per message in ticket threads only) so it survives
       restarts, and bring back "no staff reply yet".
-- [ ] Starboard: images. Discord image links expire, so fetch a fresh one when the page loads
+- [x] Starboard: images. Discord image links expire, so fetch a fresh one when the page loads
       (cached briefly) rather than storing it.
-- [ ] Levels: search finds only cached members. Check large servers and the podium with fewer
+- [x] Levels: search finds only cached members. Check large servers and the podium with fewer
       than 3 members.
-- [ ] Welcome: let invites have a friendly name ("Twitch link") set on the Invites tab, and show
+- [x] Welcome: let invites have a friendly name ("Twitch link") set on the Invites tab, and show
       it on "Joined today".
+- [x] Starboard: clearing all reactions, or one emoji, from a message left the post with its old
+      count. Both now update or take down the post.
+- [x] Tickets: staff can reopen a ticket closed in the last 7 days from the Closed tab (unarchives
+      the thread). Closed rows show the close reason and who closed it.
+- [x] Levels: the Rewards tab with role colour dots, editing a reward's level or role in place, and
+      a warning on rewards the bot can no longer give (deleted role, or above the bot's role).
+- [x] Welcome: previews and cards with long names, other scripts and no avatar; the Roles tab with
+      a deleted saved role.
+- [x] Code review of all three crates: unwraps on Discord data, silent errors that matter, missing
+      tests (curve maths, invite attribution when two invites tick at once, ticket numbering).
+      Found: XP sums overflowed past level ~215 (`/xp set-level`), imported settings unchecked,
+      invites guessed when two ticked at once, `<#0>` on a double press, user 0 on a missing
+      author, and refused welcome/level-up/starboard posts reaching only the log.
 
 ### D: keen-tapir
 `crates/feat-guard`, `crates/feat-audit`, `crates/feat-connect`.

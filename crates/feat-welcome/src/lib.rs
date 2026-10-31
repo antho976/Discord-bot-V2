@@ -5,6 +5,10 @@ pub mod invites;
 pub mod roles;
 mod web;
 
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
+
 use bot_core::anyhow::{Result, anyhow};
 use bot_core::rusqlite::params;
 use bot_core::twilight_model::channel::message::AllowedMentions;
@@ -101,6 +105,14 @@ const MIGRATIONS: &[Migration] = &[Migration {
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, roles TEXT NOT NULL, left_at INTEGER NOT NULL,
             restored_at INTEGER, restored_roles TEXT, PRIMARY KEY (guild_id, user_id));
     ",
+}, Migration {
+    // A name for an invite, like "Twitch link". Kept apart from welcome_invites, which is
+    // rewritten on every reading, and kept after the invite is gone so old joins still read well.
+    name: "002_invite_names",
+    sql: "
+        CREATE TABLE welcome_invite_names (
+            guild_id INTEGER NOT NULL, code TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (guild_id, code));
+    ",
 }];
 
 #[derive(Default)]
@@ -166,6 +178,7 @@ impl Feature for Welcome {
     fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> bot_core::Overview {
         let guild = page.guild_id;
         let since = bot_core::now_ms() - 2 * 86_400_000;
+        let names = invites::names(ctx, guild).unwrap_or_default();
         let feed = invites::recent_joins(ctx, guild, 5)
             .unwrap_or_default()
             .into_iter()
@@ -174,9 +187,10 @@ impl Feature for Welcome {
                 at: j.at,
                 avatar: ctx.member_avatar(guild, j.user),
                 who: ctx.display_name(guild, j.user),
-                text: match j.inviter {
-                    Some(inviter) => format!("joined, invited by {}", ctx.display_name(guild, inviter)),
-                    None => "joined".into(),
+                text: match (j.code.as_ref().and_then(|c| names.get(c)), j.inviter) {
+                    (Some(name), _) => format!("joined through {name}"),
+                    (None, Some(inviter)) => format!("joined, invited by {}", ctx.display_name(guild, inviter)),
+                    (None, None) => "joined".into(),
                 },
             })
             .collect();
@@ -201,8 +215,9 @@ impl Welcome {
         if s.welcome_on && !bot && s.welcome_channel.is_some() {
             let name = m.member.nick.clone().or_else(|| m.user.global_name.clone()).unwrap_or_else(|| m.user.name.clone());
             let avatar = bot_core::discord::avatar_url(user, m.user.avatar.map(|a| a.to_string()).as_deref());
-            if let Err(e) = post_welcome(ctx, &s, guild, user, &name, &avatar).await {
+            if let Err(e) = post_welcome(ctx, &s, guild, user, &name, &m.user.name, &avatar).await {
                 bot_core::tracing::warn!(guild, user, error = %e, "couldn't post a welcome");
+                notify_failure(ctx, guild, "welcome", format!("New members aren't being welcomed. {e}"));
             }
         }
         Ok(())
@@ -236,6 +251,7 @@ impl Welcome {
             let text = fill_message(ctx, &s.goodbye_text, DEFAULT_GOODBYE, guild, &name, &name, count);
             if let Err(e) = ctx.say(channel, &text).await {
                 bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post a goodbye");
+                notify_failure(ctx, guild, "goodbye", format!("Goodbyes aren't being posted. {}", why_refused(&e)));
             }
         }
         Ok(())
@@ -259,8 +275,9 @@ fn fill_message(ctx: &Ctx, template: &str, default: &str, guild: u64, user: &str
 }
 
 /// Post the welcome message for `user` in the welcome channel: text, plus the card when on.
-/// Mentions only that user. Used for real joins and for the dashboard's test button.
-pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: &str, avatar_url: &str) -> Result<()> {
+/// Mentions only that user. Used for real joins and for the dashboard's test button. `username`
+/// is the card's fallback when the display name is in a script it can't draw.
+pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: &str, username: &str, avatar_url: &str) -> Result<()> {
     let channel = s.welcome_channel.ok_or_else(|| anyhow!("Pick a welcome channel first."))?;
     let wants_count = s.welcome_card || s.welcome_text.contains("{count}") || s.welcome_text.trim().is_empty();
     let count = if wants_count { member_total(ctx, guild).await } else { None };
@@ -269,7 +286,7 @@ pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: 
 
     let mut files = Vec::new();
     if s.welcome_card {
-        match card::render(ctx, name, &ctx.guild_name(guild), count, avatar_url).await {
+        match card::render(ctx, &[name, username], &ctx.guild_name(guild), count, avatar_url).await {
             Ok(png) => files.push(Attachment::from_bytes("welcome.png".into(), png, 1)),
             Err(e) => bot_core::tracing::warn!(guild, error = %e, "couldn't draw the welcome card"),
         }
@@ -280,8 +297,36 @@ pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: 
         .attachments(&files)
         .allowed_mentions(Some(&mentions))
         .await
-        .map_err(|e| anyhow!("Discord refused the message: {e}"))?;
+        .map_err(|e| anyhow!(why_refused(&e.into())))?;
     Ok(())
+}
+
+/// Why Discord refused a post, in words a server owner can act on.
+fn why_refused(e: &bot_core::anyhow::Error) -> String {
+    use bot_core::twilight_http::error::ErrorType;
+    let status = e.downcast_ref::<bot_core::twilight_http::Error>().and_then(|e| match e.kind() {
+        ErrorType::Response { status, .. } => Some(status.get()),
+        _ => None,
+    });
+    match status {
+        Some(403) => "The bot can't post in that channel. Check it can see the channel, send messages and attach files.".into(),
+        Some(404) => "The channel was deleted. Pick another one.".into(),
+        _ => format!("Discord refused the message: {e}"),
+    }
+}
+
+/// Put a failed post behind the dashboard bell, at most once a day per server and kind, so a
+/// broken channel gets noticed without a notice for every member.
+fn notify_failure(ctx: &Ctx, guild: u64, kind: &'static str, text: String) {
+    static LAST: LazyLock<Mutex<HashMap<(u64, &'static str), Instant>>> = LazyLock::new(Default::default);
+    {
+        let mut last = LAST.lock().unwrap();
+        if last.get(&(guild, kind)).is_some_and(|t| t.elapsed().as_secs() < 86_400) {
+            return;
+        }
+        last.insert((guild, kind), Instant::now());
+    }
+    ctx.notify(Some(guild), KEY, text, Some(format!("/g/{guild}/{KEY}")));
 }
 
 /// Auto-roles, plus the roles a returning member left with. Each role is tried on its own so
@@ -381,6 +426,7 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
             "INSERT INTO welcome_invite_state (guild_id, checked_at, ok, error) VALUES (?1, ?2, 1, NULL)",
             params![guild as i64, now - 12 * 60_000],
         )?;
+        c.execute("INSERT INTO welcome_invite_names (guild_id, code, name) VALUES (?1, 'hX9d2Q', 'Twitch link')", [guild as i64])?;
         for (user, saved, restored_ago) in [(7usize, vec![role(3), role(4)], Some(3 * 3_600_000)), (8, vec![role(3), role(5), role(4)], Some(2 * day)), (9, vec![role(3)], None)] {
             let list = saved.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
             c.execute(

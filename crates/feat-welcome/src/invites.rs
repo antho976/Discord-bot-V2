@@ -1,5 +1,7 @@
 //! Invite tracking: remember each invite's use count, and on a join find the one that went up.
 
+use std::collections::HashMap;
+
 use bot_core::Ctx;
 use bot_core::anyhow::Result;
 use bot_core::rusqlite::{OptionalExtension, params};
@@ -17,24 +19,20 @@ pub struct Inv {
 
 /// Which invite a join came through, from the counts before the join and the counts now.
 ///
-/// An invite whose use count went up wins (the biggest rise if several did). Otherwise a limited
-/// invite that is gone and was one use from its limit was used up by this join. Vanity links and
-/// widget joins match nothing, which returns `None`.
+/// The one invite whose use count went up, or else the one limited invite that vanished a use
+/// from its limit (this join used it up). When more than one moved, several members joined
+/// between the two readings (at the same moment, or while the bot was away) and nothing says who
+/// used which, so the answer is `None` rather than a guess. Vanity links and widget joins match
+/// nothing, which is `None` too.
 pub fn find_used(old: &[Inv], new: &[Inv]) -> Option<Inv> {
-    let mut best: Option<(i64, &Inv)> = None;
-    for n in new {
-        let before = old.iter().find(|o| o.code == n.code).map(|o| o.uses).unwrap_or(0);
-        let rise = n.uses - before;
-        if rise > 0 && best.is_none_or(|(r, _)| rise > r) {
-            best = Some((rise, n));
-        }
+    let before = |code: &str| old.iter().find(|o| o.code == code).map(|o| o.uses).unwrap_or(0);
+    let risen: Vec<&Inv> = new.iter().filter(|n| n.uses > before(&n.code)).collect();
+    let used_up: Vec<&Inv> = old.iter().filter(|o| o.max_uses > 0 && o.uses + 1 >= o.max_uses && !new.iter().any(|n| n.code == o.code)).collect();
+    match (risen.as_slice(), used_up.as_slice()) {
+        ([one], []) => Some((*one).clone()),
+        ([], [one]) => Some(Inv { uses: one.uses + 1, ..(*one).clone() }),
+        _ => None,
     }
-    if let Some((_, inv)) = best {
-        return Some(inv.clone());
-    }
-    old.iter()
-        .find(|o| o.max_uses > 0 && o.uses + 1 >= o.max_uses && !new.iter().any(|n| n.code == o.code))
-        .map(|o| Inv { uses: o.uses + 1, ..o.clone() })
 }
 
 #[derive(Debug, Clone)]
@@ -57,9 +55,10 @@ pub fn state(ctx: &Ctx, guild: u64) -> Result<Option<State>> {
     })
 }
 
-fn load(ctx: &Ctx, guild: u64) -> Result<Vec<Inv>> {
+/// The server's invites as last read, most used first.
+pub fn load(ctx: &Ctx, guild: u64) -> Result<Vec<Inv>> {
     ctx.db.with(|c| {
-        let mut s = c.prepare_cached("SELECT code, uses, max_uses, inviter_id FROM welcome_invites WHERE guild_id = ?1")?;
+        let mut s = c.prepare_cached("SELECT code, uses, max_uses, inviter_id FROM welcome_invites WHERE guild_id = ?1 ORDER BY uses DESC, code")?;
         s
             .query_map([guild as i64], |r| {
                 Ok(Inv { code: r.get(0)?, uses: r.get(1)?, max_uses: r.get(2)?, inviter: r.get::<_, Option<i64>>(3)?.map(|i| i as u64) })
@@ -208,6 +207,33 @@ pub async fn record_join(ctx: &Ctx, lock: &bot_core::tokio::sync::Mutex<()>, gui
     }
 }
 
+/// Invite names by code.
+pub fn names(ctx: &Ctx, guild: u64) -> Result<HashMap<String, String>> {
+    ctx.db.with(|c| {
+        let mut s = c.prepare_cached("SELECT code, name FROM welcome_invite_names WHERE guild_id = ?1")?;
+        s.query_map([guild as i64], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+    })
+}
+
+/// Name invites, or clear a name with an empty one.
+pub fn set_names(ctx: &Ctx, guild: u64, names: &[(String, String)]) -> Result<()> {
+    let mut conn = ctx.db.lock();
+    let tx = conn.transaction()?;
+    for (code, name) in names {
+        if name.is_empty() {
+            tx.execute("DELETE FROM welcome_invite_names WHERE guild_id = ?1 AND code = ?2", params![guild as i64, code])?;
+        } else {
+            tx.execute(
+                "INSERT INTO welcome_invite_names (guild_id, code, name) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (guild_id, code) DO UPDATE SET name = excluded.name",
+                params![guild as i64, code, name],
+            )?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct Join {
     pub user: u64,
@@ -317,9 +343,23 @@ mod tests {
     }
 
     #[test]
-    fn the_biggest_rise_wins() {
+    fn two_invites_ticking_at_once_name_neither() {
+        // Two members joined between readings, one through each: a guess would be wrong half the time.
         let old = [inv("a", 1, 0), inv("b", 1, 0)];
-        let new = [inv("a", 2, 0), inv("b", 4, 0)];
+        let new = [inv("a", 2, 0), inv("b", 2, 0)];
+        assert!(find_used(&old, &new).is_none());
+        // The same when one of them was a single-use invite that's now gone.
+        let old = [inv("a", 1, 0), inv("once", 0, 1)];
+        let new = [inv("a", 2, 0)];
+        assert!(find_used(&old, &new).is_none());
+        // And for whoever's join is handled second: the first reading already took both rises.
+        assert!(find_used(&new, &new).is_none());
+    }
+
+    #[test]
+    fn one_invite_rising_by_more_than_one_still_names_it() {
+        let old = [inv("a", 1, 0), inv("b", 5, 0)];
+        let new = [inv("a", 1, 0), inv("b", 7, 0)];
         assert_eq!(find_used(&old, &new).unwrap().code, "b");
     }
 }

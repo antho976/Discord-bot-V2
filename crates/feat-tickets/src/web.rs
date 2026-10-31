@@ -9,7 +9,7 @@ use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 use serde::Deserialize;
 
-use crate::tickets::{self, Filter, Ticket};
+use crate::tickets::{self, Filter, Ticket, Turn};
 use crate::{DEFAULT_PANEL_TEXT, DEFAULT_PANEL_TITLE, KEY, Settings, starboard};
 
 const DAY_MS: i64 = 86_400_000;
@@ -20,6 +20,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/tickets/settings", post(save_tickets))
         .route("/g/{guild}/tickets/panel", post(send_panel))
         .route("/g/{guild}/tickets/{number}/close", post(close_ticket))
+        .route("/g/{guild}/tickets/{number}/reopen", post(reopen_ticket))
         .route("/g/{guild}/tickets/starboard", get(starboard_page).post(save_starboard))
 }
 
@@ -54,15 +55,16 @@ struct ListQuery {
     status: Option<String>,
 }
 
-/// What the thread says, read from the message cache: the last reply, and whether it's the
-/// member's turn or staff's. Empty when the thread's messages aren't cached (after a restart,
-/// or a thread nobody has spoken in).
+/// What the thread says: the last reply, and whether it's the member's turn or staff's. The turn
+/// comes from what the bot stored; the quote, and the turn for tickets opened before the bot kept
+/// it, come from the message cache, which is empty after a restart.
 #[derive(Default)]
 struct Activity {
     last_reply_at: Option<i64>,
     /// `(who, what they wrote)` for the latest reply from someone other than the opener.
     staff_reply: Option<(String, String)>,
-    waiting: Option<String>,
+    /// The badge, and whether staff owes the reply.
+    waiting: Option<(String, bool)>,
 }
 
 fn activity(ctx: &Ctx, guild: u64, t: &Ticket) -> Activity {
@@ -89,9 +91,16 @@ fn activity(ctx: &Ctx, guild: u64, t: &Ticket) -> Activity {
         .iter()
         .find(|(author, _)| *author != t.opener_id)
         .map(|(author, said)| (ctx.display_name(guild, *author), text::clip(said, 180)));
-    act.waiting = messages.first().map(|(author, _)| {
-        if *author == t.opener_id { "Waiting on staff".to_owned() } else { format!("Waiting on {}", ctx.display_name(guild, t.opener_id)) }
-    });
+    let on_member = || (format!("Waiting on {}", ctx.display_name(guild, t.opener_id)), false);
+    act.waiting = match t.waiting_on() {
+        Some(Turn::NoReplyYet) => Some(("No staff reply yet".to_owned(), true)),
+        Some(Turn::Staff) => Some(("Waiting on staff".to_owned(), true)),
+        Some(Turn::Member) => Some(on_member()),
+        None => messages.first().map(|(author, _)| if *author == t.opener_id { ("Waiting on staff".to_owned(), true) } else { on_member() }),
+    };
+    if let Some(at) = t.last_message_at {
+        act.last_reply_at = Some(act.last_reply_at.map_or(at, |cached| cached.max(at)));
+    }
     act
 }
 
@@ -158,6 +167,7 @@ async fn tickets_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 div.stack.tk-main {
                     (ui::readings(&[
                         ("open now", stats.open.to_string()),
+                        ("waiting on staff", stats.waiting.to_string()),
                         ("opened this week", stats.this_week.to_string()),
                         ("usual time to close", stats.median_close_secs.map(span).unwrap_or_else(|| "none yet".into())),
                     ]))
@@ -203,6 +213,7 @@ fn ticket_row(ctx: &Ctx, page: &Page, guild: u64, t: &Ticket, now: i64) -> Marku
                 }
                 @if !t.details.is_empty() { p.tk-quote { "“" (text::clip(&t.details, 240)) "”" } }
                 @if let Some((who, said)) = &act.staff_reply { p.tk-reply { strong { (who) } ": " span { "“" (said) "”" } } }
+                @if let Some(reason) = t.reason.as_deref().filter(|_| !t.is_open()) { p.tk-reason { "Reason: " (reason) } }
                 div.tk-meta {
                     (name) " · opened " (text::ago(t.opened_at))
                     @if t.is_open() {
@@ -215,13 +226,14 @@ fn ticket_row(ctx: &Ctx, page: &Page, guild: u64, t: &Ticket, now: i64) -> Marku
             }
             div.tk-side {
                 @if t.is_open() {
-                    @if let Some(w) = &act.waiting { (ui::badge(w, Tone::Warn)) }
+                    @if let Some((w, staff)) = &act.waiting { (ui::badge(w, if *staff { Tone::Warn } else { Tone::Muted })) }
                 } @else {
                     (ui::badge(label, tone))
                 }
                 div.tk-acts {
                     @if t.thread_id != 0 { a.btn.small href=(thread_url(guild, t.thread_id)) target="_blank" rel="noopener" { "Open thread" } }
                     @if page.can_edit() && t.is_open() { (ui::action_button(&page.path(&format!("tickets/{}/close", t.number)), "Close", Tone::Bad, true)) }
+                    @if page.can_edit() && t.can_reopen(now) { (ui::action_button(&page.path(&format!("tickets/{}/reopen", t.number)), "Reopen", Tone::Muted, false)) }
                 }
             }
         }
@@ -310,6 +322,13 @@ async fn close_ticket(State(ctx): State<Ctx>, user: User, Path((guild, number)):
     Ok(saved(&page.path("tickets")))
 }
 
+async fn reopen_ticket(State(ctx): State<Ctx>, user: User, Path((guild, number)): Path<(u64, i64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    tickets::reopen_from_dashboard(&ctx, guild, number, page.user.id).await.map_err(WebError::Bad)?;
+    ctx.audit(&page.user, Some(guild), KEY, format!("Reopened ticket {number:04}"));
+    Ok(saved(&page.path("tickets")))
+}
+
 // ---- starboard ----
 
 #[derive(Deserialize)]
@@ -323,11 +342,13 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
     let now = now_ms();
     let view = q.view.as_deref().unwrap_or("most");
     let stats = ctx.db.with(|c| starboard::stats(c, guild, now))?;
-    let rows = match view {
+    let mut rows = match view {
         "newest" => ctx.db.with(|c| starboard::recent(c, guild, 25))?,
         "settings" => Vec::new(),
         _ => ctx.db.with(|c| starboard::top(c, guild, 25))?,
     };
+    starboard::fill_missing_images(&ctx, guild, &mut rows).await;
+    let images = starboard::shown_images(&ctx, &rows).await;
     let authors = ctx.db.with(|c| starboard::top_authors(c, guild, 3))?;
     let active = match view {
         "newest" => "Newest",
@@ -377,10 +398,17 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
                                         }
                                         span.sb-stars { (glyph) " " (p.stars) }
                                     }
-                                    @if p.preview.is_empty() {
-                                        p.sb-text.muted { "No text" }
-                                    } @else {
-                                        p.sb-text { (p.preview) }
+                                    @let image = p.image.as_ref().and_then(|i| images.get(i));
+                                    // "Attachment" is what a post without text stores; the picture says it better.
+                                    @if image.is_none() || (!p.preview.is_empty() && p.preview != "Attachment") {
+                                        @if p.preview.is_empty() {
+                                            p.sb-text.muted { "No text" }
+                                        } @else {
+                                            p.sb-text { (p.preview) }
+                                        }
+                                    }
+                                    @if let Some(src) = image {
+                                        img.sb-img src=(src) alt="" loading="lazy";
                                     }
                                     div.sb-links {
                                         a href={ (thread_url(guild, p.channel_id)) "/" (p.message_id) } target="_blank" rel="noopener" { "Original" }
@@ -456,6 +484,7 @@ const CSS: &str = "
 .tk-reply { font-size: 13px; color: var(--ink-2); line-height: 1.45; }
 .tk-reply strong { color: var(--ink); font-weight: 500; }
 .tk-meta { font-size: 12px; color: var(--ink-3); }
+.tk-reason { font-size: 13px; color: var(--ink-2); }
 .tk-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
 .tk-acts { display: flex; gap: 6px; align-items: center; }
 .tk-mini { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; align-items: center; }
@@ -473,6 +502,7 @@ const CSS: &str = "
 .sb-who span { font-size: 12px; color: var(--ink-3); }
 .sb-stars { flex: none; font-size: 13px; font-weight: 500; color: var(--waiting); }
 .sb-text { font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.sb-img { display: block; width: 100%; height: auto; max-height: 320px; object-fit: cover; border-radius: 8px; background: var(--well); }
 .sb-links { display: flex; gap: 12px; font-size: 12px; color: var(--ink-3); }
 .sb-links a:hover { color: var(--ink); }
 .sb-totals { display: flex; gap: 32px; }

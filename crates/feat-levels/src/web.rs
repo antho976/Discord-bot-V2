@@ -1,10 +1,13 @@
+use std::collections::{HashMap, HashSet};
+
 use bot_core::axum::body::Bytes;
 use bot_core::axum::extract::{DefaultBodyLimit, Path, Query, State};
 use bot_core::axum::response::{IntoResponse, Json, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::axum::Router;
-use bot_core::maud::{Markup, html};
+use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::rusqlite::params;
+use bot_core::twilight_model::id::Id;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, serde_json, text};
@@ -18,6 +21,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/levels/settings", get(settings_page).post(save_settings))
         .route("/g/{guild}/levels/rewards", get(rewards_page).post(add_reward))
         .route("/g/{guild}/levels/rewards/{level}/delete", post(delete_reward))
+        .route("/g/{guild}/levels/rewards/{level}/edit", post(edit_reward))
         .route("/g/{guild}/levels/members", get(|Path(guild): Path<u64>| async move { Redirect::to(&format!("/g/{guild}/levels")) }))
         .route("/g/{guild}/levels/members/{user}", post(set_member_xp))
         .route("/g/{guild}/levels/import", get(import_page).post(import_upload).layer(DefaultBodyLimit::max(64 * 1024 * 1024)))
@@ -81,6 +85,20 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
 }
 
+/// Each place keeps its spot on the podium even when fewer than three members have XP.
+const CSS: &str = "
+.podium .step.p1 { grid-column: 2; grid-row: 1; } .podium .step.p2 { grid-column: 1; grid-row: 1; } .podium .step.p3 { grid-column: 3; grid-row: 1; }
+.lv-role { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lv-acts { display: flex; gap: 6px; justify-content: flex-end; }
+.lv-acts .pop-body { width: 240px; right: 0; left: auto; }
+.lv-acts .pop-body .stack { gap: 10px; }
+.lv-name { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+@media (max-width: 560px) {
+  .lv-table th:nth-child(3), .lv-table td:nth-child(3) { display: none; }
+  .lv-acts { flex-direction: column; align-items: flex-end; }
+}
+";
+
 fn role_name(ctx: &Ctx, guild: u64, role: u64) -> String {
     ctx.roles(guild).into_iter().find(|(id, _, _)| *id == role).map(|(_, n, _)| format!("@{n}")).unwrap_or_else(|| "Deleted role".into())
 }
@@ -133,6 +151,61 @@ fn recompute_levels(ctx: &Ctx, guild: u64, s: &Settings) -> bot_core::anyhow::Re
     Ok(())
 }
 
+/// Why the bot can't give a reward role, or None when it can.
+fn cant_give(ctx: &Ctx, guild: u64, role: u64) -> Option<&'static str> {
+    let Some(r) = ctx.cache.role(Id::new(role)) else { return Some("Deleted role") };
+    if r.managed {
+        return Some("Managed by an integration");
+    }
+    let me = ctx.bot_id().and_then(|bot| ctx.cache.member(Id::new(guild), Id::new(bot)))?;
+    let top = me.roles().iter().filter_map(|id| ctx.cache.role(*id).map(|r| r.position)).max().unwrap_or(0);
+    (r.position >= top).then_some("Above the bot's role")
+}
+
+/// A role's colour for its dot; roles without one get the caption grey.
+fn role_color(color: u32) -> String {
+    if color == 0 { "var(--ink-3)".to_owned() } else { format!("#{color:06x}") }
+}
+
+fn role_options(ctx: &Ctx, guild: u64) -> Vec<(String, String)> {
+    ctx.roles(guild).into_iter().map(|(id, n, _)| (id.to_string(), format!("@{n}"))).collect()
+}
+
+/// Change a reward's level or role where it stands.
+async fn edit_reward(State(ctx): State<Ctx>, user: User, Path((guild, level)): Path<(u64, i64)>, form: FormData) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let new_level = form.i64("level").filter(|l| (1..=500).contains(l)).ok_or_else(|| WebError::Bad("Pick a level from 1 to 500.".into()))?;
+    // Each row's select has its own name, so the page has no duplicate ids.
+    let role = form.role(&ctx, guild, &format!("role-{level}")).ok_or_else(|| WebError::Bad("Pick a role.".into()))?;
+    let old_role = crate::rewards(&ctx, guild)?.into_iter().find(|(l, _)| *l as i64 == level).map(|(_, r)| r).ok_or(WebError::NotFound)?;
+    if role != old_role && !page.user.admin && !ctx.safe_role(guild, role) {
+        return Err(WebError::Bad("That role has moderation or admin permissions, or sits above the bot's role. Only a dashboard admin can make it a reward.".into()));
+    }
+    let moved = {
+        let mut conn = ctx.db.lock();
+        let tx = conn.transaction().map_err(|e| WebError::Internal(e.into()))?;
+        let taken = new_level != level
+            && tx
+                .query_row("SELECT 1 FROM level_rewards WHERE guild_id = ?1 AND level = ?2", params![guild as i64, new_level], |_| Ok(()))
+                .is_ok();
+        if !taken {
+            tx.execute(
+                "UPDATE level_rewards SET level = ?3, role_id = ?4 WHERE guild_id = ?1 AND level = ?2",
+                params![guild as i64, level, new_level, role as i64],
+            )
+            .and_then(|_| tx.commit())
+            .map_err(|e| WebError::Internal(e.into()))?;
+        }
+        !taken
+    };
+    if !moved {
+        return Err(WebError::Bad(format!("Level {new_level} already has a reward. Change or remove that one first.")));
+    }
+    crate::resync_rewards(&ctx, guild, level.min(new_level) as u32, (role != old_role).then_some(old_role));
+    ctx.audit(&page.user, Some(guild), KEY, format!("Changed the level {level} reward to {} at level {new_level}", role_name(&ctx, guild, role)));
+    Ok(saved(&page.path("levels/rewards")))
+}
+
 async fn add_reward(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let level = form.i64("level").filter(|l| (1..=500).contains(l)).ok_or_else(|| WebError::Bad("Pick a level from 1 to 500.".into()))?;
@@ -140,6 +213,8 @@ async fn add_reward(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
     if !page.user.admin && !ctx.safe_role(guild, role) {
         return Err(WebError::Bad("That role has moderation or admin permissions, or sits above the bot's role. Only a dashboard admin can make it a reward.".into()));
     }
+    // Adding at a level that has a reward replaces its role.
+    let replaced = crate::rewards(&ctx, guild)?.into_iter().find(|(l, r)| *l as i64 == level && *r != role).map(|(_, r)| r);
     ctx.db.with(|c| {
         c.execute(
             "INSERT INTO level_rewards (guild_id, level, role_id) VALUES (?1, ?2, ?3)
@@ -147,6 +222,7 @@ async fn add_reward(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
             params![guild as i64, level, role as i64],
         )
     })?;
+    crate::resync_rewards(&ctx, guild, level as u32, replaced);
     ctx.audit(&page.user, Some(guild), KEY, format!("Set the level {level} reward to {}", role_name(&ctx, guild, role)));
     Ok(saved(&page.path("levels/rewards")))
 }
@@ -164,29 +240,70 @@ struct MembersQuery {
     page: Option<i64>,
 }
 
+/// Name and avatar of members Discord found for a search, who the bot's cache doesn't hold.
+type Found = HashMap<u64, (String, String)>;
+
+/// Members whose name contains `needle`, or whose id it is. The cache only holds members the bot
+/// has seen lately, so on a big server most are missing: Discord's member search fills the gap
+/// (it matches the start of a username or nickname) and brings their name and avatar along.
+async fn find_members(ctx: &Ctx, guild: u64, needle: &str) -> (HashSet<u64>, Found) {
+    let lower = needle.to_lowercase();
+    let mut ids: HashSet<u64> = ctx
+        .cache
+        .guild_members(Id::new(guild))
+        .map(|set| set.iter().map(|u| u.get()).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|u| ctx.display_name(guild, *u).to_lowercase().contains(&lower))
+        .collect();
+    let mut found = Found::new();
+    if let Ok(id) = needle.parse::<u64>() {
+        ids.insert(id);
+        return (ids, found);
+    }
+    let members = match ctx.http.search_guild_members(Id::new(guild), needle).limit(1000).await {
+        Ok(res) => res.models().await.unwrap_or_default(),
+        Err(e) => {
+            bot_core::tracing::debug!(guild, error = %e, "member search failed");
+            Vec::new()
+        }
+    };
+    for m in members {
+        let id = m.user.id.get();
+        if ids.insert(id) {
+            let name = m.nick.clone().or_else(|| m.user.global_name.clone()).unwrap_or_else(|| m.user.name.clone());
+            let avatar = match m.avatar {
+                Some(a) => format!("https://cdn.discordapp.com/guilds/{guild}/users/{id}/avatars/{a}.png?size=128"),
+                None => bot_core::discord::avatar_url(id, m.user.avatar.map(|a| a.to_string()).as_deref()),
+            };
+            found.insert(id, (name, avatar));
+        }
+    }
+    (ids, found)
+}
+
 async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<MembersQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let per = 25;
-    let n = q.page.unwrap_or(0).max(0);
     let search = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let ids: Option<Vec<u64>> = search.map(|needle| {
-        let needle = needle.to_lowercase();
-        let by_id: Option<u64> = needle.parse().ok();
-        ctx.cache
-            .guild_members(bot_core::twilight_model::id::Id::new(guild))
-            .map(|set| set.iter().map(|u| u.get()).collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|u| Some(*u) == by_id || ctx.display_name(guild, *u).to_lowercase().contains(&needle))
-            .chain(by_id)
-            .collect()
-    });
     let total = crate::count(&ctx, guild)?;
-    // The podium shows on the first page without a search; the list starts after it.
-    let podium = if search.is_none() && n == 0 { crate::top(&ctx, guild, 0, 3, None)? } else { Vec::new() };
-    let start = if search.is_none() { 3 + n * per } else { 0 };
-    let rows = crate::top(&ctx, guild, start, per, ids.as_deref())?;
+    // The podium takes the first three; the pages of the list start after it.
+    let pages = ((total - 3).max(0) + per - 1) / per;
+    let n = q.page.unwrap_or(0).clamp(0, (pages - 1).max(0));
+    let podium = if search.is_none() && n == 0 { crate::top(&ctx, guild, 0, 3)? } else { Vec::new() };
+    let start = 3 + n * per;
+    let (rows, found, matched): (Vec<(i64, crate::Member)>, Found, i64) = match search {
+        Some(needle) => {
+            let (ids, found) = find_members(&ctx, guild, needle).await;
+            let (rows, matched) = crate::find(&ctx, guild, &ids, per as usize)?;
+            (rows, found, matched)
+        }
+        None => {
+            let rows = crate::top(&ctx, guild, start, per)?;
+            (rows.into_iter().enumerate().map(|(i, m)| (start + i as i64 + 1, m)).collect(), Found::new(), 0)
+        }
+    };
     let rewards = crate::rewards(&ctx, guild)?;
     let roles = ctx.roles(guild);
     let at_least = |level: u32| -> i64 {
@@ -206,7 +323,8 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             )
         })
         .unwrap_or((0, 0));
-    let name = |u: u64| ctx.display_name(guild, u);
+    let name = |u: u64| found.get(&u).map(|f| f.0.clone()).unwrap_or_else(|| ctx.display_name(guild, u));
+    let avatar = |u: u64| found.get(&u).map(|f| f.1.clone()).unwrap_or_else(|| ctx.member_avatar(guild, u));
     let line = |m: &crate::Member| format!("Level {} · {} XP", s.progress(m.xp).level, text::num(m.xp));
     let earning = {
         let mut parts = vec![format!("{} to {} per message, once every {}.", s.xp_min, s.xp_max, text::duration(s.cooldown_secs))];
@@ -220,6 +338,7 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     };
 
     let main = html! {
+        style { (PreEscaped(CSS)) }
         @if !podium.is_empty() {
             div.podium {
                 @for (place, i) in [(2usize, 1usize), (1, 0), (3, 2)] {
@@ -246,14 +365,16 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             } @else {
                 (ui::empty(Icon::Trophy, "Nobody has XP yet", "Members show up here once they chat, or after you import XP from the old bot."))
             }
+        } @else if rows.is_empty() && search.is_none() {
+            p.muted.small { "Everyone with XP is on the podium so far." }
         } @else {
             div.ranks {
-                @for (i, m) in rows.iter().enumerate() {
+                @for (place, m) in &rows {
                     @let p = s.progress(m.xp);
                     @let pct = if p.needed > 0 { (p.into * 100 / p.needed).clamp(0, 100) } else { 0 };
                     div.rank {
-                        span.mono.muted.pos { @if search.is_none() { (start + i as i64 + 1) } }
-                        img.avatar src=(ctx.member_avatar(guild, m.user_id)) alt="" width="28" height="28" loading="lazy";
+                        span.mono.muted.pos { (place) }
+                        img.avatar src=(avatar(m.user_id)) alt="" width="28" height="28" loading="lazy";
                         div.who { strong { (name(m.user_id)) } span.muted.small { "Level " (p.level) } }
                         div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% to level " (p.level + 1) } }
                         span.mono.xp { (text::num(m.xp)) " XP" }
@@ -272,14 +393,15 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     }
                 }
             }
-            @if search.is_none() && total > start + per {
+            @if matched > rows.len() as i64 {
+                p.muted.small { "Showing the top " (rows.len()) " of " (text::num(matched)) " matches. Type more of the name to narrow it." }
+            }
+            @if search.is_none() && pages > 1 {
                 div.inline-form {
                     @if n > 0 { a.btn.small.outline href={ (page.path("levels")) "?page=" (n - 1) } { "Previous" } }
-                    span.muted.small { "Page " (n + 1) " of " (((total - 3).max(1) + per - 1) / per) }
-                    a.btn.small.outline href={ (page.path("levels")) "?page=" (n + 1) } { "Next" }
+                    span.muted.small { "Page " (n + 1) " of " (pages) }
+                    @if n + 1 < pages { a.btn.small.outline href={ (page.path("levels")) "?page=" (n + 1) } { "Next" } }
                 }
-            } @else if search.is_none() && n > 0 {
-                div { a.btn.small.outline href={ (page.path("levels")) "?page=" (n - 1) } { "Previous" } }
             }
         }
     };
@@ -306,7 +428,7 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 div.rail-block {
                     h2 { "XP earned this week" }
                     div.big-num { (text::num(week.0)) }
-                    span.muted.small { "by " (text::num(week.1)) " members since Monday" }
+                    span.muted.small { "by " (text::num(week.1)) @if week.1 == 1 { " member" } @else { " members" } " since Monday" }
                 }
                 div.rail-block {
                     h2 { "How XP is earned" }
@@ -322,30 +444,70 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let rewards = crate::rewards(&ctx, guild)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
+    let roles = ctx.roles(guild);
+    let options = role_options(&ctx, guild);
     let body = html! {
+        style { (PreEscaped(CSS)) }
         (tabs(&page, "Rewards"))
-        (ui::section("Reward roles", Some(if s.stack_rewards { "Given when a member reaches the level. Members keep earlier rewards." } else { "Given when a member reaches the level. Members keep only the reward for their highest level." }), html! {
+        (ui::section("Reward roles", Some(if s.stack_rewards {
+            "Given when a member reaches the level, and to members already past it. Members keep earlier rewards. Removing a reward leaves the role on whoever has it."
+        } else {
+            "Given when a member reaches the level, and to members already past it. Members keep only the reward for their highest level. Removing a reward leaves the role on whoever has it."
+        }), html! {
             @if rewards.is_empty() {
                 (ui::empty(Icon::Trophy, "No reward roles", "Add a role below and members get it at that level."))
             } @else {
-                div.table-wrap { table.table {
+                div.table-wrap { table.table.lv-table {
                     thead { tr { th { "Level" } th { "Role" } th.num { "Members" } th {} } }
                     tbody { @for (level, role) in &rewards {
+                        @let known = roles.iter().find(|r| r.0 == *role);
+                        @let problem = cant_give(&ctx, guild, *role);
                         tr {
                             td.num style="text-align:left" { (level) }
-                            td { (role_name(&ctx, guild, *role)) }
+                            td {
+                                span.lv-role {
+                                    span.lv-name {
+                                        span.dot style={ "background:" (known.map(|r| role_color(r.2)).unwrap_or_else(|| "var(--ink-3)".into())) } {}
+                                        (role_name(&ctx, guild, *role))
+                                    }
+                                    @match (known, problem) {
+                                        (None, _) => { (ui::badge("Can't give", Tone::Warn)) },
+                                        (Some(_), Some(why)) => { (ui::badge("Can't give", Tone::Warn)) span.muted.small { (why) } },
+                                        _ => {},
+                                    }
+                                }
+                            }
                             td.num {
                                 (text::num(ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND level >= ?2", params![guild as i64, *level as i64], |r| r.get::<_, i64>(0))).unwrap_or(0)))
                             }
-                            td.actions { @if page.can_edit() { (ui::action_button(&page.path(&format!("levels/rewards/{level}/delete")), "Remove", Tone::Bad, true)) } }
+                            td.actions {
+                                @if page.can_edit() {
+                                    div.lv-acts {
+                                        details.pop {
+                                            summary.btn.small { "Change" }
+                                            div.pop-body {
+                                                form.stack method="post" action=(page.path(&format!("levels/rewards/{level}/edit"))) {
+                                                    input.input.num type="number" name="level" min="1" max="500" value=(level) aria-label="Level" required;
+                                                    (ui::select(&format!("role-{level}"), &options, &role.to_string()))
+                                                    button.btn.primary type="submit" { "Save" }
+                                                }
+                                            }
+                                        }
+                                        (ui::action_button(&page.path(&format!("levels/rewards/{level}/delete")), "Remove", Tone::Bad, true))
+                                    }
+                                }
+                            }
                         }
                     } }
                 } }
+                @if rewards.iter().any(|(_, r)| cant_give(&ctx, guild, *r).is_some()) {
+                    p.muted.small { "Members reaching a level marked Can't give get nothing. Pick another role, or move the bot's role above it in Discord." }
+                }
             }
             @if page.can_edit() {
                 form.inline-form method="post" action=(page.path("levels/rewards")) {
                     input.input.num type="number" name="level" min="1" max="500" placeholder="Level" required style="max-width:110px";
-                    (ui::select("role", &std::iter::once((String::new(), "Pick a role".to_owned())).chain(ctx.roles(guild).into_iter().map(|(id, n, _)| (id.to_string(), format!("@{n}")))).collect::<Vec<_>>(), ""))
+                    (ui::select("role", &std::iter::once((String::new(), "Pick a role".to_owned())).chain(options.iter().cloned()).collect::<Vec<_>>(), ""))
                     button.btn type="submit" { "Add reward" }
                 }
             }
@@ -356,7 +518,10 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 
 async fn set_member_xp(State(ctx): State<Ctx>, user: User, Path((guild, member)): Path<(u64, u64)>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
-    let xp = form.i64("xp").filter(|x| *x >= 0).ok_or_else(|| WebError::Bad("XP must be 0 or more.".into()))?;
+    let xp = form
+        .i64("xp")
+        .filter(|x| (0..=curve::MAX_XP).contains(x))
+        .ok_or_else(|| WebError::Bad(format!("XP must be from 0 to {}.", text::num(curve::MAX_XP))))?;
     crate::set_xp(&ctx, guild, member, xp).await?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Set {}'s XP to {}", ctx.display_name(guild, member), text::num(xp)));
     Ok(saved(&page.path("levels")))
