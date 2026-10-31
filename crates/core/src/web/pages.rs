@@ -132,7 +132,16 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     struct Stat { key: &'static str, label: &'static str, value: String, note: String, up: bool }
     let stats = [
         Stat { key: "members", label: "Members", value: members.map(text::num).unwrap_or_else(|| "…".into()), note: signed(net, "this week"), up: net > 0 },
-        Stat { key: "messages", label: "Messages today", value: text::num(today_msgs), note: pace.map(|p| format!("On pace for {}", text::num(p))).unwrap_or_else(|| "Since midnight UTC".into()), up: false },
+        Stat {
+            key: "messages",
+            label: "Messages today",
+            value: text::num(today_msgs),
+            note: match pace {
+                Some(p) if today_msgs > 0 => format!("On pace for {}", text::num(p)),
+                _ => "Since midnight UTC".into(),
+            },
+            up: false,
+        },
         Stat {
             key: "active",
             label: "Active today",
@@ -212,7 +221,11 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                     a.on[days == 30] href=(link(show, 30)) { "30 days" }
                 }
             }
-            (ui::area_chart(&series, unit))
+            @if series.iter().all(|d| d.1 == 0) {
+                (ui::empty(Icon::Chart, "Nothing counted in these days", "The bot counts as things happen, and the chart fills in day by day."))
+            } @else {
+                (ui::area_chart(&series, unit))
+            }
         }
         section.ov-block {
             h2 { "Needs you" @if !needs.is_empty() { " " span.count-pill { (needs.len()) } } }

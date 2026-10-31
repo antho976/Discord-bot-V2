@@ -201,6 +201,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
         html lang="en" {
             head { (head(title)) }
             body {
+                a.skip href="#main" { "Skip to the page" }
                 div.shell {
                     nav.side aria-label="Dashboard" {
                         div.side-top {
@@ -247,7 +248,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
                             }
                         }
                     }
-                    main.page {
+                    main.page #main tabindex="-1" {
                         (top)
                         (body)
                     }
