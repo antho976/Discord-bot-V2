@@ -85,6 +85,8 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       than 3 members.
 - [x] Welcome: let invites have a friendly name ("Twitch link") set on the Invites tab, and show
       it on "Joined today".
+- [x] Starboard: clearing all reactions, or one emoji, from a message left the post with its old
+      count. Both now update or take down the post.
 
 ### D: keen-tapir
 `crates/feat-guard`, `crates/feat-audit`, `crates/feat-connect`.

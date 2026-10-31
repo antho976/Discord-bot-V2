@@ -195,7 +195,8 @@ pub async fn on_reaction(
     guild: Option<Id<GuildMarker>>,
     channel: Id<ChannelMarker>,
     message: Id<MessageMarker>,
-    emoji: &EmojiReactionType,
+    // None when a moderator cleared every reaction from the message.
+    emoji: Option<&EmojiReactionType>,
 ) -> bot_core::anyhow::Result<()> {
     let Some(guild) = guild.map(|g| g.get()) else { return Ok(()) };
     let s = ctx.settings::<Settings>(guild, KEY)?;
@@ -204,7 +205,7 @@ pub async fn on_reaction(
         return Ok(());
     }
     let Some(wanted) = parse_emoji(&s.star_emoji) else { return Ok(()) };
-    if !wanted.matches(emoji) {
+    if emoji.is_some_and(|e| !wanted.matches(e)) {
         return Ok(());
     }
     let _one_at_a_time = feature.star_lock.lock().await;

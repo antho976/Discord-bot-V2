@@ -154,10 +154,17 @@ impl Feature for Tickets {
                 if r.member.as_ref().is_some_and(|m| m.user.bot) {
                     return Ok(());
                 }
-                starboard::on_reaction(self, ctx, r.guild_id, r.channel_id, r.message_id, &r.emoji).await?;
+                starboard::on_reaction(self, ctx, r.guild_id, r.channel_id, r.message_id, Some(&r.emoji)).await?;
             }
             Event::ReactionRemove(r) => {
-                starboard::on_reaction(self, ctx, r.guild_id, r.channel_id, r.message_id, &r.emoji).await?;
+                starboard::on_reaction(self, ctx, r.guild_id, r.channel_id, r.message_id, Some(&r.emoji)).await?;
+            }
+            // A moderator clearing reactions changes the count too.
+            Event::ReactionRemoveEmoji(r) => {
+                starboard::on_reaction(self, ctx, Some(r.guild_id), r.channel_id, r.message_id, Some(&r.emoji)).await?;
+            }
+            Event::ReactionRemoveAll(r) => {
+                starboard::on_reaction(self, ctx, r.guild_id, r.channel_id, r.message_id, None).await?;
             }
             Event::MessageCreate(m) => {
                 if let Some(guild) = m.guild_id {
