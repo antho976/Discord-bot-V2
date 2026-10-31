@@ -112,6 +112,14 @@ const MIGRATIONS: &[Migration] = &[Migration {
             published_at INTEGER NOT NULL, seen_at INTEGER NOT NULL, PRIMARY KEY (feed, video_id));
         CREATE TABLE alerts_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     ",
+}, Migration {
+    // A running sum so the average doesn't drift from rounding, and every category a stream had.
+    name: "002_alerts_stream_stats",
+    sql: "
+        ALTER TABLE alerts_streams ADD COLUMN viewer_sum INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE alerts_streams ADD COLUMN games TEXT NOT NULL DEFAULT '';
+        UPDATE alerts_streams SET viewer_sum = average * samples, games = game;
+    ",
 }];
 
 #[derive(Default)]
@@ -304,21 +312,36 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         let started = now - (i * 2 + 1) * day - (i % 3) * hour - 4 * hour;
         let secs = 3 * 3600 + (i * 1871) % 7200;
         let peak = 30 + (i * 37 + i * i * 7) % 61 + (44 - i) / 3;
+        let game = games[i as usize % games.len()];
+        // Every third stream ends in Just Chatting, to show a stream with two categories.
+        let all_games = if i % 3 == 0 && game != "Just Chatting" { format!("{game}\nJust Chatting") } else { game.to_owned() };
+        let samples = secs / 300;
         tx.execute(
-            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, vod_url)
-             VALUES ('41234567', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, vod_url, viewer_sum, games)
+             VALUES ('41234567', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 format!("4{i:010}"),
                 started,
                 started + secs * 1000,
                 secs,
                 titles[i as usize % titles.len()],
-                games[i as usize % games.len()],
+                game,
                 peak,
                 peak * 2 / 3,
-                secs / 300,
+                samples,
                 (i < 6).then(|| format!("https://www.twitch.tv/videos/2{i:09}")),
+                peak * 2 / 3 * samples,
+                all_games,
             ],
+        )?;
+    }
+    // A follower total for each of the last 30 days, as the daily check stores them.
+    for d in 0..30i64 {
+        let day = bot_core::jiff::Timestamp::from_millisecond(now - d * day)?.to_zoned(bot_core::jiff::tz::TimeZone::UTC).date().to_string();
+        let total = 1_184 + (30 - d) * 2 + (30 - d) * (30 - d) / 25;
+        tx.execute(
+            "INSERT OR REPLACE INTO daily_stats (guild_id, day, key, value) VALUES (?1, ?2, 'followers', ?3)",
+            params![guild as i64, day, total],
         )?;
     }
     // Segments around now, in the server's time zone, so the week image has a past and a future.

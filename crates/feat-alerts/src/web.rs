@@ -25,7 +25,8 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/alerts/schedule.png", get(schedule_png))
         .route("/g/{guild}/alerts/youtube", get(youtube_page).post(save_youtube))
         .route("/g/{guild}/alerts/youtube/test", post(send_youtube_test))
-        .route("/g/{guild}/alerts/streams", get(streams_page))
+        .route("/g/{guild}/alerts/stats", get(stats_page))
+        .route("/g/{guild}/alerts/streams", get(streams_redirect))
         .route("/webhooks/twitch", post(twitch::webhook))
 }
 
@@ -35,7 +36,7 @@ fn tabs(page: &Page, active: &str) -> Markup {
             ("Twitch", page.path("alerts")),
             ("Schedule", page.path("alerts/schedule")),
             ("YouTube", page.path("alerts/youtube")),
-            ("Streams", page.path("alerts/streams")),
+            ("Stats", page.path("alerts/stats")),
         ],
         active,
     )
@@ -995,47 +996,133 @@ async fn send_youtube_test(State(ctx): State<Ctx>, user: User, Path(guild): Path
     Ok(bot_core::axum::response::Redirect::to(&page.path("alerts/youtube?sent=1")).into_response())
 }
 
-// ---- Streams ----
+// ---- Stats ----
 
-async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+/// Average viewers across streams, weighted by how often each was read: `None` when no stream
+/// had a viewer count.
+fn avg_viewers<'a>(rows: impl IntoIterator<Item = &'a StreamRow>) -> Option<i64> {
+    let (sum, samples) = rows.into_iter().filter(|r| r.samples > 0).fold((0, 0), |(s, n), r| (s + r.average * r.samples, n + r.samples));
+    (samples > 0).then(|| (sum + samples / 2) / samples)
+}
+
+/// Average viewers in each of the last twelve weeks, oldest first, labelled by their Monday.
+/// A week without a viewer count is 0, like its hours.
+fn weekly_viewers(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Vec<(String, i64)> {
+    let first = first_monday(tz, now);
+    (0..WEEKS)
+        .map(|w| {
+            let start = first.checked_add(Span::new().days(7 * w)).unwrap_or(first);
+            let end = start.checked_add(Span::new().days(7)).unwrap_or(start);
+            let (a, b) = (day_ms(start, tz), day_ms(end, tz));
+            let avg = avg_viewers(rows.iter().filter(|r| r.started_at >= a && r.started_at < b)).unwrap_or(0);
+            (start.strftime("%b %-d").to_string(), avg)
+        })
+        .collect()
+}
+
+/// Follower totals by day (`YYYY-MM-DD`, total), oldest first: what the bot read once a day.
+fn follower_days(ctx: &Ctx, guild: u64, since_day: &str) -> Vec<(String, i64)> {
+    ctx.db
+        .with(|c| {
+            let mut s = c.prepare_cached("SELECT day, value FROM daily_stats WHERE guild_id = ?1 AND key = 'followers' AND day >= ?2 ORDER BY day")?;
+            s.query_map(bot_core::rusqlite::params![guild as i64, since_day], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What the followers reading says: gained across the readings when there are two or more,
+/// the total when there's one.
+fn followers_reading(days: &[(String, i64)]) -> Option<(&'static str, String)> {
+    match days {
+        [] => None,
+        [(_, only)] => Some(("followers", text::num(*only))),
+        [(_, first), .., (_, last)] => {
+            let gained = last - first;
+            Some(("followers in 30 days", if gained > 0 { format!("+{}", text::num(gained)) } else { text::num(gained) }))
+        }
+    }
+}
+
+/// The rail's "Followers": the latest total, or why there isn't one.
+fn followers_block(ctx: &Ctx, mode: Mode, days: &[(String, i64)]) -> Markup {
+    html! {
+        div.rail-block {
+            h2 { "Followers" }
+            @if let Some((day, total)) = days.last() {
+                span.big-num { (text::num(*total)) }
+                p.muted.small { "Read once a day. Last read " (day.parse::<Date>().map(|d| d.strftime("%b %-d").to_string()).unwrap_or_default()) "." }
+            } @else if mode == Mode::Off {
+                p.muted.small { "Followers are read once a day once Twitch is connected." }
+            } @else if crate::state_get(ctx, "followers_unsupported").is_some() {
+                p.muted.small {
+                    "Not tracked. Twitch only shares follower counts with a login from the channel's owner or a moderator, "
+                    "with the " code { "moderator:read:followers" } " permission. The bot signs in to Twitch as an app, so Twitch refused."
+                }
+            } @else {
+                p.muted.small { "The first count shows up within a day." }
+            }
+        }
+    }
+}
+
+async fn streams_redirect(Path(guild): Path<u64>) -> bot_core::axum::response::Redirect {
+    bot_core::axum::response::Redirect::permanent(&format!("/g/{guild}/alerts/stats"))
+}
+
+async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let tz = s.tz();
+    let mode = twitch::mode(&ctx);
     let ids: Vec<String> = twitch::for_settings(&ctx, &s).into_iter().map(|b| b.user_id).collect();
     let now = now_ms();
-    // One query covers the twelve-week chart and this month.
-    let since = day_ms(first_monday(&tz, now), &tz).min(month_start(&tz, now));
-    let all = twitch::streams_since(&ctx, &ids, since, 1000)?;
-    let month: Vec<&StreamRow> = all.iter().filter(|r| r.started_at >= month_start(&tz, now)).collect();
+    let month_from = month_start(&tz, now);
+    // One query covers the twelve-week charts and this month.
+    let all = twitch::streams_since(&ctx, &ids, day_ms(first_monday(&tz, now), &tz).min(month_from), 1000)?;
+    let month: Vec<&StreamRow> = all.iter().filter(|r| r.started_at >= month_from).collect();
     let month_secs: i64 = month.iter().map(|r| stream_secs(r, now)).sum();
-    let peak = avg_peak(&month).map(|p| format!("average peak {}", text::num(p))).unwrap_or_else(|| "no viewer counts yet".into());
-    let followers: Option<i64> = ctx
-        .db
-        .with(|c| {
-            c.query_row(
-                "SELECT value FROM daily_stats WHERE guild_id = ?1 AND key = 'followers' ORDER BY day DESC LIMIT 1",
-                [guild as i64],
-                |r| r.get(0),
-            )
-            .optional()
-        })
-        .unwrap_or(None);
-    let series = weekly_hours(&all, &tz, now);
+    let since_day = Timestamp::from_millisecond(now - 30 * 86_400_000).map(|t| t.to_zoned(TimeZone::UTC).date().to_string()).unwrap_or_default();
+    let followers = follower_days(&ctx, guild, &since_day);
+    let followers_value = match followers_reading(&followers) {
+        Some(r) => r,
+        None if crate::state_get(&ctx, "followers_unsupported").is_some() => ("followers in 30 days", "not tracked".into()),
+        None => ("followers in 30 days", "none yet".into()),
+    };
+    let viewers = weekly_viewers(&all, &tz, now);
+    let hours = weekly_hours(&all, &tz, now);
     let table = twitch::streams_since(&ctx, &ids, 0, 30)?;
 
     let body = html! {
         style { (PreEscaped(CSS)) }
-        (tabs(&page, "Streams"))
+        (tabs(&page, "Stats"))
         div.with-rail {
             div.stack.sa-main {
+                (ui::readings(&[
+                    ("streams this month", month.len().to_string()),
+                    ("hours this month", if month_secs == 0 { "0 h".to_owned() } else { text::duration(month_secs) }),
+                    ("average viewers", avg_viewers(month.iter().copied()).map(text::num).unwrap_or_else(|| "none yet".into())),
+                    followers_value,
+                ]))
+                section.block {
+                    div.sa-sechead {
+                        h2 { "Average viewers" }
+                        span.muted.small { "Each week, from counts read while you're live" }
+                    }
+                    @if viewers.iter().all(|(_, v)| *v == 0) {
+                        (ui::empty(Icon::Chart, "No viewer counts yet", "The bot reads viewers every few minutes while you're live, and the chart fills in week by week."))
+                    } @else {
+                        (ui::area_chart(&viewers, "average viewers"))
+                    }
+                }
                 @if table.is_empty() {
-                    (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: length, category, title, peak and average viewers."))
+                    (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: date, length, categories, peak and average viewers."))
                 } @else {
                     (narrow_css())
-                    (ui::section("Past streams", None, html! {
+                    (ui::section("Streams", Some("Your latest 30."), html! {
                         div.table-wrap { table.table {
                             thead { tr { th { "Date" } th { "Stream" } th.num { "Length" } th.num { "Peak" } th.num.wide-only { "Average" } th.wide-only {} } }
                             tbody { @for r in &table {
+                                @let games = r.games_line();
                                 tr {
                                     td style="white-space:nowrap" { (zoned(r.started_at, &tz).map(|z| z.strftime("%b %-d").to_string()).unwrap_or_default()) }
                                     td {
@@ -1044,9 +1131,9 @@ async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                                 false => { img.sa-vt.wide-only src=(twitch::sized(&r.thumbnail, 320, 180)) alt="" width="64" height="36" loading="lazy"; }
                                                 true => { span.sa-vt.wide-only { (ui::icon(Icon::Live)) } }
                                             }
-                                            div {
+                                            div style="min-width:0" {
                                                 div { @if r.title.is_empty() { "Untitled stream" } @else { (r.title) } }
-                                                @if !r.game.is_empty() { div.muted.small { (r.game) } }
+                                                @if !games.is_empty() { div.muted.small { (games) } }
                                             }
                                         }
                                     }
@@ -1062,28 +1149,20 @@ async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             }
             aside.rail {
                 div.rail-block {
-                    h2 { "This month" }
-                    span.big-num { (if month_secs == 0 { "0 h".to_owned() } else { text::duration(month_secs) }) }
-                    p.muted.small { (plural(month.len(), "stream", "streams")) " · " (peak) }
-                    @if let Some(f) = followers {
-                        div.mini { span.grow { span { "Followers" } } span.mono { (text::num(f)) } }
-                    }
-                }
-                div.rail-block {
                     h2 { "Hours streamed" }
                     @if all.is_empty() {
                         p.muted.small { "Hours show up here once a stream ends." }
                     } @else {
-                        (week_bars(&series))
+                        (week_bars(&hours))
                         span.muted.small { "Last 12 weeks" }
                     }
                 }
+                (followers_block(&ctx, mode, &followers))
             }
         }
     };
     Ok(ui::layout(&ctx, &page, "Stream alerts", Some(status_pill(&ctx)), body).into_response())
 }
-
 
 /// The overview's Stream block: live now or the last stream, and the next one on the schedule.
 pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
@@ -1130,7 +1209,7 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
             span.status { span.dot.live[live] {} (if live { "Live" } else { "Offline" }) }
         }
         @if let Some((game, title, thumb, _, secs, peak)) = &last {
-            a.stream-card href=(page.path("alerts/streams")) {
+            a.stream-card href=(page.path("alerts/stats")) {
                 @if thumb.is_empty() {
                     span.stream-ph { (ui::icon(Icon::Live)) }
                 } @else {
@@ -1243,6 +1322,35 @@ mod tests {
         assert_eq!(in_minutes(60), "in 1 hour");
         assert_eq!(in_minutes(120), "in 2 hours");
         assert_eq!(in_minutes(90), "in 90 minutes");
+    }
+
+    #[test]
+    fn viewers_average_by_reading() {
+        let row = |average, samples| StreamRow { average, samples, ..Default::default() };
+        // A 4-hour stream counts for more than a 1-hour one; streams without counts are skipped.
+        let rows = [row(40, 48), row(10, 12), row(999, 0)];
+        assert_eq!(avg_viewers(rows.iter()), Some(34));
+        assert_eq!(avg_viewers([row(5, 0)].iter()), None);
+    }
+
+    #[test]
+    fn followers_read_as_gained() {
+        let d = |day: &str, v| (day.to_owned(), v);
+        assert_eq!(followers_reading(&[]), None);
+        assert_eq!(followers_reading(&[d("2026-10-01", 1200)]), Some(("followers", "1,200".into())));
+        assert_eq!(followers_reading(&[d("2026-10-01", 1200), d("2026-10-15", 1210), d("2026-10-31", 1242)]), Some(("followers in 30 days", "+42".into())));
+        assert_eq!(followers_reading(&[d("2026-10-01", 1200), d("2026-10-31", 1195)]), Some(("followers in 30 days", "-5".into())));
+    }
+
+    #[test]
+    fn weekly_viewers_skip_nothing() {
+        let tz = toronto();
+        let now = local_ms("2026-11-04T12:00:00");
+        let rows = vec![StreamRow { started_at: local_ms("2026-11-02T19:00:00"), average: 30, samples: 10, ..Default::default() }];
+        let series = weekly_viewers(&rows, &tz, now);
+        assert_eq!(series.len(), WEEKS as usize);
+        assert_eq!(series.last(), Some(&("Nov 2".to_owned(), 30)));
+        assert_eq!(series[0].1, 0);
     }
 
     #[test]
