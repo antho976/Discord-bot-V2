@@ -47,7 +47,10 @@ pub struct Settings {
     pub message: String,
     /// Keep every reward role earned, instead of only the highest.
     pub stack_rewards: bool,
+    /// Text and voice channels that earn no XP, and the threads in them.
     pub no_xp_channels: Vec<u64>,
+    /// Categories whose channels and threads earn no XP.
+    pub no_xp_categories: Vec<u64>,
     pub no_xp_roles: Vec<u64>,
     /// Post the week's top three when the week ends.
     pub weekly_post: bool,
@@ -81,6 +84,7 @@ impl Default for Settings {
             message: DEFAULT_MESSAGE.into(),
             stack_rewards: true,
             no_xp_channels: Vec::new(),
+            no_xp_categories: Vec::new(),
             no_xp_roles: Vec::new(),
             weekly_post: false,
             weekly_channel: None,
@@ -114,10 +118,33 @@ impl Settings {
         (streak - 1).max(0).saturating_mul(self.streak_bonus.max(0)).min(self.streak_max.max(0))
     }
 
+    /// Whether `channel` earns no XP: it's listed, it's a thread in a listed channel
+    /// (`thread_parent`), or it sits in a listed category.
+    fn no_xp_in(&self, channel: u64, thread_parent: Option<u64>, category: Option<u64>) -> bool {
+        self.no_xp_channels.contains(&channel)
+            || thread_parent.is_some_and(|p| self.no_xp_channels.contains(&p))
+            || category.is_some_and(|c| self.no_xp_categories.contains(&c))
+    }
+
     /// How the leaderboard sorts: prestige first when it's on.
     fn order(&self) -> &'static str {
         if self.prestige_on() { "prestige DESC, xp DESC, user_id" } else { "xp DESC, user_id" }
     }
+}
+
+/// Whether `channel` earns no XP. Looks up the channel's thread parent and category in the cache
+/// only when the server has listed channels or categories.
+fn no_xp_here(ctx: &Ctx, s: &Settings, channel: u64) -> bool {
+    if s.no_xp_channels.is_empty() && s.no_xp_categories.is_empty() {
+        return false;
+    }
+    if s.no_xp_channels.contains(&channel) {
+        return true;
+    }
+    let parent_of = |id: u64| ctx.cache.channel(Id::new(id)).map(|c| (c.kind.is_thread(), c.parent_id.map(|p| p.get())));
+    let Some((thread, parent)) = parent_of(channel) else { return false };
+    let (thread_parent, category) = if thread { (parent, parent.and_then(parent_of).and_then(|p| p.1)) } else { (None, parent) };
+    s.no_xp_in(channel, thread_parent, category)
 }
 
 /// Days since 1970 in UTC: streaks count these.
@@ -267,7 +294,7 @@ impl Feature for Levels {
                     return Ok(());
                 }
                 let s = ctx.settings::<Settings>(guild, KEY)?;
-                if s.no_xp_channels.contains(&m.channel_id.get()) {
+                if no_xp_here(ctx, &s, m.channel_id.get()) {
                     return Ok(());
                 }
                 if let Some(member) = &m.member
@@ -286,7 +313,7 @@ impl Feature for Levels {
                     return Ok(());
                 }
                 let s = ctx.settings::<Settings>(guild, KEY)?;
-                if s.reaction_xp <= 0 || s.no_xp_channels.contains(&r.channel_id.get()) {
+                if s.reaction_xp <= 0 || no_xp_here(ctx, &s, r.channel_id.get()) {
                     return Ok(());
                 }
                 if r.member.as_ref().is_some_and(|m| m.roles.iter().any(|role| s.no_xp_roles.contains(&role.get()))) {
@@ -327,7 +354,7 @@ impl Feature for Levels {
                 })
                 .collect();
             for (user, channel, quiet, bot) in &states {
-                if *bot || Some(*channel) == afk || (s.voice_require_active && *quiet) || s.no_xp_channels.contains(&channel.get()) {
+                if *bot || Some(*channel) == afk || (s.voice_require_active && *quiet) || no_xp_here(ctx, &s, channel.get()) {
                     continue;
                 }
                 let no_xp_role = ctx
@@ -979,7 +1006,17 @@ fn notify_failure(ctx: &Ctx, guild: u64, text: String, link: String) {
 
 
 pub(crate) fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
-    let s = Settings { prestige_level: 30, streak_bonus: 2, ..Default::default() };
+    // The sample server has no voice channels; add a few so the no-XP picker has something.
+    let music = guild + 2004;
+    for (n, name, kind, parent) in [(1u64, "Voice", 4u8, None), (2, "Lounge", 2, Some(guild + 2001)), (3, "Gaming", 2, Some(guild + 2001)), (4, "Music", 2, Some(guild + 2001))] {
+        let channel = bot_core::serde_json::json!({
+            "id": (guild + 2000 + n).to_string(), "type": kind, "name": name, "position": 20 + n, "guild_id": guild.to_string(),
+            "parent_id": parent.map(|p: u64| p.to_string()), "permission_overwrites": []
+        });
+        let channel = bot_core::serde_json::from_value(channel)?;
+        ctx.cache.update(&Event::ChannelCreate(Box::new(bot_core::twilight_model::gateway::payload::incoming::ChannelCreate(channel))));
+    }
+    let s = Settings { prestige_level: 30, streak_bonus: 2, no_xp_channels: vec![music], ..Default::default() };
     ctx.save_settings(guild, KEY, &s)?;
     for (i, (user, _)) in bot_core::preview::MEMBERS.iter().enumerate() {
         let xp = 48_000 / (i as i64 + 1) + (i as i64 * 731) % 900;
@@ -1174,6 +1211,39 @@ mod tests {
         assert_eq!(ids(&ctx), vec![10, 11, 12]);
         assert_eq!(rank_of(&ctx, 1, 12).unwrap(), Some(3));
         assert_eq!(count(&ctx, 1).unwrap(), 3);
+    }
+
+    #[test]
+    fn no_xp_covers_threads_and_categories() {
+        let s = Settings { no_xp_channels: vec![10], no_xp_categories: vec![90], ..Default::default() };
+        assert!(s.no_xp_in(10, None, None));
+        assert!(!s.no_xp_in(11, None, Some(80)));
+        // A thread in a listed channel, and a channel or thread under a listed category.
+        assert!(s.no_xp_in(500, Some(10), Some(80)));
+        assert!(s.no_xp_in(11, None, Some(90)));
+        assert!(s.no_xp_in(501, Some(11), Some(90)));
+        assert!(!s.no_xp_in(502, Some(11), Some(80)));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn no_xp_finds_a_thread_parent_and_category_in_the_cache() {
+        let ctx = ctx();
+        for (id, kind, parent) in [(90u64, 4u8, None), (91, 4, None), (10, 0, Some(90)), (11, 0, Some(91)), (500, 11, Some(10)), (501, 11, Some(11))] {
+            let channel = bot_core::serde_json::json!({
+                "id": id.to_string(), "type": kind, "name": "x", "guild_id": "1", "parent_id": parent.map(|p: u64| p.to_string()),
+                "permission_overwrites": [], "thread_metadata": {"archived": false, "auto_archive_duration": 60, "archive_timestamp": "2026-01-01T00:00:00.000000+00:00", "locked": false}
+            });
+            ctx.cache.update(&Event::ChannelCreate(Box::new(bot_core::twilight_model::gateway::payload::incoming::ChannelCreate(bot_core::serde_json::from_value(channel).unwrap()))));
+        }
+        let s = Settings { no_xp_channels: vec![10], ..Default::default() };
+        assert!(no_xp_here(&ctx, &s, 500));
+        assert!(!no_xp_here(&ctx, &s, 501));
+        let s = Settings { no_xp_categories: vec![91], ..Default::default() };
+        assert!(no_xp_here(&ctx, &s, 11));
+        assert!(no_xp_here(&ctx, &s, 501));
+        assert!(!no_xp_here(&ctx, &s, 500));
+        // A channel the cache doesn't know earns XP.
+        assert!(!no_xp_here(&ctx, &s, 999));
     }
 
     #[test]

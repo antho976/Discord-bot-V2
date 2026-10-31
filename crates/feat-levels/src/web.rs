@@ -88,7 +88,9 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_number("streak_max", "Bonus cap", Some("The streak bonus stops growing here."), s.streak_max, 0, 500, Some("%")))
             })))
             (ui::section("No XP in", None, ui::card(html! {
-                (ui::field_channels(&ctx, guild, "no_xp_channels", "Channels", None, &s.no_xp_channels))
+                (ui::field_channels(&ctx, guild, "no_xp_channels", "Text channels", Some("Threads in these channels earn nothing too."), &s.no_xp_channels))
+                (ui::field_custom_wide("Voice channels", Some("Time in these earns nothing, and neither does their text chat."), chips("no_xp_voice", &voice_channels(&ctx, guild), &s.no_xp_channels)))
+                (ui::field_custom_wide("Categories", Some("Every channel and thread in these earns nothing."), chips("no_xp_categories", &ctx.categories(guild), &s.no_xp_categories)))
                 (ui::field_roles(&ctx, guild, "no_xp_roles", "Roles", Some("Members with any of these roles earn nothing."), &s.no_xp_roles))
                 (ui::field_toggle("stack_rewards", "Keep earlier reward roles", Some("Off: members only keep the reward role for their highest level."), s.stack_rewards))
             })))
@@ -112,6 +114,35 @@ const CSS: &str = "
   .lv-acts { flex-direction: column; align-items: flex-end; }
 }
 ";
+
+/// The server's voice and stage channels, in Discord's order.
+fn voice_channels(ctx: &Ctx, guild: u64) -> Vec<(u64, String)> {
+    use bot_core::twilight_model::channel::ChannelType;
+    let Some(ids) = ctx.cache.guild_channels(Id::new(guild)) else { return Vec::new() };
+    let mut out: Vec<(i32, u64, String)> = ids
+        .iter()
+        .filter_map(|id| ctx.cache.channel(*id))
+        .filter(|c| matches!(c.kind, ChannelType::GuildVoice | ChannelType::GuildStageVoice))
+        .map(|c| (c.position.unwrap_or_default(), c.id.get(), c.name.clone().unwrap_or_default()))
+        .collect();
+    out.sort();
+    out.into_iter().map(|(_, id, name)| (id, name)).collect()
+}
+
+/// Switch-on chips for picking any number of channels or categories, like `ui::field_channels`.
+fn chips(name: &str, items: &[(u64, String)], selected: &[u64]) -> Markup {
+    html! {
+        div.chips id=(name) {
+            @if items.is_empty() { span.muted.small { "Nothing to pick from yet." } }
+            @for (id, label) in items {
+                label.chip {
+                    input type="checkbox" name=(name) value=(id) checked[selected.contains(id)];
+                    span { (label) }
+                }
+            }
+        }
+    }
+}
 
 fn role_name(ctx: &Ctx, guild: u64, role: u64) -> String {
     ctx.roles(guild).into_iter().find(|(id, _, _)| *id == role).map(|(_, n, _)| format!("@{n}")).unwrap_or_else(|| "Deleted role".into())
@@ -137,7 +168,8 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         announce_min_level: form.int_in("announce_min_level", 0, 500, 0) as u32,
         message: { let m = form.string("message"); if m.is_empty() { crate::DEFAULT_MESSAGE.into() } else { text::clip(&m, 500) } },
         stack_rewards: form.bool("stack_rewards"),
-        no_xp_channels: form.channels(&ctx, guild, "no_xp_channels"),
+        no_xp_channels: form.channels(&ctx, guild, "no_xp_channels").into_iter().chain(form.channels(&ctx, guild, "no_xp_voice")).collect(),
+        no_xp_categories: form.channels(&ctx, guild, "no_xp_categories"),
         no_xp_roles: form.roles(&ctx, guild, "no_xp_roles"),
         weekly_post: form.bool("weekly_post"),
         weekly_channel: form.channel(&ctx, guild, "weekly_channel"),
