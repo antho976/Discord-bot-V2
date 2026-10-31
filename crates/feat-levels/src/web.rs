@@ -83,6 +83,10 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_number("prestige_level", "Prestige from level", Some("Members at this level or higher can use /prestige to start over at level 0 and rank above everyone with less prestige. 0 turns it off."), s.prestige_level as i64, 0, 500, None))
                 (ui::field_number("prestige_bonus", "Bonus per prestige", Some("Extra XP from messages, voice and reactions, for each prestige."), s.prestige_bonus, 0, 100, Some("%")))
             })))
+            (ui::section("Streaks", Some("A streak counts the days in a row, in UTC, a member earned XP. It shows on /rank and the leaderboard."), ui::card(html! {
+                (ui::field_number("streak_bonus", "Bonus per day", Some("Extra XP from messages, voice and reactions for each day in a row after the first. 0 turns the bonus off."), s.streak_bonus, 0, 100, Some("%")))
+                (ui::field_number("streak_max", "Bonus cap", Some("The streak bonus stops growing here."), s.streak_max, 0, 500, Some("%")))
+            })))
             (ui::section("No XP in", None, ui::card(html! {
                 (ui::field_channels(&ctx, guild, "no_xp_channels", "Channels", None, &s.no_xp_channels))
                 (ui::field_roles(&ctx, guild, "no_xp_roles", "Roles", Some("Members with any of these roles earn nothing."), &s.no_xp_roles))
@@ -139,6 +143,8 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         weekly_channel: form.channel(&ctx, guild, "weekly_channel"),
         prestige_level: form.int_in("prestige_level", 0, 500, 0) as u32,
         prestige_bonus: form.int_in("prestige_bonus", 0, 100, 5),
+        streak_bonus: form.int_in("streak_bonus", 0, 100, 0),
+        streak_max: form.int_in("streak_max", 0, 500, 20),
     };
     let curve_changed = s.curve_base != old.curve_base || s.curve_factor != old.curve_factor || s.custom_curve != old.custom_curve;
     ctx.save_settings(guild, KEY, &s)?;
@@ -357,6 +363,9 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         if s.prestige_on() && m.prestige > 0 {
             parts.push(format!("Prestige {}", m.prestige));
         }
+        if m.streak > 1 {
+            parts.push(format!("{}-day streak", m.streak));
+        }
         parts.join(" · ")
     };
     let earning = {
@@ -366,6 +375,9 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         }
         if s.reaction_xp > 0 {
             parts.push(format!("{} for a reaction.", s.reaction_xp));
+        }
+        if s.streak_bonus > 0 && s.streak_max > 0 {
+            parts.push(format!("Each day in a row with XP adds {}% more, up to {}%.", s.streak_bonus, s.streak_max));
         }
         if s.prestige_on() {
             parts.push(if s.prestige_bonus > 0 {

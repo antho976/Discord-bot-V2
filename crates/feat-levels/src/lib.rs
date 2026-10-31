@@ -56,6 +56,10 @@ pub struct Settings {
     pub prestige_level: u32,
     /// Extra XP per prestige, in percent, on XP members earn.
     pub prestige_bonus: i64,
+    /// Extra XP, in percent, for each day in a row a member earned XP after the first. 0 is off.
+    pub streak_bonus: i64,
+    /// The most the streak bonus grows to, in percent.
+    pub streak_max: i64,
 }
 
 impl Default for Settings {
@@ -82,6 +86,8 @@ impl Default for Settings {
             weekly_channel: None,
             prestige_level: 0,
             prestige_bonus: 5,
+            streak_bonus: 0,
+            streak_max: 20,
         }
     }
 }
@@ -102,10 +108,39 @@ impl Settings {
         if self.prestige_on() { prestige.max(0).saturating_mul(self.prestige_bonus.max(0)) } else { 0 }
     }
 
+    /// The extra XP, in percent, a streak of `streak` days earns: nothing on the first day, then
+    /// `streak_bonus` for each day after it, up to `streak_max`.
+    pub fn streak_pct(&self, streak: i64) -> i64 {
+        (streak - 1).max(0).saturating_mul(self.streak_bonus.max(0)).min(self.streak_max.max(0))
+    }
+
     /// How the leaderboard sorts: prestige first when it's on.
     fn order(&self) -> &'static str {
         if self.prestige_on() { "prestige DESC, xp DESC, user_id" } else { "xp DESC, user_id" }
     }
+}
+
+/// Days since 1970 in UTC: streaks count these.
+fn day_of(ms: i64) -> i64 {
+    ms.div_euclid(86_400_000)
+}
+
+/// A streak after earning XP on `today`, given the streak and the day it last grew: one more the
+/// day after, the same later that day, and back to 1 after a day without XP.
+fn next_streak(streak: i64, day: i64, today: i64) -> i64 {
+    if day == today {
+        streak.max(1)
+    } else if day == today - 1 {
+        streak + 1
+    } else {
+        1
+    }
+}
+
+/// A streak as it stands on `today`. It's still alive the day after it last grew, since the member
+/// can carry it on until midnight UTC.
+fn live_streak(streak: i64, day: i64, today: i64) -> i64 {
+    if day >= today - 1 { streak } else { 0 }
 }
 
 /// `amount` with a bonus in percent, rounded to the nearest XP.
@@ -124,6 +159,8 @@ pub struct Member {
     pub messages: i64,
     pub voice_minutes: i64,
     pub prestige: i64,
+    /// Days in a row with XP, counting today or yesterday; 0 once it has lapsed.
+    pub streak: i64,
 }
 
 #[derive(Default)]
@@ -163,6 +200,12 @@ const MIGRATIONS: &[Migration] = &[Migration {
         CREATE TABLE level_week_winners (
             guild_id INTEGER NOT NULL, week TEXT NOT NULL, place INTEGER NOT NULL,
             user_id INTEGER NOT NULL, xp INTEGER NOT NULL, PRIMARY KEY (guild_id, place));
+    ",
+}, Migration {
+    name: "004_levels_streaks",
+    sql: "
+        ALTER TABLE levels ADD COLUMN streak INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE levels ADD COLUMN streak_day INTEGER NOT NULL DEFAULT 0;
     ",
 }];
 
@@ -311,7 +354,7 @@ impl Feature for Levels {
         match call.data.name.as_str() {
             "rank" => {
                 let user = call.opts().user("member").map(|u| u.get()).unwrap_or(call.user_id());
-                let m = member(ctx, guild, user)?.unwrap_or(Member { user_id: user, xp: 0, level: 0, messages: 0, voice_minutes: 0, prestige: 0 });
+                let m = member(ctx, guild, user)?.unwrap_or(Member { user_id: user, xp: 0, level: 0, messages: 0, voice_minutes: 0, prestige: 0, streak: 0 });
                 let p = s.progress(m.xp);
                 let place = rank_of(ctx, guild, user)?;
                 let name = ctx.display_name(guild, user);
@@ -326,7 +369,14 @@ impl Feature for Levels {
                     let value = if bonus > 0 { format!("{}, +{bonus}% XP", m.prestige) } else { m.prestige.to_string() };
                     embed = embed.field(EmbedFieldBuilder::new("Prestige", value).inline());
                 }
+                let streak = match (m.streak, s.streak_pct(m.streak)) {
+                    (0, _) => "None".to_owned(),
+                    (1, _) => "1 day".to_owned(),
+                    (n, 0) => format!("{n} days"),
+                    (n, pct) => format!("{n} days, +{pct}% XP"),
+                };
                 let embed = embed
+                    .field(EmbedFieldBuilder::new("Streak", streak).inline())
                     .field(EmbedFieldBuilder::new("Messages", text::num(m.messages)).inline())
                     .field(EmbedFieldBuilder::new("Voice", text::duration(m.voice_minutes * 60)).inline())
                     .build();
@@ -458,7 +508,7 @@ pub fn member(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<Member>> {
 }
 
 /// The columns `member_row` reads.
-const COLS: &str = "user_id, xp, level, messages, voice_minutes, prestige";
+const COLS: &str = "user_id, xp, level, messages, voice_minutes, prestige, streak, streak_day";
 
 /// Who is on the leaderboard: anyone with XP, and anyone who prestiged and is back at 0.
 const ON_BOARD: &str = "(xp > 0 OR prestige > 0)";
@@ -487,6 +537,7 @@ fn member_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<Mem
         messages: r.get(3)?,
         voice_minutes: r.get(4)?,
         prestige: r.get(5)?,
+        streak: live_streak(r.get(6)?, r.get(7)?, day_of(bot_core::now_ms())),
     })
 }
 
@@ -531,7 +582,7 @@ pub enum Board {
 
 /// XP gained this week: XP now less XP when the week started. Members who first earned XP this
 /// week have no starting row and count from zero.
-const WEEK_GAIN: &str = "SELECT l.user_id, l.xp, l.level, l.messages, l.voice_minutes, l.prestige, l.xp - COALESCE(w.xp, 0) AS gain FROM levels l
+const WEEK_GAIN: &str = "SELECT l.user_id, l.xp, l.level, l.messages, l.voice_minutes, l.prestige, l.streak, l.streak_day, l.xp - COALESCE(w.xp, 0) AS gain FROM levels l
      LEFT JOIN level_week w ON w.guild_id = l.guild_id AND w.user_id = l.user_id
      WHERE l.guild_id = ?1 AND gain > 0";
 
@@ -539,7 +590,7 @@ const WEEK_GAIN: &str = "SELECT l.user_id, l.xp, l.level, l.messages, l.voice_mi
 pub fn week_top(ctx: &Ctx, guild: u64, offset: i64, limit: i64) -> Result<Vec<(Member, i64)>> {
     ctx.db.with(|c| {
         let mut stmt = c.prepare_cached(&format!("{WEEK_GAIN} ORDER BY gain DESC, l.user_id LIMIT ?2 OFFSET ?3"))?;
-        stmt.query_map(params![guild as i64, limit, offset], |r| Ok((member_row(r)?, r.get(6)?)))?.collect()
+        stmt.query_map(params![guild as i64, limit, offset], |r| Ok((member_row(r)?, r.get(8)?)))?.collect()
     })
 }
 
@@ -582,7 +633,8 @@ fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64) -> Result<(bot_co
             None => format!("{} XP", text::num(m.xp)),
         };
         let prestige = if s.prestige_on() && m.prestige > 0 { format!("prestige {}  ·  ", m.prestige) } else { String::new() };
-        lines.push(format!("`{place:>2}`  {}  ·  {prestige}level {}  ·  {figure}", ctx.display_name(guild, m.user_id), m.level));
+        let streak = if m.streak > 1 { format!("{}-day streak  ·  ", m.streak) } else { String::new() };
+        lines.push(format!("`{place:>2}`  {}  ·  {prestige}level {}  ·  {streak}{figure}", ctx.display_name(guild, m.user_id), m.level));
     }
     let (title, nobody, prefix) = match board {
         Board::All => (format!("{} leaderboard", ctx.guild_name(guild)), "Nobody has XP yet.", "lb"),
@@ -624,23 +676,34 @@ async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, chann
     let s = ctx.settings::<Settings>(guild, KEY)?;
     // Read and write under one lock: a message, a reaction and the voice tick for the same member
     // can land together, and each must add to what the other wrote.
+    let now = bot_core::now_ms();
     let (before, level) = ctx.db.with(|c| {
-        let (xp, level, prestige): (i64, u32, i64) = c
-            .query_row("SELECT xp, level, prestige FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| {
-                Ok((r.get(0)?, r.get::<_, i64>(1)? as u32, r.get(2)?))
-            })
+        let (xp, level, prestige, streak, day): (i64, u32, i64, i64, i64) = c
+            .query_row(
+                "SELECT xp, level, prestige, streak, streak_day FROM levels WHERE guild_id = ?1 AND user_id = ?2",
+                params![guild as i64, user as i64],
+                |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u32, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
             .optional()?
-            .unwrap_or((0, 0, 0));
+            .unwrap_or((0, 0, 0, 0, 0));
         let before = (xp, level);
-        // Prestige boosts what members earn, not what staff give or take.
-        let amount = if how == Earned::Manual { amount } else { boosted(amount, s.prestige_pct(prestige)) };
+        // Earning keeps the streak going, and prestige and the streak boost what members earn;
+        // staff giving or taking XP touches neither.
+        let (amount, streak, day) = if how == Earned::Manual {
+            (amount, streak, day)
+        } else {
+            let today = day_of(now);
+            let streak = next_streak(streak, day, today);
+            (boosted(amount, s.prestige_pct(prestige).saturating_add(s.streak_pct(streak))), streak, today)
+        };
         let xp = before.0.saturating_add(amount).clamp(0, curve::MAX_XP);
         let level = s.progress(xp).level;
         c.execute(
-            "INSERT INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, updated_at, streak, streak_day)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT (guild_id, user_id) DO UPDATE SET xp = excluded.xp, level = excluded.level,
-               messages = messages + ?5, voice_minutes = voice_minutes + ?6, updated_at = excluded.updated_at",
+               messages = messages + ?5, voice_minutes = voice_minutes + ?6, updated_at = excluded.updated_at,
+               streak = excluded.streak, streak_day = excluded.streak_day",
             params![
                 guild as i64,
                 user as i64,
@@ -648,7 +711,9 @@ async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, chann
                 level as i64,
                 (how == Earned::Message) as i64,
                 (how == Earned::Voice) as i64,
-                bot_core::now_ms()
+                now,
+                streak,
+                day
             ],
         )?;
         Ok((before, level))
@@ -703,7 +768,7 @@ fn roll_week_to(ctx: &Ctx, guild: u64, week: &str) -> Result<Vec<(u64, i64)>> {
     if let Some(ended) = &stored {
         {
             let mut st = tx.prepare(&format!("{WEEK_GAIN} ORDER BY gain DESC, l.user_id LIMIT 3"))?;
-            for row in st.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(6)?)))? {
+            for row in st.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(8)?)))? {
                 winners.push(row?);
             }
         }
@@ -914,15 +979,19 @@ fn notify_failure(ctx: &Ctx, guild: u64, text: String, link: String) {
 
 
 pub(crate) fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
-    let s = Settings { prestige_level: 30, ..Default::default() };
+    let s = Settings { prestige_level: 30, streak_bonus: 2, ..Default::default() };
     ctx.save_settings(guild, KEY, &s)?;
     for (i, (user, _)) in bot_core::preview::MEMBERS.iter().enumerate() {
         let xp = 48_000 / (i as i64 + 1) + (i as i64 * 731) % 900;
         let prestige = match i { 1 => 2, 3 => 1, _ => 0 };
+        // Some members on a streak today or yesterday, one whose streak lapsed.
+        let (streak, back) = [(12, 0), (3, 0), (0, 0), (27, 1), (5, 0), (2, 1), (1, 0), (8, 4), (4, 0), (0, 0)][i];
+        let day = day_of(bot_core::now_ms()) - back;
         ctx.db.with(|c| {
             c.execute(
-                "INSERT OR REPLACE INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, prestige, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
-                params![guild as i64, *user as i64, xp, s.progress(xp).level as i64, xp / 21, xp / 40, prestige],
+                "INSERT OR REPLACE INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, prestige, streak, streak_day, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)",
+                params![guild as i64, *user as i64, xp, s.progress(xp).level as i64, xp / 21, xp / 40, prestige, streak, day],
             )
         })?;
     }
@@ -1055,7 +1124,7 @@ mod tests {
     #[test]
     fn prestige_offer_says_why_not() {
         let mut s = Settings::default();
-        let m = |level, prestige| Member { user_id: 1, xp: 0, level, messages: 0, voice_minutes: 0, prestige };
+        let m = |level, prestige| Member { user_id: 1, xp: 0, level, messages: 0, voice_minutes: 0, prestige, streak: 0 };
         assert_eq!(prestige_offer(&s, Some(&m(40, 0))).unwrap_err(), "Prestige is off on this server.");
         s.prestige_level = 30;
         assert_eq!(prestige_offer(&s, Some(&m(12, 0))).unwrap_err(), "You can prestige from level 30. You're level 12.");
@@ -1105,5 +1174,48 @@ mod tests {
         assert_eq!(ids(&ctx), vec![10, 11, 12]);
         assert_eq!(rank_of(&ctx, 1, 12).unwrap(), Some(3));
         assert_eq!(count(&ctx, 1).unwrap(), 3);
+    }
+
+    #[test]
+    fn streaks_count_days_in_a_row() {
+        // First XP ever, then again the same day, the next day, and after a gap.
+        assert_eq!(next_streak(0, 0, 20_000), 1);
+        assert_eq!(next_streak(1, 20_000, 20_000), 1);
+        assert_eq!(next_streak(1, 20_000, 20_001), 2);
+        assert_eq!(next_streak(6, 20_001, 20_002), 7);
+        assert_eq!(next_streak(6, 20_001, 20_003), 1);
+        // It still shows the day after, and is gone the day after that.
+        assert_eq!(live_streak(6, 20_001, 20_001), 6);
+        assert_eq!(live_streak(6, 20_001, 20_002), 6);
+        assert_eq!(live_streak(6, 20_001, 20_003), 0);
+        // Days split at midnight UTC.
+        assert_eq!(day_of(86_400_000 - 1), 0);
+        assert_eq!(day_of(86_400_000), 1);
+    }
+
+    #[test]
+    fn the_streak_bonus_starts_on_day_two_and_stops_at_the_cap() {
+        let s = Settings { streak_bonus: 3, streak_max: 20, ..Default::default() };
+        assert_eq!([0, 1, 2, 5, 7, 8, 100].map(|d| s.streak_pct(d)), [0, 0, 3, 12, 18, 20, 20]);
+        assert_eq!(Settings::default().streak_pct(30), 0, "the bonus is off by default");
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn earning_keeps_the_streak_and_staff_changes_dont() {
+        let ctx = ctx();
+        ctx.save_settings(1, KEY, &Settings { streak_bonus: 10, streak_max: 50, prestige_level: 30, prestige_bonus: 10, ..Default::default() }).unwrap();
+        let today = day_of(bot_core::now_ms());
+        let streak = |ctx: &Ctx| ctx.db.with(|c| c.query_row("SELECT streak, streak_day, xp FROM levels WHERE user_id = 10", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))).unwrap();
+        grant(&ctx, 1, 10, 20, Earned::Voice, None).await.unwrap();
+        assert_eq!(streak(&ctx), (1, today, 20));
+        // Yesterday was day 4 of a streak, with one prestige: today is day 5, worth 40% + 10%.
+        ctx.db.with(|c| c.execute("UPDATE levels SET streak = 4, streak_day = ?1, prestige = 1 WHERE user_id = 10", [today - 1])).unwrap();
+        grant(&ctx, 1, 10, 20, Earned::Voice, None).await.unwrap();
+        assert_eq!(streak(&ctx), (5, today, 50));
+        // Staff changes neither move the streak nor get a bonus.
+        grant(&ctx, 1, 10, 100, Earned::Manual, None).await.unwrap();
+        grant(&ctx, 1, 10, -30, Earned::Manual, None).await.unwrap();
+        assert_eq!(streak(&ctx), (5, today, 120));
+        assert_eq!(member(&ctx, 1, 10).unwrap().unwrap().streak, 5);
     }
 }
