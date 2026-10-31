@@ -669,7 +669,7 @@ pub fn readings(items: &[(&str, String)]) -> Markup {
     html! {
         div.readings {
             @for (label, value) in items {
-                div.reading { b.mono { (value) } span { (label) } }
+                div.reading { b data-count { (value) } span { (label) } }
             }
         }
     }
@@ -681,7 +681,7 @@ pub fn rail_numbers(items: &[(&str, String)]) -> Markup {
     html! {
         div.rail-nums {
             @for (label, value) in items {
-                div { b.mono { (value) } span { (label) } }
+                div { b data-count { (value) } span { (label) } }
             }
         }
     }

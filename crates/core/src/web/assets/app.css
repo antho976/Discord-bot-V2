@@ -655,7 +655,7 @@ body.public { background: var(--page); }
 @keyframes hero-in { from { transform: scale(1.12); filter: saturate(0.6) brightness(0.7); } to { transform: scale(1.02); } }
 @keyframes glow-in { from { opacity: 0; transform: translateY(-30px) scale(0.9); } }
 @keyframes grow { from { transform: scaleY(0); } }
-@keyframes fill { from { transform: scaleX(0); } }
+@keyframes fill { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 @keyframes fill-out { to { transform: scaleX(0); } }
 @keyframes line-in { from { clip-path: inset(-20px 100% -20px -20px); } to { clip-path: inset(-20px -20px -20px -20px); } }
 @keyframes area-in { from { opacity: 0; clip-path: inset(0 100% 0 0); } to { opacity: 1; clip-path: inset(0 0 0 0); } }
@@ -702,6 +702,9 @@ html.vt .page-body > *, html.vt .head-icon, html.vt .head-text, html.vt .head-ac
   .head-text h1 { font-size: 21px; }
   .head-actions { margin-left: auto; }
   .head-text p { display: none; }
+  .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-right: -18px; padding-right: 18px; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { white-space: nowrap; flex: none; }
   .page-body { padding: 18px 18px 44px; gap: 24px; }
   .row { grid-template-columns: 1fr; }
   .row-control:has(> .switch) { justify-content: flex-start; }

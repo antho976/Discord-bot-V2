@@ -290,7 +290,8 @@
   // ---------------------------------------------------------------- numbers count up
   const fmt = new Intl.NumberFormat("en-US");
   const countUp = (el) => {
-    const m = el.textContent.trim().match(/^([^\d-]*)(-?[\d,]+)(.*)$/);
+    // Only a plain figure with a short unit ("1,284", "66 h", "+42", "7%"), never a time or date.
+    const m = el.textContent.trim().match(/^([+\-]?)(\d[\d,]*)(\s?[A-Za-z%]{0,5})$/);
     if (!m || calm) { el.classList.add("counted"); return; }
     const [, pre, num, post] = m;
     const target = Number(num.replace(/,/g, ""));
