@@ -1,10 +1,13 @@
+use std::collections::{HashMap, HashSet};
+
 use bot_core::axum::body::Bytes;
 use bot_core::axum::extract::{DefaultBodyLimit, Path, Query, State};
 use bot_core::axum::response::{IntoResponse, Json, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::axum::Router;
-use bot_core::maud::{Markup, html};
+use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::rusqlite::params;
+use bot_core::twilight_model::id::Id;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, serde_json, text};
@@ -80,6 +83,9 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     };
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
 }
+
+/// Each place keeps its spot on the podium even when fewer than three members have XP.
+const CSS: &str = ".podium .step.p1 { grid-column: 2; grid-row: 1; } .podium .step.p2 { grid-column: 1; grid-row: 1; } .podium .step.p3 { grid-column: 3; grid-row: 1; }";
 
 fn role_name(ctx: &Ctx, guild: u64, role: u64) -> String {
     ctx.roles(guild).into_iter().find(|(id, _, _)| *id == role).map(|(_, n, _)| format!("@{n}")).unwrap_or_else(|| "Deleted role".into())
@@ -164,29 +170,70 @@ struct MembersQuery {
     page: Option<i64>,
 }
 
+/// Name and avatar of members Discord found for a search, who the bot's cache doesn't hold.
+type Found = HashMap<u64, (String, String)>;
+
+/// Members whose name contains `needle`, or whose id it is. The cache only holds members the bot
+/// has seen lately, so on a big server most are missing: Discord's member search fills the gap
+/// (it matches the start of a username or nickname) and brings their name and avatar along.
+async fn find_members(ctx: &Ctx, guild: u64, needle: &str) -> (HashSet<u64>, Found) {
+    let lower = needle.to_lowercase();
+    let mut ids: HashSet<u64> = ctx
+        .cache
+        .guild_members(Id::new(guild))
+        .map(|set| set.iter().map(|u| u.get()).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|u| ctx.display_name(guild, *u).to_lowercase().contains(&lower))
+        .collect();
+    let mut found = Found::new();
+    if let Ok(id) = needle.parse::<u64>() {
+        ids.insert(id);
+        return (ids, found);
+    }
+    let members = match ctx.http.search_guild_members(Id::new(guild), needle).limit(1000).await {
+        Ok(res) => res.models().await.unwrap_or_default(),
+        Err(e) => {
+            bot_core::tracing::debug!(guild, error = %e, "member search failed");
+            Vec::new()
+        }
+    };
+    for m in members {
+        let id = m.user.id.get();
+        if ids.insert(id) {
+            let name = m.nick.clone().or_else(|| m.user.global_name.clone()).unwrap_or_else(|| m.user.name.clone());
+            let avatar = match m.avatar {
+                Some(a) => format!("https://cdn.discordapp.com/guilds/{guild}/users/{id}/avatars/{a}.png?size=128"),
+                None => bot_core::discord::avatar_url(id, m.user.avatar.map(|a| a.to_string()).as_deref()),
+            };
+            found.insert(id, (name, avatar));
+        }
+    }
+    (ids, found)
+}
+
 async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<MembersQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let per = 25;
-    let n = q.page.unwrap_or(0).max(0);
     let search = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let ids: Option<Vec<u64>> = search.map(|needle| {
-        let needle = needle.to_lowercase();
-        let by_id: Option<u64> = needle.parse().ok();
-        ctx.cache
-            .guild_members(bot_core::twilight_model::id::Id::new(guild))
-            .map(|set| set.iter().map(|u| u.get()).collect::<Vec<_>>())
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|u| Some(*u) == by_id || ctx.display_name(guild, *u).to_lowercase().contains(&needle))
-            .chain(by_id)
-            .collect()
-    });
     let total = crate::count(&ctx, guild)?;
-    // The podium shows on the first page without a search; the list starts after it.
-    let podium = if search.is_none() && n == 0 { crate::top(&ctx, guild, 0, 3, None)? } else { Vec::new() };
-    let start = if search.is_none() { 3 + n * per } else { 0 };
-    let rows = crate::top(&ctx, guild, start, per, ids.as_deref())?;
+    // The podium takes the first three; the pages of the list start after it.
+    let pages = ((total - 3).max(0) + per - 1) / per;
+    let n = q.page.unwrap_or(0).clamp(0, (pages - 1).max(0));
+    let podium = if search.is_none() && n == 0 { crate::top(&ctx, guild, 0, 3)? } else { Vec::new() };
+    let start = 3 + n * per;
+    let (rows, found, matched): (Vec<(i64, crate::Member)>, Found, i64) = match search {
+        Some(needle) => {
+            let (ids, found) = find_members(&ctx, guild, needle).await;
+            let (rows, matched) = crate::find(&ctx, guild, &ids, per as usize)?;
+            (rows, found, matched)
+        }
+        None => {
+            let rows = crate::top(&ctx, guild, start, per)?;
+            (rows.into_iter().enumerate().map(|(i, m)| (start + i as i64 + 1, m)).collect(), Found::new(), 0)
+        }
+    };
     let rewards = crate::rewards(&ctx, guild)?;
     let roles = ctx.roles(guild);
     let at_least = |level: u32| -> i64 {
@@ -206,7 +253,8 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             )
         })
         .unwrap_or((0, 0));
-    let name = |u: u64| ctx.display_name(guild, u);
+    let name = |u: u64| found.get(&u).map(|f| f.0.clone()).unwrap_or_else(|| ctx.display_name(guild, u));
+    let avatar = |u: u64| found.get(&u).map(|f| f.1.clone()).unwrap_or_else(|| ctx.member_avatar(guild, u));
     let line = |m: &crate::Member| format!("Level {} · {} XP", s.progress(m.xp).level, text::num(m.xp));
     let earning = {
         let mut parts = vec![format!("{} to {} per message, once every {}.", s.xp_min, s.xp_max, text::duration(s.cooldown_secs))];
@@ -220,6 +268,7 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     };
 
     let main = html! {
+        style { (PreEscaped(CSS)) }
         @if !podium.is_empty() {
             div.podium {
                 @for (place, i) in [(2usize, 1usize), (1, 0), (3, 2)] {
@@ -246,14 +295,16 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             } @else {
                 (ui::empty(Icon::Trophy, "Nobody has XP yet", "Members show up here once they chat, or after you import XP from the old bot."))
             }
+        } @else if rows.is_empty() && search.is_none() {
+            p.muted.small { "Everyone with XP is on the podium so far." }
         } @else {
             div.ranks {
-                @for (i, m) in rows.iter().enumerate() {
+                @for (place, m) in &rows {
                     @let p = s.progress(m.xp);
                     @let pct = if p.needed > 0 { (p.into * 100 / p.needed).clamp(0, 100) } else { 0 };
                     div.rank {
-                        span.mono.muted.pos { @if search.is_none() { (start + i as i64 + 1) } }
-                        img.avatar src=(ctx.member_avatar(guild, m.user_id)) alt="" width="28" height="28" loading="lazy";
+                        span.mono.muted.pos { (place) }
+                        img.avatar src=(avatar(m.user_id)) alt="" width="28" height="28" loading="lazy";
                         div.who { strong { (name(m.user_id)) } span.muted.small { "Level " (p.level) } }
                         div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% to level " (p.level + 1) } }
                         span.mono.xp { (text::num(m.xp)) " XP" }
@@ -272,14 +323,15 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     }
                 }
             }
-            @if search.is_none() && total > start + per {
+            @if matched > rows.len() as i64 {
+                p.muted.small { "Showing the top " (rows.len()) " of " (text::num(matched)) " matches. Type more of the name to narrow it." }
+            }
+            @if search.is_none() && pages > 1 {
                 div.inline-form {
                     @if n > 0 { a.btn.small.outline href={ (page.path("levels")) "?page=" (n - 1) } { "Previous" } }
-                    span.muted.small { "Page " (n + 1) " of " (((total - 3).max(1) + per - 1) / per) }
-                    a.btn.small.outline href={ (page.path("levels")) "?page=" (n + 1) } { "Next" }
+                    span.muted.small { "Page " (n + 1) " of " (pages) }
+                    @if n + 1 < pages { a.btn.small.outline href={ (page.path("levels")) "?page=" (n + 1) } { "Next" } }
                 }
-            } @else if search.is_none() && n > 0 {
-                div { a.btn.small.outline href={ (page.path("levels")) "?page=" (n - 1) } { "Previous" } }
             }
         }
     };
@@ -306,7 +358,7 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 div.rail-block {
                     h2 { "XP earned this week" }
                     div.big-num { (text::num(week.0)) }
-                    span.muted.small { "by " (text::num(week.1)) " members since Monday" }
+                    span.muted.small { "by " (text::num(week.1)) @if week.1 == 1 { " member" } @else { " members" } " since Monday" }
                 }
                 div.rail-block {
                     h2 { "How XP is earned" }

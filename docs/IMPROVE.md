@@ -81,7 +81,7 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       restarts, and bring back "no staff reply yet".
 - [x] Starboard: images. Discord image links expire, so fetch a fresh one when the page loads
       (cached briefly) rather than storing it.
-- [ ] Levels: search finds only cached members. Check large servers and the podium with fewer
+- [x] Levels: search finds only cached members. Check large servers and the podium with fewer
       than 3 members.
 - [ ] Welcome: let invites have a friendly name ("Twitch link") set on the Invites tab, and show
       it on "Joined today".

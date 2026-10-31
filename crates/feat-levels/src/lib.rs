@@ -376,29 +376,44 @@ fn rank_of(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<i64>> {
     })
 }
 
-pub fn top(ctx: &Ctx, guild: u64, offset: i64, limit: i64, search: Option<&[u64]>) -> Result<Vec<Member>> {
+fn member_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<Member> {
+    Ok(Member {
+        user_id: r.get::<_, i64>(0)? as u64,
+        xp: r.get(1)?,
+        level: r.get::<_, i64>(2)? as u32,
+        messages: r.get(3)?,
+        voice_minutes: r.get(4)?,
+    })
+}
+
+pub fn top(ctx: &Ctx, guild: u64, offset: i64, limit: i64) -> Result<Vec<Member>> {
     ctx.db.with(|c| {
-        let mut out = Vec::new();
         let mut stmt = c.prepare_cached(
             "SELECT user_id, xp, level, messages, voice_minutes FROM levels WHERE guild_id = ?1 AND xp > 0
              ORDER BY xp DESC LIMIT ?2 OFFSET ?3",
         )?;
-        let rows = stmt.query_map(params![guild as i64, if search.is_some() { 100_000 } else { limit }, if search.is_some() { 0 } else { offset }], |r| {
-            Ok(Member {
-                user_id: r.get::<_, i64>(0)? as u64,
-                xp: r.get(1)?,
-                level: r.get::<_, i64>(2)? as u32,
-                messages: r.get(3)?,
-                voice_minutes: r.get(4)?,
-            })
-        })?;
-        for m in rows {
+        stmt.query_map(params![guild as i64, limit, offset], member_row)?.collect()
+    })
+}
+
+/// The members among `ids` with XP, best first, each with their place on the leaderboard: up to
+/// `limit` of them, and how many matched in all.
+pub fn find(ctx: &Ctx, guild: u64, ids: &std::collections::HashSet<u64>, limit: usize) -> Result<(Vec<(i64, Member)>, i64)> {
+    ctx.db.with(|c| {
+        let mut stmt = c.prepare_cached(
+            "SELECT user_id, xp, level, messages, voice_minutes FROM levels WHERE guild_id = ?1 AND xp > 0 ORDER BY xp DESC",
+        )?;
+        let (mut out, mut matched) = (Vec::new(), 0);
+        for (i, m) in stmt.query_map([guild as i64], member_row)?.enumerate() {
             let m = m?;
-            if search.is_none_or(|ids| ids.contains(&m.user_id)) {
-                out.push(m);
+            if ids.contains(&m.user_id) {
+                matched += 1;
+                if out.len() < limit {
+                    out.push((i as i64 + 1, m));
+                }
             }
         }
-        Ok(out)
+        Ok((out, matched))
     })
 }
 
@@ -411,7 +426,7 @@ fn leaderboard(ctx: &Ctx, guild: u64, page: i64) -> Result<(bot_core::twilight_m
     let total = count(ctx, guild)?;
     let pages = ((total + per - 1) / per).max(1);
     let page = page.min(pages - 1);
-    let rows = top(ctx, guild, page * per, per, None)?;
+    let rows = top(ctx, guild, page * per, per)?;
     let mut lines = Vec::new();
     for (i, m) in rows.iter().enumerate() {
         let place = page * per + i as i64 + 1;
