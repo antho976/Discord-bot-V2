@@ -303,9 +303,14 @@ pub(crate) struct Held {
 
 // ---- where a DM goes ----
 
-/// Modmail is on in this server and has somewhere to put conversations.
+/// Modmail is on in this server and the bot can reach it.
+fn reachable(ctx: &Ctx, guild: u64) -> bool {
+    ctx.enabled(guild, KEY) && ctx.cache.guild(Id::new(guild)).is_some()
+}
+
+/// Modmail is on in this server and has somewhere to put new conversations.
 fn takes_mail(ctx: &Ctx, guild: u64) -> bool {
-    ctx.enabled(guild, KEY) && ctx.cache.guild(Id::new(guild)).is_some() && ctx.settings::<Settings>(guild, KEY).is_ok_and(|s| s.channel.is_some())
+    reachable(ctx, guild) && ctx.settings::<Settings>(guild, KEY).is_ok_and(|s| s.channel.is_some())
 }
 
 /// Servers the member is in that take modmail.
@@ -343,7 +348,9 @@ pub async fn on_dm(f: &Modmail, ctx: &Ctx, m: &Message) -> Result<()> {
     let incoming = Incoming::of(m);
     let turn = f.turn(user);
     let _turn = turn.lock().await;
-    let open: Vec<u64> = ctx.db.with(|c| open_for_user(c, user))?.into_iter().map(|c| c.guild_id).filter(|g| takes_mail(ctx, *g)).collect();
+    let open: Vec<u64> = ctx.db.with(|c| open_for_user(c, user))?.into_iter().map(|c| c.guild_id).filter(|g| reachable(ctx, *g)).collect();
+    // Open conversations keep both directions even after the staff channel is cleared: staff
+    // still answer in their threads, so the member's answers still reach them there.
     let shared = if open.is_empty() { shared_servers(ctx, user) } else { Vec::new() };
     match route(&open, &shared) {
         Route::To(guild) => deliver(f, ctx, guild, user, &name, &avatar, &[incoming]).await,
