@@ -15,6 +15,8 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let edit = page.can_edit();
     let polls = ctx.db.with(|c| pl::recent(c, guild, 200))?;
     let (open, over): (Vec<Poll>, Vec<Poll>) = polls.into_iter().partition(|p| !p.is_over());
+    // Votes cast while the bot was offline: read the open polls from Discord when they're due.
+    pl::wait_briefly(pl::catch_up(&ctx, &open, pl::RESYNC_MS), 1500).await;
 
     let main = if ended_tab { ended_list(&ctx, &page, guild, &over) } else { open_view(&ctx, &page, guild, &open, edit) };
     let actions = edit.then(|| header_pop("Post a poll", post_form(&ctx, &page, guild)));
