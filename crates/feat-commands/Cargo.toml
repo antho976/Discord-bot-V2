@@ -1,0 +1,10 @@
+[package]
+name = "feat-commands"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+bot-core.workspace = true
+maud.workspace = true
+serde.workspace = true

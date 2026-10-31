@@ -71,7 +71,7 @@ impl Group {
             Group::Community => "Community",
             Group::Members => "Members",
             Group::Safety => "Safety",
-            Group::Pets => "Idleon pets",
+            Group::Pets => "Idleon",
             Group::Tools => "Tools",
         }
     }
@@ -155,6 +155,21 @@ pub trait Feature: Send + Sync + 'static {
     /// Slash commands, registered per server where the feature is on.
     fn commands(&self) -> Vec<Command> {
         Vec::new()
+    }
+
+    /// Slash commands that differ per server (ones people define on the dashboard, or one a
+    /// setting switches on), registered next to [`Feature::commands`]. Calls to them reach
+    /// `on_command` like the others. Called on every registration and for commands no
+    /// feature lists in `commands`, so read cached settings only. After a change, call
+    /// [`discord::register_commands`] for that server.
+    fn guild_commands(&self, _ctx: &Ctx, _guild: u64) -> Vec<Command> {
+        Vec::new()
+    }
+
+    /// Names [`Feature::guild_commands`] may use in some server, even where it doesn't now
+    /// (a setting that's off). Custom commands can't take them.
+    fn reserved_command_names(&self) -> &'static [&'static str] {
+        &[]
     }
 
     /// Dashboard pages and endpoints. Pages go under `/g/{guild}/{key}`, public pages under

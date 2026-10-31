@@ -15,7 +15,7 @@ use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text, tracing};
 
 use crate::twitch::{self, Broadcaster, Mode, StreamRow};
-use crate::{KEY, Settings, schedule, youtube};
+use crate::{KEY, Settings, clips, schedule, youtube};
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
@@ -23,9 +23,11 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/alerts/test", post(send_test))
         .route("/g/{guild}/alerts/schedule", get(schedule_page).post(save_schedule))
         .route("/g/{guild}/alerts/schedule.png", get(schedule_png))
+        .route("/g/{guild}/alerts/clips", get(clips_page).post(save_clips))
         .route("/g/{guild}/alerts/youtube", get(youtube_page).post(save_youtube))
         .route("/g/{guild}/alerts/youtube/test", post(send_youtube_test))
-        .route("/g/{guild}/alerts/streams", get(streams_page))
+        .route("/g/{guild}/alerts/stats", get(stats_page))
+        .route("/g/{guild}/alerts/streams", get(streams_redirect))
         .route("/webhooks/twitch", post(twitch::webhook))
 }
 
@@ -34,8 +36,9 @@ fn tabs(page: &Page, active: &str) -> Markup {
         &[
             ("Twitch", page.path("alerts")),
             ("Schedule", page.path("alerts/schedule")),
+            ("Clips", page.path("alerts/clips")),
             ("YouTube", page.path("alerts/youtube")),
-            ("Streams", page.path("alerts/streams")),
+            ("Stats", page.path("alerts/stats")),
         ],
         active,
     )
@@ -215,7 +218,8 @@ fn in_minutes(minutes: i64) -> String {
 }
 
 /// A new-video post as Discord shows it: the message, then the card Discord draws for the link.
-fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &youtube::Video) -> Markup {
+/// `reward` is the claim button's label, when posts carry one.
+fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &youtube::Video, reward: Option<String>) -> Markup {
     let url = v.url();
     let filled = youtube::fill_video(template, &v.author, &v.title, &url);
     let unfurls = filled.contains(&url);
@@ -242,6 +246,7 @@ fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &
                 }
             }
         }
+        @if let Some(label) = reward { span.sa-claim { (label) } }
     })
 }
 
@@ -313,22 +318,10 @@ fn reminder_line(cfg: &Settings) -> String {
     }
 }
 
-/// Hours a week as bars, oldest first. The latest week is lilac and the rest are dimmer.
+/// Hours a week as the rail's bars, oldest first: the latest week lilac, the rest dimmer.
 fn week_bars(series: &[(String, i64)]) -> Markup {
-    let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
-    let n = series.len();
-    html! {
-        div.sa-bars {
-            svg viewBox={ "0 0 " ((n * 10).saturating_sub(4)) " 48" } preserveAspectRatio="none" role="img" aria-label={ "Hours streamed in each of the last " (n) " weeks" } {
-                @for (i, (label, v)) in series.iter().enumerate() {
-                    @let h = (*v as f64 / max * 46.0).max(if *v > 0 { 2.0 } else { 0.0 });
-                    rect x=(i * 10) y=(48.0 - h) width="6" height=(h) fill=(if i + 1 == n { "var(--data)" } else { "var(--data-dim)" }) {
-                        title { (label) ": " (v) " h" }
-                    }
-                }
-            }
-        }
-    }
+    let bars: Vec<(String, Option<i64>)> = series.iter().map(|(label, v)| (label.clone(), Some(*v))).collect();
+    ui::mini_bars(&bars, "h", &format!("Hours streamed in each of the last {} weeks", series.len()))
 }
 
 /// The rail's "This week": the week's segments with the next one picked out, then the reminders.
@@ -446,6 +439,7 @@ fn hours_block(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Markup {
 
 const CSS: &str = r#"
 .sa-main { min-width: 0; }
+.sa-linked a { color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
 .sa-sechead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .sa-sechead h2 { font-size: 14px; }
 .sa-post { display: flex; align-items: flex-start; gap: 14px; min-width: 0; color: #dbdee1; font: 15px/1.4 var(--sans); }
@@ -479,6 +473,9 @@ const CSS: &str = r#"
 .sa-watch { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 16px; border-radius: 4px; background: #4e5058; color: #fff; font-size: 14px; font-weight: 500; }
 .sa-watch .icon { width: 14px; height: 14px; }
 .sa-watch:hover { background: #6d6f78; }
+.sa-claim { display: inline-flex; align-items: center; height: 32px; padding: 0 16px; margin-top: 4px; border-radius: 4px; background: #248046; color: #fff; font-size: 14px; font-weight: 500; }
+.sa-claims { display: flex; align-items: center; gap: 8px; flex: none; }
+.sa-claims .mono { font-size: 12px; color: var(--ink-2); }
 .sa-note { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: var(--ink-3); max-width: 72ch; }
 .sa-note > .icon { margin-top: 3px; flex: none; }
 .sa-note p + p { margin-top: 4px; }
@@ -503,7 +500,6 @@ const CSS: &str = r#"
 .sa-who { font-weight: 500; margin-top: 4px; }
 .sa-note.sa-warn { color: var(--ink-2); }
 .sa-note.sa-warn > .icon { color: var(--waiting); }
-.sa-bars svg { display: block; width: 100%; height: 52px; overflow: visible; }
 "#;
 
 /// Columns marked `.wide-only` drop on a phone so tables fit without scrolling sideways.
@@ -693,7 +689,7 @@ async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     }
     if let Err(e) = twitch::test_alert(&ctx, &s).await {
         tracing::warn!(guild, error = %e, "test alert failed");
-        return Err(WebError::Bad("Discord refused the post. Check that the bot can send messages and embeds in that channel.".into()));
+        return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
     }
     ctx.audit(&page.user, Some(guild), KEY, "Sent a test live alert");
     Ok(bot_core::axum::response::Redirect::to(&page.path("alerts?sent=1")).into_response())
@@ -856,6 +852,132 @@ async fn schedule_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     Ok(([(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "private, max-age=60")], png).into_response())
 }
 
+// ---- Clips ----
+
+/// A clip post as Discord shows it: the line with the link, then the card Discord draws for it.
+fn clip_post(ctx: &Ctx, page: &Page, b: &Broadcaster, c: &clips::Clip) -> Markup {
+    let text = clips::headline(c);
+    bot_message(ctx, page, html! {
+        div.sa-line { (text) br; a href=(c.url) target="_blank" rel="noopener" { (c.url) } }
+        div.sa-embed style="--embed:#9146ff" {
+            div.sa-provider { "Twitch" }
+            a.sa-title href=(c.url) target="_blank" rel="noopener" { (c.title) " - " (b.name) }
+            div.sa-yt {
+                @if c.thumbnail.is_empty() {
+                    div.sa-thumb {}
+                } @else {
+                    img.sa-thumb src=(c.thumbnail) alt="" width="480" height="272" loading="lazy";
+                }
+                span.sa-play { (ui::icon(Icon::Play)) }
+            }
+        }
+    })
+}
+
+async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::View)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let mode = twitch::mode(&ctx);
+    let bs = twitch::for_settings(&ctx, &s);
+    let ids: Vec<String> = bs.iter().map(|b| b.user_id.clone()).collect();
+    let list = clips::recent(&ctx, &ids, 12);
+    let now = now_ms();
+    let month = clips::count_since(&ctx, &ids, now - 30 * 86_400_000);
+    let checked = ids.iter().filter_map(|id| clips::last_check(&ctx, id)).max();
+    let b = sample_broadcaster(&bs, &s);
+    let sample = list.first().cloned().unwrap_or_else(|| clips::Clip {
+        id: String::new(),
+        title: "Your clip's title".into(),
+        creator: "a viewer".into(),
+        url: format!("https://clips.twitch.tv/{}", b.login),
+        thumbnail: String::new(),
+        views: 0,
+        created_at: now,
+    });
+    let posting = s.clips && s.clips_channel.is_some();
+
+    let body = html! {
+        style { (PreEscaped(CSS)) }
+        (tabs(&page, "Clips"))
+        div.with-rail {
+            div.stack.sa-main {
+                @if mode == Mode::Off {
+                    div.sa-note {
+                        (ui::icon(Icon::Plug))
+                        div { p { "Twitch isn't connected, so clips can't be read. Set " code { "TWITCH_CLIENT_ID" } " and " code { "TWITCH_CLIENT_SECRET" } " in the bot's environment and restart it." } }
+                    }
+                }
+                section.block {
+                    div.sa-sechead { h2 { "What members see for a new clip" } }
+                    (clip_post(&ctx, &page, &b, &sample))
+                    p.muted.small {
+                        @match (posting, channel_name(&ctx, guild, s.clips_channel)) {
+                            (true, Some(c)) => { "Posted in " (c) " within 15 minutes of Twitch listing the clip. Nobody is pinged." }
+                            (false, Some(_)) if !s.clips => { "Clip posts are off." }
+                            _ => { "Pick a channel below and save to start posting." }
+                        }
+                    }
+                }
+                (ui::section("Recent clips", Some("Clips made after posting was turned on. Older ones are never posted."), html! {
+                    @if list.is_empty() {
+                        (ui::empty(Icon::Play, "No clips yet", if bs.is_empty() { "Add your Twitch channel on the Twitch tab, then turn clips on below." } else if !posting { "Turn clips on below. New clips show up here and in the channel you pick." } else { "New clips show up here within 15 minutes." }))
+                    } @else {
+                        div.list { @for c in &list {
+                            div.list-item {
+                                @if c.thumbnail.is_empty() {
+                                    span.sa-vt { (ui::icon(Icon::Play)) }
+                                } @else {
+                                    img.sa-vt src=(c.thumbnail) alt="" width="64" height="36" loading="lazy";
+                                }
+                                div.grow style="min-width:0" {
+                                    a.clip style="display:block" href=(c.url) target="_blank" rel="noopener" { (if c.title.is_empty() { "Untitled clip" } else { c.title.as_str() }) }
+                                    p.muted.small {
+                                        @if !c.creator.is_empty() { "Clipped by " (c.creator) " · " }
+                                        (text::num(c.views)) (if c.views == 1 { " view" } else { " views" })
+                                    }
+                                }
+                                span.meta { (text::ago(c.created_at)) }
+                            }
+                        } }
+                    }
+                }))
+                (ui::settings_form(&page, &page.path("alerts/clips"), html! {
+                    (ui::section("Settings", None, ui::card(html! {
+                        (ui::field_toggle("clips", "Post new clips", Some("Clips of the channels on the Twitch tab, made by anyone."), s.clips))
+                        (ui::field_channel(&ctx, guild, "clips_channel", "Post in", None, s.clips_channel))
+                    })))
+                }))
+            }
+            aside.rail {
+                div.rail-block {
+                    h2 { "Clips" }
+                    (ui::rail_numbers(&[("in 30 days", month.to_string())]))
+                    p.muted.small {
+                        @if !posting { "Twitch is checked every 15 minutes while posting is on." }
+                        @else {
+                            "Checked every 15 minutes."
+                            @match checked { Some(at) => { " Last check " (text::ago(at)) "." } None => { " The first check marks where posting starts." } }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    Ok(ui::layout(&ctx, &page, "Stream alerts", Some(status_pill(&ctx)), body).into_response())
+}
+
+async fn save_clips(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let old = ctx.settings::<Settings>(guild, KEY)?;
+    let s = Settings { clips: form.bool("clips"), clips_channel: form.channel(&ctx, guild, "clips_channel"), ..(*old).clone() };
+    if s.clips && s.clips_channel.is_none() {
+        return Err(WebError::Bad("Pick a channel for clips.".into()));
+    }
+    ctx.save_settings(guild, KEY, &s)?;
+    ctx.audit(&page.user, Some(guild), KEY, if s.clips { "Changed Twitch clip posts" } else { "Turned off Twitch clip posts" });
+    Ok(saved(&page.path("alerts/clips")))
+}
+
 // ---- YouTube ----
 
 async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<HashMap<String, String>>) -> WebResult {
@@ -870,8 +992,13 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         published_ms: now_ms(),
     });
     let role = role_name(&ctx, guild, s.youtube_role);
+    let levels_on = ctx.enabled(guild, feat_levels::KEY);
+    let rewards = youtube::rewards_on(&ctx, guild, &s);
+    let claims = youtube::claims(&ctx, guild, &videos.iter().map(|v| v.id.clone()).collect::<Vec<_>>());
+    let (claimed, xp_given) = youtube::claim_totals(&ctx, guild, now_ms() - 30 * 86_400_000);
     let body = html! {
         style { (PreEscaped(CSS)) }
+        (narrow_css())
         (tabs(&page, "YouTube"))
         (toast_if(&q, "sent", "Test post sent"))
         div.with-rail {
@@ -881,7 +1008,7 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                         h2 { "What members see when you upload" }
                         @if page.can_edit() && !videos.is_empty() { (ui::action_button(&page.path("alerts/youtube/test"), "Send a test post", Tone::Muted, false)) }
                     }
-                    (video_post(&ctx, &page, role, &s.youtube_message, &sample))
+                    (video_post(&ctx, &page, role, &s.youtube_message, &sample, rewards.then(|| format!("Claim {} XP", text::num(s.reward_xp)))))
                     p.muted.small {
                         @match channel_name(&ctx, guild, s.youtube_channel) {
                             Some(c) => {
@@ -890,6 +1017,12 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                             }
                             None => { "Pick a channel below and save to start posting." }
                         }
+                        @if rewards {
+                            " Each member can claim " (text::num(s.reward_xp)) " XP once per video, for " (plural(s.reward_hours as usize, "hour", "hours")) " after the post."
+                        }
+                    }
+                    @if s.reward && !levels_on {
+                        p.small { (ui::badge("Not added", Tone::Warn)) " XP and levels is off on this server, so posts don't carry the claim button." }
                     }
                 }
                 (ui::section("Recent videos", Some("A channel's first check only records what's there, so old videos aren't posted."), html! {
@@ -899,11 +1032,17 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                         div.list { @for v in &videos {
                             div.list-item {
                                 img.sa-vt src=(youtube::thumb(&v.id)) alt="" width="64" height="36" loading="lazy";
+                                @let who = claims.get(&v.id).map(Vec::as_slice).unwrap_or_default();
                                 div.grow style="min-width:0" {
                                     a.clip style="display:block" href=(v.url()) target="_blank" rel="noopener" { (v.title) }
-                                    p.muted.small { (v.author) }
+                                    p.muted.small { (v.author) " · " (text::ago(v.published_ms)) }
                                 }
-                                span.meta { (text::ago(v.published_ms)) }
+                                @if !who.is_empty() {
+                                    span.sa-claims title={ (who.len()) " claimed the reward" } {
+                                        span.wide-only { (ui::avatars(&who.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), 4)) }
+                                        span.mono { (who.len()) " claimed" }
+                                    }
+                                }
                             }
                         } }
                     }
@@ -914,6 +1053,11 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                         (ui::field_channel(&ctx, guild, "youtube_channel", "Post in", None, s.youtube_channel))
                         (ui::field_role(&ctx, guild, "youtube_role", "Role to ping", Some("Only this role is pinged."), s.youtube_role))
                         (ui::field_textarea("youtube_message", "Message", Some("{channel}, {title} and {url} are filled in. Keep {url} so Discord shows the video."), &s.youtube_message, crate::DEFAULT_VIDEO_MESSAGE))
+                    })))
+                    (ui::section("Upload rewards", Some("A button on each new video post that gives XP through XP and levels."), ui::card(html! {
+                        (ui::field_toggle("reward", "Add a claim button", Some("Once per member per video."), s.reward))
+                        (ui::field_number("reward_xp", "XP", None, s.reward_xp, 1, 10_000, Some("XP")))
+                        (ui::field_number("reward_hours", "Claim window", Some("How long after the post the button pays out."), s.reward_hours, 1, 168, Some("hours")))
                     })))
                 }))
             }
@@ -934,6 +1078,12 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                 }
                             }
                         }
+                    }
+                }
+                @if s.reward || claimed > 0 {
+                    div.rail-block {
+                        h2 { "Rewards" }
+                        (ui::rail_numbers(&[("claims in 30 days", text::num(claimed)), ("XP given", text::num(xp_given))]))
                     }
                 }
             }
@@ -971,6 +1121,9 @@ async fn save_youtube(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         youtube_channel: form.channel(&ctx, guild, "youtube_channel"),
         youtube_role: form.role(&ctx, guild, "youtube_role"),
         youtube_message: if message.is_empty() { crate::DEFAULT_VIDEO_MESSAGE.into() } else { message },
+        reward: form.bool("reward"),
+        reward_xp: form.int_in("reward_xp", 1, 10_000, old.reward_xp),
+        reward_hours: form.int_in("reward_hours", 1, 168, old.reward_hours),
         ..(*old).clone()
     };
     ctx.save_settings(guild, KEY, &s)?;
@@ -987,55 +1140,164 @@ async fn send_youtube_test(State(ctx): State<Ctx>, user: User, Path(guild): Path
     let Some(v) = youtube::recent(&ctx, &s.youtube_ids, 1).into_iter().next() else {
         return Err(WebError::Bad("There's no video to post yet. Uploads show up after the first check.".into()));
     };
-    if let Err(e) = youtube::test_post(&ctx, channel, &s, &v).await {
+    if let Err(e) = youtube::test_post(&ctx, guild, channel, &s, &v).await {
         tracing::warn!(guild, error = %e, "YouTube test post failed");
-        return Err(WebError::Bad("Discord refused the post. Check that the bot can send messages in that channel.".into()));
+        return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
     }
     ctx.audit(&page.user, Some(guild), KEY, "Sent a test YouTube post");
     Ok(bot_core::axum::response::Redirect::to(&page.path("alerts/youtube?sent=1")).into_response())
 }
 
-// ---- Streams ----
+// ---- Stats ----
 
-async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+/// Average viewers across streams, weighted by how often each was read: `None` when no stream
+/// had a viewer count. Uses each stream's exact sum of counts, so nothing is lost to rounding.
+fn avg_viewers<'a>(rows: impl IntoIterator<Item = &'a StreamRow>) -> Option<i64> {
+    let (sum, samples) = rows.into_iter().filter(|r| r.samples > 0).fold((0, 0), |(s, n), r| (s + r.viewer_sum, n + r.samples));
+    (samples > 0).then(|| (sum + samples / 2) / samples)
+}
+
+/// Average viewers in each of the last twelve weeks, oldest first, labelled by their Monday.
+/// A week without a viewer count is `None`, drawn blank rather than as a drop to 0.
+fn weekly_viewers(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Vec<(String, Option<i64>)> {
+    let first = first_monday(tz, now);
+    (0..WEEKS)
+        .map(|w| {
+            let start = first.checked_add(Span::new().days(7 * w)).unwrap_or(first);
+            let end = start.checked_add(Span::new().days(7)).unwrap_or(start);
+            let (a, b) = (day_ms(start, tz), day_ms(end, tz));
+            let avg = avg_viewers(rows.iter().filter(|r| r.started_at >= a && r.started_at < b));
+            (start.strftime("%b %-d").to_string(), avg)
+        })
+        .collect()
+}
+
+/// Follower totals by day (`YYYY-MM-DD`, total), oldest first: what the bot read once a day.
+fn follower_days(ctx: &Ctx, guild: u64, since_day: &str) -> Vec<(String, i64)> {
+    ctx.db
+        .with(|c| {
+            let mut s = c.prepare_cached("SELECT day, value FROM daily_stats WHERE guild_id = ?1 AND key = 'followers' AND day >= ?2 ORDER BY day")?;
+            s.query_map(bot_core::rusqlite::params![guild as i64, since_day], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What the followers reading says: gained across the readings when there are two or more,
+/// the total when there's one.
+fn followers_reading(days: &[(String, i64)]) -> Option<(&'static str, String)> {
+    match days {
+        [] => None,
+        [(_, only)] => Some(("followers", text::num(*only))),
+        [(_, first), .., (_, last)] => {
+            let gained = last - first;
+            Some(("followers in 30 days", if gained > 0 { format!("+{}", text::num(gained)) } else { text::num(gained) }))
+        }
+    }
+}
+
+/// Why there's no follower total to show yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoFollowers {
+    /// Twitch isn't set up on the bot.
+    TwitchOff,
+    /// Twitch refused the app token and no broadcaster of this server signed in.
+    Connect,
+    /// The daily read hasn't stored one yet.
+    Soon,
+}
+
+fn no_followers(mode: Mode, app_refused: bool, signed_in: bool) -> NoFollowers {
+    match mode {
+        Mode::Off => NoFollowers::TwitchOff,
+        _ if app_refused && !signed_in => NoFollowers::Connect,
+        _ => NoFollowers::Soon,
+    }
+}
+
+/// The rail's "Followers": the latest total, or why there isn't one. `reviews_link` is the
+/// Account reviews settings page, for people who can open it.
+fn followers_block(days: &[(String, i64)], why: NoFollowers, reviews_link: Option<&str>) -> Markup {
+    html! {
+        div.rail-block {
+            h2 { "Followers" }
+            @if let Some((day, total)) = days.last() {
+                span.big-num { (text::num(*total)) }
+                p.muted.small { "Read once a day. Last read " (day.parse::<Date>().map(|d| d.strftime("%b %-d").to_string()).unwrap_or_default()) "." }
+            } @else {
+                @match why {
+                    NoFollowers::TwitchOff => p.muted.small { "Followers are read once a day once Twitch is connected." },
+                    NoFollowers::Connect => p.muted.small.sa-linked {
+                        "Connect Twitch on "
+                        @if let Some(href) = reviews_link { a href=(href) { "Account reviews > Settings" } } @else { "Account reviews > Settings" }
+                        " to see followers."
+                    },
+                    NoFollowers::Soon => p.muted.small { "The first count shows up within a day." },
+                }
+            }
+        }
+    }
+}
+
+async fn streams_redirect(Path(guild): Path<u64>) -> bot_core::axum::response::Redirect {
+    bot_core::axum::response::Redirect::permanent(&format!("/g/{guild}/alerts/stats"))
+}
+
+async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let tz = s.tz();
+    let mode = twitch::mode(&ctx);
     let ids: Vec<String> = twitch::for_settings(&ctx, &s).into_iter().map(|b| b.user_id).collect();
     let now = now_ms();
-    // One query covers the twelve-week chart and this month.
-    let since = day_ms(first_monday(&tz, now), &tz).min(month_start(&tz, now));
-    let all = twitch::streams_since(&ctx, &ids, since, 1000)?;
-    let month: Vec<&StreamRow> = all.iter().filter(|r| r.started_at >= month_start(&tz, now)).collect();
+    let month_from = month_start(&tz, now);
+    // One query covers the twelve-week charts and this month.
+    let all = twitch::streams_since(&ctx, &ids, day_ms(first_monday(&tz, now), &tz).min(month_from), 1000)?;
+    let month: Vec<&StreamRow> = all.iter().filter(|r| r.started_at >= month_from).collect();
     let month_secs: i64 = month.iter().map(|r| stream_secs(r, now)).sum();
-    let peak = avg_peak(&month).map(|p| format!("average peak {}", text::num(p))).unwrap_or_else(|| "no viewer counts yet".into());
-    let followers: Option<i64> = ctx
-        .db
-        .with(|c| {
-            c.query_row(
-                "SELECT value FROM daily_stats WHERE guild_id = ?1 AND key = 'followers' ORDER BY day DESC LIMIT 1",
-                [guild as i64],
-                |r| r.get(0),
-            )
-            .optional()
-        })
-        .unwrap_or(None);
-    let series = weekly_hours(&all, &tz, now);
+    let since_day = Timestamp::from_millisecond(now - 30 * 86_400_000).map(|t| t.to_zoned(TimeZone::UTC).date().to_string()).unwrap_or_default();
+    let followers = follower_days(&ctx, guild, &since_day);
+    let no_followers = no_followers(mode, crate::state_get(&ctx, "followers_unsupported").is_some(), ids.iter().any(|id| feat_reviews::twitch::signed_in_as(&ctx, id)));
+    let followers_value = match followers_reading(&followers) {
+        Some(r) => r,
+        None if no_followers == NoFollowers::Connect => ("followers in 30 days", "not tracked".into()),
+        None => ("followers in 30 days", "none yet".into()),
+    };
+    let reviews_link = (ctx.enabled(guild, feat_reviews::KEY) && ctx.level(&page.user, guild, feat_reviews::KEY) >= Level::View).then(|| page.path("reviews/settings"));
+    let viewers = weekly_viewers(&all, &tz, now);
+    let hours = weekly_hours(&all, &tz, now);
     let table = twitch::streams_since(&ctx, &ids, 0, 30)?;
 
     let body = html! {
         style { (PreEscaped(CSS)) }
-        (tabs(&page, "Streams"))
+        (tabs(&page, "Stats"))
         div.with-rail {
             div.stack.sa-main {
+                (ui::readings(&[
+                    ("streams this month", month.len().to_string()),
+                    ("hours this month", if month_secs == 0 { "0 h".to_owned() } else { text::duration(month_secs) }),
+                    ("average viewers", avg_viewers(month.iter().copied()).map(text::num).unwrap_or_else(|| "none yet".into())),
+                    followers_value,
+                ]))
+                section.block {
+                    div.sa-sechead {
+                        h2 { "Average viewers" }
+                        span.muted.small { "Each week, from counts read while you're live" }
+                    }
+                    @if viewers.iter().all(|(_, v)| v.is_none()) {
+                        (ui::empty(Icon::Chart, "No viewer counts yet", "The bot reads viewers every few minutes while you're live, and the chart fills in week by week."))
+                    } @else {
+                        (ui::column_bars(&viewers, "average viewers", &format!("Average viewers in each of the last {} weeks", viewers.len())))
+                    }
+                }
                 @if table.is_empty() {
-                    (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: length, category, title, peak and average viewers."))
+                    (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: date, length, categories, peak and average viewers."))
                 } @else {
                     (narrow_css())
-                    (ui::section("Past streams", None, html! {
+                    (ui::section("Streams", Some("Your latest 30."), html! {
                         div.table-wrap { table.table {
                             thead { tr { th { "Date" } th { "Stream" } th.num { "Length" } th.num { "Peak" } th.num.wide-only { "Average" } th.wide-only {} } }
                             tbody { @for r in &table {
+                                @let games = r.games_line();
                                 tr {
                                     td style="white-space:nowrap" { (zoned(r.started_at, &tz).map(|z| z.strftime("%b %-d").to_string()).unwrap_or_default()) }
                                     td {
@@ -1044,9 +1306,9 @@ async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                                 false => { img.sa-vt.wide-only src=(twitch::sized(&r.thumbnail, 320, 180)) alt="" width="64" height="36" loading="lazy"; }
                                                 true => { span.sa-vt.wide-only { (ui::icon(Icon::Live)) } }
                                             }
-                                            div {
+                                            div style="min-width:0" {
                                                 div { @if r.title.is_empty() { "Untitled stream" } @else { (r.title) } }
-                                                @if !r.game.is_empty() { div.muted.small { (r.game) } }
+                                                @if !games.is_empty() { div.muted.small { (games) } }
                                             }
                                         }
                                     }
@@ -1062,28 +1324,20 @@ async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             }
             aside.rail {
                 div.rail-block {
-                    h2 { "This month" }
-                    span.big-num { (if month_secs == 0 { "0 h".to_owned() } else { text::duration(month_secs) }) }
-                    p.muted.small { (plural(month.len(), "stream", "streams")) " · " (peak) }
-                    @if let Some(f) = followers {
-                        div.mini { span.grow { span { "Followers" } } span.mono { (text::num(f)) } }
-                    }
-                }
-                div.rail-block {
                     h2 { "Hours streamed" }
                     @if all.is_empty() {
                         p.muted.small { "Hours show up here once a stream ends." }
                     } @else {
-                        (week_bars(&series))
+                        (week_bars(&hours))
                         span.muted.small { "Last 12 weeks" }
                     }
                 }
+                (followers_block(&followers, no_followers, reviews_link.as_deref()))
             }
         }
     };
     Ok(ui::layout(&ctx, &page, "Stream alerts", Some(status_pill(&ctx)), body).into_response())
 }
-
 
 /// The overview's Stream block: live now or the last stream, and the next one on the schedule.
 pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
@@ -1130,7 +1384,7 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
             span.status { span.dot.live[live] {} (if live { "Live" } else { "Offline" }) }
         }
         @if let Some((game, title, thumb, _, secs, peak)) = &last {
-            a.stream-card href=(page.path("alerts/streams")) {
+            a.stream-card href=(page.path("alerts/stats")) {
                 @if thumb.is_empty() {
                     span.stream-ph { (ui::icon(Icon::Live)) }
                 } @else {
@@ -1243,6 +1497,58 @@ mod tests {
         assert_eq!(in_minutes(60), "in 1 hour");
         assert_eq!(in_minutes(120), "in 2 hours");
         assert_eq!(in_minutes(90), "in 90 minutes");
+    }
+
+    #[test]
+    fn viewers_average_by_reading() {
+        let row = |viewer_sum, samples| StreamRow { viewer_sum, samples, average: viewer_sum / samples.max(1), ..Default::default() };
+        // A 4-hour stream counts for more than a 1-hour one; streams without counts are skipped.
+        let rows = [row(40 * 48, 48), row(10 * 12, 12), row(999, 0)];
+        assert_eq!(avg_viewers(rows.iter()), Some(34));
+        assert_eq!(avg_viewers([row(5, 0)].iter()), None);
+        // The sums are used as they are: 3 streams of 1.5 viewers each average 2 (rounded), not 1.
+        let rows = [row(3, 2), row(3, 2), row(3, 2)];
+        assert_eq!(avg_viewers(rows.iter()), Some(2));
+    }
+
+    #[test]
+    fn followers_read_as_gained() {
+        let d = |day: &str, v| (day.to_owned(), v);
+        assert_eq!(followers_reading(&[]), None);
+        assert_eq!(followers_reading(&[d("2026-10-01", 1200)]), Some(("followers", "1,200".into())));
+        assert_eq!(followers_reading(&[d("2026-10-01", 1200), d("2026-10-15", 1210), d("2026-10-31", 1242)]), Some(("followers in 30 days", "+42".into())));
+        assert_eq!(followers_reading(&[d("2026-10-01", 1200), d("2026-10-31", 1195)]), Some(("followers in 30 days", "-5".into())));
+    }
+
+    #[test]
+    fn missing_followers_say_why() {
+        assert_eq!(no_followers(Mode::Off, true, false), NoFollowers::TwitchOff);
+        // Twitch refused the app token: connecting the broadcaster is the way to a count.
+        assert_eq!(no_followers(Mode::Push, true, false), NoFollowers::Connect);
+        assert_eq!(no_followers(Mode::Poll, true, false), NoFollowers::Connect);
+        // Signed in, or not refused yet: the daily read brings one.
+        assert_eq!(no_followers(Mode::Push, true, true), NoFollowers::Soon);
+        assert_eq!(no_followers(Mode::Push, false, false), NoFollowers::Soon);
+    }
+
+    #[test]
+    fn weekly_viewers_leave_weeks_without_counts_blank() {
+        let tz = toronto();
+        let now = local_ms("2026-11-04T12:00:00");
+        let row = |at: &str, sum| StreamRow { started_at: local_ms(at), viewer_sum: sum, samples: 10, ..Default::default() };
+        let rows = vec![
+            row("2026-10-12T19:00:00", 200),
+            row("2026-11-02T19:00:00", 300),
+            // Streamed, but no count was read: not a week of zero viewers.
+            StreamRow { started_at: local_ms("2026-10-26T19:00:00"), ..Default::default() },
+        ];
+        let series = weekly_viewers(&rows, &tz, now);
+        assert_eq!(series.len(), WEEKS as usize);
+        assert_eq!(series[0], ("Aug 17".to_owned(), None));
+        assert_eq!(&series[8..], &[("Oct 12".to_owned(), Some(20)), ("Oct 19".to_owned(), None), ("Oct 26".to_owned(), None), ("Nov 2".to_owned(), Some(30))]);
+        // A stream with counts that were all zero is a real zero.
+        let series = weekly_viewers(&[row("2026-11-02T19:00:00", 0)], &tz, now);
+        assert_eq!(series[11], ("Nov 2".to_owned(), Some(0)));
     }
 
     #[test]

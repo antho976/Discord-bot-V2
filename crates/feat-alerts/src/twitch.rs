@@ -110,9 +110,16 @@ pub(crate) async fn get<T: DeserializeOwned>(ctx: &Ctx, path: &str, query: &[(&s
 
 #[derive(Deserialize)]
 pub(crate) struct List<T> {
-    data: Vec<T>,
+    pub(crate) data: Vec<T>,
     #[serde(default)]
     pagination: Option<Pagination>,
+}
+
+impl<T> List<T> {
+    /// Where the next page starts, when there is one.
+    pub(crate) fn cursor(&self) -> Option<String> {
+        self.pagination.as_ref().and_then(|p| p.cursor.clone()).filter(|c| !c.is_empty())
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -505,12 +512,16 @@ pub struct StreamRow {
     pub peak: i64,
     pub average: i64,
     pub samples: i64,
+    /// Every viewer count read, added up. `average` is this over `samples`, rounded down.
+    pub viewer_sum: i64,
     /// Last time viewers were read (or the stream was checked).
     pub last_sample: i64,
     pub vod_url: Option<String>,
     /// A picture of the stream with `{width}` and `{height}` to fill in: the live preview while
     /// live, the VOD's once Twitch has made one, or empty.
     pub thumbnail: String,
+    /// Every category the stream was in, in order, one per line. `game` is the current one.
+    pub games: String,
 }
 
 impl StreamRow {
@@ -518,6 +529,21 @@ impl StreamRow {
     pub fn thumb_640(&self) -> Option<String> {
         (!self.thumbnail.is_empty()).then(|| sized(&self.thumbnail, 640, 360))
     }
+
+    /// The categories as one line: "Hades II, Just Chatting". Falls back to `game` for rows
+    /// from before categories were kept.
+    pub fn games_line(&self) -> String {
+        let list: Vec<&str> = self.games.lines().filter(|g| !g.is_empty()).collect();
+        if list.is_empty() { self.game.clone() } else { list.join(", ") }
+    }
+}
+
+/// `games` with `game` added at the end, unless it's empty or already there.
+pub fn add_game(games: &str, game: &str) -> String {
+    if game.is_empty() || games.lines().any(|g| g == game) {
+        return games.to_owned();
+    }
+    if games.is_empty() { game.to_owned() } else { format!("{games}\n{game}") }
 }
 
 /// Fill a Twitch image template. Live previews use `{width}`, VODs `%{width}`.
@@ -525,7 +551,7 @@ pub fn sized(template: &str, w: u32, h: u32) -> String {
     template.replace("%{width}", "{width}").replace("%{height}", "{height}").replace("{width}", &w.to_string()).replace("{height}", &h.to_string())
 }
 
-const COLS: &str = "id, broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, last_sample, vod_url, thumbnail";
+const COLS: &str = "id, broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, last_sample, vod_url, thumbnail, games, viewer_sum";
 
 fn stream_row(r: &Row) -> bot_core::rusqlite::Result<StreamRow> {
     Ok(StreamRow {
@@ -543,6 +569,8 @@ fn stream_row(r: &Row) -> bot_core::rusqlite::Result<StreamRow> {
         last_sample: r.get(11)?,
         vod_url: r.get(12)?,
         thumbnail: r.get(13)?,
+        games: r.get(14)?,
+        viewer_sum: r.get(15)?,
     })
 }
 
@@ -574,8 +602,8 @@ pub fn streams_since(ctx: &Ctx, ids: &[String], since: i64, limit: i64) -> Resul
 fn sample(ctx: &Ctx, id: i64, viewers: i64) -> Result<()> {
     ctx.db.with(|c| {
         c.execute(
-            "UPDATE alerts_streams SET peak = MAX(peak, ?2), average = (average * samples + ?2) / (samples + 1),
-             samples = samples + 1, last_sample = ?3 WHERE id = ?1",
+            "UPDATE alerts_streams SET peak = MAX(peak, ?2), viewer_sum = viewer_sum + ?2,
+             average = (viewer_sum + ?2) / (samples + 1), samples = samples + 1, last_sample = ?3 WHERE id = ?1",
             params![id, viewers, now_ms()],
         )
     })?;
@@ -604,7 +632,7 @@ pub async fn on_online(ctx: &Ctx, b: &Broadcaster, stream_id: &str, started_at: 
     let now = now_ms();
     let id = ctx.db.with(|c| {
         c.execute(
-            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, last_sample, thumbnail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, games, last_sample, thumbnail) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7)",
             params![b.user_id, stream_id, started_at, title, game, now, thumbnail],
         )?;
         Ok(c.last_insert_rowid())
@@ -738,7 +766,8 @@ pub async fn on_update(ctx: &Ctx, bid: &str, title: &str, game: &str) -> Result<
     if row.title == title && row.game == game {
         return Ok(());
     }
-    ctx.db.with(|c| c.execute("UPDATE alerts_streams SET title = ?2, game = ?3 WHERE id = ?1", params![row.id, title, game]))?;
+    let games = add_game(&row.games, game);
+    ctx.db.with(|c| c.execute("UPDATE alerts_streams SET title = ?2, game = ?3, games = ?4 WHERE id = ?1", params![row.id, title, game, games]))?;
     edit_posts(ctx, row.id).await
 }
 
@@ -808,33 +837,75 @@ pub async fn poll(ctx: &Ctx, mode: Mode) -> Result<()> {
     Ok(())
 }
 
-/// Store each server's follower total, if an app token may read it. Twitch documents the
-/// endpoint as needing a user token; when it refuses, the bot stops asking.
-async fn followers(ctx: &Ctx, guilds: &[(u64, std::sync::Arc<Settings>)]) {
-    if state_get(ctx, "followers_unsupported").is_some() {
-        return;
+/// How long after Twitch refuses the app token for follower totals the bot asks it again.
+const APP_FOLLOWERS_RETRY_MS: i64 = 7 * 86_400_000;
+
+/// A token a follower total can be read with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Via {
+    /// The broadcaster's own sign-in, from Account reviews.
+    User,
+    App,
+}
+
+/// The tokens to try for one broadcaster's follower total, in order. Any user token may read
+/// the total, so a signed-in broadcaster is read every day. The app token comes after it, and
+/// once Twitch refuses the app token it's only tried again a week later.
+fn follower_tokens(signed_in: bool, app_refused_at: Option<i64>, now: i64) -> Vec<Via> {
+    let mut out = Vec::with_capacity(2);
+    if signed_in {
+        out.push(Via::User);
     }
+    if app_refused_at.is_none_or(|at| now - at >= APP_FOLLOWERS_RETRY_MS) {
+        out.push(Via::App);
+    }
+    out
+}
+
+/// Store each server's follower total. Each broadcaster is read with their own sign-in when a
+/// server connected Twitch on Account reviews, else with the app token, which Twitch usually
+/// refuses here; then the app token waits a week before it's tried again.
+async fn followers(ctx: &Ctx, guilds: &[(u64, std::sync::Arc<Settings>)]) {
+    let mut refused: Option<i64> = state_get(ctx, "followers_unsupported").and_then(|v| v.parse().ok());
+    let client_id = ctx.cfg.twitch_client_id.clone().unwrap_or_default();
     let mut totals: HashMap<String, i64> = HashMap::new();
     for b in broadcasters(ctx) {
         if !guilds.iter().any(|(_, s)| s.twitch_logins.contains(&b.login)) {
             continue;
         }
-        let res = request(ctx, Method::GET, "channels/followers", &[("broadcaster_id", b.user_id.clone()), ("first", "1".into())], None).await;
-        match res {
-            Ok(r) if r.status() == StatusCode::UNAUTHORIZED || r.status() == StatusCode::FORBIDDEN => {
-                tracing::info!("Twitch needs a user token for follower totals; skipping them");
-                state_set(ctx, "followers_unsupported", "1");
-                return;
-            }
-            Ok(r) if r.status().is_success() => {
-                if let Ok(v) = r.json::<Value>().await
-                    && let Some(total) = v["total"].as_i64()
-                {
-                    totals.insert(b.login.clone(), total);
+        let query = [("broadcaster_id", b.user_id.clone()), ("first", "1".to_owned())];
+        let user = feat_reviews::twitch::user_token_for(ctx, &b.user_id).await;
+        for via in follower_tokens(user.is_some(), refused, now_ms()) {
+            let res = match (via, &user) {
+                (Via::User, Some(t)) => ctx.web.get(format!("{HELIX}/channels/followers")).query(&query).bearer_auth(t).header("Client-Id", &client_id).send().await.map_err(Into::into),
+                _ => request(ctx, Method::GET, "channels/followers", &query, None).await,
+            };
+            match res {
+                Ok(r) if r.status() == StatusCode::UNAUTHORIZED || r.status() == StatusCode::FORBIDDEN => {
+                    if via == Via::App {
+                        tracing::info!("Twitch needs a user token for follower totals; asking again in a week");
+                        let now = now_ms();
+                        state_set(ctx, "followers_unsupported", &now.to_string());
+                        refused = Some(now);
+                    } else {
+                        tracing::warn!(broadcaster = %b.login, status = %r.status(), "Twitch refused the broadcaster's sign-in for the follower total");
+                    }
                 }
+                Ok(r) if r.status().is_success() => {
+                    if let Ok(v) = r.json::<Value>().await
+                        && let Some(total) = v["total"].as_i64()
+                    {
+                        if via == Via::App {
+                            state_del(ctx, "followers_unsupported");
+                            refused = None;
+                        }
+                        totals.insert(b.login.clone(), total);
+                        break;
+                    }
+                }
+                Ok(r) => tracing::warn!(status = %r.status(), "couldn't read the follower total"),
+                Err(e) => tracing::warn!(error = %e, "couldn't read the follower total"),
             }
-            Ok(r) => tracing::warn!(status = %r.status(), "couldn't read the follower total"),
-            Err(e) => tracing::warn!(error = %e, "couldn't read the follower total"),
         }
     }
     for (guild, s) in guilds {
@@ -975,7 +1046,8 @@ async fn edit_posts(ctx: &Ctx, stream_id: i64) -> Result<()> {
     Ok(())
 }
 
-/// The dashboard's "Send a test alert": a sample live post, with nobody pinged.
+/// The dashboard's "Send a test alert": a sample live post, with nobody pinged. It reads nothing
+/// from Twitch (the broadcaster comes from storage), so a failure is Discord refusing the post.
 pub async fn test_alert(ctx: &Ctx, s: &Settings) -> Result<()> {
     let channel = s.live_channel.ok_or_else(|| anyhow!("no channel"))?;
     let b = for_settings(ctx, s).into_iter().next().unwrap_or_else(|| {
@@ -1001,6 +1073,22 @@ mod tests {
 
     fn antho() -> Broadcaster {
         Broadcaster { login: "antho".into(), user_id: "1".into(), name: "Antho".into(), avatar: String::new() }
+    }
+
+    #[test]
+    fn follower_totals_try_the_sign_in_first() {
+        let now = 100 * 86_400_000;
+        let day = 86_400_000;
+        // Never refused: the sign-in first, the app token as the fallback.
+        assert_eq!(follower_tokens(true, None, now), [Via::User, Via::App]);
+        assert_eq!(follower_tokens(false, None, now), [Via::App]);
+        // Refused yesterday: a signed-in broadcaster is still read today, with no app token.
+        assert_eq!(follower_tokens(true, Some(now - day), now), [Via::User]);
+        assert!(follower_tokens(false, Some(now - day), now).is_empty());
+        // A week after the refusal the app token is asked again.
+        assert!(follower_tokens(false, Some(now - 7 * day + 1), now).is_empty());
+        assert_eq!(follower_tokens(false, Some(now - 7 * day), now), [Via::App]);
+        assert_eq!(follower_tokens(true, Some(now - 8 * day), now), [Via::User, Via::App]);
     }
 
     #[test]
@@ -1038,6 +1126,18 @@ mod tests {
         assert_eq!(sized("https://x/thumb0-%{width}x%{height}.jpg", 320, 180), "https://x/thumb0-320x180.jpg");
         let row = StreamRow::default();
         assert_eq!(row.thumb_640(), None);
+    }
+
+    #[test]
+    fn categories_add_once() {
+        assert_eq!(add_game("", "Hades II"), "Hades II");
+        assert_eq!(add_game("Hades II", "Just Chatting"), "Hades II\nJust Chatting");
+        assert_eq!(add_game("Hades II\nJust Chatting", "Hades II"), "Hades II\nJust Chatting");
+        assert_eq!(add_game("Hades II", ""), "Hades II");
+        let row = StreamRow { game: "Balatro".into(), ..Default::default() };
+        assert_eq!(row.games_line(), "Balatro");
+        let row = StreamRow { game: "Balatro".into(), games: "Hades II\nBalatro".into(), ..Default::default() };
+        assert_eq!(row.games_line(), "Hades II, Balatro");
     }
 
     #[test]

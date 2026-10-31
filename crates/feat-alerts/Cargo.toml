@@ -9,5 +9,7 @@ bot-core.workspace = true
 maud.workspace = true
 serde.workspace = true
 bot-render = { path = "../render" }
+feat-levels = { path = "../feat-levels" }
+feat-reviews = { path = "../feat-reviews" }
 sha2.workspace = true
 hex.workspace = true

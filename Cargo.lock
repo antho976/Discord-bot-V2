@@ -176,12 +176,16 @@ dependencies = [
  "bot-core",
  "feat-alerts",
  "feat-audit",
+ "feat-commands",
  "feat-community",
  "feat-connect",
  "feat-embeds",
  "feat-guard",
  "feat-levels",
+ "feat-modmail",
  "feat-pets",
+ "feat-reviews",
+ "feat-rules",
  "feat-tickets",
  "feat-utility",
  "feat-welcome",
@@ -512,6 +516,8 @@ version = "0.1.0"
 dependencies = [
  "bot-core",
  "bot-render",
+ "feat-levels",
+ "feat-reviews",
  "hex",
  "maud",
  "serde",
@@ -520,6 +526,15 @@ dependencies = [
 
 [[package]]
 name = "feat-audit"
+version = "0.1.0"
+dependencies = [
+ "bot-core",
+ "maud",
+ "serde",
+]
+
+[[package]]
+name = "feat-commands"
 version = "0.1.0"
 dependencies = [
  "bot-core",
@@ -578,7 +593,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "feat-modmail"
+version = "0.1.0"
+dependencies = [
+ "bot-core",
+ "maud",
+ "serde",
+]
+
+[[package]]
 name = "feat-pets"
+version = "0.1.0"
+dependencies = [
+ "bot-core",
+ "maud",
+ "serde",
+]
+
+[[package]]
+name = "feat-reviews"
+version = "0.1.0"
+dependencies = [
+ "bot-core",
+ "maud",
+ "serde",
+]
+
+[[package]]
+name = "feat-rules"
 version = "0.1.0"
 dependencies = [
  "bot-core",

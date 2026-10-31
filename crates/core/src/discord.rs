@@ -22,7 +22,7 @@ use twilight_model::id::Id;
 use twilight_model::id::marker::{ChannelMarker, GuildMarker, RoleMarker, UserMarker};
 use twilight_model::user::User;
 
-use crate::Ctx;
+use crate::{Ctx, Feature};
 
 pub fn intents() -> Intents {
     Intents::GUILDS
@@ -277,17 +277,29 @@ fn track_member_count(ctx: &Ctx, event: &Event) {
     }
 }
 
-/// Replace a server's slash commands with those of the features switched on there. One at a
-/// time, reading the switches once it's this call's turn, so two quick toggles can't finish out
-/// of order and leave the older set registered.
+/// Replace a server's slash commands with those of the features switched on there, fixed and
+/// per server. One at a time, reading the switches once it's this call's turn, so two quick
+/// toggles can't finish out of order and leave the older set registered. Does nothing in the
+/// preview, which has no Discord connection.
 pub async fn register_commands(ctx: &Ctx, guild_id: u64) -> Result<()> {
+    if ctx.cfg.preview {
+        return Ok(());
+    }
     static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _turn = ONE_AT_A_TIME.lock().await;
+    let mut seen = HashSet::new();
     let commands: Vec<_> = ctx
         .features()
         .iter()
         .filter(|f| ctx.enabled(guild_id, f.meta().key))
-        .flat_map(|f| f.commands())
+        .flat_map(|f| {
+            let mut c = f.commands();
+            c.extend(f.guild_commands(ctx, guild_id));
+            c
+        })
+        // Discord refuses the whole set over one repeated name; the first feature keeps it,
+        // the same one `route_interaction` sends the call to.
+        .filter(|c| seen.insert(c.name.clone()))
         .collect();
     ctx.interaction().set_guild_commands(Id::new(guild_id), &commands).await?;
     tracing::info!(guild = guild_id, count = commands.len(), "registered commands");
@@ -323,11 +335,23 @@ async fn dispatch(ctx: Ctx, event: Event) {
     }
 }
 
+/// The answer to a slash command no feature declares any more.
+const GONE: &str = "That command isn't here any more.";
+
+/// The feature a slash command belongs to: its fixed commands first, then the server's own.
+/// None when no feature declares the name, switched on or not.
+fn command_owner<'a>(ctx: &'a Ctx, guild: Option<u64>, name: &str) -> Option<&'a Arc<dyn Feature>> {
+    ctx.features().iter().find(|f| f.commands().iter().any(|c| c.name == name)).or_else(|| {
+        let g = guild?;
+        ctx.features().iter().find(|f| f.guild_commands(ctx, g).iter().any(|c| c.name == name))
+    })
+}
+
 async fn route_interaction(ctx: &Ctx, i: &Interaction) {
     let guild = i.guild_id.map(|g| g.get());
     let usable = |key: &str| guild.is_none_or(|g| ctx.enabled(g, key));
-    // A button or form from a feature that has since been switched off (or a command Discord
-    // hasn't dropped yet) still gets an answer, rather than Discord's "interaction failed".
+    // A button, form or command from a feature that has since been switched off (Discord can
+    // take a moment to drop it) still gets an answer, rather than Discord's "interaction failed".
     let off = || async {
         if i.kind != InteractionType::ApplicationCommandAutocomplete {
             let _ = ctx.reply(i, Reply::text("That's switched off in this server.").ephemeral()).await;
@@ -336,11 +360,7 @@ async fn route_interaction(ctx: &Ctx, i: &Interaction) {
     };
     let result = match (&i.kind, &i.data) {
         (InteractionType::ApplicationCommand | InteractionType::ApplicationCommandAutocomplete, Some(InteractionData::ApplicationCommand(data))) => {
-            let owner = ctx
-                .features()
-                .iter()
-                .find(|f| f.commands().iter().any(|c| c.name == data.name));
-            match owner {
+            match command_owner(ctx, guild, &data.name) {
                 Some(f) if usable(f.meta().key) => {
                     let call = CommandCall { interaction: i.clone(), data: (**data).clone() };
                     let res = if i.kind == InteractionType::ApplicationCommandAutocomplete {
@@ -350,7 +370,15 @@ async fn route_interaction(ctx: &Ctx, i: &Interaction) {
                     };
                     res.map_err(|e| (f.meta().key, e))
                 }
-                _ => off().await,
+                Some(_) => off().await,
+                // A per-server command that was renamed or deleted, still in the member's list
+                // until Discord catches up.
+                None => {
+                    if i.kind != InteractionType::ApplicationCommandAutocomplete {
+                        let _ = ctx.reply(i, Reply::text(GONE).ephemeral()).await;
+                    }
+                    Ok(())
+                }
             }
         }
         (InteractionType::MessageComponent, Some(InteractionData::MessageComponent(data))) => {
@@ -430,6 +458,17 @@ pub fn why_refused(e: &twilight_http::Error) -> String {
 }
 
 /// [`why_refused`] for an error that may wrap a Discord one.
+/// Why `register_commands` failed, in words for the bell. A 403 there means the invite lacks the
+/// applications.commands scope, not a channel permission.
+pub fn why_not_registered(e: &anyhow::Error) -> String {
+    match e.downcast_ref::<twilight_http::Error>().map(|h| h.kind()) {
+        Some(twilight_http::error::ErrorType::Response { status, .. }) if status.get() == 403 => {
+            "The bot isn't allowed to add slash commands here. Invite it again with the applications.commands scope.".into()
+        }
+        _ => why_refused_any(e),
+    }
+}
+
 pub fn why_refused_any(e: &anyhow::Error) -> String {
     match e.downcast_ref::<twilight_http::Error>() {
         Some(http) => why_refused(http),
@@ -1028,6 +1067,42 @@ mod tests {
         // Someone the cache never saw: nothing to store, and no id on the page.
         assert_eq!(ctx.known_name(GUILD_A, 1_234_567_890_123), None);
         assert_eq!(ctx.display_name(GUILD_A, 1_234_567_890_123), "Unknown member");
+    }
+
+    #[tokio::test]
+    async fn commands_route_to_the_feature_that_declares_them() {
+        use twilight_model::application::command::{Command, CommandType};
+        use twilight_util::builder::command::CommandBuilder;
+
+        struct Fixed;
+        impl crate::Feature for Fixed {
+            fn meta(&self) -> crate::FeatureMeta {
+                crate::FeatureMeta { key: "fixed", name: "Fixed", description: "", group: crate::Group::Tools, nav: Vec::new() }
+            }
+            fn commands(&self) -> Vec<Command> {
+                vec![CommandBuilder::new("rank", "x", CommandType::ChatInput).build()]
+            }
+        }
+        struct PerServer;
+        impl crate::Feature for PerServer {
+            fn meta(&self) -> crate::FeatureMeta {
+                crate::FeatureMeta { key: "custom", name: "Custom", description: "", group: crate::Group::Tools, nav: Vec::new() }
+            }
+            fn guild_commands(&self, _ctx: &crate::Ctx, guild: u64) -> Vec<Command> {
+                if guild == 1 { vec![CommandBuilder::new("links", "x", CommandType::ChatInput).build()] } else { Vec::new() }
+            }
+        }
+        let ctx = crate::Ctx::new(crate::Config::preview(0), crate::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(Fixed), std::sync::Arc::new(PerServer)]).unwrap();
+        let owner = |guild, name| super::command_owner(&ctx, guild, name).map(|f| f.meta().key);
+        assert_eq!(owner(Some(2), "rank"), Some("fixed"));
+        assert_eq!(owner(None, "rank"), Some("fixed"));
+        assert_eq!(owner(Some(1), "links"), Some("custom"));
+        // Renamed or deleted in that server, or never there: nobody owns it, so it's "gone",
+        // not "switched off".
+        assert_eq!(owner(Some(2), "links"), None);
+        assert_eq!(owner(None, "links"), None);
+        assert_eq!(owner(Some(1), "old-name"), None);
     }
 
     #[test]

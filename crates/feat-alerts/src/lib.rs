@@ -4,6 +4,7 @@
 //! EventSub secret, and falls back to polling Helix every 2 minutes otherwise. Viewer counts are
 //! only polled while a stream is live. Each stream is one row in `alerts_streams`.
 
+mod clips;
 pub mod hmac;
 mod schedule;
 mod twitch;
@@ -13,7 +14,7 @@ mod youtube;
 use std::sync::Arc;
 
 use bot_core::anyhow::Result;
-use bot_core::discord::CommandCall;
+use bot_core::discord::{CommandCall, ComponentCall};
 use bot_core::rusqlite::{OptionalExtension, params};
 use bot_core::twilight_model::application::command::{Command, CommandType};
 use bot_core::twilight_util::builder::command::CommandBuilder;
@@ -53,6 +54,15 @@ pub struct Settings {
     pub youtube_channel: Option<u64>,
     pub youtube_role: Option<u64>,
     pub youtube_message: String,
+    /// A "Claim XP" button on upload posts, through XP and levels.
+    pub reward: bool,
+    pub reward_xp: i64,
+    /// How long after the post the button pays out.
+    pub reward_hours: i64,
+
+    /// Post new Twitch clips of the followed channels.
+    pub clips: bool,
+    pub clips_channel: Option<u64>,
 }
 
 impl Default for Settings {
@@ -74,6 +84,11 @@ impl Default for Settings {
             youtube_channel: None,
             youtube_role: None,
             youtube_message: DEFAULT_VIDEO_MESSAGE.into(),
+            reward: false,
+            reward_xp: 50,
+            reward_hours: 24,
+            clips: false,
+            clips_channel: None,
         }
     }
 }
@@ -111,6 +126,33 @@ const MIGRATIONS: &[Migration] = &[Migration {
             feed TEXT NOT NULL, video_id TEXT NOT NULL, title TEXT NOT NULL, author TEXT NOT NULL,
             published_at INTEGER NOT NULL, seen_at INTEGER NOT NULL, PRIMARY KEY (feed, video_id));
         CREATE TABLE alerts_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    ",
+}, Migration {
+    // A running sum so the average doesn't drift from rounding, and every category a stream had.
+    name: "002_alerts_stream_stats",
+    sql: "
+        ALTER TABLE alerts_streams ADD COLUMN viewer_sum INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE alerts_streams ADD COLUMN games TEXT NOT NULL DEFAULT '';
+        UPDATE alerts_streams SET viewer_sum = average * samples, games = game;
+    ",
+}, Migration {
+    // Clips seen on Twitch, so each is posted once. The newest 50 per broadcaster are kept.
+    name: "003_alerts_clips",
+    sql: "
+        CREATE TABLE alerts_clips (
+            id TEXT PRIMARY KEY, broadcaster_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+            creator TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, thumbnail TEXT NOT NULL DEFAULT '',
+            views INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, seen_at INTEGER NOT NULL);
+        CREATE INDEX alerts_clips_by_time ON alerts_clips(broadcaster_id, created_at DESC);
+    ",
+}, Migration {
+    // Who claimed the XP on each upload post. The key makes a claim once per member per video.
+    name: "004_alerts_video_claims",
+    sql: "
+        CREATE TABLE alerts_video_claims (
+            guild_id INTEGER NOT NULL, video_id TEXT NOT NULL, user_id INTEGER NOT NULL,
+            xp INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (guild_id, video_id, user_id));
+        CREATE INDEX alerts_video_claims_by_time ON alerts_video_claims(guild_id, at);
     ",
 }];
 
@@ -158,6 +200,7 @@ impl Feature for Alerts {
     }
 
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
+        let last_tick = clips::stamp_tick(ctx);
         let guilds = alert_guilds(ctx);
         if guilds.is_empty() {
             return Ok(());
@@ -182,6 +225,7 @@ impl Feature for Alerts {
             {
                 bot_core::tracing::warn!(error = %e, "couldn't fill VOD pictures");
             }
+            clips::check(ctx, &guilds, last_tick).await;
         }
         schedule::send_reminders(ctx, &guilds).await;
         schedule::weekly_posts(ctx, &guilds).await;
@@ -192,6 +236,13 @@ impl Feature for Alerts {
     async fn on_command(&self, ctx: &Ctx, call: &CommandCall) -> Result<()> {
         if call.data.name == "schedule" {
             schedule::command(ctx, call).await?;
+        }
+        Ok(())
+    }
+
+    async fn on_component(&self, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
+        if call.args().first() == Some(&"claim") {
+            youtube::claim(ctx, call).await?;
         }
         Ok(())
     }
@@ -251,9 +302,14 @@ pub(crate) fn state_del(ctx: &Ctx, key: &str) {
     }
 }
 
+/// When `due(key, ..)` last fired, if ever.
+pub(crate) fn last_due(ctx: &Ctx, key: &str) -> Option<i64> {
+    state_get(ctx, &format!("at:{key}")).and_then(|v| v.parse().ok())
+}
+
 /// True (and the clock reset) when `every_ms` has passed since this key last fired.
 pub(crate) fn due(ctx: &Ctx, key: &str, every_ms: i64) -> bool {
-    let last: i64 = state_get(ctx, &format!("at:{key}")).and_then(|v| v.parse().ok()).unwrap_or(0);
+    let last = last_due(ctx, key).unwrap_or(0);
     let now = now_ms();
     if now - last < every_ms {
         return false;
@@ -276,6 +332,9 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         weekly_channel: channel("announcements"),
         youtube_ids: vec!["UCx7Antho0000000000000a".into()],
         youtube_channel: channel("announcements"),
+        reward: true,
+        clips: true,
+        clips_channel: channel("stream-alerts"),
         ..Settings::default()
     };
     ctx.save_settings(guild, KEY, &s)?;
@@ -298,27 +357,43 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         "Back to the Underworld",
     ];
     for i in 0..44i64 {
-        if i % 7 == 4 || i % 11 == 9 {
+        // A few nights off, and a week's break about six weeks back that the charts leave blank.
+        if i % 7 == 4 || i % 11 == 9 || (21..=24).contains(&i) {
             continue;
         }
         let started = now - (i * 2 + 1) * day - (i % 3) * hour - 4 * hour;
         let secs = 3 * 3600 + (i * 1871) % 7200;
         let peak = 30 + (i * 37 + i * i * 7) % 61 + (44 - i) / 3;
+        let game = games[i as usize % games.len()];
+        // Every third stream ends in Just Chatting, to show a stream with two categories.
+        let all_games = if i % 3 == 0 && game != "Just Chatting" { format!("{game}\nJust Chatting") } else { game.to_owned() };
+        let samples = secs / 300;
         tx.execute(
-            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, vod_url)
-             VALUES ('41234567', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, vod_url, viewer_sum, games)
+             VALUES ('41234567', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 format!("4{i:010}"),
                 started,
                 started + secs * 1000,
                 secs,
                 titles[i as usize % titles.len()],
-                games[i as usize % games.len()],
+                game,
                 peak,
                 peak * 2 / 3,
-                secs / 300,
+                samples,
                 (i < 6).then(|| format!("https://www.twitch.tv/videos/2{i:09}")),
+                peak * 2 / 3 * samples,
+                all_games,
             ],
+        )?;
+    }
+    // A follower total for each of the last 30 days, as the daily check stores them.
+    for d in 0..30i64 {
+        let day = bot_core::jiff::Timestamp::from_millisecond(now - d * day)?.to_zoned(bot_core::jiff::tz::TimeZone::UTC).date().to_string();
+        let total = 1_184 + (30 - d) * 2 + (30 - d) * (30 - d) / 25;
+        tx.execute(
+            "INSERT OR REPLACE INTO daily_stats (guild_id, day, key, value) VALUES (?1, ?2, 'followers', ?3)",
+            params![guild as i64, day, total],
         )?;
     }
     // Segments around now, in the server's time zone, so the week image has a past and a future.
@@ -346,6 +421,30 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         )?;
     }
     tx.execute("INSERT OR REPLACE INTO alerts_state (key, value) VALUES ('yt_init:UCx7Antho0000000000000a', '1')", [])?;
+    // Most members claim the newest upload, fewer the older ones.
+    for (n, (id, _, back)) in videos.iter().enumerate() {
+        for (i, (user, _)) in bot_core::preview::MEMBERS.iter().enumerate().filter(|(i, _)| *i < 9 - n * 3) {
+            tx.execute(
+                "INSERT OR REPLACE INTO alerts_video_claims (guild_id, video_id, user_id, xp, at) VALUES (?1, ?2, ?3, 50, ?4)",
+                params![guild as i64, id, *user as i64, now - back * day + (i as i64 + 1) * 7 * 60_000],
+            )?;
+        }
+    }
+    let clips = [
+        ("Antho misses the easiest jump in the Underworld", "mossy_t", 3, 412),
+        ("Gold stake, final hand", "kiwi", 26, 1_204),
+        ("Pet tier list goes wrong", "Raeven", 50, 233),
+        ("Chat picks the build", "dune_walker", 74, 98),
+        ("World 6 boss on the first try", "mossy_t", 120, 640),
+    ];
+    for (n, (title, creator, back, views)) in clips.iter().enumerate() {
+        tx.execute(
+            "INSERT OR REPLACE INTO alerts_clips (id, broadcaster_id, title, creator, url, views, created_at, seen_at)
+             VALUES (?1, '41234567', ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![format!("PreviewClip{n}"), title, creator, format!("https://clips.twitch.tv/PreviewClip{n}"), views, now - back * hour],
+        )?;
+    }
+    tx.execute("INSERT OR REPLACE INTO alerts_state (key, value) VALUES ('clips_ok:41234567', ?1)", [(now - 6 * 60_000).to_string()])?;
     tx.commit()?;
     Ok(())
 }

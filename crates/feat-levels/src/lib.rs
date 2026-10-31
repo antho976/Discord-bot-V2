@@ -18,7 +18,7 @@ use bot_core::twilight_model::channel::message::AllowedMentions;
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
-use bot_core::twilight_util::builder::command::{CommandBuilder, IntegerBuilder, SubCommandBuilder, UserBuilder};
+use bot_core::twilight_util::builder::command::{CommandBuilder, IntegerBuilder, StringBuilder, SubCommandBuilder, UserBuilder};
 use bot_core::twilight_util::builder::embed::{EmbedBuilder, EmbedFieldBuilder};
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, text};
 use rand::RngExt as _;
@@ -47,8 +47,22 @@ pub struct Settings {
     pub message: String,
     /// Keep every reward role earned, instead of only the highest.
     pub stack_rewards: bool,
+    /// Text and voice channels that earn no XP, and the threads in them.
     pub no_xp_channels: Vec<u64>,
+    /// Categories whose channels and threads earn no XP.
+    pub no_xp_categories: Vec<u64>,
     pub no_xp_roles: Vec<u64>,
+    /// Post the week's top three when the week ends.
+    pub weekly_post: bool,
+    pub weekly_channel: Option<u64>,
+    /// The level members can prestige from with `/prestige`; 0 turns prestige off.
+    pub prestige_level: u32,
+    /// Extra XP per prestige, in percent, on XP members earn.
+    pub prestige_bonus: i64,
+    /// Extra XP, in percent, for each day in a row a member earned XP after the first. 0 is off.
+    pub streak_bonus: i64,
+    /// The most the streak bonus grows to, in percent.
+    pub streak_max: i64,
 }
 
 impl Default for Settings {
@@ -70,7 +84,14 @@ impl Default for Settings {
             message: DEFAULT_MESSAGE.into(),
             stack_rewards: true,
             no_xp_channels: Vec::new(),
+            no_xp_categories: Vec::new(),
             no_xp_roles: Vec::new(),
+            weekly_post: false,
+            weekly_channel: None,
+            prestige_level: 0,
+            prestige_bonus: 5,
+            streak_bonus: 0,
+            streak_max: 20,
         }
     }
 }
@@ -81,6 +102,86 @@ impl Settings {
     pub fn progress(&self, xp: i64) -> curve::Progress {
         curve::progress(xp, self.curve_base, self.curve_factor, &self.custom_curve)
     }
+
+    pub fn prestige_on(&self) -> bool {
+        self.prestige_level > 0
+    }
+
+    /// The extra XP, in percent, a member with `prestige` gets on what they earn.
+    pub fn prestige_pct(&self, prestige: i64) -> i64 {
+        if self.prestige_on() { prestige.max(0).saturating_mul(self.prestige_bonus.max(0)) } else { 0 }
+    }
+
+    /// The extra XP, in percent, a streak of `streak` days earns: nothing on the first day, then
+    /// `streak_bonus` for each day after it, up to `streak_max`.
+    /// Streaks show only while they earn something, like prestige, so a server that never set a
+    /// bonus doesn't see them on /rank and the boards.
+    pub fn streaks_on(&self) -> bool {
+        self.streak_bonus > 0 && self.streak_max > 0
+    }
+
+    pub fn streak_pct(&self, streak: i64) -> i64 {
+        (streak - 1).max(0).saturating_mul(self.streak_bonus.max(0)).min(self.streak_max.max(0))
+    }
+
+    /// Whether `channel` earns no XP: it's listed, it's a thread in a listed channel
+    /// (`thread_parent`), or it sits in a listed category.
+    fn no_xp_in(&self, channel: u64, thread_parent: Option<u64>, category: Option<u64>) -> bool {
+        self.no_xp_channels.contains(&channel)
+            || thread_parent.is_some_and(|p| self.no_xp_channels.contains(&p))
+            || category.is_some_and(|c| self.no_xp_categories.contains(&c))
+    }
+
+    /// How the leaderboard sorts: prestige first when it's on.
+    fn order(&self) -> &'static str {
+        if self.prestige_on() { "prestige DESC, xp DESC, user_id" } else { "xp DESC, user_id" }
+    }
+}
+
+/// Whether `channel` earns no XP. Looks up the channel's thread parent and category in the cache
+/// only when the server has listed channels or categories.
+fn no_xp_here(ctx: &Ctx, s: &Settings, channel: u64) -> bool {
+    if s.no_xp_channels.is_empty() && s.no_xp_categories.is_empty() {
+        return false;
+    }
+    if s.no_xp_channels.contains(&channel) {
+        return true;
+    }
+    let parent_of = |id: u64| ctx.cache.channel(Id::new(id)).map(|c| (c.kind.is_thread(), c.parent_id.map(|p| p.get())));
+    let Some((thread, parent)) = parent_of(channel) else { return false };
+    let (thread_parent, category) = if thread { (parent, parent.and_then(parent_of).and_then(|p| p.1)) } else { (None, parent) };
+    s.no_xp_in(channel, thread_parent, category)
+}
+
+/// Days since 1970 in UTC: streaks count these.
+fn day_of(ms: i64) -> i64 {
+    ms.div_euclid(86_400_000)
+}
+
+/// A streak after earning XP on `today`, given the streak and the day it last grew: one more the
+/// day after, the same later that day, and back to 1 after a day without XP.
+fn next_streak(streak: i64, day: i64, today: i64) -> i64 {
+    if day == today {
+        streak.max(1)
+    } else if day == today - 1 {
+        streak + 1
+    } else {
+        1
+    }
+}
+
+/// A streak as it stands on `today`. It's still alive the day after it last grew, since the member
+/// can carry it on until midnight UTC.
+fn live_streak(streak: i64, day: i64, today: i64) -> i64 {
+    if day >= today - 1 { streak } else { 0 }
+}
+
+/// `amount` with a bonus in percent, rounded to the nearest XP.
+fn boosted(amount: i64, pct: i64) -> i64 {
+    if pct <= 0 || amount <= 0 {
+        return amount;
+    }
+    amount.saturating_mul(100 + pct).saturating_add(50) / 100
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +191,9 @@ pub struct Member {
     pub level: u32,
     pub messages: i64,
     pub voice_minutes: i64,
+    pub prestige: i64,
+    /// Days in a row with XP, counting today or yesterday; 0 once it has lapsed.
+    pub streak: i64,
 }
 
 #[derive(Default)]
@@ -123,6 +227,19 @@ const MIGRATIONS: &[Migration] = &[Migration {
             level INTEGER NOT NULL, role_id INTEGER, at INTEGER NOT NULL);
         CREATE INDEX level_ups_by_time ON level_ups(guild_id, at);
     ",
+}, Migration {
+    name: "003_levels_week_winners",
+    sql: "
+        CREATE TABLE level_week_winners (
+            guild_id INTEGER NOT NULL, week TEXT NOT NULL, place INTEGER NOT NULL,
+            user_id INTEGER NOT NULL, xp INTEGER NOT NULL, PRIMARY KEY (guild_id, place));
+    ",
+}, Migration {
+    name: "004_levels_streaks",
+    sql: "
+        ALTER TABLE levels ADD COLUMN streak INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE levels ADD COLUMN streak_day INTEGER NOT NULL DEFAULT 0;
+    ",
 }];
 
 #[feature_async]
@@ -146,7 +263,9 @@ impl Feature for Levels {
             CommandBuilder::new("rank", "Your level and XP, or someone else's", CommandType::ChatInput)
                 .option(UserBuilder::new("member", "Whose rank to show"))
                 .build(),
-            CommandBuilder::new("leaderboard", "The server's top members by XP", CommandType::ChatInput).build(),
+            CommandBuilder::new("leaderboard", "The server's top members by XP", CommandType::ChatInput)
+                .option(StringBuilder::new("board", "All time, or this week's XP").choices([("All time", "all"), ("This week", "week")]))
+                .build(),
             CommandBuilder::new("xp", "Change a member's XP", CommandType::ChatInput)
                 .default_member_permissions(Permissions::MANAGE_GUILD)
                 .option(
@@ -168,6 +287,20 @@ impl Feature for Levels {
         ]
     }
 
+    /// `/prestige` only where prestige is on, so members elsewhere don't see a command that
+    /// would only say it's off.
+    fn guild_commands(&self, ctx: &Ctx, guild: u64) -> Vec<Command> {
+        if ctx.settings::<Settings>(guild, KEY).is_ok_and(|s| s.prestige_on()) {
+            vec![CommandBuilder::new("prestige", "Start over at level 0 for a prestige rank and more XP", CommandType::ChatInput).build()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn reserved_command_names(&self) -> &'static [&'static str] {
+        &["prestige"]
+    }
+
     fn routes(&self) -> bot_core::axum::Router<Ctx> {
         web::routes()
     }
@@ -180,7 +313,7 @@ impl Feature for Levels {
                     return Ok(());
                 }
                 let s = ctx.settings::<Settings>(guild, KEY)?;
-                if s.no_xp_channels.contains(&m.channel_id.get()) {
+                if no_xp_here(ctx, &s, m.channel_id.get()) {
                     return Ok(());
                 }
                 if let Some(member) = &m.member
@@ -199,7 +332,7 @@ impl Feature for Levels {
                     return Ok(());
                 }
                 let s = ctx.settings::<Settings>(guild, KEY)?;
-                if s.reaction_xp <= 0 || s.no_xp_channels.contains(&r.channel_id.get()) {
+                if s.reaction_xp <= 0 || no_xp_here(ctx, &s, r.channel_id.get()) {
                     return Ok(());
                 }
                 if r.member.as_ref().is_some_and(|m| m.roles.iter().any(|role| s.no_xp_roles.contains(&role.get()))) {
@@ -217,7 +350,10 @@ impl Feature for Levels {
 
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
         for guild in ctx.enabled_guilds(KEY) {
-            roll_week(ctx, guild)?;
+            let winners = roll_week(ctx, guild)?;
+            if !winners.is_empty() {
+                post_winners(ctx, guild, &winners).await;
+            }
         }
         // One minute of voice XP for everyone talking in a channel.
         for guild in ctx.enabled_guilds(KEY) {
@@ -237,7 +373,7 @@ impl Feature for Levels {
                 })
                 .collect();
             for (user, channel, quiet, bot) in &states {
-                if *bot || Some(*channel) == afk || (s.voice_require_active && *quiet) || s.no_xp_channels.contains(&channel.get()) {
+                if *bot || Some(*channel) == afk || (s.voice_require_active && *quiet) || no_xp_here(ctx, &s, channel.get()) {
                     continue;
                 }
                 let no_xp_role = ctx
@@ -264,24 +400,50 @@ impl Feature for Levels {
         match call.data.name.as_str() {
             "rank" => {
                 let user = call.opts().user("member").map(|u| u.get()).unwrap_or(call.user_id());
-                let m = member(ctx, guild, user)?.unwrap_or(Member { user_id: user, xp: 0, level: 0, messages: 0, voice_minutes: 0 });
+                let m = member(ctx, guild, user)?.unwrap_or(Member { user_id: user, xp: 0, level: 0, messages: 0, voice_minutes: 0, prestige: 0, streak: 0 });
                 let p = s.progress(m.xp);
                 let place = rank_of(ctx, guild, user)?;
                 let name = ctx.display_name(guild, user);
-                let embed = EmbedBuilder::new()
+                let mut embed = EmbedBuilder::new()
                     .title(format!("{name}, level {}", p.level))
                     .color(0xf0806a)
                     .description(format!("`{}`  {} / {} XP", curve::bar(p.into, p.needed, 18), text::num(p.into), text::num(p.needed)))
                     .field(EmbedFieldBuilder::new("Rank", place.map(|r| format!("#{r}")).unwrap_or_else(|| "Unranked".into())).inline())
-                    .field(EmbedFieldBuilder::new("Total XP", text::num(m.xp)).inline())
+                    .field(EmbedFieldBuilder::new("Total XP", text::num(m.xp)).inline());
+                if s.prestige_on() {
+                    let bonus = s.prestige_pct(m.prestige);
+                    let value = if bonus > 0 { format!("{}, +{bonus}% XP", m.prestige) } else { m.prestige.to_string() };
+                    embed = embed.field(EmbedFieldBuilder::new("Prestige", value).inline());
+                }
+                if s.streaks_on() {
+                    let streak = match (m.streak, s.streak_pct(m.streak)) {
+                        (0, _) => "None".to_owned(),
+                        (1, _) => "1 day".to_owned(),
+                        (n, 0) => format!("{n} days"),
+                        (n, pct) => format!("{n} days, +{pct}% XP"),
+                    };
+                    embed = embed.field(EmbedFieldBuilder::new("Streak", streak).inline());
+                }
+                let embed = embed
                     .field(EmbedFieldBuilder::new("Messages", text::num(m.messages)).inline())
                     .field(EmbedFieldBuilder::new("Voice", text::duration(m.voice_minutes * 60)).inline())
                     .build();
                 ctx.reply(&call.interaction, Reply::embed(embed)).await?;
             }
             "leaderboard" => {
-                let (embed, rows) = leaderboard(ctx, guild, 0)?;
+                let board = if call.opts().str("board") == Some("week") { Board::Week } else { Board::All };
+                let (embed, rows) = leaderboard(ctx, guild, board, 0)?;
                 ctx.reply(&call.interaction, Reply::embed(embed).components(rows)).await?;
+            }
+            "prestige" => {
+                let reply = match prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()) {
+                    Ok(text) => {
+                        let id = format!("{KEY}:prestige:{}", call.user_id());
+                        Reply::text(text).components(vec![button_row(&[(&id, "Prestige", ButtonStyle::Danger)])])
+                    }
+                    Err(why) => Reply::text(why),
+                };
+                ctx.reply(&call.interaction, reply.ephemeral()).await?;
             }
             "xp" => {
                 // Discord hides /xp from members without Manage Server, but server admins can
@@ -333,13 +495,46 @@ impl Feature for Levels {
 
     async fn on_component(&self, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
         let Some(guild) = call.guild_id() else { return Ok(()) };
-        if let ["lb", page] = call.args().as_slice() {
+        if let [which @ ("lb" | "lbw"), page] = call.args().as_slice() {
             let page: i64 = page.parse().unwrap_or(0);
-            let (embed, rows) = leaderboard(ctx, guild, page.max(0))?;
+            let board = if *which == "lbw" { Board::Week } else { Board::All };
+            let (embed, rows) = leaderboard(ctx, guild, board, page.max(0))?;
             ctx.update(&call.interaction, Reply::embed(embed).components(rows)).await?;
+        }
+        if let ["prestige", user] = call.args().as_slice() {
+            // The offer is only shown to the member it's for, but check anyway.
+            if user.parse::<u64>().ok() != Some(call.user_id()) {
+                return Ok(());
+            }
+            let s = ctx.settings::<Settings>(guild, KEY)?;
+            let text = match prestige(ctx, guild, call.user_id(), s.prestige_level)? {
+                Some(n) => {
+                    sync_rewards(ctx, guild, call.user_id(), 0).await;
+                    let bonus = if s.prestige_bonus > 0 { format!(" You earn {}% more XP from here.", s.prestige_pct(n)) } else { String::new() };
+                    format!("You're prestige {n} now, back at level 0.{bonus}")
+                }
+                None => prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()).err().unwrap_or_else(|| "Nothing changed. Try /prestige again.".into()),
+            };
+            ctx.update(&call.interaction, Reply::text(text)).await?;
         }
         Ok(())
     }
+}
+
+/// What prestiging would do for this member, or why they can't yet.
+fn prestige_offer(s: &Settings, m: Option<&Member>) -> std::result::Result<String, String> {
+    if !s.prestige_on() {
+        return Err("Prestige is off on this server.".into());
+    }
+    let (level, now) = m.map(|m| (m.level, m.prestige)).unwrap_or((0, 0));
+    if level < s.prestige_level {
+        return Err(format!("You can prestige from level {}. You're level {level}.", s.prestige_level));
+    }
+    let bonus = if s.prestige_bonus > 0 { format!(", and you earn {}% more XP", s.prestige_pct(now + 1)) } else { String::new() };
+    Ok(format!(
+        "Prestige {} puts your XP and level back to 0 and takes away your level reward roles until you earn them again. Your prestige shows on /rank and the leaderboard{bonus}. This can't be undone.",
+        now + 1
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -353,27 +548,29 @@ enum Earned {
 pub fn member(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<Member>> {
     ctx.db.with(|c| {
         c.query_row(
-            "SELECT user_id, xp, level, messages, voice_minutes FROM levels WHERE guild_id = ?1 AND user_id = ?2",
+            &format!("SELECT {COLS} FROM levels WHERE guild_id = ?1 AND user_id = ?2"),
             params![guild as i64, user as i64],
-            |r| {
-                Ok(Member {
-                    user_id: r.get::<_, i64>(0)? as u64,
-                    xp: r.get(1)?,
-                    level: r.get::<_, i64>(2)? as u32,
-                    messages: r.get(3)?,
-                    voice_minutes: r.get(4)?,
-                })
-            },
+            member_row,
         )
         .optional()
     })
 }
 
+/// The columns `member_row` reads.
+const COLS: &str = "user_id, xp, level, messages, voice_minutes, prestige, streak, streak_day";
+
+/// Who is on the leaderboard: anyone with XP, and anyone who prestiged and is back at 0.
+const ON_BOARD: &str = "(xp > 0 OR prestige > 0)";
+
 fn rank_of(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<i64>> {
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let ahead = if s.prestige_on() { "o.prestige > l.prestige OR (o.prestige = l.prestige AND o.xp > l.xp)" } else { "o.xp > l.xp" };
     ctx.db.with(|c| {
         c.query_row(
-            "SELECT (SELECT COUNT(*) FROM levels o WHERE o.guild_id = l.guild_id AND o.xp > l.xp) + 1
-             FROM levels l WHERE l.guild_id = ?1 AND l.user_id = ?2 AND l.xp > 0",
+            &format!(
+                "SELECT (SELECT COUNT(*) FROM levels o WHERE o.guild_id = l.guild_id AND ({ahead})) + 1
+                 FROM levels l WHERE l.guild_id = ?1 AND l.user_id = ?2 AND (l.xp > 0 OR l.prestige > 0)"
+            ),
             params![guild as i64, user as i64],
             |r| r.get(0),
         )
@@ -388,15 +585,15 @@ fn member_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<Mem
         level: r.get::<_, i64>(2)? as u32,
         messages: r.get(3)?,
         voice_minutes: r.get(4)?,
+        prestige: r.get(5)?,
+        streak: live_streak(r.get(6)?, r.get(7)?, day_of(bot_core::now_ms())),
     })
 }
 
 pub fn top(ctx: &Ctx, guild: u64, offset: i64, limit: i64) -> Result<Vec<Member>> {
+    let s = ctx.settings::<Settings>(guild, KEY)?;
     ctx.db.with(|c| {
-        let mut stmt = c.prepare_cached(
-            "SELECT user_id, xp, level, messages, voice_minutes FROM levels WHERE guild_id = ?1 AND xp > 0
-             ORDER BY xp DESC LIMIT ?2 OFFSET ?3",
-        )?;
+        let mut stmt = c.prepare_cached(&format!("SELECT {COLS} FROM levels WHERE guild_id = ?1 AND {ON_BOARD} ORDER BY {} LIMIT ?2 OFFSET ?3", s.order()))?;
         stmt.query_map(params![guild as i64, limit, offset], member_row)?.collect()
     })
 }
@@ -404,10 +601,9 @@ pub fn top(ctx: &Ctx, guild: u64, offset: i64, limit: i64) -> Result<Vec<Member>
 /// The members among `ids` with XP, best first, each with their place on the leaderboard: up to
 /// `limit` of them, and how many matched in all.
 pub fn find(ctx: &Ctx, guild: u64, ids: &std::collections::HashSet<u64>, limit: usize) -> Result<(Vec<(i64, Member)>, i64)> {
+    let s = ctx.settings::<Settings>(guild, KEY)?;
     ctx.db.with(|c| {
-        let mut stmt = c.prepare_cached(
-            "SELECT user_id, xp, level, messages, voice_minutes FROM levels WHERE guild_id = ?1 AND xp > 0 ORDER BY xp DESC",
-        )?;
+        let mut stmt = c.prepare_cached(&format!("SELECT {COLS} FROM levels WHERE guild_id = ?1 AND {ON_BOARD} ORDER BY {}", s.order()))?;
         let (mut out, mut matched) = (Vec::new(), 0);
         for (i, m) in stmt.query_map([guild as i64], member_row)?.enumerate() {
             let m = m?;
@@ -423,30 +619,86 @@ pub fn find(ctx: &Ctx, guild: u64, ids: &std::collections::HashSet<u64>, limit: 
 }
 
 pub fn count(ctx: &Ctx, guild: u64) -> Result<i64> {
-    ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND xp > 0", [guild as i64], |r| r.get(0)))
+    ctx.db.with(|c| c.query_row(&format!("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND {ON_BOARD}"), [guild as i64], |r| r.get(0)))
 }
 
-fn leaderboard(ctx: &Ctx, guild: u64, page: i64) -> Result<(bot_core::twilight_model::channel::message::Embed, Vec<bot_core::twilight_model::channel::message::component::Component>)> {
+/// Which leaderboard: total XP, or XP gained since Monday.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Board {
+    All,
+    Week,
+}
+
+/// XP gained this week: XP now less XP when the week started. Members who first earned XP this
+/// week have no starting row and count from zero.
+const WEEK_GAIN: &str = "SELECT l.user_id, l.xp, l.level, l.messages, l.voice_minutes, l.prestige, l.streak, l.streak_day, l.xp - COALESCE(w.xp, 0) AS gain FROM levels l
+     LEFT JOIN level_week w ON w.guild_id = l.guild_id AND w.user_id = l.user_id
+     WHERE l.guild_id = ?1 AND gain > 0";
+
+/// This week's top members by XP gained, each with what they gained.
+pub fn week_top(ctx: &Ctx, guild: u64, offset: i64, limit: i64) -> Result<Vec<(Member, i64)>> {
+    ctx.db.with(|c| {
+        let mut stmt = c.prepare_cached(&format!("{WEEK_GAIN} ORDER BY gain DESC, l.user_id LIMIT ?2 OFFSET ?3"))?;
+        stmt.query_map(params![guild as i64, limit, offset], |r| Ok((member_row(r)?, r.get(8)?)))?.collect()
+    })
+}
+
+/// How many members gained XP this week, and how much they gained together.
+pub fn week_totals(ctx: &Ctx, guild: u64) -> Result<(i64, i64)> {
+    ctx.db.with(|c| c.query_row(&format!("SELECT COUNT(*), COALESCE(SUM(gain), 0) FROM ({WEEK_GAIN})"), [guild as i64], |r| Ok((r.get(0)?, r.get(1)?))))
+}
+
+/// A finished week's top three: the week ("2026-W44") and `(user, XP gained)` best first.
+pub type Winners = (String, Vec<(u64, i64)>);
+
+/// Last week's top three, kept from when the week rolled over.
+pub fn last_week(ctx: &Ctx, guild: u64) -> Result<Option<Winners>> {
+    let rows: Vec<(String, u64, i64)> = ctx.db.with(|c| {
+        let mut stmt = c.prepare_cached("SELECT week, user_id, xp FROM level_week_winners WHERE guild_id = ?1 ORDER BY place")?;
+        stmt.query_map([guild as i64], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64, r.get(2)?)))?.collect()
+    })?;
+    let Some(week) = rows.first().map(|r| r.0.clone()) else { return Ok(None) };
+    Ok(Some((week, rows.into_iter().map(|(_, u, x)| (u, x)).collect())))
+}
+
+fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64) -> Result<(bot_core::twilight_model::channel::message::Embed, Vec<bot_core::twilight_model::channel::message::component::Component>)> {
     let per = 10;
-    let total = count(ctx, guild)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let total = match board {
+        Board::All => count(ctx, guild)?,
+        Board::Week => week_totals(ctx, guild)?.0,
+    };
     let pages = ((total + per - 1) / per).max(1);
     let page = page.min(pages - 1);
-    let rows = top(ctx, guild, page * per, per)?;
+    let rows: Vec<(Member, Option<i64>)> = match board {
+        Board::All => top(ctx, guild, page * per, per)?.into_iter().map(|m| (m, None)).collect(),
+        Board::Week => week_top(ctx, guild, page * per, per)?.into_iter().map(|(m, g)| (m, Some(g))).collect(),
+    };
     let mut lines = Vec::new();
-    for (i, m) in rows.iter().enumerate() {
+    for (i, (m, gain)) in rows.iter().enumerate() {
         let place = page * per + i as i64 + 1;
-        lines.push(format!("`{place:>2}`  {}  ·  level {}  ·  {} XP", ctx.display_name(guild, m.user_id), m.level, text::num(m.xp)));
+        let figure = match gain {
+            Some(g) => format!("+{} XP", text::num(*g)),
+            None => format!("{} XP", text::num(m.xp)),
+        };
+        let prestige = if s.prestige_on() && m.prestige > 0 { format!("prestige {}  ·  ", m.prestige) } else { String::new() };
+        let streak = if s.streaks_on() && m.streak > 1 { format!("{}-day streak  ·  ", m.streak) } else { String::new() };
+        lines.push(format!("`{place:>2}`  {}  ·  {prestige}level {}  ·  {streak}{figure}", ctx.display_name(guild, m.user_id), m.level));
     }
+    let (title, nobody, prefix) = match board {
+        Board::All => (format!("{} leaderboard", ctx.guild_name(guild)), "Nobody has XP yet.", "lb"),
+        Board::Week => (format!("{} this week", ctx.guild_name(guild)), "Nobody has earned XP since Monday.", "lbw"),
+    };
     let embed = EmbedBuilder::new()
-        .title(format!("{} leaderboard", ctx.guild_name(guild)))
+        .title(title)
         .color(0xf0806a)
-        .description(if lines.is_empty() { "Nobody has XP yet.".into() } else { lines.join("\n") })
+        .description(if lines.is_empty() { nobody.into() } else { lines.join("\n") })
         .footer(bot_core::twilight_util::builder::embed::EmbedFooterBuilder::new(format!("Page {} of {pages}", page + 1)))
         .build();
     let mut buttons = Vec::new();
     if pages > 1 {
-        let prev = format!("{KEY}:lb:{}", (page - 1).max(0));
-        let next = format!("{KEY}:lb:{}", (page + 1).min(pages - 1));
+        let prev = format!("{KEY}:{prefix}:{}", (page - 1).max(0));
+        let next = format!("{KEY}:{prefix}:{}", (page + 1).min(pages - 1));
         buttons.push(button_row(&[(&prev, "Previous", ButtonStyle::Secondary), (&next, "Next", ButtonStyle::Secondary)]));
     }
     Ok((embed, buttons))
@@ -467,26 +719,71 @@ fn cooled_down(map: &Mutex<HashMap<(u64, u64), Instant>>, key: (u64, u64), coold
     true
 }
 
+/// XP from another feature, like a claimed upload reward: a flat amount (no prestige or streak
+/// boost), with level-ups announced and reward roles handled like any other gain. `channel` is
+/// where a level-up is announced when no level-up channel is set.
+///
+/// `Ok(false)` when levels are off in that server, so nothing was paid. Once the XP is written
+/// this is `Ok(true)`: a level-up that couldn't be logged, or a role that couldn't be given, is
+/// logged here rather than returned, so the caller never undoes a payment that went through.
+pub async fn give_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, channel: Option<u64>) -> Result<bool> {
+    if !ctx.enabled(guild, KEY) {
+        return Ok(false);
+    }
+    let (s, before, level) = add_xp(ctx, guild, user, amount.max(0), Earned::Manual)?;
+    if level > before
+        && let Err(e) = log_level_up(ctx, guild, user, level)
+    {
+        bot_core::tracing::warn!(guild, user, level, error = %e, "couldn't log a level-up from given XP");
+    }
+    level_changed(ctx, &s, guild, user, before, level, channel).await;
+    Ok(true)
+}
+
 /// Add XP (or take it, when `amount` is negative) and handle a level change: announcement and
 /// reward roles.
 async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, channel: Option<u64>) -> Result<()> {
+    let (s, before, level) = add_xp(ctx, guild, user, amount, how)?;
+    if level > before {
+        log_level_up(ctx, guild, user, level)?;
+    }
+    level_changed(ctx, &s, guild, user, before, level, channel).await;
+    Ok(())
+}
+
+/// Write the XP change. Returns the settings, the level before and the level after.
+fn add_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned) -> Result<(std::sync::Arc<Settings>, u32, u32)> {
     let s = ctx.settings::<Settings>(guild, KEY)?;
     // Read and write under one lock: a message, a reaction and the voice tick for the same member
     // can land together, and each must add to what the other wrote.
+    let now = bot_core::now_ms();
     let (before, level) = ctx.db.with(|c| {
-        let before: (i64, u32) = c
-            .query_row("SELECT xp, level FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| {
-                Ok((r.get(0)?, r.get::<_, i64>(1)? as u32))
-            })
+        let (xp, level, prestige, streak, day): (i64, u32, i64, i64, i64) = c
+            .query_row(
+                "SELECT xp, level, prestige, streak, streak_day FROM levels WHERE guild_id = ?1 AND user_id = ?2",
+                params![guild as i64, user as i64],
+                |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u32, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
             .optional()?
-            .unwrap_or((0, 0));
+            .unwrap_or((0, 0, 0, 0, 0));
+        let before = (xp, level);
+        // Earning keeps the streak going, and prestige and the streak boost what members earn;
+        // staff giving or taking XP touches neither.
+        let (amount, streak, day) = if how == Earned::Manual {
+            (amount, streak, day)
+        } else {
+            let today = day_of(now);
+            let streak = next_streak(streak, day, today);
+            (boosted(amount, s.prestige_pct(prestige).saturating_add(s.streak_pct(streak))), streak, today)
+        };
         let xp = before.0.saturating_add(amount).clamp(0, curve::MAX_XP);
         let level = s.progress(xp).level;
         c.execute(
-            "INSERT INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            "INSERT INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, updated_at, streak, streak_day)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT (guild_id, user_id) DO UPDATE SET xp = excluded.xp, level = excluded.level,
-               messages = messages + ?5, voice_minutes = voice_minutes + ?6, updated_at = excluded.updated_at",
+               messages = messages + ?5, voice_minutes = voice_minutes + ?6, updated_at = excluded.updated_at,
+               streak = excluded.streak, streak_day = excluded.streak_day",
             params![
                 guild as i64,
                 user as i64,
@@ -494,47 +791,84 @@ async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, chann
                 level as i64,
                 (how == Earned::Message) as i64,
                 (how == Earned::Voice) as i64,
-                bot_core::now_ms()
+                now,
+                streak,
+                day
             ],
         )?;
         Ok((before, level))
     })?;
-    if level > before.1 {
-        let role = rewards(ctx, guild).unwrap_or_default().into_iter().find(|(l, _)| *l == level).map(|(_, r)| r as i64);
-        ctx.db.with(|c| {
-            c.execute(
-                "INSERT INTO level_ups (guild_id, user_id, level, role_id, at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![guild as i64, user as i64, level as i64, role, bot_core::now_ms()],
-            )
-        })?;
-    }
-    if level != before.1 {
+    Ok((s, before.1, level))
+}
+
+/// Keep a level-up for the history, with the reward role it came with.
+fn log_level_up(ctx: &Ctx, guild: u64, user: u64, level: u32) -> Result<()> {
+    let role = rewards(ctx, guild).unwrap_or_default().into_iter().find(|(l, _)| *l == level).map(|(_, r)| r as i64);
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO level_ups (guild_id, user_id, level, role_id, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![guild as i64, user as i64, level as i64, role, bot_core::now_ms()],
+        )
+    })?;
+    Ok(())
+}
+
+/// Reward roles and the announcement after a level change. Failures are logged where they happen.
+async fn level_changed(ctx: &Ctx, s: &Settings, guild: u64, user: u64, before: u32, level: u32, channel: Option<u64>) {
+    if level != before {
         sync_rewards(ctx, guild, user, level).await;
-        if level > before.1 && s.announce && level >= s.announce_min_level {
-            announce(ctx, &s, guild, user, level, channel).await;
+        if level > before && s.announce && level >= s.announce_min_level {
+            announce(ctx, s, guild, user, level, channel).await;
         }
     }
-    Ok(())
 }
 
 /// This ISO week, like "2026-W44", in UTC.
 fn week_key() -> String {
-    let d = bot_core::jiff::Timestamp::now().to_zoned(bot_core::jiff::tz::TimeZone::UTC).date();
+    week_key_of(bot_core::jiff::Timestamp::now().to_zoned(bot_core::jiff::tz::TimeZone::UTC).date())
+}
+
+/// The ISO week a day falls in. Weeks start on Monday, and the days around New Year can belong
+/// to the other year's first or last week.
+fn week_key_of(d: bot_core::jiff::civil::Date) -> String {
     let w = d.iso_week_date();
     format!("{}-W{:02}", w.year(), w.week())
 }
 
-/// At the start of each week, remember everyone's XP so "this week" can be worked out, and drop
-/// level-ups older than a month.
-fn roll_week(ctx: &Ctx, guild: u64) -> Result<()> {
-    let week = week_key();
+/// At the start of each week, keep the top three of the week that ended, remember everyone's XP
+/// so "this week" can be worked out, and drop level-ups older than a month. Returns the top three
+/// when a week just ended, so they can be posted.
+fn roll_week(ctx: &Ctx, guild: u64) -> Result<Vec<(u64, i64)>> {
+    roll_week_to(ctx, guild, &week_key())
+}
+
+/// The top three kept for the stored week are measured from that week's start to now, so after
+/// the bot was down for a whole week they also hold the missed week's XP.
+fn roll_week_to(ctx: &Ctx, guild: u64, week: &str) -> Result<Vec<(u64, i64)>> {
     let mut conn = ctx.db.lock();
     let stored: Option<String> =
         conn.query_row("SELECT week FROM level_week_state WHERE guild_id = ?1", [guild as i64], |r| r.get(0)).optional()?;
-    if stored.as_deref() == Some(week.as_str()) {
-        return Ok(());
+    if stored.as_deref() == Some(week) {
+        return Ok(Vec::new());
     }
     let tx = conn.transaction()?;
+    // The first roll has no start of week to measure from, so it names no winners.
+    let mut winners = Vec::new();
+    if let Some(ended) = &stored {
+        {
+            let mut st = tx.prepare(&format!("{WEEK_GAIN} ORDER BY gain DESC, l.user_id LIMIT 3"))?;
+            for row in st.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(8)?)))? {
+                winners.push(row?);
+            }
+        }
+        tx.execute("DELETE FROM level_week_winners WHERE guild_id = ?1", [guild as i64])?;
+        for (place, (user, gain)) in winners.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO level_week_winners (guild_id, week, place, user_id, xp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![guild as i64, ended, place as i64 + 1, *user as i64, gain],
+            )?;
+        }
+    }
     tx.execute("DELETE FROM level_week WHERE guild_id = ?1", [guild as i64])?;
     tx.execute("INSERT INTO level_week (guild_id, user_id, xp) SELECT guild_id, user_id, xp FROM levels WHERE guild_id = ?1", [guild as i64])?;
     tx.execute(
@@ -543,7 +877,29 @@ fn roll_week(ctx: &Ctx, guild: u64) -> Result<()> {
     )?;
     tx.execute("DELETE FROM level_ups WHERE guild_id = ?1 AND at < ?2", params![guild as i64, bot_core::now_ms() - 30 * 86_400_000])?;
     tx.commit()?;
-    Ok(())
+    Ok(winners)
+}
+
+/// The week's top three as the weekly post lists them.
+pub fn winners_text(winners: &[(u64, i64)]) -> String {
+    winners
+        .iter()
+        .enumerate()
+        .map(|(i, (user, gain))| format!("**{}.** <@{user}>  ·  +{} XP", i + 1, text::num(*gain)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Post the top three of the week that ended, when the server asked for it. Mentions in an embed
+/// show the name without pinging anyone.
+async fn post_winners(ctx: &Ctx, guild: u64, winners: &[(u64, i64)]) {
+    let Ok(s) = ctx.settings::<Settings>(guild, KEY) else { return };
+    let Some(channel) = s.weekly_channel.filter(|_| s.weekly_post) else { return };
+    let embed = EmbedBuilder::new().title("Most XP last week").color(0xf0806a).description(winners_text(winners)).build();
+    if let Err(e) = ctx.http.create_message(Id::new(channel)).embeds(&[embed]).allowed_mentions(Some(&AllowedMentions::default())).await {
+        bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post the weekly top three");
+        notify_failure(ctx, guild, format!("The weekly top three wasn't posted. {}", why_refused(&e)), format!("/g/{guild}/{KEY}/settings"));
+    }
 }
 
 /// Set a member's XP outright and fix their level and roles.
@@ -551,14 +907,74 @@ pub async fn set_xp(ctx: &Ctx, guild: u64, user: u64, xp: i64) -> Result<()> {
     let xp = xp.clamp(0, curve::MAX_XP);
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let level = s.progress(xp).level;
-    ctx.db.with(|c| {
-        c.execute(
+    {
+        let mut conn = ctx.db.lock();
+        let tx = conn.transaction()?;
+        let old: i64 = tx
+            .query_row("SELECT xp FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| r.get(0))
+            .optional()?
+            .unwrap_or(0);
+        tx.execute(
             "INSERT INTO levels (guild_id, user_id, xp, level, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT (guild_id, user_id) DO UPDATE SET xp = excluded.xp, level = excluded.level, updated_at = excluded.updated_at",
             params![guild as i64, user as i64, xp, level as i64, bot_core::now_ms()],
+        )?;
+        shift_week(&tx, guild, user, xp - old)?;
+        tx.commit()?;
+    }
+    sync_rewards(ctx, guild, user, level).await;
+    Ok(())
+}
+
+/// Move a member's XP at the start of the week by `delta` alongside a staff change or an import,
+/// so XP that wasn't earned this week doesn't count as earned this week. A member with no row
+/// counts from zero, so the new row is the change itself.
+pub(crate) fn shift_week(c: &bot_core::rusqlite::Connection, guild: u64, user: u64, delta: i64) -> bot_core::rusqlite::Result<()> {
+    if delta != 0 {
+        c.execute(
+            "INSERT INTO level_week (guild_id, user_id, xp) VALUES (?1, ?2, ?3) ON CONFLICT (guild_id, user_id) DO UPDATE SET xp = xp + ?3",
+            params![guild as i64, user as i64, delta],
+        )?;
+    }
+    Ok(())
+}
+
+/// Start a member over at level 0 with one more prestige, if they're still at `from_level` or
+/// higher, and return their new prestige. Their XP at the start of the week drops by the XP they
+/// give up, so what they gained this week stays the same.
+fn prestige(ctx: &Ctx, guild: u64, user: u64, from_level: u32) -> Result<Option<i64>> {
+    if from_level == 0 {
+        return Ok(None);
+    }
+    let mut conn = ctx.db.lock();
+    let tx = conn.transaction()?;
+    let row: Option<(i64, i64, i64)> = tx
+        .query_row("SELECT xp, level, prestige FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .optional()?;
+    let Some((xp, _, prestige)) = row.filter(|r| r.1 >= from_level as i64) else { return Ok(None) };
+    tx.execute(
+        "UPDATE levels SET xp = 0, level = 0, prestige = prestige + 1, updated_at = ?3 WHERE guild_id = ?1 AND user_id = ?2",
+        params![guild as i64, user as i64, bot_core::now_ms()],
+    )?;
+    tx.execute(
+        "INSERT INTO level_week (guild_id, user_id, xp) VALUES (?1, ?2, -?3) ON CONFLICT (guild_id, user_id) DO UPDATE SET xp = xp - ?3",
+        params![guild as i64, user as i64, xp],
+    )?;
+    tx.commit()?;
+    Ok(Some(prestige + 1))
+}
+
+/// Set a member's prestige outright, from the dashboard.
+pub fn set_prestige(ctx: &Ctx, guild: u64, user: u64, prestige: i64) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO levels (guild_id, user_id, prestige, updated_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (guild_id, user_id) DO UPDATE SET prestige = excluded.prestige, updated_at = excluded.updated_at",
+            params![guild as i64, user as i64, prestige.max(0), bot_core::now_ms()],
         )
     })?;
-    sync_rewards(ctx, guild, user, level).await;
     Ok(())
 }
 
@@ -673,25 +1089,49 @@ fn notify_failure(ctx: &Ctx, guild: u64, text: String, link: String) {
 
 
 pub(crate) fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
-    let s = Settings::default();
+    // The sample server has no voice channels; add a few so the no-XP picker has something.
+    let music = guild + 2004;
+    for (n, name, kind, parent) in [(1u64, "Voice", 4u8, None), (2, "Lounge", 2, Some(guild + 2001)), (3, "Gaming", 2, Some(guild + 2001)), (4, "Music", 2, Some(guild + 2001))] {
+        let channel = bot_core::serde_json::json!({
+            "id": (guild + 2000 + n).to_string(), "type": kind, "name": name, "position": 20 + n, "guild_id": guild.to_string(),
+            "parent_id": parent.map(|p: u64| p.to_string()), "permission_overwrites": []
+        });
+        let channel = bot_core::serde_json::from_value(channel)?;
+        ctx.cache.update(&Event::ChannelCreate(Box::new(bot_core::twilight_model::gateway::payload::incoming::ChannelCreate(channel))));
+    }
+    let s = Settings { prestige_level: 30, streak_bonus: 2, no_xp_channels: vec![music], ..Default::default() };
+    ctx.save_settings(guild, KEY, &s)?;
     for (i, (user, _)) in bot_core::preview::MEMBERS.iter().enumerate() {
         let xp = 48_000 / (i as i64 + 1) + (i as i64 * 731) % 900;
+        let prestige = match i { 1 => 2, 3 => 1, _ => 0 };
+        // Some members on a streak today or yesterday, one whose streak lapsed.
+        let (streak, back) = [(12, 0), (3, 0), (0, 0), (27, 1), (5, 0), (2, 1), (1, 0), (8, 4), (4, 0), (0, 0)][i];
+        let day = day_of(bot_core::now_ms()) - back;
         ctx.db.with(|c| {
             c.execute(
-                "INSERT OR REPLACE INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
-                params![guild as i64, *user as i64, xp, s.progress(xp).level as i64, xp / 21, xp / 40],
+                "INSERT OR REPLACE INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, prestige, streak, streak_day, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)",
+                params![guild as i64, *user as i64, xp, s.progress(xp).level as i64, xp / 21, xp / 40, prestige, streak, day],
             )
         })?;
     }
-    // XP at the start of the week and a few level-ups, for the overview.
+    // XP at the start of the week, last week's top three, and a few level-ups, for the overview.
     let now = bot_core::now_ms();
+    let last = week_key_of(bot_core::jiff::Timestamp::now().to_zoned(bot_core::jiff::tz::TimeZone::UTC).date().saturating_sub(bot_core::jiff::Span::new().days(7)));
     ctx.db.with(|c| {
         c.execute(
             "INSERT OR REPLACE INTO level_week (guild_id, user_id, xp)
              SELECT guild_id, user_id, xp - (abs(random()) % 4000) - 400 FROM levels WHERE guild_id = ?1",
             [guild as i64],
         )?;
-        c.execute("INSERT OR REPLACE INTO level_week_state (guild_id, week) VALUES (?1, ?2)", params![guild as i64, week_key()])
+        c.execute("INSERT OR REPLACE INTO level_week_state (guild_id, week) VALUES (?1, ?2)", params![guild as i64, week_key()])?;
+        for (place, (i, gain)) in [(2usize, 5_120i64), (0, 4_380), (6, 3_910)].into_iter().enumerate() {
+            c.execute(
+                "INSERT OR REPLACE INTO level_week_winners (guild_id, week, place, user_id, xp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![guild as i64, last, place as i64 + 1, bot_core::preview::MEMBERS[i].0 as i64, gain],
+            )?;
+        }
+        Ok(())
     })?;
     let regulars = ctx.roles(guild).into_iter().find(|r| r.1 == "Regulars").map(|r| r.0 as i64);
     for (i, level, role, back) in [(0usize, 25, regulars, 720_000i64), (3, 12, None, 9_000_000), (5, 8, None, 30_000_000)] {
@@ -732,5 +1172,248 @@ mod tests {
             cooled_down(&map, (4, user), 0);
         }
         assert!(map.lock().unwrap().len() < 10);
+    }
+
+    #[test]
+    fn weeks_follow_iso_numbering() {
+        use bot_core::jiff::civil::date;
+        assert_eq!(week_key_of(date(2026, 10, 31)), "2026-W44");
+        // Monday starts the week.
+        assert_eq!(week_key_of(date(2026, 11, 1)), "2026-W44");
+        assert_eq!(week_key_of(date(2026, 11, 2)), "2026-W45");
+        // New Year: 2026 starts on a Thursday, so it has a week 53 running into 2027, and the last
+        // days of 2024 already belong to 2025.
+        assert_eq!(week_key_of(date(2026, 1, 1)), "2026-W01");
+        assert_eq!(week_key_of(date(2027, 1, 1)), "2026-W53");
+        assert_eq!(week_key_of(date(2024, 12, 30)), "2025-W01");
+    }
+
+    fn ctx() -> Ctx {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(Levels::default())]).unwrap();
+        ctx
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn prestige_is_a_command_only_where_it_is_on() {
+        let ctx = ctx();
+        let names = |ctx: &Ctx| Levels::default().guild_commands(ctx, 1).into_iter().map(|c| c.name).collect::<Vec<_>>();
+        assert!(names(&ctx).is_empty());
+        assert!(!Levels::default().commands().iter().any(|c| c.name == "prestige"));
+        ctx.save_settings(1, KEY, &Settings { prestige_level: 50, ..Settings::default() }).unwrap();
+        assert_eq!(names(&ctx), vec!["prestige"]);
+        assert!(Levels::default().guild_commands(&ctx, 2).is_empty());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn given_xp_pays_once_written_and_never_where_levels_are_off() {
+        let ctx = ctx();
+        let xp = |ctx: &Ctx| ctx.db.with(|c| c.query_row("SELECT xp FROM levels WHERE guild_id = 1 AND user_id = 10", [], |r| r.get::<_, i64>(0)).optional()).unwrap();
+        // Levels off: nothing paid.
+        assert!(!give_xp(&ctx, 1, 10, 50, None).await.unwrap());
+        assert_eq!(xp(&ctx), None);
+        ctx.set_enabled(1, KEY, true).unwrap();
+        ctx.save_settings(1, KEY, &Settings { announce: false, ..Settings::default() }).unwrap();
+        assert!(give_xp(&ctx, 1, 10, 50, None).await.unwrap());
+        assert_eq!(xp(&ctx), Some(50));
+        // A level-up that can't be logged still counts as paid, so the caller doesn't undo it.
+        ctx.db.with(|c| c.execute_batch("DROP TABLE level_ups")).unwrap();
+        assert!(give_xp(&ctx, 1, 10, 100_000, None).await.unwrap());
+        assert_eq!(xp(&ctx), Some(100_050));
+    }
+
+    fn set(ctx: &Ctx, user: u64, xp: i64) {
+        ctx.db
+            .with(|c| c.execute("INSERT OR REPLACE INTO levels (guild_id, user_id, xp) VALUES (1, ?1, ?2)", params![user as i64, xp]))
+            .unwrap();
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn the_week_rolls_over_and_keeps_its_top_three() {
+        let ctx = ctx();
+        for (user, xp) in [(10, 500), (11, 900), (12, 100), (13, 50)] {
+            set(&ctx, user, xp);
+        }
+        // The first roll only marks the start: nothing to measure the week before against.
+        assert!(roll_week_to(&ctx, 1, "2026-W44").unwrap().is_empty());
+        assert_eq!(crate::week_totals(&ctx, 1).unwrap(), (0, 0));
+        // During the week: gains count from the start, and a newcomer counts from zero.
+        for (user, xp) in [(10, 800), (11, 950), (12, 600), (13, 60), (14, 70)] {
+            set(&ctx, user, xp);
+        }
+        let top: Vec<(u64, i64)> = crate::week_top(&ctx, 1, 0, 10).unwrap().into_iter().map(|(m, g)| (m.user_id, g)).collect();
+        assert_eq!(top, vec![(12, 500), (10, 300), (14, 70), (11, 50), (13, 10)]);
+        assert_eq!(crate::week_totals(&ctx, 1).unwrap(), (5, 930));
+        // Rolling twice in the same week does nothing.
+        assert!(roll_week_to(&ctx, 1, "2026-W44").unwrap().is_empty());
+        // The next week: the top three are kept under the week that ended, and the board is empty.
+        assert_eq!(roll_week_to(&ctx, 1, "2026-W45").unwrap(), vec![(12, 500), (10, 300), (14, 70)]);
+        assert_eq!(crate::last_week(&ctx, 1).unwrap(), Some(("2026-W44".into(), vec![(12, 500), (10, 300), (14, 70)])));
+        assert_eq!(crate::week_totals(&ctx, 1).unwrap(), (0, 0));
+        // A quiet week names nobody, and clears the last top three.
+        assert!(roll_week_to(&ctx, 1, "2026-W46").unwrap().is_empty());
+        assert_eq!(crate::last_week(&ctx, 1).unwrap(), None);
+    }
+
+    #[test]
+    fn bonuses_round_and_only_add() {
+        assert_eq!(boosted(20, 0), 20);
+        assert_eq!(boosted(15, 5), 16);
+        assert_eq!(boosted(20, 50), 30);
+        // Taking XP away is never boosted.
+        assert_eq!(boosted(-20, 50), -20);
+        assert_eq!(boosted(i64::MAX, 50), i64::MAX / 100);
+        let mut s = Settings::default();
+        assert_eq!(s.prestige_pct(3), 0, "prestige is off by default");
+        s.prestige_level = 30;
+        assert_eq!(s.prestige_pct(3), 15);
+    }
+
+    #[test]
+    fn prestige_offer_says_why_not() {
+        let mut s = Settings::default();
+        let m = |level, prestige| Member { user_id: 1, xp: 0, level, messages: 0, voice_minutes: 0, prestige, streak: 0 };
+        assert_eq!(prestige_offer(&s, Some(&m(40, 0))).unwrap_err(), "Prestige is off on this server.");
+        s.prestige_level = 30;
+        assert_eq!(prestige_offer(&s, Some(&m(12, 0))).unwrap_err(), "You can prestige from level 30. You're level 12.");
+        assert_eq!(prestige_offer(&s, None).unwrap_err(), "You can prestige from level 30. You're level 0.");
+        let offer = prestige_offer(&s, Some(&m(30, 1))).unwrap();
+        assert!(offer.starts_with("Prestige 2 puts"), "{offer}");
+        assert!(offer.contains("10% more XP"), "{offer}");
+    }
+
+    fn set_level(ctx: &Ctx, user: u64, xp: i64, level: i64, prestige: i64) {
+        ctx.db
+            .with(|c| {
+                c.execute(
+                    "INSERT OR REPLACE INTO levels (guild_id, user_id, xp, level, prestige) VALUES (1, ?1, ?2, ?3, ?4)",
+                    params![user as i64, xp, level, prestige],
+                )
+            })
+            .unwrap();
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn prestige_starts_over_and_keeps_the_week() {
+        let ctx = ctx();
+        set_level(&ctx, 10, 4_000, 18, 0);
+        roll_week_to(&ctx, 1, "2026-W44").unwrap();
+        set_level(&ctx, 10, 5_000, 20, 0);
+        // 11 first earned XP this week, so has no start-of-week row.
+        set_level(&ctx, 11, 3_000, 15, 0);
+        set_level(&ctx, 12, 900, 6, 0);
+        // Off, or below the level: nothing happens.
+        assert_eq!(prestige(&ctx, 1, 10, 0).unwrap(), None);
+        assert_eq!(prestige(&ctx, 1, 12, 10).unwrap(), None);
+        assert_eq!(prestige(&ctx, 1, 10, 10).unwrap(), Some(1));
+        assert_eq!(prestige(&ctx, 1, 11, 10).unwrap(), Some(1));
+        // A second press finds them at level 0.
+        assert_eq!(prestige(&ctx, 1, 10, 10).unwrap(), None);
+        let m = member(&ctx, 1, 10).unwrap().unwrap();
+        assert_eq!((m.xp, m.level, m.prestige), (0, 0, 1));
+        // This week's gains are what they were before.
+        let week: Vec<(u64, i64)> = crate::week_top(&ctx, 1, 0, 10).unwrap().into_iter().map(|(m, g)| (m.user_id, g)).collect();
+        assert_eq!(week, vec![(11, 3_000), (10, 1_000), (12, 900)]);
+        // With prestige on, prestige ranks first; off, XP alone. Both stay on the board at 0 XP.
+        let ids = |ctx: &Ctx| top(ctx, 1, 0, 10).unwrap().into_iter().map(|m| m.user_id).collect::<Vec<_>>();
+        assert_eq!(ids(&ctx), vec![12, 10, 11]);
+        assert_eq!(rank_of(&ctx, 1, 12).unwrap(), Some(1));
+        ctx.save_settings(1, KEY, &Settings { prestige_level: 10, ..Default::default() }).unwrap();
+        assert_eq!(ids(&ctx), vec![10, 11, 12]);
+        assert_eq!(rank_of(&ctx, 1, 12).unwrap(), Some(3));
+        assert_eq!(count(&ctx, 1).unwrap(), 3);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn staff_changes_and_imports_stay_off_the_weekly_board() {
+        let ctx = ctx();
+        set_level(&ctx, 10, 4_000, 18, 0);
+        roll_week_to(&ctx, 1, "2026-W44").unwrap();
+        set_level(&ctx, 10, 4_500, 18, 0);
+        // Staff set 10 to 9,000 and 11 (no XP before) to 2,000, as Set XP and an import do.
+        let shift = |user, delta| ctx.db.with(|c| shift_week(c, 1, user, delta)).unwrap();
+        set_level(&ctx, 10, 9_000, 30, 0);
+        shift(10, 4_500);
+        set_level(&ctx, 11, 2_000, 12, 0);
+        shift(11, 2_000);
+        let week: Vec<(u64, i64)> = crate::week_top(&ctx, 1, 0, 10).unwrap().into_iter().map(|(m, g)| (m.user_id, g)).collect();
+        assert_eq!(week.iter().find(|w| w.0 == 10), Some(&(10, 500)));
+        assert!(week.iter().all(|w| w.0 != 11 || w.1 == 0));
+    }
+
+    #[test]
+    fn no_xp_covers_threads_and_categories() {
+        let s = Settings { no_xp_channels: vec![10], no_xp_categories: vec![90], ..Default::default() };
+        assert!(s.no_xp_in(10, None, None));
+        assert!(!s.no_xp_in(11, None, Some(80)));
+        // A thread in a listed channel, and a channel or thread under a listed category.
+        assert!(s.no_xp_in(500, Some(10), Some(80)));
+        assert!(s.no_xp_in(11, None, Some(90)));
+        assert!(s.no_xp_in(501, Some(11), Some(90)));
+        assert!(!s.no_xp_in(502, Some(11), Some(80)));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn no_xp_finds_a_thread_parent_and_category_in_the_cache() {
+        let ctx = ctx();
+        for (id, kind, parent) in [(90u64, 4u8, None), (91, 4, None), (10, 0, Some(90)), (11, 0, Some(91)), (500, 11, Some(10)), (501, 11, Some(11))] {
+            let channel = bot_core::serde_json::json!({
+                "id": id.to_string(), "type": kind, "name": "x", "guild_id": "1", "parent_id": parent.map(|p: u64| p.to_string()),
+                "permission_overwrites": [], "thread_metadata": {"archived": false, "auto_archive_duration": 60, "archive_timestamp": "2026-01-01T00:00:00.000000+00:00", "locked": false}
+            });
+            ctx.cache.update(&Event::ChannelCreate(Box::new(bot_core::twilight_model::gateway::payload::incoming::ChannelCreate(bot_core::serde_json::from_value(channel).unwrap()))));
+        }
+        let s = Settings { no_xp_channels: vec![10], ..Default::default() };
+        assert!(no_xp_here(&ctx, &s, 500));
+        assert!(!no_xp_here(&ctx, &s, 501));
+        let s = Settings { no_xp_categories: vec![91], ..Default::default() };
+        assert!(no_xp_here(&ctx, &s, 11));
+        assert!(no_xp_here(&ctx, &s, 501));
+        assert!(!no_xp_here(&ctx, &s, 500));
+        // A channel the cache doesn't know earns XP.
+        assert!(!no_xp_here(&ctx, &s, 999));
+    }
+
+    #[test]
+    fn streaks_count_days_in_a_row() {
+        // First XP ever, then again the same day, the next day, and after a gap.
+        assert_eq!(next_streak(0, 0, 20_000), 1);
+        assert_eq!(next_streak(1, 20_000, 20_000), 1);
+        assert_eq!(next_streak(1, 20_000, 20_001), 2);
+        assert_eq!(next_streak(6, 20_001, 20_002), 7);
+        assert_eq!(next_streak(6, 20_001, 20_003), 1);
+        // It still shows the day after, and is gone the day after that.
+        assert_eq!(live_streak(6, 20_001, 20_001), 6);
+        assert_eq!(live_streak(6, 20_001, 20_002), 6);
+        assert_eq!(live_streak(6, 20_001, 20_003), 0);
+        // Days split at midnight UTC.
+        assert_eq!(day_of(86_400_000 - 1), 0);
+        assert_eq!(day_of(86_400_000), 1);
+    }
+
+    #[test]
+    fn the_streak_bonus_starts_on_day_two_and_stops_at_the_cap() {
+        let s = Settings { streak_bonus: 3, streak_max: 20, ..Default::default() };
+        assert_eq!([0, 1, 2, 5, 7, 8, 100].map(|d| s.streak_pct(d)), [0, 0, 3, 12, 18, 20, 20]);
+        assert_eq!(Settings::default().streak_pct(30), 0, "the bonus is off by default");
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn earning_keeps_the_streak_and_staff_changes_dont() {
+        let ctx = ctx();
+        ctx.save_settings(1, KEY, &Settings { streak_bonus: 10, streak_max: 50, prestige_level: 30, prestige_bonus: 10, ..Default::default() }).unwrap();
+        let today = day_of(bot_core::now_ms());
+        let streak = |ctx: &Ctx| ctx.db.with(|c| c.query_row("SELECT streak, streak_day, xp FROM levels WHERE user_id = 10", [], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))).unwrap();
+        grant(&ctx, 1, 10, 20, Earned::Voice, None).await.unwrap();
+        assert_eq!(streak(&ctx), (1, today, 20));
+        // Yesterday was day 4 of a streak, with one prestige: today is day 5, worth 40% + 10%.
+        ctx.db.with(|c| c.execute("UPDATE levels SET streak = 4, streak_day = ?1, prestige = 1 WHERE user_id = 10", [today - 1])).unwrap();
+        grant(&ctx, 1, 10, 20, Earned::Voice, None).await.unwrap();
+        assert_eq!(streak(&ctx), (5, today, 50));
+        // Staff changes neither move the streak nor get a bonus.
+        grant(&ctx, 1, 10, 100, Earned::Manual, None).await.unwrap();
+        grant(&ctx, 1, 10, -30, Earned::Manual, None).await.unwrap();
+        assert_eq!(streak(&ctx), (5, today, 120));
+        assert_eq!(member(&ctx, 1, 10).unwrap().unwrap().streak, 5);
     }
 }

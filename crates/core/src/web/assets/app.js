@@ -41,6 +41,72 @@
     document.querySelectorAll(".nav.on").forEach((a) => { a.classList.remove("on"); a.removeAttribute("aria-current"); });
     best.classList.add("on");
     best.setAttribute("aria-current", "page");
+    best.closest(".nav-fold")?.setAttribute("open", "");
+  }
+
+  // Sidebar groups remember being opened or folded by the person, per browser. Only their own
+  // clicks are stored; the current page's group and groups opened here aren't.
+  const folds = [...document.querySelectorAll(".nav-fold")];
+  const FOLDS = "nav-open";
+  let opened = [];
+  try { opened = JSON.parse(localStorage.getItem(FOLDS) || "[]"); } catch (_) {}
+  folds.forEach((d) => {
+    if (opened.includes(d.dataset.group)) d.setAttribute("open", "");
+    d.querySelector("summary").addEventListener("click", () => {
+      const g = d.dataset.group;
+      // The click runs before the details toggles, so it is about to become !open.
+      opened = opened.filter((x) => x !== g);
+      if (!d.open) opened.push(g);
+      try { localStorage.setItem(FOLDS, JSON.stringify(opened)); } catch (_) {}
+    });
+  });
+
+  // Page search: matches names and what each page does, opens groups that hold a match, and
+  // Enter goes to the first one.
+  const q = document.getElementById("nav-q");
+  if (q) {
+    const side = q.closest(".side");
+    const links = [...side.querySelectorAll(".side-links .nav")];
+    const none = side.querySelector(".nav-none");
+    const found = side.querySelector("#nav-found");
+    let before = null;
+    let searching = false;
+    const visible = () => links.filter((a) => !a.hidden);
+    q.addEventListener("input", () => {
+      const words = q.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      if (words.length && !searching) { searching = true; before = folds.map((d) => d.open); }
+      links.forEach((a) => {
+        const hay = (a.textContent + " " + (a.dataset.about || "")).toLowerCase();
+        a.hidden = !words.every((w) => hay.includes(w));
+      });
+      folds.forEach((d) => {
+        const any = [...d.querySelectorAll(".nav")].some((a) => !a.hidden);
+        d.hidden = words.length > 0 && !any;
+        if (words.length) d.open = true;
+      });
+      side.classList.toggle("searching", words.length > 0);
+      none.hidden = !words.length || visible().length > 0;
+      const n = visible().length;
+      found.textContent = words.length ? (n ? `${n} ${n === 1 ? "page" : "pages"}` : "No page matches.") : "";
+      if (!words.length && searching) {
+        folds.forEach((d, i) => { d.open = before[i]; });
+        searching = false;
+      }
+    });
+    q.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { const first = visible()[0]; if (first) location.href = first.href; }
+      if (e.key === "Escape") { q.value = ""; q.dispatchEvent(new Event("input")); q.blur(); }
+      if (e.key === "ArrowDown") { e.preventDefault(); visible()[0]?.focus(); }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target;
+      if (t.closest("input, textarea, select, [contenteditable]")) return;
+      e.preventDefault();
+      side.classList.add("open");
+      side.querySelector(".menu-btn")?.setAttribute("aria-expanded", "true");
+      q.focus();
+    });
   }
 
   // Popovers and the server switcher close on a click outside them or on Escape.

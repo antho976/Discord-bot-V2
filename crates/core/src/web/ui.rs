@@ -1,6 +1,8 @@
 //! The dashboard's building blocks. Features compose their pages from these so every page has
 //! the same shell, spacing and controls. Classes are defined in `assets/app.css`.
 
+use std::collections::HashMap;
+
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 
 use super::auth::{Level, Page};
@@ -45,6 +47,13 @@ pub enum Icon {
     Menu,
     Logout,
     Hash,
+    Search,
+    Mail,
+    Rules,
+    /// Custom commands: a key with a slash.
+    Slash,
+    /// Account reviews: a clipboard with a ticked line.
+    Review,
 }
 
 impl Icon {
@@ -82,9 +91,14 @@ impl Icon {
             Icon::Close => (16, r#"<path d="m4 4 8 8M12 4l-8 8"/>"#),
             Icon::Chevron => (16, r#"<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>"#),
             Icon::External => (16, r#"<path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3"/>"#),
+            Icon::Search => (16, r#"<path d="M3 7a4 4 0 1 0 8 0 4 4 0 1 0-8 0M10 10l3.5 3.5"/>"#),
             Icon::Menu => (16, r#"<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>"#),
             Icon::Logout => (24, r#"<path d="M10 4.5H6.5A1.5 1.5 0 0 0 5 6v12a1.5 1.5 0 0 0 1.5 1.5H10M14.5 8l4 4-4 4M18.5 12h-9"/>"#),
             Icon::Hash => (16, r#"<path d="M6 2.5 5 13.5M11 2.5l-1 11M2.75 6h11M2.25 10h11"/>"#),
+            Icon::Mail => (24, r#"<path d="M5 5.5h14A1.5 1.5 0 0 1 20.5 7v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 17V7A1.5 1.5 0 0 1 5 5.5zM4 7l8 6 8-6"/>"#),
+            Icon::Rules => (24, r#"<path d="M10 4 8.25 20M16.5 4l-.9 8.5M4.5 9h15M4 15h8.5M14 17.5l2 2 4-4"/>"#),
+            Icon::Slash => (24, r#"<path d="M6 4.5h12A1.5 1.5 0 0 1 19.5 6v12a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5ZM14 8.5l-4 7"/>"#),
+            Icon::Review => (24, r#"<path d="M8.5 5H7a1.5 1.5 0 0 0-1.5 1.5v13A1.5 1.5 0 0 0 7 21h10a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 17 5h-1.5M9.5 3.5h5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1ZM8.75 12.25l1.5 1.5 2.75-2.75M14.75 12.5h.5M8.75 17h6.5"/>"#),
         }
     }
 }
@@ -121,6 +135,7 @@ pub fn head(title: &str) -> Markup {
 /// `actions` sits at the right of the title.
 pub fn layout(ctx: &Ctx, page: &Page, title: &str, actions: Option<Markup>, body: Markup) -> Markup {
     let (ic, line) = identity(ctx, page, title);
+    let unread = unread_by_feature(ctx, page);
     let head = html! {
         header.page-head {
             span.head-icon { (icon(ic)) }
@@ -130,21 +145,24 @@ pub fn layout(ctx: &Ctx, page: &Page, title: &str, actions: Option<Markup>, body
             }
             div.head-actions {
                 @if let Some(a) = actions { (a) }
-                (bell(ctx, page))
+                (bell_count(page, unread.values().sum()))
             }
         }
     };
-    shell(ctx, page, title, head, html! { div.page-body { (body) } })
+    shell(ctx, page, title, &unread, head, html! { div.page-body { (body) } })
 }
 
 /// The shell with a page that draws its own header (the overview's banner). Put [`bell`] in it.
 pub fn layout_custom(ctx: &Ctx, page: &Page, title: &str, body: Markup) -> Markup {
-    shell(ctx, page, title, html! {}, body)
+    shell(ctx, page, title, &unread_by_feature(ctx, page), html! {}, body)
 }
 
 /// The notification bell with its unread count.
 pub fn bell(ctx: &Ctx, page: &Page) -> Markup {
-    let unread = unread_count(ctx, page);
+    bell_count(page, unread_by_feature(ctx, page).values().sum())
+}
+
+fn bell_count(page: &Page, unread: i64) -> Markup {
     html! {
         a.icon-btn.bell href={ "/g/" (page.guild_id) "/notifications" } title="Notifications" aria-label={ "Notifications, " (unread) " new" } {
             (icon(Icon::Bell))
@@ -173,27 +191,35 @@ fn identity(ctx: &Ctx, page: &Page, title: &str) -> (Icon, Option<&'static str>)
     }
 }
 
-fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Markup {
+fn shell(ctx: &Ctx, page: &Page, title: &str, unread: &HashMap<String, i64>, top: Markup, body: Markup) -> Markup {
     let guild = page.guild_id;
     let guilds = ctx.guilds_for(&page.user);
     let levels = ctx.levels(&page.user, guild);
-    type Link = (&'static str, &'static str, Icon, &'static str);
-    let mut groups: Vec<(Group, Vec<Link>)> = Vec::new();
+    // label, path, icon, about, unread count (on a feature's first page only, so a feature with
+    // several pages counts once)
+    type Link = (&'static str, &'static str, Icon, &'static str, i64);
+    // A folded group shows the unread notices inside it, so nothing waiting hides.
+    let mut groups: Vec<(Group, Vec<Link>, bool)> = Vec::new();
     for f in ctx.features() {
         let meta = f.meta();
         if !ctx.enabled(guild, meta.key) || levels.get(meta.key) == Level::None {
             continue;
         }
-        let items: Vec<_> = meta.nav.iter().map(|n| (n.label, n.path, n.icon, meta.key)).collect();
+        let waiting = unread.get(meta.key).copied().unwrap_or(0);
+        let items: Vec<Link> = meta.nav.iter().enumerate().map(|(i, n)| (n.label, n.path, n.icon, n.about, if i == 0 { waiting } else { 0 })).collect();
+        let here = meta.key == page.key;
         if items.is_empty() {
             continue;
         }
-        match groups.iter_mut().find(|(g, _)| *g == meta.group) {
-            Some((_, list)) => list.extend(items),
-            None => groups.push((meta.group, items)),
+        match groups.iter_mut().find(|(g, ..)| *g == meta.group) {
+            Some((_, list, open)) => {
+                list.extend(items);
+                *open |= here;
+            }
+            None => groups.push((meta.group, items, here)),
         }
     }
-    groups.sort_by_key(|(g, _)| *g);
+    groups.sort_by_key(|(g, ..)| *g);
     let current = page.key;
 
     html! {
@@ -223,28 +249,49 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
                             }
                             button.icon-btn.menu-btn type="button" aria-label="Menu" aria-expanded="false" { (icon(Icon::Menu)) }
                         }
+                        label.nav-search {
+                            (icon(Icon::Search))
+                            input #nav-q type="search" placeholder="Search pages" aria-label="Search pages" autocomplete="off" spellcheck="false";
+                            kbd { "/" }
+                        }
                         div.side-links {
-                            a.nav.on[current == "overview"] aria-current=[(current == "overview").then_some("page")] href={ "/g/" (guild) } { (icon(Icon::Home)) span { "Overview" } }
-                            @for (group, items) in &groups {
-                                div.nav-group { (group.label()) }
-                                @for (label, path, ic, _key) in items {
-                                    a.nav href={ "/g/" (guild) "/" (path) } data-path={ "/g/" (guild) "/" (path) } {
-                                        (icon(*ic)) span { (label) }
+                            a.nav.on[current == "overview"] aria-current=[(current == "overview").then_some("page")] href={ "/g/" (guild) } data-about="home summary" { (icon(Icon::Home)) span { "Overview" } }
+                            @for (group, items, here) in &groups {
+                                @let count: i64 = items.iter().map(|l| l.4).sum();
+                                details.nav-fold open[*here] data-group=(group.label()) {
+                                    summary.nav-group {
+                                        span.grow { (group.label()) }
+                                        @if count > 0 { span.nav-count.folded { (count) span.sr { " unread" } } }
+                                        (icon(Icon::Chevron))
+                                    }
+                                    @for (label, path, ic, about, waiting) in items {
+                                        a.nav href={ "/g/" (guild) "/" (path) } data-path={ "/g/" (guild) "/" (path) } data-about=(about) {
+                                            (icon(*ic)) span.grow { (label) }
+                                            @if *waiting > 0 { span.nav-count { (waiting) span.sr { " unread" } } }
+                                        }
                                     }
                                 }
                             }
-                            @if page.user.admin {
-                                div.nav-group { "Admin" }
-                                a.nav.on[current == "features"] aria-current=[(current == "features").then_some("page")] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
-                                a.nav.on[current == "users"] aria-current=[(current == "users").then_some("page")] href="/users" { (icon(Icon::Users)) span { "People" } }
-                                a.nav.on[current == "activity"] aria-current=[(current == "activity").then_some("page")] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
-                            }
+                            p.nav-none hidden { "No page matches." }
+                            p.sr #nav-found role="status" {}
                         }
                         div.side-foot {
-                            img.avatar src=(page.user.avatar_url()) alt="" width="24" height="24" loading="lazy";
-                            span.grow.clip { (page.user.name) }
-                            form method="post" action="/logout" {
-                                button.icon-btn type="submit" title="Sign out" aria-label="Sign out" { (icon(Icon::Logout)) }
+                            details.pop.account {
+                                summary.account-btn {
+                                    img.avatar src=(page.user.avatar_url()) alt="" width="24" height="24" loading="lazy";
+                                    span.grow.clip { (page.user.name) }
+                                    (icon(Icon::Chevron))
+                                }
+                                div.pop-body.account-menu {
+                                    @if page.user.admin {
+                                        a.menu-item.on[current == "features"] aria-current=[(current == "features").then_some("page")] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
+                                        a.menu-item.on[current == "users"] aria-current=[(current == "users").then_some("page")] href="/users" { (icon(Icon::Users)) span { "People" } }
+                                        a.menu-item.on[current == "activity"] aria-current=[(current == "activity").then_some("page")] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
+                                    }
+                                    form method="post" action="/logout" {
+                                        button.menu-item type="submit" { (icon(Icon::Logout)) span { "Sign out" } }
+                                    }
+                                }
                             }
                         }
                     }
@@ -277,7 +324,8 @@ pub fn public_layout(title: &str, subtitle: Option<&str>, body: Markup) -> Marku
     }
 }
 
-fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
+/// Unread notices this person may see, by feature key ("" for notices about no server).
+fn unread_by_feature(ctx: &Ctx, page: &Page) -> HashMap<String, i64> {
     let seen = notifications_seen(ctx, page.user.id, page.guild_id);
     let global_seen = notifications_seen_anywhere(ctx, page.user.id);
     let rows: Vec<(String, bool)> = ctx
@@ -294,9 +342,13 @@ fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
         })
         .unwrap_or_default();
     let levels = ctx.levels(&page.user, page.guild_id);
-    rows.iter()
-        .filter(|(feature, global)| if *global { page.user.admin } else { levels.get(feature) >= Level::View })
-        .count() as i64
+    let mut out = HashMap::new();
+    for (feature, global) in rows {
+        if if global { page.user.admin } else { levels.get(&feature) >= Level::View } {
+            *out.entry(if global { String::new() } else { feature }).or_insert(0) += 1;
+        }
+    }
+    out
 }
 
 /// When this person last opened any server's notifications. Notices with no server (app
@@ -651,18 +703,38 @@ pub fn switch_row(name: &str, label: &str, help: Option<&str>, on: bool) -> Mark
 }
 
 /// Small bars for a short series in a rail, `(label, value)`, oldest first: the latest in lilac,
-/// the rest dimmer. Hovering a bar shows its label and value with `unit`. `about` names the
+/// the rest dimmer. Hovering a bar shows its label and value with `unit`. A `None` value leaves
+/// its bar blank and says nothing was read, so a gap doesn't pass for a zero. `about` names the
 /// chart for screen readers ("Hours streamed in each of the last 12 weeks").
-pub fn mini_bars(series: &[(String, i64)], unit: &str, about: &str) -> Markup {
-    let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
+pub fn mini_bars(series: &[(String, Option<i64>)], unit: &str, about: &str) -> Markup {
+    html! { div.mini-bars { (bars_svg(series, unit, about)) } }
+}
+
+/// [`mini_bars`] sized for a page's main column, with the first, middle and last labels under it.
+pub fn column_bars(series: &[(String, Option<i64>)], unit: &str, about: &str) -> Markup {
     let n = series.len();
     html! {
-        div.mini-bars {
-            svg viewBox={ "0 0 " ((n * 10).saturating_sub(4)) " 48" } preserveAspectRatio="none" role="img" aria-label=(about) {
-                @for (i, (label, v)) in series.iter().enumerate() {
-                    @let h = (*v as f64 / max * 46.0).max(if *v > 0 { 2.0 } else { 0.0 });
-                    rect x=(i * 10) y=(48.0 - h) width="6" height=(h) fill=(if i + 1 == n { "var(--data)" } else { "var(--data-dim)" }) {
-                        title { (label) ": " (crate::text::num(*v)) " " (unit) }
+        figure.chart {
+            (bars_svg(series, unit, about))
+            @if n > 1 {
+                div.axis { span { (series[0].0) } span { (series[n / 2].0) } span { (series[n - 1].0) } }
+            }
+        }
+    }
+}
+
+fn bars_svg(series: &[(String, Option<i64>)], unit: &str, about: &str) -> Markup {
+    let max = series.iter().filter_map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
+    let n = series.len();
+    html! {
+        svg viewBox={ "0 0 " ((n * 10).saturating_sub(4)) " 48" } preserveAspectRatio="none" role="img" aria-label=(about) {
+            @for (i, (label, v)) in series.iter().enumerate() {
+                @let v = *v;
+                @let h = v.map_or(0.0, |v| (v as f64 / max * 46.0).max(if v > 0 { 2.0 } else { 0.0 }));
+                rect x=(i * 10) y=(48.0 - h) width="6" height=(h) fill=(if i + 1 == n { "var(--data)" } else { "var(--data-dim)" }) {
+                    title {
+                        (label) ": "
+                        @match v { Some(v) => { (crate::text::num(v)) " " (unit) } None => { "nothing read" } }
                     }
                 }
             }
@@ -701,7 +773,8 @@ pub fn bar_chart(series: &[(String, i64)], color: &str, unit: &str) -> Markup {
 }
 
 /// A smooth area chart for a daily series, `(label, value)`, oldest first, in the data colour.
-/// Hovering a day shows its value. Labels the first, middle and last day under it.
+/// Hovering a day shows its value. Labels the first and middle day under it, and the last one
+/// "Today", so the series must end today (the overview's do).
 pub fn area_chart(series: &[(String, i64)], unit: &str) -> Markup {
     let n = series.len();
     let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;

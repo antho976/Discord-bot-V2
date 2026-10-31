@@ -1,14 +1,17 @@
 //! YouTube uploads from each channel's public RSS feed, checked every 5 minutes. No API key.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use bot_core::anyhow::Result;
-use bot_core::rusqlite::params;
+use bot_core::discord::{ComponentCall, Reply, button_row, snowflake_ms};
+use bot_core::rusqlite::{params, params_from_iter};
+use bot_core::twilight_model::channel::message::component::{ButtonStyle, Component};
 use bot_core::twilight_model::channel::message::AllowedMentions;
 use bot_core::twilight_model::id::Id;
 use bot_core::{Ctx, jiff, now_ms, text, tracing};
 
-use crate::{DEFAULT_VIDEO_MESSAGE, Settings, due, state_get, state_set};
+use crate::{DEFAULT_VIDEO_MESSAGE, KEY, Settings, due, state_get, state_set};
 
 const FEED: &str = "https://www.youtube.com/feeds/videos.xml";
 /// A video that shows up in the feed but is older than this isn't announced (a deleted video
@@ -223,7 +226,8 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
                     None => text,
                 };
                 let mentions = AllowedMentions { roles: s.youtube_role.map(Id::new).into_iter().collect(), ..Default::default() };
-                if let Err(e) = ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&mentions)).await {
+                let rows: Vec<Component> = rewards_on(ctx, *guild, s).then(|| reward_row(s, &v.id, false)).into_iter().collect();
+                if let Err(e) = ctx.http.create_message(Id::new(channel)).content(&content).components(&rows).allowed_mentions(Some(&mentions)).await {
                     tracing::warn!(guild, channel, error = %e, "couldn't post a new video");
                 }
             }
@@ -231,13 +235,129 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
     }
 }
 
-/// The dashboard's "Send a test post": the post for a stored video, with nobody pinged.
-pub async fn test_post(ctx: &Ctx, channel: u64, s: &Settings, v: &Video) -> Result<()> {
+/// The dashboard's "Send a test post": the post for a stored video, with nobody pinged. The
+/// reward button shows but can't be pressed, so a test pays nobody.
+pub async fn test_post(ctx: &Ctx, guild: u64, channel: u64, s: &Settings, v: &Video) -> Result<()> {
     let text = fill_video(&s.youtube_message, &v.author, &v.title, &v.url());
     let content = format!("{text}\n-# Test post. Nobody was pinged.");
     let none = AllowedMentions::default();
-    ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&none)).await?;
+    let rows: Vec<Component> = rewards_on(ctx, guild, s).then(|| reward_row(s, &v.id, true)).into_iter().collect();
+    ctx.http.create_message(Id::new(channel)).content(&content).components(&rows).allowed_mentions(Some(&none)).await?;
     Ok(())
+}
+
+// ---- upload rewards ----
+
+/// Upload posts carry the claim button: rewards on, some XP to give, and XP and levels on.
+pub fn rewards_on(ctx: &Ctx, guild: u64, s: &Settings) -> bool {
+    s.reward && s.reward_xp > 0 && ctx.enabled(guild, feat_levels::KEY)
+}
+
+/// "Claim 50 XP", with the video in its custom id.
+pub fn reward_row(s: &Settings, video: &str, disabled: bool) -> Component {
+    let id = format!("{KEY}:claim:{video}");
+    let mut row = button_row(&[(&id, &format!("Claim {} XP", text::num(s.reward_xp)), ButtonStyle::Success)]);
+    if let Component::ActionRow(r) = &mut row {
+        for c in &mut r.components {
+            if let Component::Button(b) = c {
+                b.disabled = disabled;
+            }
+        }
+    }
+    row
+}
+
+/// The button pays out for `hours` after the post went up.
+pub fn claim_open(posted_ms: i64, now: i64, hours: i64) -> bool {
+    posted_ms > 0 && now >= posted_ms && now - posted_ms < hours * 3_600_000
+}
+
+/// The claim button: once per member per video, within the window, through XP and levels.
+pub async fn claim(ctx: &Ctx, call: &ComponentCall) -> Result<()> {
+    let (Some(guild), Some(video)) = (call.guild_id(), call.args().get(1).map(|v| (*v).to_owned())) else { return Ok(()) };
+    let say = |t: String| Reply::text(t).ephemeral();
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    if !rewards_on(ctx, guild, &s) {
+        return ctx.reply(&call.interaction, say("Upload rewards are off on this server.".into())).await;
+    }
+    let posted = call.interaction.message.as_ref().map(|m| snowflake_ms(m.id.get())).unwrap_or(0);
+    let now = now_ms();
+    if !claim_open(posted, now, s.reward_hours) {
+        let closed = posted + s.reward_hours * 3_600_000;
+        return ctx.reply(&call.interaction, say(format!("This reward closed {}.", text::ago(closed)))).await;
+    }
+    let user = call.user_id();
+    // A level-up can mean role changes and a post, so answer later. Deferring first means a
+    // failed defer leaves no claim behind that was never paid.
+    ctx.defer(&call.interaction, true).await?;
+    // The row goes in before the XP, so a double click can't pay twice.
+    let added = ctx.db.with(|c| {
+        c.execute(
+            "INSERT OR IGNORE INTO alerts_video_claims (guild_id, video_id, user_id, xp, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![guild as i64, video, user as i64, s.reward_xp, now],
+        )
+    });
+    let added = match added {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(guild, user, error = %e, "couldn't record an upload reward claim");
+            return ctx.edit_original(&call.interaction, say("The XP didn't go through. Try again in a minute.".into())).await;
+        }
+    };
+    if added == 0 {
+        return ctx.edit_original(&call.interaction, say("You already claimed this one.".into())).await;
+    }
+    // Level-ups from a claim go to the levels announce channel when one is set, never here.
+    let answer = match feat_levels::give_xp(ctx, guild, user, s.reward_xp, None).await {
+        Ok(true) => return ctx.edit_original(&call.interaction, say(format!("You got {} XP.", text::num(s.reward_xp)))).await,
+        Ok(false) => "Upload rewards are off on this server.",
+        Err(e) => {
+            tracing::warn!(guild, user, error = %e, "couldn't give upload reward XP");
+            "The XP didn't go through. Try again in a minute."
+        }
+    };
+    // Nothing was paid, so the claim is taken back.
+    let undo = ctx.db.with(|c| {
+        c.execute("DELETE FROM alerts_video_claims WHERE guild_id = ?1 AND video_id = ?2 AND user_id = ?3", params![guild as i64, video, user as i64])
+    });
+    if let Err(e) = undo {
+        tracing::warn!(guild, user, error = %e, "couldn't undo a failed claim");
+    }
+    ctx.edit_original(&call.interaction, say(answer.into())).await
+}
+
+/// Who claimed each of these videos, earliest first.
+pub fn claims(ctx: &Ctx, guild: u64, videos: &[String]) -> HashMap<String, Vec<u64>> {
+    let mut out: HashMap<String, Vec<u64>> = HashMap::new();
+    if videos.is_empty() {
+        return out;
+    }
+    let marks = vec!["?"; videos.len()].join(", ");
+    let sql = format!("SELECT video_id, user_id FROM alerts_video_claims WHERE guild_id = {guild} AND video_id IN ({marks}) ORDER BY at");
+    let rows: Vec<(String, i64)> = ctx
+        .db
+        .with(|c| {
+            let mut st = c.prepare(&sql)?;
+            st.query_map(params_from_iter(videos.iter()), |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+        })
+        .unwrap_or_default();
+    for (video, user) in rows {
+        out.entry(video).or_default().push(user as u64);
+    }
+    out
+}
+
+/// Claims and XP given since `since`.
+pub fn claim_totals(ctx: &Ctx, guild: u64, since: i64) -> (i64, i64) {
+    ctx.db
+        .with(|c| {
+            c.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(xp), 0) FROM alerts_video_claims WHERE guild_id = ?1 AND at >= ?2",
+                params![guild as i64, since],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+        })
+        .unwrap_or((0, 0))
 }
 
 /// Insert videos not seen before and return them. Keeps the newest 50 per channel.
@@ -369,6 +489,28 @@ mod tests {
         assert_eq!(u("https://example.com/antho"), None);
         assert_eq!(u("@"), None);
         assert_eq!(u("@bad name"), None);
+    }
+
+    #[test]
+    fn claims_stay_open_for_the_window() {
+        let h = 3_600_000;
+        let posted = 1_000 * h;
+        assert!(claim_open(posted, posted + h, 24));
+        assert!(claim_open(posted, posted + 24 * h - 1, 24));
+        assert!(!claim_open(posted, posted + 24 * h, 24));
+        // No message to time it by, or a clock behind the post: closed.
+        assert!(!claim_open(0, posted, 24));
+        assert!(!claim_open(posted, posted - 1, 24));
+    }
+
+    #[test]
+    fn reward_button_names_the_xp() {
+        let s = Settings { reward_xp: 1500, ..Settings::default() };
+        let Component::ActionRow(row) = reward_row(&s, "dQw4w9WgXcQ", true) else { panic!("not a row") };
+        let Component::Button(b) = &row.components[0] else { panic!("not a button") };
+        assert_eq!(b.label.as_deref(), Some("Claim 1,500 XP"));
+        assert_eq!(b.custom_id.as_deref(), Some("alerts:claim:dQw4w9WgXcQ"));
+        assert!(b.disabled);
     }
 
     #[test]

@@ -30,8 +30,13 @@ Never a raw grey in feature CSS: use the tokens.
 
 ## Shell
 
-- **Sidebar:** the server switcher, then the pages grouped (Streams, Community, Members, Safety,
-  Idleon pets, Tools, Admin), 30 px rows, the signed-in person at the bottom.
+- **Sidebar:** the server switcher, a page search (`/` jumps to it; it matches names and each page's
+  `about`, Enter opens the first match), Overview, then the pages in folding groups (Streams,
+  Community, Members, Safety, Idleon, Tools), 30 px rows. The group holding the current page starts
+  open and the browser remembers the others; a folded group shows a coral count of unread notices
+  inside it. Features, People and Activity sit in the menu under the signed-in person at the bottom,
+  with Sign out. Option A of three, picked by the lead on 2026-10-31 when the owner left it to us
+  (Relay design 16, page "Sidebar"), because the flat list ran past the screen.
 - **Page header** (`ui::layout`): a 40 px icon tile with the page's own icon, the title (20 px,
   600), one line on what the page does (`NavItem::about`), then actions and the bell. One filled
   primary button at most; status pills (`span.status > span.dot`) for connection states.
@@ -49,7 +54,7 @@ Never a raw grey in feature CSS: use the tokens.
 | Timeline (`.timeline`, `.change`, day headings in the viewer's timezone) | Activity, audit log |
 | `.need` rows with an outlined button | Overview "Needs you" |
 | Faces (`img.avatar`, `ui::avatars` overlapping) | Wherever a person appears. Always `ctx.member_avatar` |
-| `ui::area_chart` (lilac curve), `.meter` (lilac bar) | Data |
+| `ui::area_chart` (lilac curve, daily series ending today), `ui::column_bars` and `ui::mini_bars` (weekly bars, a blank where nothing was read), `.meter` (lilac bar) | Data |
 | Discord-style previews (message, embed with coral edge, APP tag) | Live post, welcome card, embeds |
 | `details.pop` + `.pop-body` | A header or row action that needs a small form |
 | `.seg` | A small segmented choice (None / View / Edit, 7 / 30 days) |
