@@ -46,6 +46,15 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     let mods = store::mod_actions(&ctx, guild, oldest - store::MATCH_MS)?;
     let week = store::moderator_counts(&ctx, guild, now_ms() - 7 * 86_400_000, ctx.bot_id())?;
     let has_channel = s.channel.is_some() || s.message_channel.is_some() || s.member_channel.is_some();
+    // Set but gone from the server. Only once the server is cached, so a restart doesn't flash it.
+    let cached = ctx.cache.guild(Id::new(guild)).is_some();
+    let gone: Vec<&str> = [(s.channel, "log channel"), (s.message_channel, "channel for message events"), (s.member_channel, "channel for member events")]
+        .into_iter()
+        // The log channel isn't used when both of the others are set.
+        .filter(|(c, _)| *c != s.channel || s.message_channel.is_none() || s.member_channel.is_none())
+        .filter(|(c, _)| cached && c.is_some_and(|c| ctx.cache.channel(Id::new(c)).is_none()))
+        .map(|(_, name)| name)
+        .collect();
     let search_value = search.as_deref().unwrap_or_default();
 
     let body = html! {
@@ -53,6 +62,9 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         (tabs(&page, "Recent"))
         div.with-rail {
             div.au-main {
+                @for name in &gone {
+                    p.au-warn { "The " (name) " was deleted, so its events aren't posted in Discord. Pick another in " a href=(page.path("audit/settings")) { "Settings" } "." }
+                }
                 div.au-filters {
                     form.au-chips method="get" action=(page.path(KEY)) {
                         input type="hidden" name="q" value=(search_value);
@@ -318,6 +330,8 @@ fn style() -> Markup {
 
 const STYLE: &str = r#"
 .au-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.au-warn { font-size: 13px; color: var(--waiting); }
+.au-warn a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .au-filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
 .au-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .au-mods { display: flex; flex-wrap: wrap; gap: 14px; }
