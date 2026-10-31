@@ -218,7 +218,8 @@ fn in_minutes(minutes: i64) -> String {
 }
 
 /// A new-video post as Discord shows it: the message, then the card Discord draws for the link.
-fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &youtube::Video) -> Markup {
+/// `reward` is the claim button's label, when posts carry one.
+fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &youtube::Video, reward: Option<String>) -> Markup {
     let url = v.url();
     let filled = youtube::fill_video(template, &v.author, &v.title, &url);
     let unfurls = filled.contains(&url);
@@ -245,6 +246,7 @@ fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &
                 }
             }
         }
+        @if let Some(label) = reward { span.sa-claim { (label) } }
     })
 }
 
@@ -482,6 +484,9 @@ const CSS: &str = r#"
 .sa-watch { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 16px; border-radius: 4px; background: #4e5058; color: #fff; font-size: 14px; font-weight: 500; }
 .sa-watch .icon { width: 14px; height: 14px; }
 .sa-watch:hover { background: #6d6f78; }
+.sa-claim { display: inline-flex; align-items: center; height: 32px; padding: 0 16px; margin-top: 4px; border-radius: 4px; background: #248046; color: #fff; font-size: 14px; font-weight: 500; }
+.sa-claims { display: flex; align-items: center; gap: 8px; flex: none; }
+.sa-claims .mono { font-size: 12px; color: var(--ink-2); }
 .sa-note { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: var(--ink-3); max-width: 72ch; }
 .sa-note > .icon { margin-top: 3px; flex: none; }
 .sa-note p + p { margin-top: 4px; }
@@ -1000,8 +1005,13 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         published_ms: now_ms(),
     });
     let role = role_name(&ctx, guild, s.youtube_role);
+    let levels_on = ctx.enabled(guild, feat_levels::KEY);
+    let rewards = youtube::rewards_on(&ctx, guild, &s);
+    let claims = youtube::claims(&ctx, guild, &videos.iter().map(|v| v.id.clone()).collect::<Vec<_>>());
+    let (claimed, xp_given) = youtube::claim_totals(&ctx, guild, now_ms() - 30 * 86_400_000);
     let body = html! {
         style { (PreEscaped(CSS)) }
+        (narrow_css())
         (tabs(&page, "YouTube"))
         (toast_if(&q, "sent", "Test post sent"))
         div.with-rail {
@@ -1011,7 +1021,7 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                         h2 { "What members see when you upload" }
                         @if page.can_edit() && !videos.is_empty() { (ui::action_button(&page.path("alerts/youtube/test"), "Send a test post", Tone::Muted, false)) }
                     }
-                    (video_post(&ctx, &page, role, &s.youtube_message, &sample))
+                    (video_post(&ctx, &page, role, &s.youtube_message, &sample, rewards.then(|| format!("Claim {} XP", text::num(s.reward_xp)))))
                     p.muted.small {
                         @match channel_name(&ctx, guild, s.youtube_channel) {
                             Some(c) => {
@@ -1020,6 +1030,12 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                             }
                             None => { "Pick a channel below and save to start posting." }
                         }
+                        @if rewards {
+                            " Each member can claim " (text::num(s.reward_xp)) " XP once per video, for " (plural(s.reward_hours as usize, "hour", "hours")) " after the post."
+                        }
+                    }
+                    @if s.reward && !levels_on {
+                        p.small { (ui::badge("Not added", Tone::Warn)) " XP and levels is off on this server, so posts don't carry the claim button." }
                     }
                 }
                 (ui::section("Recent videos", Some("A channel's first check only records what's there, so old videos aren't posted."), html! {
@@ -1029,11 +1045,17 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                         div.list { @for v in &videos {
                             div.list-item {
                                 img.sa-vt src=(youtube::thumb(&v.id)) alt="" width="64" height="36" loading="lazy";
+                                @let who = claims.get(&v.id).map(Vec::as_slice).unwrap_or_default();
                                 div.grow style="min-width:0" {
                                     a.clip style="display:block" href=(v.url()) target="_blank" rel="noopener" { (v.title) }
-                                    p.muted.small { (v.author) }
+                                    p.muted.small { (v.author) " · " (text::ago(v.published_ms)) }
                                 }
-                                span.meta { (text::ago(v.published_ms)) }
+                                @if !who.is_empty() {
+                                    span.sa-claims title={ (who.len()) " claimed the reward" } {
+                                        span.wide-only { (ui::avatars(&who.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), 4)) }
+                                        span.mono { (who.len()) " claimed" }
+                                    }
+                                }
                             }
                         } }
                     }
@@ -1044,6 +1066,11 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                         (ui::field_channel(&ctx, guild, "youtube_channel", "Post in", None, s.youtube_channel))
                         (ui::field_role(&ctx, guild, "youtube_role", "Role to ping", Some("Only this role is pinged."), s.youtube_role))
                         (ui::field_textarea("youtube_message", "Message", Some("{channel}, {title} and {url} are filled in. Keep {url} so Discord shows the video."), &s.youtube_message, crate::DEFAULT_VIDEO_MESSAGE))
+                    })))
+                    (ui::section("Upload rewards", Some("A button on each new video post that gives XP through XP and levels."), ui::card(html! {
+                        (ui::field_toggle("reward", "Add a claim button", Some("Once per member per video."), s.reward))
+                        (ui::field_number("reward_xp", "XP", None, s.reward_xp, 1, 10_000, Some("XP")))
+                        (ui::field_number("reward_hours", "Claim window", Some("How long after the post the button pays out."), s.reward_hours, 1, 168, Some("hours")))
                     })))
                 }))
             }
@@ -1064,6 +1091,12 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                 }
                             }
                         }
+                    }
+                }
+                @if s.reward || claimed > 0 {
+                    div.rail-block {
+                        h2 { "Rewards" }
+                        (ui::rail_numbers(&[("claims in 30 days", text::num(claimed)), ("XP given", text::num(xp_given))]))
                     }
                 }
             }
@@ -1101,6 +1134,9 @@ async fn save_youtube(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         youtube_channel: form.channel(&ctx, guild, "youtube_channel"),
         youtube_role: form.role(&ctx, guild, "youtube_role"),
         youtube_message: if message.is_empty() { crate::DEFAULT_VIDEO_MESSAGE.into() } else { message },
+        reward: form.bool("reward"),
+        reward_xp: form.int_in("reward_xp", 1, 10_000, old.reward_xp),
+        reward_hours: form.int_in("reward_hours", 1, 168, old.reward_hours),
         ..(*old).clone()
     };
     ctx.save_settings(guild, KEY, &s)?;
@@ -1117,7 +1153,7 @@ async fn send_youtube_test(State(ctx): State<Ctx>, user: User, Path(guild): Path
     let Some(v) = youtube::recent(&ctx, &s.youtube_ids, 1).into_iter().next() else {
         return Err(WebError::Bad("There's no video to post yet. Uploads show up after the first check.".into()));
     };
-    if let Err(e) = youtube::test_post(&ctx, channel, &s, &v).await {
+    if let Err(e) = youtube::test_post(&ctx, guild, channel, &s, &v).await {
         tracing::warn!(guild, error = %e, "YouTube test post failed");
         return Err(WebError::Bad("Discord refused the post. Check that the bot can send messages in that channel.".into()));
     }

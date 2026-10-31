@@ -14,7 +14,7 @@ mod youtube;
 use std::sync::Arc;
 
 use bot_core::anyhow::Result;
-use bot_core::discord::CommandCall;
+use bot_core::discord::{CommandCall, ComponentCall};
 use bot_core::rusqlite::{OptionalExtension, params};
 use bot_core::twilight_model::application::command::{Command, CommandType};
 use bot_core::twilight_util::builder::command::CommandBuilder;
@@ -54,6 +54,11 @@ pub struct Settings {
     pub youtube_channel: Option<u64>,
     pub youtube_role: Option<u64>,
     pub youtube_message: String,
+    /// A "Claim XP" button on upload posts, through XP and levels.
+    pub reward: bool,
+    pub reward_xp: i64,
+    /// How long after the post the button pays out.
+    pub reward_hours: i64,
 
     /// Post new Twitch clips of the followed channels.
     pub clips: bool,
@@ -79,6 +84,9 @@ impl Default for Settings {
             youtube_channel: None,
             youtube_role: None,
             youtube_message: DEFAULT_VIDEO_MESSAGE.into(),
+            reward: false,
+            reward_xp: 50,
+            reward_hours: 24,
             clips: false,
             clips_channel: None,
         }
@@ -136,6 +144,15 @@ const MIGRATIONS: &[Migration] = &[Migration {
             creator TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, thumbnail TEXT NOT NULL DEFAULT '',
             views INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, seen_at INTEGER NOT NULL);
         CREATE INDEX alerts_clips_by_time ON alerts_clips(broadcaster_id, created_at DESC);
+    ",
+}, Migration {
+    // Who claimed the XP on each upload post. The key makes a claim once per member per video.
+    name: "004_alerts_video_claims",
+    sql: "
+        CREATE TABLE alerts_video_claims (
+            guild_id INTEGER NOT NULL, video_id TEXT NOT NULL, user_id INTEGER NOT NULL,
+            xp INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (guild_id, video_id, user_id));
+        CREATE INDEX alerts_video_claims_by_time ON alerts_video_claims(guild_id, at);
     ",
 }];
 
@@ -222,6 +239,13 @@ impl Feature for Alerts {
         Ok(())
     }
 
+    async fn on_component(&self, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
+        if call.args().first() == Some(&"claim") {
+            youtube::claim(ctx, call).await?;
+        }
+        Ok(())
+    }
+
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         preview_rows(ctx, guild)
     }
@@ -302,6 +326,7 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         weekly_channel: channel("announcements"),
         youtube_ids: vec!["UCx7Antho0000000000000a".into()],
         youtube_channel: channel("announcements"),
+        reward: true,
         clips: true,
         clips_channel: channel("stream-alerts"),
         ..Settings::default()
@@ -389,6 +414,15 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         )?;
     }
     tx.execute("INSERT OR REPLACE INTO alerts_state (key, value) VALUES ('yt_init:UCx7Antho0000000000000a', '1')", [])?;
+    // Most members claim the newest upload, fewer the older ones.
+    for (n, (id, _, back)) in videos.iter().enumerate() {
+        for (i, (user, _)) in bot_core::preview::MEMBERS.iter().enumerate().filter(|(i, _)| *i < 9 - n * 3) {
+            tx.execute(
+                "INSERT OR REPLACE INTO alerts_video_claims (guild_id, video_id, user_id, xp, at) VALUES (?1, ?2, ?3, 50, ?4)",
+                params![guild as i64, id, *user as i64, now - back * day + (i as i64 + 1) * 7 * 60_000],
+            )?;
+        }
+    }
     let clips = [
         ("Antho misses the easiest jump in the Underworld", "mossy_t", 3, 412),
         ("Gold stake, final hand", "kiwi", 26, 1_204),

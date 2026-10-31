@@ -715,6 +715,13 @@ fn cooled_down(map: &Mutex<HashMap<(u64, u64), Instant>>, key: (u64, u64), coold
     true
 }
 
+/// XP from another feature, like a claimed upload reward: a flat amount (no prestige or streak
+/// boost), with level-ups announced and reward roles handled like any other gain. `channel` is
+/// where a level-up is announced when no level-up channel is set.
+pub async fn give_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, channel: Option<u64>) -> Result<()> {
+    grant(ctx, guild, user, amount.max(0), Earned::Manual, channel).await
+}
+
 /// Add XP (or take it, when `amount` is negative) and handle a level change: announcement and
 /// reward roles.
 async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, channel: Option<u64>) -> Result<()> {
