@@ -211,7 +211,7 @@ impl Welcome {
         if s.welcome_on && !bot && s.welcome_channel.is_some() {
             let name = m.member.nick.clone().or_else(|| m.user.global_name.clone()).unwrap_or_else(|| m.user.name.clone());
             let avatar = bot_core::discord::avatar_url(user, m.user.avatar.map(|a| a.to_string()).as_deref());
-            if let Err(e) = post_welcome(ctx, &s, guild, user, &name, &avatar).await {
+            if let Err(e) = post_welcome(ctx, &s, guild, user, &name, &m.user.name, &avatar).await {
                 bot_core::tracing::warn!(guild, user, error = %e, "couldn't post a welcome");
             }
         }
@@ -269,8 +269,9 @@ fn fill_message(ctx: &Ctx, template: &str, default: &str, guild: u64, user: &str
 }
 
 /// Post the welcome message for `user` in the welcome channel: text, plus the card when on.
-/// Mentions only that user. Used for real joins and for the dashboard's test button.
-pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: &str, avatar_url: &str) -> Result<()> {
+/// Mentions only that user. Used for real joins and for the dashboard's test button. `username`
+/// is the card's fallback when the display name is in a script it can't draw.
+pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: &str, username: &str, avatar_url: &str) -> Result<()> {
     let channel = s.welcome_channel.ok_or_else(|| anyhow!("Pick a welcome channel first."))?;
     let wants_count = s.welcome_card || s.welcome_text.contains("{count}") || s.welcome_text.trim().is_empty();
     let count = if wants_count { member_total(ctx, guild).await } else { None };
@@ -279,7 +280,7 @@ pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: 
 
     let mut files = Vec::new();
     if s.welcome_card {
-        match card::render(ctx, name, &ctx.guild_name(guild), count, avatar_url).await {
+        match card::render(ctx, &[name, username], &ctx.guild_name(guild), count, avatar_url).await {
             Ok(png) => files.push(Attachment::from_bytes("welcome.png".into(), png, 1)),
             Err(e) => bot_core::tracing::warn!(guild, error = %e, "couldn't draw the welcome card"),
         }

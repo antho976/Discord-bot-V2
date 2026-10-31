@@ -31,12 +31,16 @@ fn channel_name(ctx: &Ctx, guild: u64, id: Option<u64>) -> String {
     id.and_then(|id| ctx.text_channels(guild).into_iter().find(|(c, _)| *c == id)).map(|(_, n)| format!("#{n}")).unwrap_or_else(|| "Off".into())
 }
 
+/// "@Regulars, @Idleon", with roles deleted since counted at the end: "@Regulars and 1 deleted role".
 fn role_names(ctx: &Ctx, guild: u64, ids: &[u64]) -> String {
     let known = ctx.roles(guild);
-    ids.iter()
-        .map(|id| known.iter().find(|(r, _, _)| r == id).map(|(_, n, _)| format!("@{n}")).unwrap_or_else(|| "a deleted role".into()))
-        .collect::<Vec<_>>()
-        .join(", ")
+    let names: Vec<String> = ids.iter().filter_map(|id| known.iter().find(|(r, _, _)| r == id)).map(|(_, n, _)| format!("@{n}")).collect();
+    let gone = ids.len() - names.len();
+    match (names.is_empty(), gone) {
+        (_, 0) => names.join(", "),
+        (true, _) => counted(gone as i64, "deleted role", "deleted roles"),
+        (false, _) => format!("{} and {}", names.join(", "), counted(gone as i64, "deleted role", "deleted roles")),
+    }
 }
 
 /// "1 new member", "8 new members".
@@ -363,18 +367,23 @@ async fn save_messages(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     Ok(saved(&page.path("welcome")))
 }
 
+/// The signed-in person's Discord username, when the cache has it.
+fn username(ctx: &Ctx, user: u64) -> String {
+    ctx.cache.user(Id::new(user)).map(|u| u.name.clone()).unwrap_or_default()
+}
+
 /// The welcome card for whoever is signed in, as the page's preview.
 async fn card_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     ctx.page(&user, guild, KEY, Level::View)?;
     let number = ctx.member_count(guild).map(|n| n as i64);
-    let png = card::render(&ctx, &user.name, &ctx.guild_name(guild), number, &user.avatar_url()).await?;
+    let png = card::render(&ctx, &[&user.name, &username(&ctx, user.id)], &ctx.guild_name(guild), number, &user.avatar_url()).await?;
     Ok(([(CONTENT_TYPE, "image/png"), (CACHE_CONTROL, "no-store")], png).into_response())
 }
 
 async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    crate::post_welcome(&ctx, &s, guild, user.id, &user.name, &user.avatar_url())
+    crate::post_welcome(&ctx, &s, guild, user.id, &user.name, &username(&ctx, user.id), &user.avatar_url())
         .await
         .map_err(|e| WebError::Bad(e.to_string()))?;
     ctx.audit(&page.user, Some(guild), KEY, "Sent a test welcome");
@@ -389,7 +398,9 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
     let days = s.rejoin_days.max(1);
     let waiting = roles::waiting_count(&ctx, guild, days)?;
     let restored = roles::recently_restored(&ctx, guild, 25)?;
-    let stuck: Vec<u64> = s.autoroles.iter().copied().filter(|r| !roles::assignable(&ctx, guild, *r)).collect();
+    let exists = |r: &u64| ctx.cache.role(Id::new(*r)).is_some();
+    let stuck: Vec<u64> = s.autoroles.iter().copied().filter(|r| exists(r) && !roles::assignable(&ctx, guild, *r)).collect();
+    let deleted = s.autoroles.iter().filter(|r| !exists(r)).count() as i64;
 
     let body = html! {
         style { (PreEscaped(CSS)) }
@@ -398,6 +409,13 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
             div.stack.wl-main {
                 @if !stuck.is_empty() {
                     p.small { (ui::badge("Can't give", Tone::Warn)) " " (role_names(&ctx, guild, &stuck)) ". These sit above the bot's own role, or the server manages them." }
+                }
+                @if deleted > 0 {
+                    p.small {
+                        (ui::badge("Deleted", Tone::Warn)) " "
+                        (counted(deleted, "auto-role was", "auto-roles were")) " deleted in Discord. Save this tab to take "
+                        (if deleted == 1 { "it" } else { "them" }) " off the list."
+                    }
                 }
                 (ui::settings_form(&page, &page.path("welcome/roles"), html! {
                     (ui::section("Auto-roles", None, ui::card(html! {
@@ -436,7 +454,7 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                     h2 { "Waiting to come back" }
                     div.wl-big {
                         span.big-num { (text::num(waiting)) }
-                        span.muted.small { "members left with roles saved, in the last " (days) " days" }
+                        span.muted.small { (if waiting == 1 { "member" } else { "members" }) " left with roles saved, in the last " (days) " days" }
                     }
                 }
             }

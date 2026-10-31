@@ -91,7 +91,7 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       the thread). Closed rows show the close reason and who closed it.
 - [x] Levels: the Rewards tab with role colour dots, editing a reward's level or role in place, and
       a warning on rewards the bot can no longer give (deleted role, or above the bot's role).
-- [ ] Welcome: previews and cards with long names, other scripts and no avatar; the Roles tab with
+- [x] Welcome: previews and cards with long names, other scripts and no avatar; the Roles tab with
       a deleted saved role.
 - [ ] Code review of all three crates: unwraps on Discord data, silent errors that matter, missing
       tests (curve maths, invite attribution when two invites tick at once, ticket numbering).
