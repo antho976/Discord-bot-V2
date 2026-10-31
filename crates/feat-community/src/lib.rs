@@ -117,9 +117,11 @@ impl Feature for Community {
     async fn on_event(&self, ctx: &Ctx, event: &Event) -> Result<()> {
         match event {
             Event::MessagePollVoteAdd(v) => {
+                polls::note_live_vote(v.message_id.get(), v.user_id.get());
                 ctx.db.with(|c| polls::vote(c, v.message_id.get(), v.user_id.get(), v.answer_id, true))?;
             }
             Event::MessagePollVoteRemove(v) => {
+                polls::note_live_vote(v.message_id.get(), v.user_id.get());
                 ctx.db.with(|c| polls::vote(c, v.message_id.get(), v.user_id.get(), v.answer_id, false))?;
             }
             _ => {}

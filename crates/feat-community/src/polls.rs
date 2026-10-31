@@ -171,6 +171,31 @@ pub fn live(c: &Connection, poll: &Poll) -> bot_core::rusqlite::Result<Live> {
 /// When each poll's voters were last read from Discord, since the bot started.
 static SYNCED: Mutex<Option<HashMap<i64, i64>>> = Mutex::new(None);
 
+/// Members whose votes changed live while a poll's voters were being read, by poll message. Only
+/// polls being read have an entry, so a vote outside a catch-up costs one lookup.
+static READING: Mutex<Option<HashMap<u64, HashSet<u64>>>> = Mutex::new(None);
+
+fn reading() -> std::sync::MutexGuard<'static, Option<HashMap<u64, HashSet<u64>>>> {
+    READING.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Called for every live vote event, before it's stored, so a catch-up that reconciles after the
+/// store also sees the member here.
+pub fn note_live_vote(message: u64, user: u64) {
+    if let Some(users) = reading().as_mut().and_then(|m| m.get_mut(&message)) {
+        users.insert(user);
+    }
+}
+
+fn start_reading(message: u64) {
+    reading().get_or_insert_with(HashMap::new).entry(message).or_default();
+}
+
+/// Stop noting live votes on a poll and return the members whose votes changed meanwhile.
+fn finish_reading(message: u64) -> HashSet<u64> {
+    reading().as_mut().and_then(|m| m.remove(&message)).unwrap_or_default()
+}
+
 /// Claim a read of a poll's voters: false when one started less than `gap` ms ago.
 fn claim_sync(id: i64, gap: i64) -> bool {
     let now = now_ms();
@@ -198,14 +223,20 @@ pub fn catch_up(ctx: &Ctx, polls: &[Poll], gap: i64) -> Option<bot_core::tokio::
     let ctx = ctx.clone();
     Some(bot_core::tokio::spawn(async move {
         for p in due {
+            start_reading(p.message_id);
             let fetched_at = now_ms();
             match fetch_voters(&ctx, &p).await {
-                Ok((voters, complete)) => match ctx.db.with(|c| reconcile(c, &p, &voters, complete, fetched_at)) {
+                // The live-vote set is taken under the database lock: any event stored before this
+                // point has already noted its member, and any later one applies on top.
+                Ok((voters, complete)) => match ctx.db.with(|c| reconcile(c, &p, &voters, complete, fetched_at, &finish_reading(p.message_id))) {
                     Ok((0, 0)) => {}
                     Ok((added, removed)) => tracing::info!(poll = p.id, added, removed, "caught up on poll votes"),
                     Err(e) => tracing::warn!(poll = p.id, error = %e, "couldn't store caught-up poll votes"),
                 },
-                Err(e) => tracing::warn!(poll = p.id, error = %e, "couldn't read poll voters"),
+                Err(e) => {
+                    finish_reading(p.message_id);
+                    tracing::warn!(poll = p.id, error = %e, "couldn't read poll voters");
+                }
             }
         }
     }))
@@ -254,15 +285,24 @@ async fn fetch_voters(ctx: &Ctx, p: &Poll) -> Result<(Vec<Vec<u64>>, bool)> {
 /// Make the stored votes match Discord's list of voters per answer. Votes the bot missed are
 /// added, dated at the poll's start because the real time isn't known. Stored votes Discord no
 /// longer lists are removed, but only when the list is complete and the vote came in before
-/// the list was read. Returns `(added, removed)`.
-pub fn reconcile(c: &Connection, poll: &Poll, voters: &[Vec<u64>], complete: bool, fetched_at: i64) -> bot_core::rusqlite::Result<(usize, usize)> {
+/// the list was read. Members in `live` voted or took a vote back while the list was being read,
+/// so the list may be out of date for them: their stored votes are left as the live events made
+/// them. Returns `(added, removed)`.
+pub fn reconcile(
+    c: &Connection,
+    poll: &Poll,
+    voters: &[Vec<u64>],
+    complete: bool,
+    fetched_at: i64,
+    live: &HashSet<u64>,
+) -> bot_core::rusqlite::Result<(usize, usize)> {
     let mut st = c.prepare_cached("SELECT user_id, answer, at FROM poll_votes WHERE poll_id = ?1")?;
     let stored: Vec<(u64, i64, i64)> =
         st.query_map([poll.id], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
     let listed: HashSet<(u64, i64)> =
         voters.iter().enumerate().flat_map(|(i, users)| users.iter().map(move |u| (*u, i as i64))).collect();
     let mut added = 0;
-    for (user, answer) in &listed {
+    for (user, answer) in listed.iter().filter(|(u, _)| !live.contains(u)) {
         added += c.execute(
             "INSERT OR IGNORE INTO poll_votes (poll_id, user_id, answer, at) VALUES (?1, ?2, ?3, ?4)",
             params![poll.id, id_i64(*user), answer, poll.created_at],
@@ -271,7 +311,7 @@ pub fn reconcile(c: &Connection, poll: &Poll, voters: &[Vec<u64>], complete: boo
     let mut removed = 0;
     if complete {
         for (user, answer, at) in stored {
-            if at < fetched_at && (answer as usize) < voters.len() && !listed.contains(&(user, answer)) {
+            if at < fetched_at && (answer as usize) < voters.len() && !listed.contains(&(user, answer)) && !live.contains(&user) {
                 removed += c.execute(
                     "DELETE FROM poll_votes WHERE poll_id = ?1 AND user_id = ?2 AND answer = ?3",
                     params![poll.id, id_i64(user), answer],
@@ -548,16 +588,43 @@ mod tests {
             // Seen live: 10 on answer 0, 11 on answer 1 (since taken back), 12 just now.
             c.execute("INSERT INTO poll_votes (poll_id, user_id, answer, at) VALUES (1, 10, 0, 50), (1, 11, 1, 60), (1, 12, 1, 999)", [])?;
             // Discord lists 10 and 13 on answer 0, nobody on answer 1.
-            assert_eq!(reconcile(c, &p, &[vec![10, 13], vec![]], true, 500)?, (1, 1));
+            assert_eq!(reconcile(c, &p, &[vec![10, 13], vec![]], true, 500, &HashSet::new())?, (1, 1));
             let mut st = c.prepare("SELECT user_id, answer, at FROM poll_votes ORDER BY user_id")?;
             let rows: Vec<(i64, i64, i64)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
             // 12 voted after the list was read, so it stays; 13 is dated at the poll's start.
             assert_eq!(rows, vec![(10, 0, 50), (12, 1, 999), (13, 0, 5)]);
             // A partial list only adds.
-            assert_eq!(reconcile(c, &p, &[vec![], vec![14]], false, 2000)?, (1, 0));
+            assert_eq!(reconcile(c, &p, &[vec![], vec![14]], false, 2000, &HashSet::new())?, (1, 0));
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn a_vote_switched_during_the_read_counts_once() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        let p = poll(2, 2);
+        start_reading(p.message_id);
+        db.with(|c| {
+            c.execute("INSERT INTO polls (id, guild_id, channel_id, message_id, question, answers, ends_at) VALUES (2, 1, 1, 102, 'q', '[]', 0)", [])?;
+            c.execute("INSERT INTO poll_votes (poll_id, user_id, answer, at) VALUES (2, 20, 0, 50), (2, 21, 0, 50)", [])?;
+            // Discord's list is read with member 20 on the first answer; then 20 switches live.
+            note_live_vote(102, 20);
+            vote(c, 102, 20, 1, false)?;
+            note_live_vote(102, 20);
+            vote(c, 102, 20, 2, true)?;
+            let live = finish_reading(p.message_id);
+            assert_eq!(reconcile(c, &p, &[vec![20, 21], vec![]], true, 500, &live)?, (0, 0));
+            let mut st = c.prepare("SELECT user_id, answer FROM poll_votes WHERE poll_id = 2 ORDER BY user_id")?;
+            let rows: Vec<(i64, i64)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+            assert_eq!(rows, vec![(20, 1), (21, 0)]);
+            Ok(())
+        })
+        .unwrap();
+        // Outside a read, live votes aren't remembered.
+        note_live_vote(102, 22);
+        assert!(finish_reading(p.message_id).is_empty());
     }
 
     #[test]
