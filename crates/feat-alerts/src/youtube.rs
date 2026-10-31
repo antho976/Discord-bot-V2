@@ -240,6 +240,16 @@ fn store(ctx: &Ctx, feed: &str, f: &Feed) -> Result<Vec<Video>> {
     Ok(fresh)
 }
 
+/// A video's picture at 320x180, from YouTube's image server.
+pub fn thumb(id: &str) -> String {
+    format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg")
+}
+
+/// Each channel with its newest stored video, in the order given. `None` until the first check.
+pub fn latest_per_feed(ctx: &Ctx, feeds: &[String]) -> Vec<(String, Option<Video>)> {
+    feeds.iter().map(|feed| (feed.clone(), recent(ctx, std::slice::from_ref(feed), 1).into_iter().next())).collect()
+}
+
 /// The newest videos across these channels.
 pub fn recent(ctx: &Ctx, feeds: &[String], limit: usize) -> Vec<Video> {
     let mut out: Vec<Video> = feeds

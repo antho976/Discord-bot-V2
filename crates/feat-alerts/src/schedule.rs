@@ -57,10 +57,18 @@ pub async fn refresh(ctx: &Ctx) -> Result<()> {
     }
     let logins = logins(&alert_guilds(ctx));
     let ms = |s: &str| s.parse::<Timestamp>().ok().map(|t| t.as_millisecond());
+    let mut failed = None;
     for b in twitch::broadcasters(ctx).into_iter().filter(|b| logins.contains(&b.login)) {
         let q = [("broadcaster_id", b.user_id.clone()), ("first", "25".to_owned())];
-        // 404 means the broadcaster has no schedule.
-        let segments = twitch::get::<Wrap>(ctx, "schedule", &q).await?.and_then(|w| w.data.segments).unwrap_or_default();
+        // 404 means the broadcaster has no schedule. Any other failure keeps what's stored, and
+        // the other broadcasters are still read.
+        let segments = match twitch::get::<Wrap>(ctx, "schedule", &q).await {
+            Ok(w) => w.and_then(|w| w.data.segments).unwrap_or_default(),
+            Err(e) => {
+                failed = Some(e.context(format!("schedule of {}", b.login)));
+                continue;
+            }
+        };
         let now = now_ms();
         let mut conn = ctx.db.lock();
         let tx = conn.transaction()?;
@@ -84,7 +92,7 @@ pub async fn refresh(ctx: &Ctx) -> Result<()> {
         tx.execute("DELETE FROM alerts_reminders_sent WHERE at < ?1", [now - 14 * 86_400_000])?;
         tx.commit()?;
     }
-    Ok(())
+    failed.map_or(Ok(()), Err)
 }
 
 /// Segments of these broadcasters starting in `[from, until)`, soonest first.
