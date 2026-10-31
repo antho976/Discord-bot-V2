@@ -2,7 +2,8 @@
 //! every 15 minutes per broadcaster, only for servers that turned clips on; each clip is stored
 //! once by its id, so a clip is never posted twice. When a broadcaster hasn't been checked for a
 //! while (clips were off, or the channel left the Twitch tab), watching starts over from now, so
-//! turning clips back on doesn't post the clips made in between.
+//! turning clips back on doesn't post the clips made in between. When the whole bot was down
+//! instead, the next check picks up where the last good read left off.
 
 use std::sync::Arc;
 
@@ -20,8 +21,12 @@ const EVERY_MS: i64 = 15 * 60_000;
 const OVERLAP_MS: i64 = 60 * 60_000;
 /// Twitch caps a clip search at a week from its start.
 const MAX_SPAN_MS: i64 = 6 * 86_400_000;
-/// A broadcaster not checked for this long wasn't being watched, so watching starts over.
+/// A broadcaster not checked for this long wasn't being watched, so watching starts over. A gap
+/// this long between alerts ticks means the bot itself was down.
 const STALE_MS: i64 = 2 * EVERY_MS;
+/// The state row stamped by every alerts tick, so a check can tell a bot outage from clips
+/// being off.
+const TICK_KEY: &str = "clips:tick";
 /// At most this many clips go out per check (the newest), so a catch-up can't flood a channel.
 const MAX_POSTS: usize = 5;
 /// Helix returns clips by views, 100 a page; this many pages are read per check.
@@ -75,13 +80,28 @@ pub enum Plan {
 }
 
 /// `since` is when watching started, `last_run` the previous check of this broadcaster (whether
-/// or not Twitch answered) and `last_ok` the last time Twitch answered. A broadcaster nobody
-/// checked lately starts over, so clips made while nobody watched are never posted.
-pub fn plan(since: Option<i64>, last_run: Option<i64>, last_ok: Option<i64>, now: i64) -> Plan {
+/// or not Twitch answered), `last_ok` the last time Twitch answered and `last_tick` the alerts
+/// tick before this one.
+///
+/// A broadcaster the running bot stopped checking (clips were off, or the channel left the
+/// Twitch tab) starts over, so clips made in that gap are never posted. When the ticks stopped
+/// too, the whole bot was down: only the time up to its last tick counts, so a broadcaster it was
+/// still checking then searches on from the last good read. `MAX_POSTS` and Twitch's six days
+/// bound that catch-up.
+pub fn plan(since: Option<i64>, last_run: Option<i64>, last_ok: Option<i64>, last_tick: Option<i64>, now: i64) -> Plan {
+    let running_until = last_tick.filter(|t| now - t > STALE_MS).unwrap_or(now);
     match (since, last_run) {
-        (Some(since), Some(run)) if now - run <= STALE_MS => Plan::Search { since, from: window_start(since, last_ok, now) },
+        (Some(since), Some(run)) if running_until - run <= STALE_MS => Plan::Search { since, from: window_start(since, last_ok, now) },
         _ => Plan::Start,
     }
+}
+
+/// Stamp this alerts tick and return the one before it. Called first thing on every tick, so
+/// the stamp only goes stale while the bot is down.
+pub fn stamp_tick(ctx: &Ctx) -> Option<i64> {
+    let last = state_get(ctx, TICK_KEY).and_then(|v| v.parse().ok());
+    state_set(ctx, TICK_KEY, &now_ms().to_string());
+    last
 }
 
 /// The clips to post from what a check found (oldest first): the newest few, oldest first.
@@ -115,8 +135,8 @@ fn rfc3339(ms: i64) -> String {
 }
 
 /// Called every tick: look for new clips of each broadcaster a clip-posting server follows,
-/// every 15 minutes, and post them.
-pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
+/// every 15 minutes, and post them. `last_tick` is what `stamp_tick` returned this tick.
+pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)], last_tick: Option<i64>) {
     let posting = clip_guilds(guilds);
     if posting.is_empty() {
         return;
@@ -132,7 +152,7 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
         let since_key = format!("clips_since:{}", b.user_id);
         let since = state_get(ctx, &since_key).and_then(|v| v.parse::<i64>().ok());
         let last_ok = state_get(ctx, &format!("clips_ok:{}", b.user_id)).and_then(|v| v.parse().ok());
-        let (since, from) = match plan(since, last_run, last_ok, now) {
+        let (since, from) = match plan(since, last_run, last_ok, last_tick, now) {
             Plan::Start => {
                 state_set(ctx, &since_key, &now.to_string());
                 continue;
@@ -286,19 +306,42 @@ mod tests {
         let min = 60_000;
         let now = 100_000 * min;
         let since = now - 300 * min;
+        // The bot ticked a minute ago: it has been running all along.
+        let tick = Some(now - min);
         // Never checked, or never started: mark the start.
-        assert_eq!(plan(None, None, None, now), Plan::Start);
-        assert_eq!(plan(None, Some(now - 15 * min), None, now), Plan::Start);
-        assert_eq!(plan(Some(since), None, Some(now - 15 * min), now), Plan::Start);
+        assert_eq!(plan(None, None, None, tick, now), Plan::Start);
+        assert_eq!(plan(None, Some(now - 15 * min), None, tick, now), Plan::Start);
+        assert_eq!(plan(Some(since), None, Some(now - 15 * min), tick, now), Plan::Start);
         // Checked on the last round: search from an hour before the last good read.
-        assert_eq!(plan(Some(since), Some(now - 15 * min), Some(now - 15 * min), now), Plan::Search { since, from: now - 75 * min });
+        assert_eq!(plan(Some(since), Some(now - 15 * min), Some(now - 15 * min), tick, now), Plan::Search { since, from: now - 75 * min });
         // Twitch failing for a while doesn't start over: the check still ran, so the search
         // reaches back to the last good read.
-        assert_eq!(plan(Some(since), Some(now - 15 * min), Some(now - 120 * min), now), Plan::Search { since, from: now - 180 * min });
+        assert_eq!(plan(Some(since), Some(now - 15 * min), Some(now - 120 * min), tick, now), Plan::Search { since, from: now - 180 * min });
         // Clips were off for a day (or the channel left the Twitch tab): start over, so nothing
         // from the gap is posted.
-        assert_eq!(plan(Some(now - 10 * 1440 * min), Some(now - 1440 * min), Some(now - 1440 * min), now), Plan::Start);
-        assert_eq!(plan(Some(since), Some(now - 31 * min), Some(now - 31 * min), now), Plan::Start);
+        assert_eq!(plan(Some(now - 10 * 1440 * min), Some(now - 1440 * min), Some(now - 1440 * min), tick, now), Plan::Start);
+        assert_eq!(plan(Some(since), Some(now - 31 * min), Some(now - 31 * min), tick, now), Plan::Start);
+        // No tick stamp yet (the first tick after this shipped): the same as running all along.
+        assert_eq!(plan(Some(since), Some(now - 31 * min), Some(now - 31 * min), None, now), Plan::Start);
+    }
+
+    #[test]
+    fn after_a_bot_outage_checks_pick_up_where_they_left_off() {
+        let min = 60_000;
+        let now = 100_000 * min;
+        let since = now - 3000 * min;
+        // Down for two hours: the last tick, check and good read were just before it stopped.
+        let down = now - 120 * min;
+        assert_eq!(plan(Some(since), Some(down - 5 * min), Some(down - 5 * min), Some(down), now), Plan::Search { since, from: down - 65 * min });
+        // Down for two weeks: still searched, within Twitch's six days.
+        let down = now - 14 * 1440 * min;
+        let long_since = now - 30 * 1440 * min;
+        assert_eq!(plan(Some(long_since), Some(down - 5 * min), Some(down - 5 * min), Some(down), now), Plan::Search { since: long_since, from: now - MAX_SPAN_MS });
+        // Clips were already off for a day when the bot went down: start over.
+        let down = now - 60 * min;
+        assert_eq!(plan(Some(since), Some(down - 1440 * min), Some(down - 1440 * min), Some(down), now), Plan::Start);
+        // Never started: mark the start.
+        assert_eq!(plan(None, None, None, Some(down), now), Plan::Start);
     }
 
     #[test]

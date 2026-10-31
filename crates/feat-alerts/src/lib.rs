@@ -200,6 +200,7 @@ impl Feature for Alerts {
     }
 
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
+        let last_tick = clips::stamp_tick(ctx);
         let guilds = alert_guilds(ctx);
         if guilds.is_empty() {
             return Ok(());
@@ -224,7 +225,7 @@ impl Feature for Alerts {
             {
                 bot_core::tracing::warn!(error = %e, "couldn't fill VOD pictures");
             }
-            clips::check(ctx, &guilds).await;
+            clips::check(ctx, &guilds, last_tick).await;
         }
         schedule::send_reminders(ctx, &guilds).await;
         schedule::weekly_posts(ctx, &guilds).await;
