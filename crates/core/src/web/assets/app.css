@@ -94,7 +94,7 @@ h2 { font-size: 14px; }
 .btn.primary { background: var(--ink); color: var(--ground); }
 .btn.primary:hover { background: #fff; }
 .btn.danger { color: var(--held); }
-.btn.danger.armed { background: var(--held); color: var(--ground); }
+.btn.armed, .btn.danger.armed { background: var(--held); color: var(--ground); }
 .btn.small { height: 28px; padding: 0 11px; font-size: 12px; }
 .btn:disabled, fieldset:disabled .btn { opacity: 0.4; cursor: default; }
 .icon-btn { position: relative; display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: var(--r-icon); border: 0; background: transparent; color: var(--ink-2); cursor: pointer; }
@@ -145,9 +145,10 @@ select option { background: var(--solid); }
 .switch input:disabled + .track { opacity: 0.5; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; background: var(--control); color: var(--ink-2); font-size: 12px; cursor: pointer; user-select: none; }
+.chip { position: relative; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; background: var(--control); color: var(--ink-2); font-size: 12px; cursor: pointer; user-select: none; }
 .chip:hover { background: var(--hover); }
-.chip input { display: none; }
+.chip input, .seg input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.chip:has(input:focus-visible), .seg > :has(input:focus-visible) { outline: 2px solid rgba(237, 237, 237, 0.35); outline-offset: 2px; }
 .chip:has(input:checked) { background: var(--ink); color: var(--ground); }
 .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
 
@@ -188,9 +189,9 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tab.on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 500; }
 /* A small segmented choice (None, View, Edit; 7 days, 30 days). */
 .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--well); }
-.seg > * { padding: 3px 10px; border-radius: 6px; font-size: 12px; color: var(--ink-3); cursor: pointer; }
+.seg > * { position: relative; padding: 3px 10px; border-radius: 6px; font-size: 12px; color: var(--ink-3); cursor: pointer; }
 .seg > *:hover { color: var(--ink); }
-.seg > .on { background: var(--selected); color: var(--ink); }
+.seg > .on, .seg > :has(input:checked) { background: var(--selected); color: var(--ink); }
 
 .chart { margin: 0; display: flex; flex-direction: column; gap: 6px; }
 .chart svg { width: 100%; height: 140px; display: block; }

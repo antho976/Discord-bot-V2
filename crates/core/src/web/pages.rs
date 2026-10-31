@@ -570,8 +570,8 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                             (ui::field_custom(m.name, None, html! {
                                 div.seg role="radiogroup" aria-label=(m.name) {
                                     @for (v, label) in [(0, "None"), (1, "View"), (2, "Edit")] {
-                                        label.on[cur == v] {
-                                            input type="radio" name=(name) value=(v) checked[cur == v] style="display:none" onchange="this.closest('.seg').querySelectorAll('label').forEach(t=>t.classList.toggle('on',t.contains(this)))";
+                                        label {
+                                            input type="radio" name=(name) value=(v) checked[cur == v];
                                             (label)
                                         }
                                     }

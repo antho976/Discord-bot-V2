@@ -42,11 +42,12 @@ pub fn duration(secs: i64) -> String {
     }
 }
 
-/// Parse "10m", "2h", "1d 12h", "90" (minutes) into seconds.
+/// Parse "10m", "2h", "1d 12h", "90" (minutes) into seconds. Zero, negative and absurdly
+/// large spans are None.
 pub fn parse_duration(s: &str) -> Option<i64> {
     let s = s.trim().to_lowercase();
     if let Ok(n) = s.parse::<i64>() {
-        return Some(n * 60);
+        return n.checked_mul(60).filter(|t| *t > 0);
     }
     let mut total = 0i64;
     let mut num = String::new();
@@ -58,7 +59,7 @@ pub fn parse_duration(s: &str) -> Option<i64> {
         } else {
             let n: i64 = num.parse().ok()?;
             num.clear();
-            total += n * match ch {
+            let unit = match ch {
                 's' => 1,
                 'm' => 60,
                 'h' => 3600,
@@ -66,6 +67,7 @@ pub fn parse_duration(s: &str) -> Option<i64> {
                 'w' => 604800,
                 _ => return None,
             };
+            total = total.checked_add(n.checked_mul(unit)?)?;
         }
     }
     if !num.is_empty() {
@@ -98,6 +100,9 @@ mod tests {
         assert_eq!(parse_duration("90"), Some(5400));
         assert_eq!(parse_duration("abc"), None);
         assert_eq!(parse_duration("5x"), None);
+        assert_eq!(parse_duration("0"), None);
+        assert_eq!(parse_duration("-5"), None);
+        assert_eq!(parse_duration("99999999999999999d"), None);
     }
 
     #[test]

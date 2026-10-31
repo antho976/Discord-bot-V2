@@ -175,7 +175,7 @@ impl FromRequestParts<Ctx> for User {
         if user.id == ctx.cfg.owner_id {
             user.admin = true;
         }
-        if let Some(tz) = cookie(&parts.headers, "tz").and_then(|t| jiff::tz::TimeZone::get(&t.replace("%2F", "/")).ok()) {
+        if let Some(tz) = cookie(&parts.headers, "tz").and_then(|t| jiff::tz::TimeZone::get(&decode_tz(&t)).ok()) {
             user.tz = tz;
         }
         Ok(user)
@@ -202,6 +202,11 @@ pub fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
         .filter_map(|kv| kv.trim().split_once('='))
         .find(|(k, _)| *k == name)
         .map(|(_, v)| v.to_owned())
+}
+
+/// The `tz` cookie as app.js wrote it with `encodeURIComponent`: "Etc%2FGMT%2B5" is "Etc/GMT+5".
+fn decode_tz(raw: &str) -> String {
+    form_urlencoded::parse(format!("tz={raw}").as_bytes()).next().map(|(_, v)| v.into_owned()).unwrap_or_default()
 }
 
 fn hash_token(token: &str) -> String {
@@ -385,4 +390,17 @@ async fn logout(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
         let _ = ctx.db.with(|c| c.execute("DELETE FROM dash_sessions WHERE token_hash = ?1", [hash_token(&token)]));
     }
     ([(header::SET_COOKIE, set_cookie(&ctx, SESSION_COOKIE, "", 0))], Redirect::to("/login")).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_tz;
+
+    #[test]
+    fn timezone_cookie_decodes() {
+        assert_eq!(decode_tz("Europe%2FLondon"), "Europe/London");
+        assert_eq!(decode_tz("Etc%2FGMT%2B5"), "Etc/GMT+5");
+        assert_eq!(decode_tz("America%2FArgentina%2FBuenos_Aires"), "America/Argentina/Buenos_Aires");
+        assert_eq!(decode_tz("UTC"), "UTC");
+    }
 }

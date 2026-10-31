@@ -222,7 +222,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
                             button.icon-btn.menu-btn type="button" aria-label="Menu" aria-expanded="false" { (icon(Icon::Menu)) }
                         }
                         div.side-links {
-                            a.nav.on[current == "overview"] href={ "/g/" (guild) } { (icon(Icon::Home)) span { "Overview" } }
+                            a.nav.on[current == "overview"] aria-current=[(current == "overview").then_some("page")] href={ "/g/" (guild) } { (icon(Icon::Home)) span { "Overview" } }
                             @for (group, items) in &groups {
                                 div.nav-group { (group.label()) }
                                 @for (label, path, ic, _key) in items {
@@ -233,9 +233,9 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
                             }
                             @if page.user.admin {
                                 div.nav-group { "Admin" }
-                                a.nav.on[current == "features"] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
-                                a.nav.on[current == "users"] href="/users" { (icon(Icon::Users)) span { "People" } }
-                                a.nav.on[current == "activity"] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
+                                a.nav.on[current == "features"] aria-current=[(current == "features").then_some("page")] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
+                                a.nav.on[current == "users"] aria-current=[(current == "users").then_some("page")] href="/users" { (icon(Icon::Users)) span { "People" } }
+                                a.nav.on[current == "activity"] aria-current=[(current == "activity").then_some("page")] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
                             }
                         }
                         div.side-foot {
@@ -535,7 +535,7 @@ pub fn tabs(items: &[(&str, String)], active: &str) -> Markup {
     html! {
         nav.tabs {
             @for (label, href) in items {
-                a.tab.on[*label == active] href=(href) { (label) }
+                a.tab.on[*label == active] href=(href) aria-current=[(*label == active).then_some("page")] { (label) }
             }
         }
     }
