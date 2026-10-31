@@ -176,11 +176,12 @@ fn identity(ctx: &Ctx, page: &Page, title: &str) -> (Icon, Option<&'static str>)
 fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Markup {
     let guild = page.guild_id;
     let guilds = ctx.guilds_for(&page.user);
+    let levels = ctx.levels(&page.user, guild);
     type Link = (&'static str, &'static str, Icon, &'static str);
     let mut groups: Vec<(Group, Vec<Link>)> = Vec::new();
     for f in ctx.features() {
         let meta = f.meta();
-        if !ctx.enabled(guild, meta.key) || ctx.level(&page.user, guild, meta.key) == Level::None {
+        if !ctx.enabled(guild, meta.key) || levels.get(meta.key) == Level::None {
             continue;
         }
         let items: Vec<_> = meta.nav.iter().map(|n| (n.label, n.path, n.icon, meta.key)).collect();
@@ -289,8 +290,9 @@ fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
             Ok(rows)
         })
         .unwrap_or_default();
+    let levels = ctx.levels(&page.user, page.guild_id);
     rows.iter()
-        .filter(|(feature, global)| if *global { page.user.admin } else { ctx.level(&page.user, page.guild_id, feature) >= Level::View })
+        .filter(|(feature, global)| if *global { page.user.admin } else { levels.get(feature) >= Level::View })
         .count() as i64
 }
 

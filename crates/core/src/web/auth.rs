@@ -40,6 +40,19 @@ impl Level {
     }
 }
 
+/// What one person can do on every page of one server, read in one query. For anything that
+/// asks about many pages at once: the sidebar, the overview, the bell.
+pub struct Levels {
+    admin: bool,
+    grants: std::collections::HashMap<String, Level>,
+}
+
+impl Levels {
+    pub fn get(&self, key: &str) -> Level {
+        if self.admin { Level::Edit } else { self.grants.get(key).copied().unwrap_or(Level::None) }
+    }
+}
+
 /// A signed-in dashboard user.
 #[derive(Debug, Clone)]
 pub struct User {
@@ -113,6 +126,27 @@ impl Ctx {
             .flatten()
             .map(Level::from_i64)
             .unwrap_or(Level::None)
+    }
+
+    /// [`Ctx::level`] for every page in a server at once.
+    pub fn levels(&self, user: &User, guild_id: u64) -> Levels {
+        if user.admin {
+            return Levels { admin: true, grants: Default::default() };
+        }
+        let grants = self
+            .db
+            .with(|c| {
+                let mut s = c.prepare("SELECT page, level FROM dash_perms WHERE user_id = ?1 AND guild_id = ?2 AND level > 0")?;
+                let rows = s
+                    .query_map(params![user.id as i64, guild_id as i64], |r| Ok((r.get::<_, String>(0)?, Level::from_i64(r.get(1)?))))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(key, _)| !self.feature(key).is_some_and(|f| f.admin_only()))
+            .collect();
+        Levels { admin: false, grants }
     }
 
     /// Open a page for a user, or refuse when they lack `need` on it.

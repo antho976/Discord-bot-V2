@@ -57,23 +57,33 @@ fn any_guild(ctx: &Ctx, user: &User) -> WebResult<u64> {
 }
 
 fn daily(ctx: &Ctx, guild: u64, key: &str, days: i64) -> Vec<(String, i64)> {
+    daily_keys(ctx, guild, &[key], days).remove(0)
+}
+
+/// [`daily`] for several keys in one query, in the order asked.
+fn daily_keys(ctx: &Ctx, guild: u64, keys: &[&str], days: i64) -> Vec<Vec<(String, i64)>> {
     let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
-    let rows: Vec<(String, i64)> = ctx
+    let start = today.checked_sub(jiff::Span::new().days(days - 1)).unwrap_or(today).to_string();
+    let rows: HashMap<(String, String), i64> = ctx
         .db
         .with(|c| {
-            let mut s = c.prepare("SELECT day, value FROM daily_stats WHERE guild_id = ?1 AND key = ?2 AND day >= ?3")?;
-            let start = today.checked_sub(jiff::Span::new().days(days - 1)).unwrap_or(today).to_string();
-            let rows = s.query_map(params![guild as i64, key, start], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            // The primary key is (guild, key, day), so naming the keys keeps this to an index range.
+            let marks = (3..keys.len() + 3).map(|i| format!("?{i}")).collect::<Vec<_>>().join(", ");
+            let mut s = c.prepare(&format!("SELECT key, day, value FROM daily_stats WHERE guild_id = ?1 AND day >= ?2 AND key IN ({marks})"))?;
+            let mut args: Vec<rusqlite::types::Value> = vec![(guild as i64).into(), start.clone().into()];
+            args.extend(keys.iter().map(|k| k.to_string().into()));
+            let rows = s
+                .query_map(rusqlite::params_from_iter(args), |r| Ok(((r.get(0)?, r.get(1)?), r.get(2)?)))?
+                .collect::<rusqlite::Result<HashMap<_, _>>>()?;
             Ok(rows)
         })
         .unwrap_or_default();
-    (0..days)
-        .rev()
-        .map(|back| {
-            let d = today.checked_sub(jiff::Span::new().days(back)).unwrap_or(today);
-            let key = d.to_string();
-            let v = rows.iter().find(|(k, _)| *k == key).map(|(_, v)| *v).unwrap_or(0);
-            (d.strftime("%b %-d").to_string(), v)
+    let days: Vec<jiff::civil::Date> = (0..days).rev().map(|back| today.checked_sub(jiff::Span::new().days(back)).unwrap_or(today)).collect();
+    keys.iter()
+        .map(|key| {
+            days.iter()
+                .map(|d| (d.strftime("%b %-d").to_string(), rows.get(&(key.to_string(), d.to_string())).copied().unwrap_or(0)))
+                .collect()
         })
         .collect()
 }
@@ -91,11 +101,12 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let page = super::Page { user: user.clone(), guild_id: guild, key: "overview", level: Level::View };
     let days: i64 = if q.get("days").map(String::as_str) == Some("7") { 7 } else { 30 };
     let show = q.get("show").map(String::as_str).unwrap_or("messages");
-    let messages = daily(&ctx, guild, "messages", days);
-    let joins = daily(&ctx, guild, "joins", 14);
-    let leaves = daily(&ctx, guild, "leaves", 7);
-    let active = daily(&ctx, guild, "active", days);
-    let voice = daily(&ctx, guild, "voice_minutes", days.max(14));
+    // Every series in one read of the last 30 days, then cut to length.
+    let [messages, joins, leaves, active, voice]: [Vec<(String, i64)>; 5] =
+        daily_keys(&ctx, guild, &["messages", "joins", "leaves", "active", "voice_minutes"], 30).try_into().unwrap_or_default();
+    let tail = |s: &[(String, i64)], n: i64| s[s.len().saturating_sub(n as usize)..].to_vec();
+    let joins_long = joins.clone();
+    let (messages, joins, leaves, active, voice) = (tail(&messages, days), tail(&joins, 14), tail(&leaves, 7), tail(&active, days), tail(&voice, days.max(14)));
     let last = |s: &[(String, i64)]| s.last().map(|d| d.1).unwrap_or(0);
     let sum_last = |s: &[(String, i64)], n: usize| s.iter().rev().take(n).map(|d| d.1).sum::<i64>();
     let members = ctx.member_count(guild).map(|n| n as i64);
@@ -130,7 +141,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         },
     ];
     let (series, unit, caption): (Vec<(String, i64)>, &str, &str) = match show {
-        "members" => (daily(&ctx, guild, "joins", days), "joins", "Joins per day"),
+        "members" => (tail(&joins_long, days), "joins", "Joins per day"),
         "active" => (active.clone(), "members", "Active members per day"),
         "voice" => (voice.iter().rev().take(days as usize).rev().map(|(l, m)| (l.clone(), m / 60)).collect(), "hours", "Voice hours per day"),
         _ => (messages.clone(), "messages", "Messages per day"),
@@ -142,9 +153,10 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let mut needs = Vec::new();
     let mut feed = Vec::new();
     let mut panel = Vec::new();
+    let levels = ctx.levels(&user, guild);
     for f in ctx.features() {
         let key = f.meta().key;
-        let level = ctx.level(&user, guild, key);
+        let level = levels.get(key);
         if !ctx.enabled(guild, key) || level == Level::None {
             continue;
         }
@@ -306,9 +318,10 @@ struct Note {
 /// server-less notices (app connections) only for admins.
 fn recent_notifications(ctx: &Ctx, user: &User, guild: u64, limit: i64) -> Vec<Note> {
     let mut notes = all_notifications(ctx, guild, limit * 4);
+    let levels = ctx.levels(user, guild);
     notes.retain(|n| match n.global {
         true => user.admin,
-        false => ctx.level(user, guild, &n.feature) >= Level::View,
+        false => levels.get(&n.feature) >= Level::View,
     });
     notes.truncate(limit as usize);
     notes
