@@ -24,11 +24,17 @@ fn tabs(page: &Page, active: &str) -> Markup {
     ui::tabs(&[("Catches", page.path(KEY)), ("Settings", page.path("guard/settings"))], active)
 }
 
+/// A channel set in the settings that the server no longer has. Only once the server is in the
+/// cache, so a restart doesn't show every channel as gone.
+fn deleted(ctx: &Ctx, guild: u64, channel: Option<u64>) -> bool {
+    channel.is_some_and(|c| ctx.cache.guild(Id::new(guild)).is_some() && ctx.cache.channel(Id::new(c)).is_none())
+}
+
 /// The header pill: whether the checks run, and how strict they are.
-fn status(s: &Settings) -> Markup {
+fn status(ctx: &Ctx, guild: u64, s: &Settings) -> Markup {
     let (dot, label) = if s.scam_detection {
         ("dot live", format!("On · {} strictness", s.strictness.key()))
-    } else if s.honeypot_channel.is_some() {
+    } else if s.honeypot_channel.is_some() && !deleted(ctx, guild, s.honeypot_channel) {
         ("dot waiting", "Honeypot only".to_owned())
     } else {
         ("dot", "Off".to_owned())
@@ -57,8 +63,20 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
         div.with-rail {
             div.gd-main {
                 (readings(&ctx, guild, &week))
+                @let log_gone = deleted(&ctx, guild, s.log_channel);
+                @let honeypot_gone = deleted(&ctx, guild, s.honeypot_channel);
                 @if s.log_channel.is_none() {
                     p.muted.small { "No log channel yet, so catches only show up here and behind the bell. Pick one on the " a href=(page.path("guard/settings")) { "Settings tab" } "." }
+                }
+                @if log_gone || honeypot_gone {
+                    div.gd-warns {
+                        @if log_gone {
+                            p.gd-warn { "The alert channel was deleted, so catches only show up here and behind the bell. Pick another on the " a href=(page.path("guard/settings")) { "Settings tab" } "." }
+                        }
+                        @if honeypot_gone {
+                            p.gd-warn { "The honeypot channel was deleted, so nothing is caught there. Pick another on the " a href=(page.path("guard/settings")) { "Settings tab" } "." }
+                        }
+                    }
                 }
                 (ui::section("Recent catches", Some("Release lifts the timeout and marks the catch as a mistake. Ban also deletes their messages from the last day."), html! {
                     @if catches.is_empty() {
@@ -73,7 +91,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
             }
         }
     };
-    Ok(ui::layout(&ctx, &page, "Scam protection", Some(status(&s)), body).into_response())
+    Ok(ui::layout(&ctx, &page, "Scam protection", Some(status(&ctx, guild, &s)), body).into_response())
 }
 
 /// The week's numbers, and the seven-day chart in the alert colour.
@@ -365,7 +383,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
             })))
         }))
     };
-    Ok(ui::layout(&ctx, &page, "Scam protection", Some(status(&s)), body).into_response())
+    Ok(ui::layout(&ctx, &page, "Scam protection", Some(status(&ctx, guild, &s)), body).into_response())
 }
 
 async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
@@ -455,6 +473,9 @@ const STYLE: &str = r#"
 .gd-top .readings { gap: 20px 36px; }
 .gd-top .reading .avatars .avatar { width: 26px; height: 26px; }
 .reading .gd-none { font-size: 14px; font-weight: 500; color: var(--ink-3); padding-top: 4px; }
+.gd-warns { display: flex; flex-direction: column; gap: 6px; }
+.gd-warn { font-size: 13px; color: var(--waiting); }
+.gd-warn a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .gd-bars { margin: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .gd-bars svg { width: 120px; height: 36px; display: block; overflow: visible; }
 .gd-bars rect { fill: var(--signal); opacity: 0.32; }
