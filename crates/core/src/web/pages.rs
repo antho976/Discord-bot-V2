@@ -129,9 +129,9 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let hours = |m: i64| format!("{} h", text::num((m as f64 / 60.0).round() as i64));
     let signed = |n: i64, unit: &str| if n >= 0 { format!("+{} {unit}", text::num(n)) } else { format!("{} {unit}", text::num(n)) };
 
-    struct Stat { key: &'static str, label: &'static str, value: String, note: String, up: bool }
+    struct Stat { key: &'static str, label: &'static str, value: String, note: String, up: bool, down: bool }
     let stats = [
-        Stat { key: "members", label: "Members", value: members.map(text::num).unwrap_or_else(|| "…".into()), note: signed(net, "this week"), up: net > 0 },
+        Stat { key: "members", label: "Members", value: members.map(text::num).unwrap_or_else(|| "…".into()), note: signed(net, "this week"), up: net > 0, down: net < 0 },
         Stat {
             key: "messages",
             label: "Messages today",
@@ -141,6 +141,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                 _ => "Since midnight UTC".into(),
             },
             up: false,
+            down: false,
         },
         Stat {
             key: "active",
@@ -148,6 +149,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             value: text::num(active_today),
             note: members.filter(|m| *m > 0).map(|m| format!("{}% of members", (active_today * 100 / m).min(100))).unwrap_or_default(),
             up: false,
+            down: false,
         },
         Stat {
             key: "voice",
@@ -155,6 +157,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             value: hours(voice_week),
             note: format!("{} on last week", if voice_week >= voice_prev { format!("+{}", hours(voice_week - voice_prev)) } else { format!("-{}", hours(voice_prev - voice_week)) }),
             up: voice_week > voice_prev,
+            down: voice_week < voice_prev,
         },
     ];
     let (series, unit, caption): (Vec<(String, i64)>, &str, &str) = match show {
@@ -179,12 +182,13 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         }
         let fp = super::Page { user: user.clone(), guild_id: guild, key, level };
         let o = f.overview(&ctx, &fp);
-        needs.extend(o.needs);
+        let hue = ui::feature_hue(&ctx, key);
+        needs.extend(o.needs.into_iter().map(|n| (hue, n)));
         feeds.push(o.feed);
         panel.extend(o.panel);
     }
     // Alerts first, then whatever has waited longest.
-    needs.sort_by_key(|n| (!n.alert, n.since));
+    needs.sort_by_key(|(_, n)| (!n.alert, n.since));
     let feed = mix_feed(feeds, 6);
     panel.sort_by_key(|p| p.0);
     let on = ctx.features().iter().filter(|f| ctx.enabled(guild, f.meta().key)).count();
@@ -203,18 +207,22 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let main = html! {
         nav.ov-stats aria-label="Readings" {
             @for st in &stats {
-                a.ov-stat.on[st.key == show] href=(link(st.key, days)) {
+                a.ov-stat.on[st.key == show] href=(link(st.key, days)) aria-current=[(st.key == show).then_some("true")] {
                     span.muted.small { (st.label) }
-                    b { (st.value) }
-                    span.small.up[st.up] { (st.note) }
+                    b data-count { (st.value) }
+                    span.small.up[st.up].down[st.down] { (st.note) }
+                    @if st.key == show { span.stat-line {} }
                 }
             }
         }
         div.ov-chart {
             div.ov-chart-head {
-                span.muted.small {
-                    (caption) " · " (text::num(avg)) " on average"
-                    @if let Some(t) = &day_starts { " · days start at " (t) " your time" }
+                div {
+                    h2 { (caption) }
+                    p {
+                        (text::num(avg)) " on average over " (days) " days"
+                        @if let Some(t) = &day_starts { " · days start at " (t) " your time" }
+                    }
                 }
                 div.seg {
                     a.on[days == 7] href=(link(show, 7)) { "7 days" }
@@ -228,20 +236,20 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             }
         }
         section.ov-block {
-            h2 { "Needs you" @if !needs.is_empty() { " " span.count-pill { (needs.len()) } } }
+            h2 { "Needs you" @if !needs.is_empty() { span.count-pill { (needs.len()) } } }
             @if needs.is_empty() {
-                p.muted.small { "Nothing is waiting on you." }
+                (ui::empty(Icon::Check, "Nothing is waiting on you", "Scam catches, pet requests, tickets and app approvals land here when they need someone."))
             } @else {
                 div.ov-rows {
-                    @for n in &needs {
-                        div.need {
+                    @for (hue, n) in &needs {
+                        div.need.alert[n.alert] data-hue=(hue) {
                             @if n.people.is_empty() {
                                 span.need-icon.alert[n.alert] { (ui::icon(n.icon)) }
                             } @else {
                                 (ui::avatars(&n.people, 2))
                             }
                             div.grow { strong { (n.title) } p.muted.small { (n.detail) } }
-                            a.btn.small.outline href=(n.href) { (n.action) }
+                            a class=(if n.alert { "btn small primary" } else { "btn small outline" }) href=(n.href) { (n.action) }
                         }
                     }
                 }
@@ -255,7 +263,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                 div.ov-feed {
                     @for h in &feed {
                         div.happen {
-                            img.avatar src=(h.avatar) alt="" width="26" height="26" loading="lazy";
+                            img.avatar src=(h.avatar) alt="" width="32" height="32" loading="lazy";
                             span.grow { strong { (h.who) } " " (h.text) }
                             span.muted.small { (short_ago(h.at)) }
                         }
@@ -272,12 +280,14 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         }
     };
 
+    let uploaded = super::banner::uploaded_at(&ctx, guild).is_some();
     let body = html! {
         header.ov-hero data-local {
-            @match (&banner, &icon_large) {
-                (Some(b), _) => div.ov-bg style={ "background-image:url(" (b) ")" } {},
-                (None, Some(i)) => div.ov-bg.wash style={ "background-image:url(" (i) ")" } {},
-                (None, None) => {},
+            div.ov-bg {
+                @match (&banner, &icon_large) {
+                    (Some(b), _) => img src=(b) alt="" fetchpriority="high";,
+                    (None, i) => (ui::art(i.as_deref(), false)),
+                }
             }
             div.ov-top {
                 @if ctx.cfg.preview {
@@ -287,19 +297,40 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                 } @else {
                     (ui::status(ui::Dot::Waiting, "Connecting"))
                 }
-                (ui::bell(&ctx, &page))
+                @if user.admin {
+                    details.pop.banner-pop {
+                        summary.btn.small aria-label="Change the banner" { (ui::icon(Icon::Image)) span.pop-label { "Banner" } }
+                        div.pop-body {
+                            strong { "The picture behind this header" }
+                            p.muted.small {
+                                @if uploaded { "You uploaded this one. It also heads the sidebar." }
+                                @else if banner.is_some() { "This is the banner from Discord's server settings. An upload replaces it here." }
+                                @else { "No banner yet, so this is drawn from the server icon. Upload a wide picture, at least 1600 px across." }
+                            }
+                            div.inline-form {
+                                button.btn.small.primary type="button" data-banner-pick { (ui::icon(Icon::Image)) "Upload a picture" }
+                                @if uploaded {
+                                    form.inline method="post" action={ "/g/" (guild) "/banner/remove" } {
+                                        button.btn.small.ghost type="submit" { "Remove upload" }
+                                    }
+                                }
+                            }
+                            input #banner-file type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-action={ "/g/" (guild) "/banner" };
+                        }
+                    }
+                }
             }
             div.ov-hello {
                 @match &icon_large {
-                    Some(i) => img.ov-icon src=(i) alt="" width="56" height="56";,
+                    Some(i) => img.ov-icon src=(i) alt="" width="84" height="84";,
                     None => span.ov-icon.letter { (name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default()) },
                 }
                 div {
                     h1 { (greeting) ", " (user.name) }
                     p {
-                        (name)
-                        @if let Some(m) = members { " · " (text::num(m)) " members" }
-                        @if active_today > 0 { " · " (text::num(active_today)) " here today" }
+                        span { strong { (name) } }
+                        @if let Some(m) = members { span { (ui::icon(Icon::Member)) (text::num(m)) " members" } }
+                        @if active_today > 0 { span { span.dot.live {} (text::num(active_today)) " here today" } }
                     }
                 }
             }
@@ -406,8 +437,8 @@ fn notification_row(ctx: &Ctx, user: &User, n: &Note, new: bool) -> Markup {
     };
     html! {
         @match &n.link {
-            Some(l) => a.note.new[new] href=(l) { (inner) },
-            None => div.note.new[new] { (inner) },
+            Some(l) => a.note.new[new] href=(l) data-hue=(ui::feature_hue(ctx, &n.feature)) { (inner) },
+            None => div.note.new[new] data-hue=(ui::feature_hue(ctx, &n.feature)) { (inner) },
         }
     }
 }
@@ -489,7 +520,7 @@ async fn features_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         }
         div.fgroups {
             @for (group, list) in &groups {
-                section.card.fgroup {
+                section.card.fgroup data-hue=(group.hue()) {
                     h2.fgroup-label { (group.label()) }
                     @for m in list {
                         @let on = ctx.enabled(guild, m.key);
