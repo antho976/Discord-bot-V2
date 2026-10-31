@@ -132,6 +132,10 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       winners.
 - [x] Found: "Couldn't post" was shown for giveaways and suggestions that did post; tick read
       errors were swallowed; a double click on /pet add submitted twice.
+- [x] Review (keen-hare): poll catch-up could count a vote switched during the read twice; a
+      long winning answer broke the polls rail; an edit just before a giveaway ended wasn't the
+      one announced, and its refresh could overwrite the ended post; pets copy for viewers and
+      the public counts.
 
 ### Lead: sharp-hare
 - Review every pull request (correctness, scope, look) and leave comments; check CI.
