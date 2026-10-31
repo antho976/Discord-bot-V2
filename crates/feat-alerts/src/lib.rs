@@ -344,9 +344,11 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
     let mut conn = ctx.db.lock();
     let tx = conn.transaction()?;
     tx.execute(
-        "INSERT OR REPLACE INTO alerts_broadcasters (login, user_id, name, avatar, updated_at) VALUES ('antho', '41234567', 'Antho', '', ?1)",
-        [now],
+        "INSERT OR REPLACE INTO alerts_broadcasters (login, user_id, name, avatar, updated_at) VALUES ('antho', '41234567', 'Antho', ?1, ?2)",
+        params![bot_core::preview::picture("icon.png"), now],
     )?;
+    // Sample pictures for streams and clips, in turn.
+    let pictures = ["stream.jpg", "banner.jpg", "lake.jpg"].map(bot_core::preview::picture);
     let games = ["Legends of Idleon", "Hades II", "Balatro", "Legends of Idleon", "Just Chatting", "Hades II"];
     let titles = [
         "World 6 push, then pets",
@@ -369,8 +371,8 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         let all_games = if i % 3 == 0 && game != "Just Chatting" { format!("{game}\nJust Chatting") } else { game.to_owned() };
         let samples = secs / 300;
         tx.execute(
-            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, vod_url, viewer_sum, games)
-             VALUES ('41234567', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, vod_url, viewer_sum, games, thumbnail)
+             VALUES ('41234567', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 format!("4{i:010}"),
                 started,
@@ -384,9 +386,16 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
                 (i < 6).then(|| format!("https://www.twitch.tv/videos/2{i:09}")),
                 peak * 2 / 3 * samples,
                 all_games,
+                pictures[i as usize % pictures.len()],
             ],
         )?;
     }
+    // On air now, 52 minutes in, so the pages show a live stream.
+    tx.execute(
+        "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, peak, average, samples, last_sample, viewer_sum, games, thumbnail)
+         VALUES ('41234567', '40000000099', ?1, 'Idleon: world 6 push', 'Legends of Idleon', 61, 48, 10, ?2, 480, 'Legends of Idleon', ?3)",
+        params![now - 52 * 60_000, now - 2 * 60_000, pictures[0]],
+    )?;
     // A follower total for each of the last 30 days, as the daily check stores them.
     for d in 0..30i64 {
         let day = bot_core::jiff::Timestamp::from_millisecond(now - d * day)?.to_zoned(bot_core::jiff::tz::TimeZone::UTC).date().to_string();
@@ -439,9 +448,9 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
     ];
     for (n, (title, creator, back, views)) in clips.iter().enumerate() {
         tx.execute(
-            "INSERT OR REPLACE INTO alerts_clips (id, broadcaster_id, title, creator, url, views, created_at, seen_at)
-             VALUES (?1, '41234567', ?2, ?3, ?4, ?5, ?6, ?6)",
-            params![format!("PreviewClip{n}"), title, creator, format!("https://clips.twitch.tv/PreviewClip{n}"), views, now - back * hour],
+            "INSERT OR REPLACE INTO alerts_clips (id, broadcaster_id, title, creator, url, thumbnail, views, created_at, seen_at)
+             VALUES (?1, '41234567', ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+            params![format!("PreviewClip{n}"), title, creator, format!("https://clips.twitch.tv/PreviewClip{n}"), pictures[(n + 1) % pictures.len()], views, now - back * hour],
         )?;
     }
     tx.execute("INSERT OR REPLACE INTO alerts_state (key, value) VALUES ('clips_ok:41234567', ?1)", [(now - 6 * 60_000).to_string()])?;
