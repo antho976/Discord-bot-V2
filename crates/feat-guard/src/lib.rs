@@ -278,7 +278,7 @@ impl Feature for Guard {
                     icon: Icon::Shield,
                     title: format!("Scam caught: {}", c.user_name),
                     detail,
-                    href: page.path(KEY),
+                    href: format!("{}?show=waiting", page.path(KEY)),
                     action: "Review",
                     alert: true,
                 }
@@ -524,7 +524,7 @@ async fn act(ctx: &Ctx, guild: u64, s: &Settings, m: &Message, text: &str, found
         }
     }
     let what = if found.honeypot { "posted in the honeypot channel".to_owned() } else { found.reason.to_lowercase() };
-    ctx.notify(Some(guild), KEY, format!("Caught {name}: {what}"), Some(format!("/g/{guild}/{KEY}")));
+    ctx.notify(Some(guild), KEY, format!("Caught {name}: {what}"), Some(format!("/g/{guild}/{KEY}?show=waiting")));
 
     if s.dm_member && timed_out {
         let server = ctx.guild_name(guild);
