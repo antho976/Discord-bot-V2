@@ -186,11 +186,13 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         recompute_levels(&ctx, guild, &s)?;
     }
     // /prestige is registered only where prestige is on.
-    if s.prestige_on() != old.prestige_on() && ctx.enabled(guild, KEY) {
+    if s.prestige_on() != old.prestige_on() && ctx.enabled(guild, KEY) && !ctx.cfg.preview {
         let ctx = ctx.clone();
         bot_core::tokio::spawn(async move {
             if let Err(e) = bot_core::discord::register_commands(&ctx, guild).await {
                 bot_core::tracing::warn!(guild, error = %e, "couldn't update commands");
+                let why = text::clip(&e.to_string(), 200);
+                ctx.notify_once(guild, KEY, "register", format!("/prestige didn't reach Discord: {why}. Save the settings again to retry."), Some(format!("/g/{guild}/levels/settings")), std::time::Duration::from_secs(3600));
             }
         });
     }

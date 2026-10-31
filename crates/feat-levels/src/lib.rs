@@ -297,6 +297,10 @@ impl Feature for Levels {
         }
     }
 
+    fn reserved_command_names(&self) -> &'static [&'static str] {
+        &["prestige"]
+    }
+
     fn routes(&self) -> bot_core::axum::Router<Ctx> {
         web::routes()
     }

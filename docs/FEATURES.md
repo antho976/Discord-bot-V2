@@ -17,6 +17,8 @@ implementation: read it before writing a feature, and copy its shape.
     dashboard, or one a setting switches on). Read cached settings only. After changing what it
     returns, call `bot_core::discord::register_commands(ctx, guild)`; Discord allows about 200
     re-registrations a day per server, so only when names or descriptions change.
+  - `reserved_command_names()`: names `guild_commands` may return in some server, even where it
+    doesn't now (a setting that's off), so custom commands can't take them.
   - `on_event()`: every gateway event for servers where the feature is on.
   - `on_command()` / `on_autocomplete()`: only for commands this feature declared.
   - `on_component()` / `on_modal()`: buttons, selects and modals whose custom id starts with
