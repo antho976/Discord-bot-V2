@@ -18,7 +18,7 @@ use bot_core::twilight_model::channel::message::AllowedMentions;
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
-use bot_core::twilight_util::builder::command::{CommandBuilder, IntegerBuilder, SubCommandBuilder, UserBuilder};
+use bot_core::twilight_util::builder::command::{CommandBuilder, IntegerBuilder, StringBuilder, SubCommandBuilder, UserBuilder};
 use bot_core::twilight_util::builder::embed::{EmbedBuilder, EmbedFieldBuilder};
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, text};
 use rand::RngExt as _;
@@ -49,6 +49,9 @@ pub struct Settings {
     pub stack_rewards: bool,
     pub no_xp_channels: Vec<u64>,
     pub no_xp_roles: Vec<u64>,
+    /// Post the week's top three when the week ends.
+    pub weekly_post: bool,
+    pub weekly_channel: Option<u64>,
 }
 
 impl Default for Settings {
@@ -71,6 +74,8 @@ impl Default for Settings {
             stack_rewards: true,
             no_xp_channels: Vec::new(),
             no_xp_roles: Vec::new(),
+            weekly_post: false,
+            weekly_channel: None,
         }
     }
 }
@@ -123,6 +128,13 @@ const MIGRATIONS: &[Migration] = &[Migration {
             level INTEGER NOT NULL, role_id INTEGER, at INTEGER NOT NULL);
         CREATE INDEX level_ups_by_time ON level_ups(guild_id, at);
     ",
+}, Migration {
+    name: "003_levels_week_winners",
+    sql: "
+        CREATE TABLE level_week_winners (
+            guild_id INTEGER NOT NULL, week TEXT NOT NULL, place INTEGER NOT NULL,
+            user_id INTEGER NOT NULL, xp INTEGER NOT NULL, PRIMARY KEY (guild_id, place));
+    ",
 }];
 
 #[feature_async]
@@ -146,7 +158,9 @@ impl Feature for Levels {
             CommandBuilder::new("rank", "Your level and XP, or someone else's", CommandType::ChatInput)
                 .option(UserBuilder::new("member", "Whose rank to show"))
                 .build(),
-            CommandBuilder::new("leaderboard", "The server's top members by XP", CommandType::ChatInput).build(),
+            CommandBuilder::new("leaderboard", "The server's top members by XP", CommandType::ChatInput)
+                .option(StringBuilder::new("board", "All time, or this week's XP").choices([("All time", "all"), ("This week", "week")]))
+                .build(),
             CommandBuilder::new("xp", "Change a member's XP", CommandType::ChatInput)
                 .default_member_permissions(Permissions::MANAGE_GUILD)
                 .option(
@@ -217,7 +231,10 @@ impl Feature for Levels {
 
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
         for guild in ctx.enabled_guilds(KEY) {
-            roll_week(ctx, guild)?;
+            let winners = roll_week(ctx, guild)?;
+            if !winners.is_empty() {
+                post_winners(ctx, guild, &winners).await;
+            }
         }
         // One minute of voice XP for everyone talking in a channel.
         for guild in ctx.enabled_guilds(KEY) {
@@ -280,7 +297,8 @@ impl Feature for Levels {
                 ctx.reply(&call.interaction, Reply::embed(embed)).await?;
             }
             "leaderboard" => {
-                let (embed, rows) = leaderboard(ctx, guild, 0)?;
+                let board = if call.opts().str("board") == Some("week") { Board::Week } else { Board::All };
+                let (embed, rows) = leaderboard(ctx, guild, board, 0)?;
                 ctx.reply(&call.interaction, Reply::embed(embed).components(rows)).await?;
             }
             "xp" => {
@@ -333,9 +351,10 @@ impl Feature for Levels {
 
     async fn on_component(&self, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
         let Some(guild) = call.guild_id() else { return Ok(()) };
-        if let ["lb", page] = call.args().as_slice() {
+        if let [which @ ("lb" | "lbw"), page] = call.args().as_slice() {
             let page: i64 = page.parse().unwrap_or(0);
-            let (embed, rows) = leaderboard(ctx, guild, page.max(0))?;
+            let board = if *which == "lbw" { Board::Week } else { Board::All };
+            let (embed, rows) = leaderboard(ctx, guild, board, page.max(0))?;
             ctx.update(&call.interaction, Reply::embed(embed).components(rows)).await?;
         }
         Ok(())
@@ -426,27 +445,80 @@ pub fn count(ctx: &Ctx, guild: u64) -> Result<i64> {
     ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND xp > 0", [guild as i64], |r| r.get(0)))
 }
 
-fn leaderboard(ctx: &Ctx, guild: u64, page: i64) -> Result<(bot_core::twilight_model::channel::message::Embed, Vec<bot_core::twilight_model::channel::message::component::Component>)> {
+/// Which leaderboard: total XP, or XP gained since Monday.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Board {
+    All,
+    Week,
+}
+
+/// XP gained this week: XP now less XP when the week started. Members who first earned XP this
+/// week have no starting row and count from zero.
+const WEEK_GAIN: &str = "SELECT l.user_id, l.xp, l.level, l.messages, l.voice_minutes, l.xp - COALESCE(w.xp, 0) AS gain FROM levels l
+     LEFT JOIN level_week w ON w.guild_id = l.guild_id AND w.user_id = l.user_id
+     WHERE l.guild_id = ?1 AND gain > 0";
+
+/// This week's top members by XP gained, each with what they gained.
+pub fn week_top(ctx: &Ctx, guild: u64, offset: i64, limit: i64) -> Result<Vec<(Member, i64)>> {
+    ctx.db.with(|c| {
+        let mut stmt = c.prepare_cached(&format!("{WEEK_GAIN} ORDER BY gain DESC, l.user_id LIMIT ?2 OFFSET ?3"))?;
+        stmt.query_map(params![guild as i64, limit, offset], |r| Ok((member_row(r)?, r.get(5)?)))?.collect()
+    })
+}
+
+/// How many members gained XP this week, and how much they gained together.
+pub fn week_totals(ctx: &Ctx, guild: u64) -> Result<(i64, i64)> {
+    ctx.db.with(|c| c.query_row(&format!("SELECT COUNT(*), COALESCE(SUM(gain), 0) FROM ({WEEK_GAIN})"), [guild as i64], |r| Ok((r.get(0)?, r.get(1)?))))
+}
+
+/// A finished week's top three: the week ("2026-W44") and `(user, XP gained)` best first.
+pub type Winners = (String, Vec<(u64, i64)>);
+
+/// Last week's top three, kept from when the week rolled over.
+pub fn last_week(ctx: &Ctx, guild: u64) -> Result<Option<Winners>> {
+    let rows: Vec<(String, u64, i64)> = ctx.db.with(|c| {
+        let mut stmt = c.prepare_cached("SELECT week, user_id, xp FROM level_week_winners WHERE guild_id = ?1 ORDER BY place")?;
+        stmt.query_map([guild as i64], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64, r.get(2)?)))?.collect()
+    })?;
+    let Some(week) = rows.first().map(|r| r.0.clone()) else { return Ok(None) };
+    Ok(Some((week, rows.into_iter().map(|(_, u, x)| (u, x)).collect())))
+}
+
+fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64) -> Result<(bot_core::twilight_model::channel::message::Embed, Vec<bot_core::twilight_model::channel::message::component::Component>)> {
     let per = 10;
-    let total = count(ctx, guild)?;
+    let total = match board {
+        Board::All => count(ctx, guild)?,
+        Board::Week => week_totals(ctx, guild)?.0,
+    };
     let pages = ((total + per - 1) / per).max(1);
     let page = page.min(pages - 1);
-    let rows = top(ctx, guild, page * per, per)?;
+    let rows: Vec<(Member, Option<i64>)> = match board {
+        Board::All => top(ctx, guild, page * per, per)?.into_iter().map(|m| (m, None)).collect(),
+        Board::Week => week_top(ctx, guild, page * per, per)?.into_iter().map(|(m, g)| (m, Some(g))).collect(),
+    };
     let mut lines = Vec::new();
-    for (i, m) in rows.iter().enumerate() {
+    for (i, (m, gain)) in rows.iter().enumerate() {
         let place = page * per + i as i64 + 1;
-        lines.push(format!("`{place:>2}`  {}  ·  level {}  ·  {} XP", ctx.display_name(guild, m.user_id), m.level, text::num(m.xp)));
+        let figure = match gain {
+            Some(g) => format!("+{} XP", text::num(*g)),
+            None => format!("{} XP", text::num(m.xp)),
+        };
+        lines.push(format!("`{place:>2}`  {}  ·  level {}  ·  {figure}", ctx.display_name(guild, m.user_id), m.level));
     }
+    let (title, nobody, prefix) = match board {
+        Board::All => (format!("{} leaderboard", ctx.guild_name(guild)), "Nobody has XP yet.", "lb"),
+        Board::Week => (format!("{} this week", ctx.guild_name(guild)), "Nobody has earned XP since Monday.", "lbw"),
+    };
     let embed = EmbedBuilder::new()
-        .title(format!("{} leaderboard", ctx.guild_name(guild)))
+        .title(title)
         .color(0xf0806a)
-        .description(if lines.is_empty() { "Nobody has XP yet.".into() } else { lines.join("\n") })
+        .description(if lines.is_empty() { nobody.into() } else { lines.join("\n") })
         .footer(bot_core::twilight_util::builder::embed::EmbedFooterBuilder::new(format!("Page {} of {pages}", page + 1)))
         .build();
     let mut buttons = Vec::new();
     if pages > 1 {
-        let prev = format!("{KEY}:lb:{}", (page - 1).max(0));
-        let next = format!("{KEY}:lb:{}", (page + 1).min(pages - 1));
+        let prev = format!("{KEY}:{prefix}:{}", (page - 1).max(0));
+        let next = format!("{KEY}:{prefix}:{}", (page + 1).min(pages - 1));
         buttons.push(button_row(&[(&prev, "Previous", ButtonStyle::Secondary), (&next, "Next", ButtonStyle::Secondary)]));
     }
     Ok((embed, buttons))
@@ -519,22 +591,48 @@ async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, chann
 
 /// This ISO week, like "2026-W44", in UTC.
 fn week_key() -> String {
-    let d = bot_core::jiff::Timestamp::now().to_zoned(bot_core::jiff::tz::TimeZone::UTC).date();
+    week_key_of(bot_core::jiff::Timestamp::now().to_zoned(bot_core::jiff::tz::TimeZone::UTC).date())
+}
+
+/// The ISO week a day falls in. Weeks start on Monday, and the days around New Year can belong
+/// to the other year's first or last week.
+fn week_key_of(d: bot_core::jiff::civil::Date) -> String {
     let w = d.iso_week_date();
     format!("{}-W{:02}", w.year(), w.week())
 }
 
-/// At the start of each week, remember everyone's XP so "this week" can be worked out, and drop
-/// level-ups older than a month.
-fn roll_week(ctx: &Ctx, guild: u64) -> Result<()> {
-    let week = week_key();
+/// At the start of each week, keep the top three of the week that ended, remember everyone's XP
+/// so "this week" can be worked out, and drop level-ups older than a month. Returns the top three
+/// when a week just ended, so they can be posted.
+fn roll_week(ctx: &Ctx, guild: u64) -> Result<Vec<(u64, i64)>> {
+    roll_week_to(ctx, guild, &week_key())
+}
+
+fn roll_week_to(ctx: &Ctx, guild: u64, week: &str) -> Result<Vec<(u64, i64)>> {
     let mut conn = ctx.db.lock();
     let stored: Option<String> =
         conn.query_row("SELECT week FROM level_week_state WHERE guild_id = ?1", [guild as i64], |r| r.get(0)).optional()?;
-    if stored.as_deref() == Some(week.as_str()) {
-        return Ok(());
+    if stored.as_deref() == Some(week) {
+        return Ok(Vec::new());
     }
     let tx = conn.transaction()?;
+    // The first roll has no start of week to measure from, so it names no winners.
+    let mut winners = Vec::new();
+    if let Some(ended) = &stored {
+        {
+            let mut st = tx.prepare(&format!("{WEEK_GAIN} ORDER BY gain DESC, l.user_id LIMIT 3"))?;
+            for row in st.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(5)?)))? {
+                winners.push(row?);
+            }
+        }
+        tx.execute("DELETE FROM level_week_winners WHERE guild_id = ?1", [guild as i64])?;
+        for (place, (user, gain)) in winners.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO level_week_winners (guild_id, week, place, user_id, xp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![guild as i64, ended, place as i64 + 1, *user as i64, gain],
+            )?;
+        }
+    }
     tx.execute("DELETE FROM level_week WHERE guild_id = ?1", [guild as i64])?;
     tx.execute("INSERT INTO level_week (guild_id, user_id, xp) SELECT guild_id, user_id, xp FROM levels WHERE guild_id = ?1", [guild as i64])?;
     tx.execute(
@@ -543,7 +641,29 @@ fn roll_week(ctx: &Ctx, guild: u64) -> Result<()> {
     )?;
     tx.execute("DELETE FROM level_ups WHERE guild_id = ?1 AND at < ?2", params![guild as i64, bot_core::now_ms() - 30 * 86_400_000])?;
     tx.commit()?;
-    Ok(())
+    Ok(winners)
+}
+
+/// The week's top three as the weekly post lists them.
+pub fn winners_text(winners: &[(u64, i64)]) -> String {
+    winners
+        .iter()
+        .enumerate()
+        .map(|(i, (user, gain))| format!("**{}.** <@{user}>  ·  +{} XP", i + 1, text::num(*gain)))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Post the top three of the week that ended, when the server asked for it. Mentions in an embed
+/// show the name without pinging anyone.
+async fn post_winners(ctx: &Ctx, guild: u64, winners: &[(u64, i64)]) {
+    let Ok(s) = ctx.settings::<Settings>(guild, KEY) else { return };
+    let Some(channel) = s.weekly_channel.filter(|_| s.weekly_post) else { return };
+    let embed = EmbedBuilder::new().title("Most XP last week").color(0xf0806a).description(winners_text(winners)).build();
+    if let Err(e) = ctx.http.create_message(Id::new(channel)).embeds(&[embed]).allowed_mentions(Some(&AllowedMentions::default())).await {
+        bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post the weekly top three");
+        notify_failure(ctx, guild, format!("The weekly top three wasn't posted. {}", why_refused(&e)), format!("/g/{guild}/{KEY}/settings"));
+    }
 }
 
 /// Set a member's XP outright and fix their level and roles.
@@ -683,15 +803,23 @@ pub(crate) fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
             )
         })?;
     }
-    // XP at the start of the week and a few level-ups, for the overview.
+    // XP at the start of the week, last week's top three, and a few level-ups, for the overview.
     let now = bot_core::now_ms();
+    let last = week_key_of(bot_core::jiff::Timestamp::now().to_zoned(bot_core::jiff::tz::TimeZone::UTC).date().saturating_sub(bot_core::jiff::Span::new().days(7)));
     ctx.db.with(|c| {
         c.execute(
             "INSERT OR REPLACE INTO level_week (guild_id, user_id, xp)
              SELECT guild_id, user_id, xp - (abs(random()) % 4000) - 400 FROM levels WHERE guild_id = ?1",
             [guild as i64],
         )?;
-        c.execute("INSERT OR REPLACE INTO level_week_state (guild_id, week) VALUES (?1, ?2)", params![guild as i64, week_key()])
+        c.execute("INSERT OR REPLACE INTO level_week_state (guild_id, week) VALUES (?1, ?2)", params![guild as i64, week_key()])?;
+        for (place, (i, gain)) in [(2usize, 5_120i64), (0, 4_380), (6, 3_910)].into_iter().enumerate() {
+            c.execute(
+                "INSERT OR REPLACE INTO level_week_winners (guild_id, week, place, user_id, xp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![guild as i64, last, place as i64 + 1, bot_core::preview::MEMBERS[i].0 as i64, gain],
+            )?;
+        }
+        Ok(())
     })?;
     let regulars = ctx.roles(guild).into_iter().find(|r| r.1 == "Regulars").map(|r| r.0 as i64);
     for (i, level, role, back) in [(0usize, 25, regulars, 720_000i64), (3, 12, None, 9_000_000), (5, 8, None, 30_000_000)] {
@@ -732,5 +860,58 @@ mod tests {
             cooled_down(&map, (4, user), 0);
         }
         assert!(map.lock().unwrap().len() < 10);
+    }
+
+    #[test]
+    fn weeks_follow_iso_numbering() {
+        use bot_core::jiff::civil::date;
+        assert_eq!(week_key_of(date(2026, 10, 31)), "2026-W44");
+        // Monday starts the week.
+        assert_eq!(week_key_of(date(2026, 11, 1)), "2026-W44");
+        assert_eq!(week_key_of(date(2026, 11, 2)), "2026-W45");
+        // New Year: 2026 starts on a Thursday, so it has a week 53 running into 2027, and the last
+        // days of 2024 already belong to 2025.
+        assert_eq!(week_key_of(date(2026, 1, 1)), "2026-W01");
+        assert_eq!(week_key_of(date(2027, 1, 1)), "2026-W53");
+        assert_eq!(week_key_of(date(2024, 12, 30)), "2025-W01");
+    }
+
+    fn ctx() -> Ctx {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(Levels::default())]).unwrap();
+        ctx
+    }
+
+    fn set(ctx: &Ctx, user: u64, xp: i64) {
+        ctx.db
+            .with(|c| c.execute("INSERT OR REPLACE INTO levels (guild_id, user_id, xp) VALUES (1, ?1, ?2)", params![user as i64, xp]))
+            .unwrap();
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn the_week_rolls_over_and_keeps_its_top_three() {
+        let ctx = ctx();
+        for (user, xp) in [(10, 500), (11, 900), (12, 100), (13, 50)] {
+            set(&ctx, user, xp);
+        }
+        // The first roll only marks the start: nothing to measure the week before against.
+        assert!(roll_week_to(&ctx, 1, "2026-W44").unwrap().is_empty());
+        assert_eq!(crate::week_totals(&ctx, 1).unwrap(), (0, 0));
+        // During the week: gains count from the start, and a newcomer counts from zero.
+        for (user, xp) in [(10, 800), (11, 950), (12, 600), (13, 60), (14, 70)] {
+            set(&ctx, user, xp);
+        }
+        let top: Vec<(u64, i64)> = crate::week_top(&ctx, 1, 0, 10).unwrap().into_iter().map(|(m, g)| (m.user_id, g)).collect();
+        assert_eq!(top, vec![(12, 500), (10, 300), (14, 70), (11, 50), (13, 10)]);
+        assert_eq!(crate::week_totals(&ctx, 1).unwrap(), (5, 930));
+        // Rolling twice in the same week does nothing.
+        assert!(roll_week_to(&ctx, 1, "2026-W44").unwrap().is_empty());
+        // The next week: the top three are kept under the week that ended, and the board is empty.
+        assert_eq!(roll_week_to(&ctx, 1, "2026-W45").unwrap(), vec![(12, 500), (10, 300), (14, 70)]);
+        assert_eq!(crate::last_week(&ctx, 1).unwrap(), Some(("2026-W44".into(), vec![(12, 500), (10, 300), (14, 70)])));
+        assert_eq!(crate::week_totals(&ctx, 1).unwrap(), (0, 0));
+        // A quiet week names nobody, and clears the last top three.
+        assert!(roll_week_to(&ctx, 1, "2026-W46").unwrap().is_empty());
+        assert_eq!(crate::last_week(&ctx, 1).unwrap(), None);
     }
 }

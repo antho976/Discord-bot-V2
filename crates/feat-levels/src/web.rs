@@ -13,7 +13,7 @@ use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, serde_json, text};
 use serde::Deserialize;
 
-use crate::{KEY, Settings, curve, import};
+use crate::{Board, KEY, Settings, curve, import};
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
@@ -75,6 +75,10 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_number("announce_min_level", "Start at level", Some("Quieter: skip messages for the first few levels."), s.announce_min_level as i64, 0, 500, None))
                 (ui::field_text("message", "Message", Some("{user} is the member, {level} the new level."), &s.message, crate::DEFAULT_MESSAGE))
             })))
+            (ui::section("Weekly board", Some("The board starts over every Monday at 00:00 UTC. The top three are kept for a week and shown on the leaderboard."), ui::card(html! {
+                (ui::field_toggle("weekly_post", "Post the top three", Some("When the week ends, with how much XP each gained. Names show without a ping."), s.weekly_post))
+                (ui::field_channel(&ctx, guild, "weekly_channel", "Channel", None, s.weekly_channel))
+            })))
             (ui::section("No XP in", None, ui::card(html! {
                 (ui::field_channels(&ctx, guild, "no_xp_channels", "Channels", None, &s.no_xp_channels))
                 (ui::field_roles(&ctx, guild, "no_xp_roles", "Roles", Some("Members with any of these roles earn nothing."), &s.no_xp_roles))
@@ -92,6 +96,7 @@ const CSS: &str = "
 .lv-acts { display: flex; gap: 6px; justify-content: flex-end; }
 .lv-acts .pop-body { width: 240px; right: 0; left: auto; }
 .lv-acts .pop-body .stack { gap: 10px; }
+.lv-board { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .lv-name { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 @media (max-width: 560px) {
   .lv-table th:nth-child(3), .lv-table td:nth-child(3) { display: none; }
@@ -125,6 +130,8 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         stack_rewards: form.bool("stack_rewards"),
         no_xp_channels: form.channels(&ctx, guild, "no_xp_channels"),
         no_xp_roles: form.roles(&ctx, guild, "no_xp_roles"),
+        weekly_post: form.bool("weekly_post"),
+        weekly_channel: form.channel(&ctx, guild, "weekly_channel"),
     };
     let curve_changed = s.curve_base != old.curve_base || s.curve_factor != old.curve_factor || s.custom_curve != old.custom_curve;
     ctx.save_settings(guild, KEY, &s)?;
@@ -238,6 +245,7 @@ async fn delete_reward(State(ctx): State<Ctx>, user: User, Path((guild, level)):
 struct MembersQuery {
     q: Option<String>,
     page: Option<i64>,
+    board: Option<String>,
 }
 
 /// Name and avatar of members Discord found for a search, who the bot's cache doesn't hold.
@@ -286,24 +294,43 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let per = 25;
-    let search = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let total = crate::count(&ctx, guild)?;
+    let board = if q.board.as_deref() == Some("week") { Board::Week } else { Board::All };
+    // Search is for finding someone's XP; the weekly board is short enough to read.
+    let search = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty() && board == Board::All);
+    let week = crate::week_totals(&ctx, guild)?;
+    let total = match board {
+        Board::All => crate::count(&ctx, guild)?,
+        Board::Week => week.0,
+    };
     // The podium takes the first three; the pages of the list start after it.
     let pages = ((total - 3).max(0) + per - 1) / per;
     let n = q.page.unwrap_or(0).clamp(0, (pages - 1).max(0));
-    let podium = if search.is_none() && n == 0 { crate::top(&ctx, guild, 0, 3)? } else { Vec::new() };
     let start = 3 + n * per;
-    let (rows, found, matched): (Vec<(i64, crate::Member)>, Found, i64) = match search {
+    // Each row: place, member, and XP gained this week on the weekly board.
+    type Row = (i64, crate::Member, Option<i64>);
+    let ranked = |offset: i64, limit: i64| -> bot_core::anyhow::Result<Vec<Row>> {
+        Ok(match board {
+            Board::All => crate::top(&ctx, guild, offset, limit)?.into_iter().enumerate().map(|(i, m)| (offset + i as i64 + 1, m, None)).collect(),
+            Board::Week => crate::week_top(&ctx, guild, offset, limit)?.into_iter().enumerate().map(|(i, (m, g))| (offset + i as i64 + 1, m, Some(g))).collect(),
+        })
+    };
+    let podium = if search.is_none() && n == 0 { ranked(0, 3)? } else { Vec::new() };
+    let (rows, found, matched): (Vec<Row>, Found, i64) = match search {
         Some(needle) => {
             let (ids, found) = find_members(&ctx, guild, needle).await;
             let (rows, matched) = crate::find(&ctx, guild, &ids, per as usize)?;
-            (rows, found, matched)
+            (rows.into_iter().map(|(p, m)| (p, m, None)).collect(), found, matched)
         }
-        None => {
-            let rows = crate::top(&ctx, guild, start, per)?;
-            (rows.into_iter().enumerate().map(|(i, m)| (start + i as i64 + 1, m)).collect(), Found::new(), 0)
-        }
+        None => (ranked(start, per)?, Found::new(), 0),
     };
+    // The weekly meters measure against first place.
+    let leader = match board {
+        Board::Week if n == 0 => podium.first().and_then(|r| r.2),
+        Board::Week => crate::week_top(&ctx, guild, 0, 1)?.first().map(|r| r.1),
+        Board::All => None,
+    }
+    .unwrap_or(1)
+    .max(1);
     let rewards = crate::rewards(&ctx, guild)?;
     let roles = ctx.roles(guild);
     let at_least = |level: u32| -> i64 {
@@ -311,21 +338,12 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             .with(|c| c.query_row("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND level >= ?2", params![guild as i64, level as i64], |r| r.get(0)))
             .unwrap_or(0)
     };
-    let week: (i64, i64) = ctx
-        .db
-        .with(|c| {
-            c.query_row(
-                "SELECT COALESCE(SUM(l.xp - COALESCE(w.xp, 0)), 0), COUNT(*) FROM levels l
-                 LEFT JOIN level_week w ON w.guild_id = l.guild_id AND w.user_id = l.user_id
-                 WHERE l.guild_id = ?1 AND l.xp > COALESCE(w.xp, 0)",
-                [guild as i64],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-        })
-        .unwrap_or((0, 0));
     let name = |u: u64| found.get(&u).map(|f| f.0.clone()).unwrap_or_else(|| ctx.display_name(guild, u));
     let avatar = |u: u64| found.get(&u).map(|f| f.1.clone()).unwrap_or_else(|| ctx.member_avatar(guild, u));
-    let line = |m: &crate::Member| format!("Level {} · {} XP", s.progress(m.xp).level, text::num(m.xp));
+    let line = |m: &crate::Member, gain: Option<i64>| match gain {
+        Some(g) => format!("+{} XP this week", text::num(g)),
+        None => format!("Level {} · {} XP", s.progress(m.xp).level, text::num(m.xp)),
+    };
     let earning = {
         let mut parts = vec![format!("{} to {} per message, once every {}.", s.xp_min, s.xp_max, text::duration(s.cooldown_secs))];
         if s.voice_xp > 0 {
@@ -336,17 +354,25 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         }
         parts.join(" ")
     };
+    let board_q = if board == Board::Week { "board=week&" } else { "" };
 
     let main = html! {
         style { (PreEscaped(CSS)) }
+        div.lv-board {
+            nav.seg aria-label="Board" {
+                a.on[board == Board::All] href=(page.path("levels")) aria-current=[(board == Board::All).then_some("true")] { "All time" }
+                a.on[board == Board::Week] href={ (page.path("levels")) "?board=week" } aria-current=[(board == Board::Week).then_some("true")] { "This week" }
+            }
+            @if board == Board::Week { span.muted.small { "XP gained since Monday 00:00 UTC" } }
+        }
         @if !podium.is_empty() {
             div.podium {
                 @for (place, i) in [(2usize, 1usize), (1, 0), (3, 2)] {
-                    @if let Some(m) = podium.get(i) {
+                    @if let Some((_, m, gain)) = podium.get(i) {
                         div class={ "step p" (place) } {
                             img.avatar src=(ctx.member_avatar(guild, m.user_id)) alt="" loading="lazy";
                             strong { (name(m.user_id)) }
-                            span.muted.small { (line(m)) }
+                            span.muted.small { (line(m, *gain)) }
                             div.block { (place) }
                         }
                     }
@@ -355,38 +381,48 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         }
         div.list-head {
             h2 { @if podium.is_empty() { "Members" } @else { "Everyone else" } }
-            form method="get" action=(page.path("levels")) {
-                input.input.search type="search" name="q" value=(search.unwrap_or_default()) placeholder="Search members";
+            @if board == Board::All {
+                form method="get" action=(page.path("levels")) {
+                    input.input.search type="search" name="q" value=(search.unwrap_or_default()) placeholder="Search members";
+                }
             }
         }
         @if rows.is_empty() && podium.is_empty() {
             @if search.is_some() {
                 (ui::empty(Icon::Users, "No match", "Nobody with XP matches that name or ID."))
+            } @else if board == Board::Week {
+                (ui::empty(Icon::Trophy, "Nobody has earned XP this week", "The board starts over every Monday at 00:00 UTC and fills as members chat."))
             } @else {
                 (ui::empty(Icon::Trophy, "Nobody has XP yet", "Members show up here once they chat, or after you import XP from the old bot."))
             }
         } @else if rows.is_empty() && search.is_none() {
-            p.muted.small { "Everyone with XP is on the podium so far." }
+            p.muted.small { @if board == Board::Week { "Everyone who earned XP this week is on the podium so far." } @else { "Everyone with XP is on the podium so far." } }
         } @else {
             div.ranks {
-                @for (place, m) in &rows {
+                @for (place, m, gain) in &rows {
                     @let p = s.progress(m.xp);
-                    @let pct = if p.needed > 0 { (p.into * 100 / p.needed).clamp(0, 100) } else { 0 };
                     div.rank {
                         span.mono.muted.pos { (place) }
                         img.avatar src=(avatar(m.user_id)) alt="" width="28" height="28" loading="lazy";
                         div.who { strong { (name(m.user_id)) } span.muted.small { "Level " (p.level) } }
-                        div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% to level " (p.level + 1) } }
-                        span.mono.xp { (text::num(m.xp)) " XP" }
-                        @if page.can_edit() {
-                            details.pop.set-xp {
-                                summary.btn.small.outline { "Set XP" }
-                                div.pop-body {
-                                    form.inline-form method="post" action=(page.path(&format!("levels/members/{}", m.user_id))) {
-                                        input.input.num type="number" name="xp" value=(m.xp) min="0";
-                                        button.btn.primary type="submit" { "Set" }
+                        @if let Some(g) = gain {
+                            @let pct = (g * 100 / leader).clamp(0, 100);
+                            div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% of first place" } }
+                            span.mono.xp { "+" (text::num(*g)) " XP" }
+                        } @else {
+                            @let pct = if p.needed > 0 { (p.into * 100 / p.needed).clamp(0, 100) } else { 0 };
+                            div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% to level " (p.level + 1) } }
+                            span.mono.xp { (text::num(m.xp)) " XP" }
+                            @if page.can_edit() {
+                                details.pop.set-xp {
+                                    summary.btn.small.outline { "Set XP" }
+                                    div.pop-body {
+                                        form.inline-form method="post" action=(page.path(&format!("levels/members/{}", m.user_id))) {
+                                            input.input.num type="number" name="xp" value=(m.xp) min="0";
+                                            button.btn.primary type="submit" { "Set" }
+                                        }
+                                        p.muted.small { "Their level and reward roles follow the new XP." }
                                     }
-                                    p.muted.small { "Their level and reward roles follow the new XP." }
                                 }
                             }
                         }
@@ -398,9 +434,68 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             }
             @if search.is_none() && pages > 1 {
                 div.inline-form {
-                    @if n > 0 { a.btn.small.outline href={ (page.path("levels")) "?page=" (n - 1) } { "Previous" } }
+                    @if n > 0 { a.btn.small.outline href={ (page.path("levels")) "?" (board_q) "page=" (n - 1) } { "Previous" } }
                     span.muted.small { "Page " (n + 1) " of " (pages) }
-                    @if n + 1 < pages { a.btn.small.outline href={ (page.path("levels")) "?page=" (n + 1) } { "Next" } }
+                    @if n + 1 < pages { a.btn.small.outline href={ (page.path("levels")) "?" (board_q) "page=" (n + 1) } { "Next" } }
+                }
+            }
+        }
+    };
+    let week_block = html! {
+        div.rail-block {
+            h2 { "XP earned this week" }
+            div.big-num { (text::num(week.1)) }
+            span.muted.small { "by " (text::num(week.0)) @if week.0 == 1 { " member" } @else { " members" } " since Monday" }
+        }
+    };
+    let rail = match board {
+        Board::All => html! {
+            div.rail-block {
+                h2 { "Reward roles" }
+                @if rewards.is_empty() {
+                    p.muted.small { "None yet. " a href=(page.path("levels/rewards")) { "Add one" } " and members get it at that level." }
+                }
+                @for (level, role) in &rewards {
+                    @let r = roles.iter().find(|x| x.0 == *role);
+                    div.mini {
+                        span.lvl { (level) }
+                        span.dot style={ "background:" (r.map(|r| role_color(r.2)).unwrap_or_else(|| "var(--ink-3)".into())) } {}
+                        div.grow { span { (r.map(|r| r.1.clone()).unwrap_or_else(|| "Deleted role".into())) } }
+                        span.mono { (text::num(at_least(*level))) }
+                    }
+                }
+            }
+            (week_block)
+            div.rail-block {
+                h2 { "How XP is earned" }
+                p.muted.small { (earning) }
+            }
+        },
+        Board::Week => {
+            let last = crate::last_week(&ctx, guild)?;
+            html! {
+                (week_block)
+                div.rail-block {
+                    h2 { "Last week" }
+                    @match &last {
+                        Some((_, winners)) => {
+                            @for (i, (u, gain)) in winners.iter().enumerate() {
+                                div.mini {
+                                    span.lvl { (i + 1) }
+                                    img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="24" height="24" loading="lazy";
+                                    div.grow { span { (ctx.display_name(guild, *u)) } }
+                                    span.mono { "+" (text::num(*gain)) }
+                                }
+                            }
+                        },
+                        None => { p.muted.small { "The top three show here once this week ends." } },
+                    }
+                    p.muted.small {
+                        @match s.weekly_channel.filter(|_| s.weekly_post).and_then(|c| ctx.text_channels(guild).into_iter().find(|x| x.0 == c)) {
+                            Some((_, ch)) => { "Posted to #" (ch) " when each week ends." },
+                            None => { "Not posted anywhere. " @if page.can_edit() { a href=(page.path("levels/settings")) { "Pick a channel" } " to post them when each week ends." } },
+                        }
+                    }
                 }
             }
         }
@@ -409,32 +504,7 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         (tabs(&page, "Leaderboard"))
         div.with-rail {
             div.stack.lb { (main) }
-            aside.rail {
-                div.rail-block {
-                    h2 { "Reward roles" }
-                    @if rewards.is_empty() {
-                        p.muted.small { "None yet. " a href=(page.path("levels/rewards")) { "Add one" } " and members get it at that level." }
-                    }
-                    @for (level, role) in &rewards {
-                        @let r = roles.iter().find(|x| x.0 == *role);
-                        div.mini {
-                            span.lvl { (level) }
-                            span.dot style={ "background:" (r.map(|r| if r.2 == 0 { "var(--ink-3)".to_owned() } else { format!("#{:06x}", r.2) }).unwrap_or_else(|| "var(--ink-3)".into())) } {}
-                            div.grow { span { (r.map(|r| r.1.clone()).unwrap_or_else(|| "Deleted role".into())) } }
-                            span.mono { (text::num(at_least(*level))) }
-                        }
-                    }
-                }
-                div.rail-block {
-                    h2 { "XP earned this week" }
-                    div.big-num { (text::num(week.0)) }
-                    span.muted.small { "by " (text::num(week.1)) @if week.1 == 1 { " member" } @else { " members" } " since Monday" }
-                }
-                div.rail-block {
-                    h2 { "How XP is earned" }
-                    p.muted.small { (earning) }
-                }
-            }
+            aside.rail { (rail) }
         }
     };
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
