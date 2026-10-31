@@ -561,6 +561,32 @@ mod tests {
     }
 
     #[test]
+    fn live_counts_follow_votes() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        let p = poll(1, 3);
+        db.with(|c| {
+            c.execute("INSERT INTO polls (id, guild_id, channel_id, message_id, question, answers, ends_at) VALUES (1, 1, 1, 101, 'q', '[]', 0)", [])?;
+            // Discord counts answers from 1. A multi-answer voter counts once per answer.
+            vote(c, 101, 7, 1, true)?;
+            vote(c, 101, 7, 2, true)?;
+            vote(c, 101, 8, 1, true)?;
+            vote(c, 101, 8, 1, true)?;
+            // Votes on polls the bot didn't post are ignored.
+            assert_eq!(vote(c, 999, 7, 1, true)?, 0);
+            let l = live(c, &p)?;
+            assert_eq!(l.voters, 2);
+            assert_eq!(l.answers.iter().map(|a| (a.1, a.2)).collect::<Vec<_>>(), vec![(2, 67), (1, 33), (0, 0)]);
+            // Taking a vote back removes only that answer.
+            vote(c, 101, 7, 1, false)?;
+            let l = live(c, &p)?;
+            assert_eq!((l.voters, l.answers[0].1, l.answers[1].1), (2, 1, 1));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn a_poll_is_read_again_only_after_the_gap() {
         assert!(claim_sync(-7, RESYNC_MS));
         assert!(!claim_sync(-7, RESYNC_MS));
