@@ -61,6 +61,22 @@ impl Batcher {
         first
     }
 
+    /// The embeds queued for a channel that still wait to learn who did it, by position. Items are
+    /// only ever appended until the queue is drained, so the positions hold.
+    pub fn waiting(&self, channel: u64) -> Vec<(usize, Who)> {
+        let queues = self.queues.lock().unwrap();
+        let Some(q) = queues.get(&channel) else { return Vec::new() };
+        q.items.iter().enumerate().filter_map(|(i, item)| item.who.map(|w| (i, w))).collect()
+    }
+
+    /// Change a queued embed in place and stop it waiting.
+    pub fn settle(&self, channel: u64, index: usize, f: impl FnOnce(&mut Embed)) {
+        if let Some(item) = self.queues.lock().unwrap().get_mut(&channel).and_then(|q| q.items.get_mut(index)) {
+            f(&mut item.embed);
+            item.who = None;
+        }
+    }
+
     /// Take everything queued for a channel, in order, with a closing note when some were dropped.
     pub fn drain(&self, channel: u64) -> Vec<Queued> {
         let Some(mut q) = self.queues.lock().unwrap().remove(&channel) else { return Vec::new() };

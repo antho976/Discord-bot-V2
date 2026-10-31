@@ -76,7 +76,8 @@ pub struct Filter {
 /// them now, from the cache.
 #[derive(Debug, Clone, Default)]
 pub struct Search {
-    /// Lowercase.
+    /// As typed, trimmed. SQLite's `lower()` only folds ASCII, so the stored text and this are
+    /// both lowered there, the same way.
     pub text: String,
     /// Members whose name now contains the text.
     pub users: Vec<u64>,
@@ -90,8 +91,9 @@ pub struct Search {
 
 impl Search {
     pub fn new(ctx: &Ctx, guild: u64, q: &str) -> Search {
-        let text = q.trim().to_lowercase();
-        let has = |name: &str| name.to_lowercase().contains(&text);
+        let text = q.trim().to_owned();
+        let lower = text.to_lowercase();
+        let has = |name: &str| name.to_lowercase().contains(&lower);
         let g = Id::new(guild);
         let users = ctx
             .cache
@@ -102,7 +104,7 @@ impl Search {
             .filter(|u| has(&ctx.display_name(guild, *u)))
             .take(500)
             .collect();
-        let bare = text.trim_start_matches('#');
+        let bare = lower.trim_start_matches('#');
         let channels = ctx
             .cache
             .guild_channels(g)
@@ -268,9 +270,10 @@ const SEARCH_SQL: &str = "
         AND (instr(lower(COALESCE(json_extract(e.summary, '$.before'), '')), ?Q) > 0
              OR instr(lower(COALESCE(json_extract(e.summary, '$.after'), '')), ?Q) > 0))
     OR (e.kind = 'roles' AND json_valid(e.summary) AND (
-        EXISTS (SELECT 1 FROM json_each(e.summary, '$.added') j WHERE instr(lower(json_extract(j.value, '$.name')), ?Q) > 0)
-        OR EXISTS (SELECT 1 FROM json_each(e.summary, '$.removed') j WHERE instr(lower(json_extract(j.value, '$.name')), ?Q) > 0)))
-    OR (e.kind NOT IN ('message_edit', 'nickname', 'roles') AND instr(lower(e.summary), ?Q) > 0)
+        EXISTS (SELECT 1 FROM json_each(e.summary, '$.added') j WHERE j.type = 'object' AND instr(lower(json_extract(j.value, '$.name')), ?Q) > 0)
+        OR EXISTS (SELECT 1 FROM json_each(e.summary, '$.removed') j WHERE j.type = 'object' AND instr(lower(json_extract(j.value, '$.name')), ?Q) > 0)))
+    -- Plain summaries, including edits, nicknames and role changes stored as text by older versions.
+    OR ((e.kind NOT IN ('message_edit', 'nickname', 'roles') OR NOT json_valid(e.summary)) AND instr(lower(e.summary), ?Q) > 0)
     OR EXISTS (SELECT 1 FROM audit_mod_actions a
                WHERE a.guild_id = e.guild_id AND a.target_id = e.user_id AND abs(a.at - e.at) < 60000
                  AND a.action = CASE e.kind WHEN 'ban' THEN 'ban' WHEN 'unban' THEN 'unban' WHEN 'timeout' THEN 'timeout'
@@ -290,7 +293,7 @@ fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
         args.push(Box::new(q.text.parse::<i64>().unwrap_or(-1)));
         let kinds = if q.kinds.is_empty() { "NULL".to_owned() } else { kind_list(&q.kinds) };
         let clause = SEARCH_SQL
-            .replace("?Q", "?2")
+            .replace("?Q", "lower(?2)")
             .replace("?N", "?3")
             .replace("{users}", &id_list(&q.users))
             .replace("{channels}", &id_list(&q.channels))

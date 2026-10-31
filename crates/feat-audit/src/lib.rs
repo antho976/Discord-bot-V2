@@ -20,7 +20,7 @@ use bot_core::twilight_util::builder::embed::{EmbedAuthorBuilder, EmbedBuilder, 
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, text};
 use serde::{Deserialize, Serialize};
 
-use batch::{Batcher, Queued, Who};
+use batch::{Batcher, Who};
 
 pub const KEY: &str = "audit";
 
@@ -564,8 +564,10 @@ const LATE_MS: i64 = 5_000;
 /// Wait out the window, then post everything that gathered for the channel.
 async fn flush(ctx: Ctx, batcher: Arc<Batcher>, channel: u64) {
     bot_core::tokio::time::sleep(batch::WINDOW).await;
-    let mut queued = batcher.drain(channel);
-    attribute(&ctx, &mut queued).await;
+    // Attributed while still queued, so events arriving meanwhile join this batch instead of
+    // starting their own and being posted ahead of it.
+    attribute(&ctx, &batcher, channel).await;
+    let queued = batcher.drain(channel);
     for embeds in batch::chunk(queued.into_iter().map(|q| q.embed).collect()) {
         let sent = ctx.http.create_message(Id::new(channel)).embeds(&embeds).allowed_mentions(Some(&AllowedMentions::default())).await;
         if let Err(e) = sent {
@@ -574,30 +576,32 @@ async fn flush(ctx: Ctx, batcher: Arc<Batcher>, channel: u64) {
     }
 }
 
-/// Add who did it, and why, to the posts a moderator may be behind. The audit entry usually comes
-/// with the event, before or after it; one still missing gets until `LATE_MS` after its event.
-async fn attribute(ctx: &Ctx, queued: &mut [Queued]) {
-    for pass in 0..2 {
-        let waiting: Vec<Who> = queued.iter().filter_map(|q| q.who).collect();
-        let (Some(first), Some(last)) = (waiting.iter().map(|w| w.at).min(), waiting.iter().map(|w| w.at).max()) else { return };
-        if pass == 1 {
+/// Add who did it, and why, to the posts queued for `channel` that a moderator may be behind. The
+/// audit entry usually comes with the event, before or after it; one still missing gets until
+/// `LATE_MS` after its event. A few rounds at most, so events joining the batch while it waits are
+/// looked up too without holding it back for long.
+async fn attribute(ctx: &Ctx, batcher: &Batcher, channel: u64) {
+    for round in 0..4 {
+        if round > 0 {
+            let Some(last) = batcher.waiting(channel).iter().map(|(_, w)| w.at).max() else { return };
             let wait = LATE_MS - (now_ms() - last);
-            if wait > 0 {
-                bot_core::tokio::time::sleep(Duration::from_millis(wait as u64)).await;
+            if wait <= 0 {
+                return;
             }
+            bot_core::tokio::time::sleep(Duration::from_millis(wait as u64)).await;
         }
-        let actions = match store::mod_actions(ctx, waiting[0].guild, first - store::MATCH_MS) {
+        let waiting = batcher.waiting(channel);
+        let Some(first) = waiting.iter().map(|(_, w)| w.at).min() else { return };
+        let actions = match store::mod_actions(ctx, waiting[0].1.guild, first - store::MATCH_MS) {
             Ok(a) => a,
             Err(e) => {
                 bot_core::tracing::warn!(error = %e, "couldn't read moderator actions");
                 return;
             }
         };
-        for q in queued.iter_mut() {
-            let Some(who) = q.who else { continue };
+        for (i, who) in waiting {
             if let Some(a) = store::moderator_for(&actions, who.kind, Some(who.target), who.channel, who.at).filter(|a| a.moderator != who.target) {
-                add_moderator(&mut q.embed, who.kind, a.moderator, a.reason.as_deref());
-                q.who = None;
+                batcher.settle(channel, i, |e| add_moderator(e, who.kind, a.moderator, a.reason.as_deref()));
             }
         }
     }
@@ -900,7 +904,8 @@ mod tests {
         let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
         ctx.install_features(vec![Arc::new(Audit::default())]).unwrap();
         let now = now_ms();
-        let queued = |kind, target, at| Queued { embed: embed_without_ctx("x"), who: Some(Who { guild: 1, kind, target, channel: None, at }) };
+        let b = Batcher::default();
+        let push = |kind, target, at| b.push(5, embed_without_ctx("x"), Some(Who { guild: 1, kind, target, channel: None, at }));
         // A ban whose entry is already in, a timeout whose entry comes while the post waits, and
         // a member who left on their own.
         let record = |ctx: &Ctx, action: &str, target: i64| {
@@ -914,18 +919,28 @@ mod tests {
                 .unwrap();
         };
         record(&ctx, "ban", 5);
-        let mut items = vec![queued(Kind::Ban, 5, now - 4_000), queued(Kind::Timeout, 6, now - 3_500), queued(Kind::Leave, 7, now - 3_500)];
+        push(Kind::Ban, 5, now - 4_000);
+        push(Kind::Timeout, 6, now - 3_500);
+        push(Kind::Leave, 7, now - 3_500);
         let late = ctx.clone();
         bot_core::tokio::spawn(async move {
             bot_core::tokio::time::sleep(Duration::from_millis(400)).await;
             record(&late, "timeout", 6);
         });
-        attribute(&ctx, &mut items).await;
-        let by = |q: &Queued| q.embed.fields.iter().find(|f| f.name == "By").map(|f| f.value.clone());
+        // An event that comes while the batch waits joins it, behind the others.
+        let attributing = attribute(&ctx, &b, 5);
+        let joining = async {
+            bot_core::tokio::time::sleep(Duration::from_millis(200)).await;
+            assert!(!b.push(5, embed_without_ctx("joined"), None), "no second window while the first waits");
+        };
+        bot_core::tokio::join!(attributing, joining);
+        let items = b.drain(5);
+        let by = |q: &batch::Queued| q.embed.fields.iter().find(|f| f.name == "By").map(|f| f.value.clone());
         assert_eq!(by(&items[0]).as_deref(), Some("<@9>"));
         assert_eq!(by(&items[1]).as_deref(), Some("<@9>"));
         assert_eq!(by(&items[2]), None);
         assert_eq!(items[2].embed.title.as_deref(), Some("x"));
+        assert_eq!(items[3].embed.title.as_deref(), Some("joined"));
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
@@ -956,6 +971,12 @@ mod tests {
         assert_eq!(find(text("raid")), ["noor"]);
         assert_eq!(find(text("selling")), ["lu"]);
         assert_eq!(find(text("15")), ["lu"]);
+        // Older plain-text summaries, and names typed with their capitals.
+        store::record(&ctx, g, Kind::Nickname, Some(16), "émile", None, "Old to Néo").unwrap();
+        store::record(&ctx, g, Kind::Roles, Some(17), "Émile", None, "Admins given").unwrap();
+        assert_eq!(find(text("néo")), ["émile"]);
+        assert_eq!(find(text("admins")), ["Émile"]);
+        assert_eq!(find(text("Émile")), ["Émile"]);
         // The JSON around the text isn't searched.
         assert!(find(text("before")).is_empty());
         assert!(find(text("color")).is_empty());
@@ -964,7 +985,7 @@ mod tests {
         assert_eq!(find(store::Search { text: "zz".into(), users: vec![12], ..Default::default() }), ["pavel"]);
         assert_eq!(find(store::Search { text: "zz".into(), channels: vec![21], ..Default::default() }), ["noor"]);
         assert_eq!(find(store::Search { text: "zz".into(), moderators: vec![99], ..Default::default() }), ["lu"]);
-        assert_eq!(find(store::Search { text: "zz".into(), kinds: vec![Kind::Nickname], ..Default::default() }), ["pavel"]);
+        assert_eq!(find(store::Search { text: "zz".into(), kinds: vec![Kind::Nickname], ..Default::default() }), ["pavel", "émile"]);
     }
 
     fn embed_without_ctx(title: &str) -> Embed {
