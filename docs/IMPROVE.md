@@ -95,6 +95,18 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       message.
 - [x] Found: a field added after removing another was sent out of order (rows were read by
       number, not by position).
+- [x] Review pass (unwraps, silent errors, tests). Fixed: a failed read or write of "reminder
+      sent" could repost a reminder every minute; failed subscription removals and follower
+      writes were silent; an embed Discord accepted showed an error page when its reply couldn't
+      be read; YouTube handle links with a page (`/@name/videos`), `/c/` and `/user/` links and
+      Twitch links with a query didn't resolve. New tests: weeks and months across DST, the
+      schedule image across a year end and on a DST Sunday, southern and half-hour DST zones,
+      relative times, link parsing. Mutex `unwrap`s and `write!` into strings are left as they
+      are.
+- [ ] Not done: subscriptions pointing at an old `PUBLIC_URL` are never removed (they could
+      belong to another instance sharing the Twitch app, so removing them needs the owner's
+      call). AFK still runs one indexed DELETE per message to end someone's AFK; an in-memory
+      set of AFK people would avoid it if that ever matters.
 - [ ] For core (brisk-heron): on a phone the page title wraps beside a header status pill
       ("Stream alerts" next to "Twitch not connected"). The header could drop the pill under the
       title below ~480 px.

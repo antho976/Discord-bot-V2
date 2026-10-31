@@ -203,4 +203,18 @@ mod tests {
         assert_eq!((india.time.as_str(), india.offset.as_str()), ("Thu 17:30", "UTC+5:30"));
         assert!(local("Nope/Nope", at("2026-01-15T12:00:00Z")).is_none());
     }
+
+    #[test]
+    fn southern_and_half_hour_dst() {
+        let (jan, jul) = (at("2026-01-15T12:00:00Z"), at("2026-07-16T12:00:00Z"));
+        let off = |zone: &str, t: Timestamp| local(zone, t).unwrap().offset;
+        // Summer is January in Sydney.
+        assert_eq!((off("Australia/Sydney", jan), off("Australia/Sydney", jul)), ("UTC+11".into(), "UTC+10".into()));
+        assert_eq!((off("Australia/Adelaide", jan), off("Australia/Adelaide", jul)), ("UTC+10:30".into(), "UTC+9:30".into()));
+        // Lord Howe moves its clocks by half an hour.
+        assert_eq!((off("Australia/Lord_Howe", jan), off("Australia/Lord_Howe", jul)), ("UTC+11".into(), "UTC+10:30".into()));
+        // The clock and the day roll over together: 12:00 UTC is already Friday in Kiritimati.
+        let line = local("Pacific/Kiritimati", jan).unwrap();
+        assert_eq!((line.time.as_str(), line.hour), ("Fri 02:00", 2));
+    }
 }
