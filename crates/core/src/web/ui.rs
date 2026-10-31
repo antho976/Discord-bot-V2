@@ -48,6 +48,8 @@ pub enum Icon {
     Logout,
     Hash,
     Search,
+    Mail,
+    Rules,
 }
 
 impl Icon {
@@ -89,6 +91,8 @@ impl Icon {
             Icon::Menu => (16, r#"<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>"#),
             Icon::Logout => (24, r#"<path d="M10 4.5H6.5A1.5 1.5 0 0 0 5 6v12a1.5 1.5 0 0 0 1.5 1.5H10M14.5 8l4 4-4 4M18.5 12h-9"/>"#),
             Icon::Hash => (16, r#"<path d="M6 2.5 5 13.5M11 2.5l-1 11M2.75 6h11M2.25 10h11"/>"#),
+            Icon::Mail => (24, r#"<path d="M5 5.5h14A1.5 1.5 0 0 1 20.5 7v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 17V7A1.5 1.5 0 0 1 5 5.5zM4 7l8 6 8-6"/>"#),
+            Icon::Rules => (24, r#"<path d="M10 4 8.25 20M16.5 4l-.9 8.5M4.5 9h15M4 15h8.5M14 17.5l2 2 4-4"/>"#),
         }
     }
 }
