@@ -1,5 +1,5 @@
-// The dashboard's only script: the "Saved" toast, two-click deletes, the phone menu, and
-// marking the current page in the sidebar.
+// The dashboard's only script: the "Saved" toast, two-click deletes, the phone menu, marking
+// the current page in the sidebar, and the timezone cookie.
 (() => {
   const toast = (text) => {
     const t = document.createElement("div");
@@ -10,6 +10,15 @@
     setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 250); }, 1800);
   };
   window.botToast = toast;
+
+  // Tell the server the browser's timezone so times read in local time.
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz && !document.cookie.split("; ").includes("tz=" + encodeURIComponent(tz))) {
+      document.cookie = "tz=" + encodeURIComponent(tz) + "; path=/; max-age=31536000; samesite=lax";
+      if (document.querySelector("[data-local]")) location.reload();
+    }
+  } catch (_) {}
 
   const url = new URL(location.href);
   if (url.searchParams.has("saved")) {

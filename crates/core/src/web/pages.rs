@@ -191,7 +191,7 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
 async fn features_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = admin_page(&ctx, &user, guild, "features")?;
     let mut feats: Vec<_> = ctx.features().iter().map(|f| f.meta()).collect();
-    feats.sort_by_key(|m| (m.group, m.name));
+    feats.sort_by_key(|m| m.group);
     let mut groups: Vec<(crate::Group, Vec<crate::FeatureMeta>)> = Vec::new();
     for m in feats {
         match groups.iter_mut().find(|(g, _)| *g == m.group) {
@@ -199,26 +199,38 @@ async fn features_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
             None => groups.push((m.group, vec![m])),
         }
     }
+    let guilds = ctx.guilds_for(&user);
+    let count_on = |g: u64| ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key)).count();
     let body = html! {
-        p.muted { "What runs in " strong { (ctx.guild_name(guild)) } ". A feature that's off ignores this server and its slash commands disappear here." }
-        @for (group, list) in &groups {
-            (ui::section(group.label(), None, ui::card(html! {
-                @for m in list {
-                    form method="post" action={ "/g/" (guild) "/features/" (m.key) } {
-                        (ui::field_toggle(&format!("on-{}", m.key), m.name, Some(m.description), ctx.enabled(guild, m.key)))
+        @if guilds.len() > 1 {
+            nav.server-pick aria-label="Server" {
+                @for g in &guilds {
+                    a.on[*g == guild] href={ "/g/" (g) "/features" } {
+                        (ui::guild_avatar(&ctx, *g)) span { (ctx.guild_name(*g)) } span.mono.muted { (count_on(*g)) " on" }
                     }
                 }
-            })))
+            }
+        }
+        div.fgroups {
+            @for (group, list) in &groups {
+                section.card.fgroup {
+                    h2.fgroup-label { (group.label()) }
+                    @for m in list {
+                        @let on = ctx.enabled(guild, m.key);
+                        form.frow.off[!on] method="post" action={ "/g/" (guild) "/features/" (m.key) } {
+                            @if let Some(n) = m.nav.first() { (ui::icon(n.icon)) }
+                            label.grow for={ "on-" (m.key) } { strong { (m.name) } span.help { (m.description) } }
+                            label.switch {
+                                input type="checkbox" id={ "on-" (m.key) } name={ "on-" (m.key) } checked[on] data-autosubmit;
+                                span.track { span.thumb {} }
+                            }
+                        }
+                    }
+                }
+            }
         }
     };
-    let body = html! { div.stack.autosubmit-switches { (body) } };
-    Ok(ui::layout(&ctx, &page, "Features", None, mark_autosubmit(body)).into_response())
-}
-
-/// Make every switch on the page save on change.
-fn mark_autosubmit(body: Markup) -> Markup {
-    let s = body.into_string().replace("type=\"checkbox\"", "type=\"checkbox\" data-autosubmit");
-    maud::PreEscaped(s)
+    Ok(ui::layout(&ctx, &page, "Features", None, body).into_response())
 }
 
 async fn toggle_feature(State(ctx): State<Ctx>, user: User, Path((guild, key)): Path<(u64, String)>, form: FormData) -> WebResult {
@@ -246,6 +258,8 @@ struct Person {
     admin: bool,
     created_at: i64,
     grants: i64,
+    signed_in: Option<i64>,
+    added_by: Option<String>,
 }
 
 fn people(ctx: &Ctx) -> Vec<Person> {
@@ -253,7 +267,9 @@ fn people(ctx: &Ctx) -> Vec<Person> {
         .with(|c| {
             let mut s = c.prepare(
                 "SELECT u.id, u.name, u.avatar, u.admin, u.created_at,
-                        (SELECT COUNT(*) FROM dash_perms p WHERE p.user_id = u.id AND p.level > 0)
+                        (SELECT COUNT(*) FROM dash_perms p WHERE p.user_id = u.id AND p.level > 0),
+                        (SELECT MAX(s.created_at) FROM dash_sessions s WHERE s.user_id = u.id),
+                        (SELECT a.name FROM dash_users a WHERE a.id = u.added_by AND a.name != '')
                  FROM dash_users u ORDER BY u.admin DESC, u.name COLLATE NOCASE",
             )?;
             let rows = s
@@ -265,6 +281,8 @@ fn people(ctx: &Ctx) -> Vec<Person> {
                         admin: r.get(3)?,
                         created_at: r.get(4)?,
                         grants: r.get(5)?,
+                        signed_in: r.get(6)?,
+                        added_by: r.get(7)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -278,38 +296,42 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
     let page = admin_page(&ctx, &user, guild, "users")?;
     let list = people(&ctx);
     let owner = ctx.cfg.owner_id;
-    let body = html! {
-        (ui::section("Add someone", Some("They sign in with Discord. Until you give them pages, they see nothing."), html! {
-            form.inline-form method="post" action="/users" {
-                input.input.mono type="text" name="id" placeholder="Discord user ID" inputmode="numeric" pattern="[0-9]{15,21}" required;
-                button.btn.primary type="submit" { (ui::icon(Icon::Plus)) "Add" }
+    let add = html! {
+        details.pop {
+            summary.btn.primary { (ui::icon(Icon::Plus)) "Add someone" }
+            div.pop-body {
+                form.inline-form method="post" action="/users" {
+                    input.input.mono type="text" name="id" placeholder="Discord user ID" inputmode="numeric" pattern="[0-9]{15,21}" required autofocus;
+                    button.btn.primary type="submit" { "Add" }
+                }
+                p.muted.small { "In Discord: Settings, Advanced, turn on Developer Mode, then right-click their name and Copy User ID. People who try to sign in see their ID too. Until you give them pages, they see nothing." }
             }
-            p.muted.small { "In Discord: Settings, Advanced, turn on Developer Mode, then right-click their name and Copy User ID. People who try to sign in see their ID too." }
-        }))
-        (ui::section("People", None, html! {
-            div.table-wrap {
-                table.table {
-                    thead { tr { th { "Name" } th { "Access" } th { "Added" } th {} } }
-                    tbody {
-                        @for p in &list {
-                            tr {
-                                td { (ui::person(if p.name.is_empty() { "Not signed in yet" } else { &p.name }, &crate::discord::avatar_url(p.id, p.avatar.as_deref()), Some(&p.id.to_string()))) }
-                                td {
-                                    @if p.id == owner { (ui::badge("Owner", Tone::Accent)) }
-                                    @else if p.admin { (ui::badge("Admin", Tone::Accent)) }
-                                    @else if p.grants == 0 { (ui::badge("No pages", Tone::Warn)) }
-                                    @else { (ui::badge(&format!("{} {}", p.grants, if p.grants == 1 { "page" } else { "pages" }), Tone::Muted)) }
-                                }
-                                td.muted.small { (text::ago(p.created_at)) }
-                                td.actions { a.btn.small href={ "/users/" (p.id) } { "Edit access" } }
-                            }
-                        }
+        }
+    };
+    let body = html! {
+        div.people {
+            @for p in &list {
+                @let seen = match p.signed_in {
+                    Some(at) if p.id == user.id && crate::now_ms() - at < 3_600_000 => "Signed in now".to_owned(),
+                    Some(at) => format!("Signed in {}", text::ago(at)),
+                    None => format!("Added {} · hasn't signed in yet", text::ago(p.created_at)),
+                };
+                div.prow {
+                    img.avatar src=(crate::discord::avatar_url(p.id, p.avatar.as_deref())) alt="" width="36" height="36" loading="lazy";
+                    div.grow {
+                        strong { (if p.name.is_empty() { p.id.to_string() } else { p.name.clone() }) }
+                        p.muted.small { (seen) @if let Some(by) = p.added_by.as_ref().filter(|_| p.id != owner) { " · added by " (by) } }
                     }
+                    @if p.id == owner { (ui::badge("Owner", Tone::Accent)) }
+                    @else if p.admin { (ui::badge("Admin", Tone::Muted)) }
+                    @else if p.grants == 0 { (ui::badge("No pages yet", Tone::Warn)) }
+                    @else { (ui::badge(&format!("{} {}", p.grants, if p.grants == 1 { "page" } else { "pages" }), Tone::Muted)) }
+                    @if p.id != owner { a.btn.small.outline href={ "/users/" (p.id) } { "Edit access" } }
                 }
             }
-        }))
+        }
     };
-    Ok(ui::layout(&ctx, &page, "People", None, body).into_response())
+    Ok(ui::layout(&ctx, &page, "People", Some(add), body).into_response())
 }
 
 async fn add_user(State(ctx): State<Ctx>, user: User, form: FormData) -> WebResult {
@@ -354,8 +376,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
     let display = if person.name.is_empty() { "Not signed in yet".to_owned() } else { person.name.clone() };
 
     let body = html! {
-        div { (ui::person(&display, &crate::discord::avatar_url(id, person.avatar.as_deref()), Some(&id.to_string()))) }
-        form.settings method="post" action={ "/users/" (id) } {
+        form.settings.narrow method="post" action={ "/users/" (id) } {
             (ui::card(html! {
                 @if is_owner {
                     (ui::field_custom("Admin", Some("The owner is always an admin."), ui::badge("Owner", Tone::Accent)))
@@ -371,10 +392,10 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                             @let name = format!("p:{}:{}", g, m.key);
                             @let cur = level_of(g, m.key);
                             (ui::field_custom(m.name, None, html! {
-                                div.tabs role="radiogroup" aria-label=(m.name) {
-                                    @for (v, label) in [(0, "No access"), (1, "View"), (2, "Edit")] {
-                                        label.tab.on[cur == v] {
-                                            input type="radio" name=(name) value=(v) checked[cur == v] style="display:none" onchange="this.closest('.tabs').querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.contains(this)))";
+                                div.seg role="radiogroup" aria-label=(m.name) {
+                                    @for (v, label) in [(0, "None"), (1, "View"), (2, "Edit")] {
+                                        label.on[cur == v] {
+                                            input type="radio" name=(name) value=(v) checked[cur == v] style="display:none" onchange="this.closest('.seg').querySelectorAll('label').forEach(t=>t.classList.toggle('on',t.contains(this)))";
                                             (label)
                                         }
                                     }
@@ -396,7 +417,8 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
             }))
         }
     };
-    Ok(ui::layout(&ctx, &page, "Edit access", Some(html! { a.btn.small href="/users" { "All people" } }), body).into_response())
+    let title = if person.name.is_empty() { "Access".to_owned() } else { format!("{display}'s access") };
+    Ok(ui::layout(&ctx, &page, &title, Some(html! { a.btn.small.outline href="/users" { "All people" } }), body).into_response())
 }
 
 async fn save_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>, form: FormData) -> WebResult {
@@ -448,26 +470,92 @@ async fn delete_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) ->
 async fn activity(State(ctx): State<Ctx>, user: User) -> WebResult<Response> {
     let guild = any_guild(&ctx, &user)?;
     let page = admin_page(&ctx, &user, guild, "activity")?;
-    let rows: Vec<(i64, String, Option<i64>, String, String)> = ctx.db.with(|c| {
-        let mut s = c.prepare("SELECT at, user_name, guild_id, feature, action FROM dash_audit ORDER BY at DESC LIMIT 200")?;
-        let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    struct Change {
+        at: i64,
+        who: u64,
+        name: String,
+        avatar: Option<String>,
+        guild: Option<i64>,
+        feature: String,
+        action: String,
+    }
+    let rows: Vec<Change> = ctx.db.with(|c| {
+        let mut s = c.prepare(
+            "SELECT a.at, a.user_id, a.user_name, u.avatar, a.guild_id, a.feature, a.action
+             FROM dash_audit a LEFT JOIN dash_users u ON u.id = a.user_id ORDER BY a.at DESC LIMIT 200",
+        )?;
+        let rows = s
+            .query_map([], |r| {
+                Ok(Change {
+                    at: r.get(0)?,
+                    who: r.get::<_, i64>(1)? as u64,
+                    name: r.get(2)?,
+                    avatar: r.get(3)?,
+                    guild: r.get(4)?,
+                    feature: r.get(5)?,
+                    action: r.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     })?;
+    let week_ago = crate::now_ms() - 7 * 86_400_000;
+    let mut week: Vec<(u64, String, Option<String>, i64)> = Vec::new();
+    for r in rows.iter().filter(|r| r.at >= week_ago) {
+        match week.iter_mut().find(|w| w.0 == r.who) {
+            Some(w) => w.3 += 1,
+            None => week.push((r.who, r.name.clone(), r.avatar.clone(), 1)),
+        }
+    }
+    week.sort_by_key(|w| -w.3);
+    let top = week.first().map(|w| w.3).unwrap_or(1).max(1);
+    let today = user.local(crate::now_ms()).date();
+    let day_label = |at: i64| {
+        let d = user.local(at).date();
+        let back = (today - d).get_days();
+        match back {
+            0 => "Today".to_owned(),
+            1 => "Yesterday".to_owned(),
+            2..=6 => d.strftime("%A").to_string(),
+            _ => d.strftime("%b %-d").to_string(),
+        }
+    };
+    let page_name = |key: &str| match key {
+        "features" => "Features",
+        "users" => "People",
+        k => ctx.feature(k).map(|f| f.meta().name).unwrap_or("Dashboard"),
+    };
     let body = html! {
         @if rows.is_empty() {
             (ui::empty(Icon::Activity, "No changes yet", "Every change made on the dashboard is listed here, with who made it."))
         } @else {
-            div.table-wrap {
-                table.table {
-                    thead { tr { th { "When" } th { "Who" } th { "Where" } th { "What" } } }
-                    tbody {
-                        @for (at, who, g, feature, action) in &rows {
-                            tr {
-                                td.muted.small style="white-space:nowrap" { (text::ago(*at)) }
-                                td { (who) }
-                                td.muted.small { @if let Some(g) = g { (ctx.guild_name(*g as u64)) " · " } (feature) }
-                                td { (action) }
+            div.with-rail {
+                div.timeline data-local {
+                    @for (i, r) in rows.iter().enumerate() {
+                        @let label = day_label(r.at);
+                        @if i == 0 || day_label(rows[i - 1].at) != label { h2.day { (label) } }
+                        div.change {
+                            span.mono.muted { (user.local(r.at).strftime("%H:%M")) }
+                            img.avatar src=(crate::discord::avatar_url(r.who, r.avatar.as_deref())) alt="" width="26" height="26" loading="lazy";
+                            span.grow { strong { (r.name) } " " (lower_first(&r.action)) }
+                            span.muted.small.clip {
+                                @if let Some(g) = r.guild.filter(|_| ctx.guild_ids().len() > 1) { (ctx.guild_name(g as u64)) " · " }
+                                (page_name(&r.feature))
                             }
+                        }
+                    }
+                }
+                aside.rail {
+                    h2 { "Changes this week" }
+                    @if week.is_empty() { p.muted.small { "Nobody changed anything in the last 7 days." } }
+                    @for (who, name, avatar, n) in &week {
+                        div.rail-person {
+                            img.avatar src=(crate::discord::avatar_url(*who, avatar.as_deref())) alt="" width="26" height="26" loading="lazy";
+                            div.grow {
+                                span { (name) }
+                                span.meter { span style={ "width:" (n * 100 / top) "%" } {} }
+                            }
+                            span.mono.muted { (n) }
                         }
                     }
                 }
@@ -475,4 +563,13 @@ async fn activity(State(ctx): State<Ctx>, user: User) -> WebResult<Response> {
         }
     };
     Ok(ui::layout(&ctx, &page, "Activity", None, body).into_response())
+}
+
+/// "Turned Starboard on" reads as "turned Starboard on" after a name.
+fn lower_first(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(f) if !c.as_str().starts_with(|x: char| x.is_uppercase()) => f.to_lowercase().chain(c).collect(),
+        _ => s.to_owned(),
+    }
 }

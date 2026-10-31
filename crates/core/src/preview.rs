@@ -85,10 +85,58 @@ pub fn seed(ctx: &Ctx) -> Result<()> {
             )?;
         }
     }
+    let now = crate::now_ms();
+    let owner = ctx.cfg.owner_id as i64;
     tx.execute(
         "INSERT OR IGNORE INTO dash_users (id, name, avatar, admin, created_at) VALUES (?1, 'Antho', NULL, 1, ?2)",
-        rusqlite::params![ctx.cfg.owner_id as i64, crate::now_ms()],
+        rusqlite::params![owner, now - 40 * 86_400_000],
     )?;
+    // People with dashboard access, and what they changed, for the People and Activity pages.
+    let h = 3_600_000;
+    let people = [(MEMBERS[0], true, 2 * h), (MEMBERS[1], false, h / 5), (MEMBERS[3], false, 26 * h), (MEMBERS[6], false, 0)];
+    for ((id, name), admin, seen) in people {
+        tx.execute(
+            "INSERT OR IGNORE INTO dash_users (id, name, avatar, admin, added_by, created_at) VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+            rusqlite::params![id as i64, name, admin, owner, now - if seen == 0 { h } else { 20 * 86_400_000 }],
+        )?;
+        if seen > 0 {
+            tx.execute(
+                "INSERT OR IGNORE INTO dash_sessions (token_hash, user_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?3)",
+                rusqlite::params![format!("preview-{id}"), id as i64, now - seen],
+            )?;
+        }
+    }
+    for (g, page, level) in [(GUILD_A, "guard", 2), (GUILD_A, "tickets", 2), (GUILD_A, "levels", 1), (GUILD_A, "welcome", 2), (GUILD_A, "community", 1), (GUILD_A, "pets", 1), (GUILD_A, "audit", 1)] {
+        tx.execute(
+            "INSERT OR IGNORE INTO dash_perms (user_id, guild_id, page, level) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![MEMBERS[1].0 as i64, g as i64, page, level],
+        )?;
+    }
+    for page in ["levels", "pets"] {
+        tx.execute(
+            "INSERT OR IGNORE INTO dash_perms (user_id, guild_id, page, level) VALUES (?1, ?2, ?3, 1)",
+            rusqlite::params![MEMBERS[3].0 as i64, GUILD_A as i64, page],
+        )?;
+    }
+    let changes = [
+        (h / 3, 1, "guard", "Released Ines from a scam timeout"),
+        (2 * h, 9, "levels", "Imported XP from the old bot: 261 members, 26 reward roles"),
+        (3 * h, 0, "pets", "Approved 3 pet requests"),
+        (4 * h, 9, "users", "Gave Oskar edit access to Scam protection and Tickets"),
+        (24 * h, 9, "features", "Turned Starboard off"),
+        (25 * h, 1, "welcome", "Changed the welcome message"),
+        (26 * h, 0, "levels", "Set the level 25 reward to @Veterans"),
+        (50 * h, 1, "community", "Ended the Spring Idleon giveaway early"),
+        (53 * h, 9, "guard", "Set #honeypot as the trap channel"),
+        (56 * h, 0, "embeds", "Sent the rules embed to #welcome"),
+    ];
+    for (back, who, feature, action) in changes {
+        let (id, name) = if who == 9 { (owner, "Antho") } else { (MEMBERS[who].0 as i64, MEMBERS[who].1) };
+        tx.execute(
+            "INSERT INTO dash_audit (at, user_id, user_name, guild_id, feature, action) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![now - back, id, name, GUILD_A as i64, feature, action],
+        )?;
+    }
     tx.commit()?;
     Ok(())
 }
