@@ -423,6 +423,109 @@ pub async fn settle(ctx: &Ctx, guild: u64, list: &[Redemption]) -> usize {
     failed
 }
 
+/// How often each stored sign-in is checked with Twitch's validate endpoint, which Twitch asks
+/// apps that keep a login to call at least hourly.
+pub const VALIDATE_EVERY_MS: i64 = 60 * 60_000;
+/// A token this close to expiring is refreshed instead of validated.
+const REFRESH_WITHIN_MS: i64 = 10 * 60_000;
+
+/// When each server's sign-in was last checked. In memory: after a restart every sign-in is
+/// checked at the first tick, which is still within Twitch's hour.
+static CHECKED: std::sync::Mutex<Option<std::collections::HashMap<u64, i64>>> = std::sync::Mutex::new(None);
+
+/// What the hourly check does for one sign-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Check {
+    /// Checked within the hour.
+    Skip,
+    /// Expired or about to: refresh it, which proves it still works.
+    Refresh,
+    Validate,
+}
+
+/// `expires_at` is 0 when there's no access token.
+fn check_for(now: i64, expires_at: i64, last_check: Option<i64>) -> Check {
+    if last_check.is_some_and(|t| now - t < VALIDATE_EVERY_MS) {
+        Check::Skip
+    } else if expires_at - now <= REFRESH_WITHIN_MS {
+        Check::Refresh
+    } else {
+        Check::Validate
+    }
+}
+
+/// Signed-in servers with their access token's expiry (0 without one).
+fn signed_in(ctx: &Ctx) -> Vec<(u64, i64)> {
+    ctx.db
+        .with(|c| {
+            let mut s = c.prepare_cached("SELECT guild_id, CASE WHEN access_token IS NULL THEN 0 ELSE expires_at END FROM reviews_twitch WHERE refresh_token IS NOT NULL")?;
+            s.query_map([], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect::<bot_core::rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default()
+}
+
+/// The sign-ins due their hourly check, marked as checked now: a check that fails on the
+/// network or a Twitch outage waits for the next hour.
+pub fn due_checks(ctx: &Ctx, now: i64) -> Vec<u64> {
+    if ctx.cfg.preview || !configured(ctx) {
+        return Vec::new();
+    }
+    let rows = signed_in(ctx);
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let mut checked = CHECKED.lock().unwrap();
+    let checked = checked.get_or_insert_with(Default::default);
+    let mut due = Vec::new();
+    for (guild, expires_at) in rows {
+        if check_for(now, expires_at, checked.get(&guild).copied()) != Check::Skip {
+            checked.insert(guild, now);
+            due.push(guild);
+        }
+    }
+    due
+}
+
+/// Keep a stored sign-in alive: refresh it when it's about to expire, else ask Twitch whether
+/// it still stands, and refresh it when Twitch says it doesn't. A refresh Twitch refuses drops
+/// the sign-in and tells the owner behind the bell ([`token`]). Anything else, like a network
+/// error, is left for the next hour.
+pub async fn keep_alive(ctx: &Ctx, guild: u64) {
+    let Ok(Some(c)) = conn(ctx, guild) else { return };
+    if !c.connected() {
+        return;
+    }
+    let now = now_ms();
+    let expires_at = if c.access_token.is_some() { c.expires_at } else { 0 };
+    if check_for(now, expires_at, None) == Check::Validate
+        && let Some(t) = &c.access_token
+    {
+        let res = ctx.web.get("https://id.twitch.tv/oauth2/validate").header("Authorization", format!("OAuth {t}")).send().await;
+        match res {
+            Ok(r) if r.status().is_success() => {
+                if let Ok(v) = r.json::<Value>().await
+                    && let Some(secs) = v["expires_in"].as_i64()
+                {
+                    let _ = ctx.db.with(|c| c.execute("UPDATE reviews_twitch SET expires_at = ?2 WHERE guild_id = ?1 AND access_token IS NOT NULL", params![guild as i64, now + secs * 1000]));
+                }
+                return;
+            }
+            Ok(r) if r.status() == StatusCode::UNAUTHORIZED => {}
+            Ok(r) => {
+                bot_core::tracing::debug!(guild, status = %r.status(), "Twitch couldn't validate the sign-in; trying next hour");
+                return;
+            }
+            Err(e) => {
+                bot_core::tracing::debug!(guild, error = %e, "couldn't reach Twitch to validate the sign-in; trying next hour");
+                return;
+            }
+        }
+    }
+    if let Err(e) = token(ctx, guild, true).await {
+        bot_core::tracing::warn!(guild, error = %e, "couldn't refresh the Twitch sign-in");
+    }
+}
+
 /// Servers due for their automatic sync: connected, with a reward, and not synced for 5 min.
 pub fn due(ctx: &Ctx, guild: u64, now: i64) -> bool {
     conn(ctx, guild).ok().flatten().is_some_and(|c| c.connected() && c.can_manage() && c.synced_at.is_none_or(|t| now - t >= SYNC_EVERY_MS))
@@ -444,6 +547,23 @@ mod tests {
         let q = request_from(&json!({"id": "rd2", "user_login": "noor", "user_name": "Noor", "user_input": ""}), "rw").unwrap();
         assert_eq!((q.name.as_str(), q.notes.as_str()), ("Noor", ""));
         assert!(request_from(&json!({"user_login": "x"}), "rw").is_none());
+    }
+
+    #[test]
+    fn sign_ins_are_checked_hourly() {
+        let now = 1_000 * VALIDATE_EVERY_MS;
+        let min = 60_000;
+        // Never checked, or checked an hour ago: a token with time left is validated.
+        assert_eq!(check_for(now, now + 3 * 60 * min, None), Check::Validate);
+        assert_eq!(check_for(now, now + 3 * 60 * min, Some(now - 60 * min)), Check::Validate);
+        // Checked within the hour: nothing, even when the token is about to expire.
+        assert_eq!(check_for(now, now + 3 * 60 * min, Some(now - 59 * min)), Check::Skip);
+        assert_eq!(check_for(now, now - min, Some(now - 5 * min)), Check::Skip);
+        // Expired, missing, or 10 minutes from expiry: refreshed instead.
+        assert_eq!(check_for(now, now - min, None), Check::Refresh);
+        assert_eq!(check_for(now, 0, Some(now - 2 * 60 * min)), Check::Refresh);
+        assert_eq!(check_for(now, now + 10 * min, None), Check::Refresh);
+        assert_eq!(check_for(now, now + 10 * min + 1, None), Check::Validate);
     }
 
     #[test]

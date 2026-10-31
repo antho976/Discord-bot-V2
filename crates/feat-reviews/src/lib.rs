@@ -97,10 +97,15 @@ impl Feature for Reviews {
 
     /// Fetches channel points redemptions every 5 minutes for servers that connected Twitch,
     /// in the background so a slow Twitch doesn't hold up the other features' minute.
-    /// Also moves waitlisted requests whose time has come into the queue.
+    /// Also moves waitlisted requests whose time has come into the queue, and checks each
+    /// stored Twitch sign-in once an hour so one Twitch revoked is noticed within the hour.
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
         let now = now_ms();
         store::promote_due(ctx, now)?;
+        for guild in twitch::due_checks(ctx, now) {
+            let ctx = ctx.clone();
+            bot_core::tokio::spawn(async move { twitch::keep_alive(&ctx, guild).await });
+        }
         for guild in ctx.enabled_guilds(KEY) {
             let s = ctx.settings::<Settings>(guild, KEY)?;
             let Some(reward) = s.reward_id.clone() else { continue };
