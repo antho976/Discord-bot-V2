@@ -1012,7 +1012,8 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
                 span.muted.small { "Next stream" }
                 strong { (day_time(g.starts_at)) }
                 @if !g.title.is_empty() { span { (g.title) } }
-                @if s.reminders && !minutes.is_empty() {
+                // Reminders are skipped while live, so they aren't promised then.
+                @if s.reminders && !minutes.is_empty() && !live {
                     @if let Some(ch) = channel_name(ctx, page.guild_id, s.reminder_channel) {
                         @let times: Vec<String> = minutes.iter().filter_map(|m| zoned(g.starts_at - m * 60_000, &tz)).map(|z| z.strftime("%-I:%M %p").to_string()).collect();
                         span.muted.small { "Reminders at " (join_and(&times)) " in " (ch) }
