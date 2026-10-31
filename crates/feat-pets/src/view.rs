@@ -85,6 +85,18 @@ pub const STYLE: &str = r#"
 .pets-row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; font-size: 12px; color: var(--ink-3); text-align: right; }
 .pets-row-acts { display: flex; align-items: center; gap: 6px; flex: none; }
 .pets-ok { color: var(--live); }
+.pets-who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.pets-who .avatar { width: 18px; height: 18px; }
+.pets-who .pets-arrow { flex: none; color: var(--ink-3); }
+.pets-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pets-nums > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pets-nums b { font-size: 24px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
+.pets-nums span { font-size: 12px; color: var(--ink-3); }
+.pets-edit { display: block; color: inherit; border-radius: var(--r-key); }
+.pets-edit:hover strong { text-decoration: underline; text-underline-offset: 3px; }
+.pets-stepper { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; }
+.pets-stepper > span { min-width: 2ch; text-align: center; }
+.rail .links a { padding: 8px 0; }
 .pets-bad { color: var(--held); }
 @media (max-width: 820px) {
   .pets-row { flex-wrap: wrap; row-gap: 8px; }
@@ -92,6 +104,7 @@ pub const STYLE: &str = r#"
   .pets-by { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pets-row-side { flex: 1; flex-direction: column; align-items: flex-start; padding-left: 46px; text-align: left; }
   .pets-row-acts { margin-left: auto; }
+  .pets-rar-col { display: none; }
 }
 @media (max-width: 560px) {
   .pets-tabs { gap: 14px; }
@@ -185,6 +198,28 @@ pub fn expiry(at: Option<i64>) -> (String, bool) {
     match at {
         Some(t) => (format!("Expires {}", until(t)), t - now_ms() < 3_600_000),
         None => ("No expiry".into(), false),
+    }
+}
+
+/// A small arrow from giver to winner, read as "to".
+pub fn arrow() -> Markup {
+    html! {
+        svg.pets-arrow viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="to" {
+            path d="M3 8h9M8.5 4.5 12 8l-3.5 3.5" {}
+        }
+    }
+}
+
+/// The giver and the winner of a pet giveaway, with their faces.
+pub fn pair(ctx: &Ctx, guild: u64, giver: u64, winner: u64) -> Markup {
+    html! {
+        span.who.pets-who {
+            img.avatar src=(ctx.member_avatar(guild, giver)) alt="" width="18" height="18" loading="lazy";
+            span.clip { (ctx.display_name(guild, giver)) }
+            (arrow())
+            img.avatar src=(ctx.member_avatar(guild, winner)) alt="" width="18" height="18" loading="lazy";
+            span.clip { (ctx.display_name(guild, winner)) }
+        }
     }
 }
 
