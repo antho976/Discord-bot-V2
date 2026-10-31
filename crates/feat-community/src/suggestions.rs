@@ -149,13 +149,15 @@ pub fn month_stats(c: &Connection, guild: u64, since: i64) -> bot_core::rusqlite
     )
 }
 
-/// Members who have cast the most votes in a server, most first, with their vote counts.
-pub fn top_voters(c: &Connection, guild: u64, limit: i64) -> bot_core::rusqlite::Result<Vec<(u64, i64)>> {
+/// Members who have cast the most votes in a server since `since` (epoch ms), most first, with
+/// their vote counts. A vote counts from when it was last cast or switched; votes from before
+/// they were dated have no time and are left out.
+pub fn top_voters(c: &Connection, guild: u64, since: i64, limit: i64) -> bot_core::rusqlite::Result<Vec<(u64, i64)>> {
     let mut s = c.prepare_cached(
         "SELECT v.user_id, COUNT(*) AS n FROM suggestion_votes v JOIN suggestions s ON s.id = v.suggestion_id
-         WHERE s.guild_id = ?1 GROUP BY v.user_id ORDER BY n DESC, v.user_id LIMIT ?2",
+         WHERE s.guild_id = ?1 AND v.at >= ?2 AND v.at > 0 GROUP BY v.user_id ORDER BY n DESC, v.user_id LIMIT ?3",
     )?;
-    s.query_map(params![id_i64(guild), limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
+    s.query_map(params![id_i64(guild), since, limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
 }
 
 /// What a vote press does: the same button again takes the vote back, the other one switches.
@@ -167,7 +169,10 @@ pub fn cast_vote(c: &Connection, id: i64, user: u64, pressed: i64) -> bot_core::
     let existing: Option<i64> =
         c.query_row("SELECT vote FROM suggestion_votes WHERE suggestion_id = ?1 AND user_id = ?2", params![id, id_i64(user)], |r| r.get(0)).optional()?;
     match next_vote(existing, pressed) {
-        Some(v) => c.execute("INSERT OR REPLACE INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (?1, ?2, ?3)", params![id, id_i64(user), v])?,
+        Some(v) => c.execute(
+            "INSERT OR REPLACE INTO suggestion_votes (suggestion_id, user_id, vote, at) VALUES (?1, ?2, ?3, ?4)",
+            params![id, id_i64(user), v, now_ms()],
+        )?,
         None => c.execute("DELETE FROM suggestion_votes WHERE suggestion_id = ?1 AND user_id = ?2", params![id, id_i64(user)])?,
     };
     tally(c, id)
@@ -404,8 +409,8 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
             let id = c.last_insert_rowid();
             for n in 0..ups + downs {
                 c.execute(
-                    "INSERT OR IGNORE INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (?1, ?2, ?3)",
-                    params![id, id_i64(who(n)), if n < ups { 1 } else { -1 }],
+                    "INSERT OR IGNORE INTO suggestion_votes (suggestion_id, user_id, vote, at) VALUES (?1, ?2, ?3, ?4)",
+                    params![id, id_i64(who(n)), if n < ups { 1 } else { -1 }, now - ((i + n) as i64 % 9 + 1) * 5 * hour],
                 )?;
             }
             Ok(())
@@ -460,16 +465,19 @@ mod tests {
         db.with(|c| {
             assert_eq!(open_count(c, 1)?, 0);
             assert_eq!(month_stats(c, 1, 0)?, (0, 0, 0));
-            assert!(top_voters(c, 1, 3)?.is_empty());
+            assert!(top_voters(c, 1, 0, 3)?.is_empty());
             c.execute("INSERT INTO suggestions (guild_id, channel_id, author_id, content, created_at) VALUES (1, 2, 3, 'a', 10)", [])?;
             c.execute(
                 "INSERT INTO suggestions (guild_id, channel_id, author_id, content, status, created_at, status_at) VALUES (1, 2, 3, 'b', 'approved', 10, 20)",
                 [],
             )?;
-            c.execute("INSERT INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (1, 9, 1), (2, 9, -1), (2, 8, 1)", [])?;
+            c.execute("INSERT INTO suggestion_votes (suggestion_id, user_id, vote, at) VALUES (1, 9, 1, 30), (2, 9, -1, 40), (2, 8, 1, 10)", [])?;
+            // A vote from before votes were dated.
+            c.execute("INSERT INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (1, 7, 1)", [])?;
             assert_eq!(open_count(c, 1)?, 1);
             assert_eq!(month_stats(c, 1, 5)?, (2, 1, 0));
-            assert_eq!(top_voters(c, 1, 3)?, vec![(9, 2), (8, 1)]);
+            assert_eq!(top_voters(c, 1, 0, 3)?, vec![(9, 2), (8, 1)]);
+            assert_eq!(top_voters(c, 1, 35, 3)?, vec![(9, 1)]);
             Ok(())
         })
         .unwrap();

@@ -42,7 +42,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let since = month_start(&page.user, now_ms());
     let (mut rows, waiting, month, voters) = ctx.db.with(|c| {
-        Ok((sg::list(c, guild, 100)?, sg::open_count(c, guild)?, sg::month_stats(c, guild, since)?, sg::top_voters(c, guild, 3)?))
+        Ok((sg::list(c, guild, 100)?, sg::open_count(c, guild)?, sg::month_stats(c, guild, since)?, sg::top_voters(c, guild, since, 3)?))
     })?;
     // The board reads top-first: net votes, then newest.
     rows.sort_by_key(|(r, t)| (std::cmp::Reverse(t.up - t.down), std::cmp::Reverse(r.id)));
@@ -93,9 +93,9 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                         }
                     }
                     div.rail-block {
-                        h2 { "Most votes given" }
+                        h2 { "Most votes this month" }
                         @if voters.is_empty() {
-                            (ui::empty(Icon::Bulb, "No votes yet", "Members vote with the buttons on each suggestion."))
+                            (ui::empty(Icon::Bulb, "No votes this month", "Members vote with the buttons on each suggestion."))
                         } @else {
                             div.cm-top {
                                 @for (u, n) in &voters {
@@ -106,7 +106,6 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                                     }
                                 }
                             }
-                            p.muted.small { "All time. Votes aren't dated, so they can't be counted by month." }
                         }
                     }
                 }
