@@ -187,18 +187,8 @@ impl Feature for Levels {
                     && member.roles.iter().any(|r| s.no_xp_roles.contains(&r.get())) {
                         return Ok(());
                     }
-                let key = (guild, m.author.id.get());
-                {
-                    let mut cd = self.cooldowns.lock().unwrap();
-                    if let Some(last) = cd.get(&key)
-                        && last.elapsed().as_secs() < s.cooldown_secs.max(0) as u64 {
-                            return Ok(());
-                        }
-                    cd.insert(key, Instant::now());
-                    if cd.len() > 5000 {
-                        let limit = s.cooldown_secs.max(0) as u64;
-                        cd.retain(|_, t| t.elapsed().as_secs() < limit);
-                    }
+                if !cooled_down(&self.cooldowns, (guild, m.author.id.get()), s.cooldown_secs) {
+                    return Ok(());
                 }
                 let amount = if s.xp_max > s.xp_min { rand::rng().random_range(s.xp_min..=s.xp_max) } else { s.xp_min };
                 grant(ctx, guild, m.author.id.get(), amount, Earned::Message, Some(m.channel_id.get())).await?;
@@ -212,13 +202,11 @@ impl Feature for Levels {
                 if s.reaction_xp <= 0 || s.no_xp_channels.contains(&r.channel_id.get()) {
                     return Ok(());
                 }
-                let key = (guild, r.user_id.get());
-                {
-                    let mut cd = self.reaction_cooldowns.lock().unwrap();
-                    if cd.get(&key).is_some_and(|t| t.elapsed().as_secs() < s.cooldown_secs.max(0) as u64) {
-                        return Ok(());
-                    }
-                    cd.insert(key, Instant::now());
+                if r.member.as_ref().is_some_and(|m| m.roles.iter().any(|role| s.no_xp_roles.contains(&role.get()))) {
+                    return Ok(());
+                }
+                if !cooled_down(&self.reaction_cooldowns, (guild, r.user_id.get()), s.cooldown_secs) {
+                    return Ok(());
                 }
                 grant(ctx, guild, r.user_id.get(), s.reaction_xp, Earned::Reaction, None).await?;
             }
@@ -243,17 +231,24 @@ impl Feature for Levels {
                 .iter()
                 .voice_states()
                 .filter(|v| v.guild_id().get() == guild)
-                .map(|v| (v.user_id().get(), v.channel_id(), v.self_mute() || v.self_deaf() || v.mute() || v.deaf()))
+                .map(|v| {
+                    let bot = ctx.cache.user(v.user_id()).is_some_and(|u| u.bot);
+                    (v.user_id().get(), v.channel_id(), v.self_mute() || v.self_deaf() || v.mute() || v.deaf(), bot)
+                })
                 .collect();
-            for (user, channel, quiet) in &states {
-                if Some(*channel) == afk || (s.voice_require_active && *quiet) {
+            for (user, channel, quiet, bot) in &states {
+                if *bot || Some(*channel) == afk || (s.voice_require_active && *quiet) || s.no_xp_channels.contains(&channel.get()) {
                     continue;
                 }
-                if ctx.cache.user(Id::new(*user)).is_some_and(|u| u.bot) {
+                let no_xp_role = ctx
+                    .cache
+                    .member(Id::new(guild), Id::new(*user))
+                    .is_some_and(|m| m.roles().iter().any(|r| s.no_xp_roles.contains(&r.get())));
+                if no_xp_role {
                     continue;
                 }
-                // Alone in a channel earns nothing.
-                let humans = states.iter().filter(|(_, c, _)| c == channel).count();
+                // Alone in a channel earns nothing, and a music bot is no company.
+                let humans = states.iter().filter(|(_, c, _, b)| c == channel && !b).count();
                 if humans < 2 {
                     continue;
                 }
@@ -306,8 +301,7 @@ impl Feature for Levels {
                     }
                     "take" => {
                         let n = opts.int("amount").unwrap_or(0);
-                        let cur = member(ctx, guild, user)?.map(|m| m.xp).unwrap_or(0);
-                        set_xp(ctx, guild, user, (cur - n).max(0)).await?;
+                        grant(ctx, guild, user, -n, Earned::Manual, None).await?;
                         format!("Took {} XP from {name}.", text::num(n))
                     }
                     "set-level" => {
@@ -438,13 +432,36 @@ fn leaderboard(ctx: &Ctx, guild: u64, page: i64) -> Result<(bot_core::twilight_m
     Ok((embed, buttons))
 }
 
-/// Add XP and handle a level-up: announcement and reward roles.
+/// Whether `key` is past its cooldown; if so, the cooldown starts again now. Entries that have
+/// run out are dropped once the map grows, so it stays small.
+fn cooled_down(map: &Mutex<HashMap<(u64, u64), Instant>>, key: (u64, u64), cooldown_secs: i64) -> bool {
+    let limit = cooldown_secs.max(0) as u64;
+    let mut cd = map.lock().unwrap();
+    if cd.get(&key).is_some_and(|t| t.elapsed().as_secs() < limit) {
+        return false;
+    }
+    cd.insert(key, Instant::now());
+    if cd.len() > 5000 {
+        cd.retain(|_, t| t.elapsed().as_secs() < limit);
+    }
+    true
+}
+
+/// Add XP (or take it, when `amount` is negative) and handle a level change: announcement and
+/// reward roles.
 async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, channel: Option<u64>) -> Result<()> {
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let before = member(ctx, guild, user)?.map(|m| (m.xp, m.level)).unwrap_or((0, 0));
-    let xp = (before.0 + amount).max(0);
-    let level = s.progress(xp).level;
-    ctx.db.with(|c| {
+    // Read and write under one lock: a message, a reaction and the voice tick for the same member
+    // can land together, and each must add to what the other wrote.
+    let (before, level) = ctx.db.with(|c| {
+        let before: (i64, u32) = c
+            .query_row("SELECT xp, level FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| {
+                Ok((r.get(0)?, r.get::<_, i64>(1)? as u32))
+            })
+            .optional()?
+            .unwrap_or((0, 0));
+        let xp = (before.0 + amount).max(0);
+        let level = s.progress(xp).level;
         c.execute(
             "INSERT INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
@@ -459,7 +476,8 @@ async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, chann
                 (how == Earned::Voice) as i64,
                 bot_core::now_ms()
             ],
-        )
+        )?;
+        Ok((before, level))
     })?;
     if level > before.1 {
         let role = rewards(ctx, guild).unwrap_or_default().into_iter().find(|(l, _)| *l == level).map(|(_, r)| r as i64);
@@ -609,4 +627,27 @@ pub(crate) fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         })?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cooldowns_hold_and_stay_small() {
+        let map = Mutex::new(HashMap::new());
+        assert!(cooled_down(&map, (1, 10), 60));
+        assert!(!cooled_down(&map, (1, 10), 60));
+        // Another member, or another server, has their own cooldown.
+        assert!(cooled_down(&map, (1, 11), 60));
+        assert!(cooled_down(&map, (2, 10), 60));
+        // No cooldown: every message counts.
+        assert!(cooled_down(&map, (3, 10), 0));
+        assert!(cooled_down(&map, (3, 10), 0));
+        // Past the size limit, finished cooldowns are dropped.
+        for user in 0..5001 {
+            cooled_down(&map, (4, user), 0);
+        }
+        assert!(map.lock().unwrap().len() < 10);
+    }
 }
