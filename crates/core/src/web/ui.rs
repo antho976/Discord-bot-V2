@@ -503,6 +503,18 @@ pub fn readings(items: &[(&str, String)]) -> Markup {
     }
 }
 
+/// Up to three small figures side by side in a rail block: `(label, value)`, like
+/// ("companions", "61"). The page's own answer goes in [`readings`]; these are the rail's.
+pub fn rail_numbers(items: &[(&str, String)]) -> Markup {
+    html! {
+        div.rail-nums {
+            @for (label, value) in items {
+                div { b.mono { (value) } span { (label) } }
+            }
+        }
+    }
+}
+
 /// What an empty list looks like: the section's own icon and one line on how it fills.
 pub fn empty(ic: Icon, title: &str, text: &str) -> Markup {
     html! {

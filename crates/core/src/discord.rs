@@ -758,7 +758,8 @@ impl Ctx {
         }
     }
 
-    /// A member's display name from the cache, falling back to the user id.
+    /// A member's display name from the cache, or "Unknown member" for someone the cache hasn't
+    /// seen (left, or not loaded in a large server). Ids never render on the dashboard.
     pub fn display_name(&self, guild_id: u64, user_id: u64) -> String {
         let (g, u) = (Id::<GuildMarker>::new(guild_id), Id::<UserMarker>::new(user_id));
         if let Some(m) = self.cache.member(g, u)
@@ -767,7 +768,7 @@ impl Ctx {
             }
         match self.cache.user(u) {
             Some(user) => user.global_name.clone().unwrap_or_else(|| user.name.clone()),
-            None => format!("User {user_id}"),
+            None => "Unknown member".to_owned(),
         }
     }
 
