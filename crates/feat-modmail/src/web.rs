@@ -4,7 +4,11 @@ use bot_core::axum::response::IntoResponse;
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::web::ui::{self, Tone};
-use bot_core::web::{FormData, Level, Page, User, WebResult, saved};
+use bot_core::twilight_model::channel::ChannelType;
+use bot_core::twilight_model::channel::permission_overwrite::{PermissionOverwrite, PermissionOverwriteType};
+use bot_core::twilight_model::guild::Permissions;
+use bot_core::twilight_model::id::Id;
+use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 use serde::Deserialize;
 
@@ -26,6 +30,41 @@ fn channel_name(ctx: &Ctx, guild: u64, channel: u64) -> String {
     ctx.text_channels(guild).into_iter().find(|(id, _)| *id == channel).map(|(_, n)| format!("#{n}")).unwrap_or_else(|| "a deleted channel".into())
 }
 
+/// Channels that can hold conversations: text channels and forums. Announcement channels can't
+/// take the public threads a conversation opens.
+fn staff_channels(ctx: &Ctx, guild: u64) -> Vec<(u64, String)> {
+    ctx.text_channels(guild)
+        .into_iter()
+        .filter(|(id, _)| ctx.cache.channel(Id::new(*id)).is_some_and(|c| c.kind != ChannelType::GuildAnnouncement))
+        .collect()
+}
+
+/// Whether @everyone can see the channel, from the cached @everyone role and the channel's own
+/// overwrites.
+fn everyone_can_view(ctx: &Ctx, guild: u64, channel: u64) -> bool {
+    let Some(ch) = ctx.cache.channel(Id::new(channel)) else { return false };
+    let base = ctx.cache.role(Id::new(guild)).map(|r| r.permissions).unwrap_or_else(Permissions::empty);
+    everyone_sees(base, ch.permission_overwrites.as_deref().unwrap_or_default(), guild)
+}
+
+/// @everyone's view of a channel: the role's permissions, then the channel's overwrite for
+/// @everyone (the role shares the server's id).
+fn everyone_sees(base: Permissions, overwrites: &[PermissionOverwrite], guild: u64) -> bool {
+    if base.contains(Permissions::ADMINISTRATOR) {
+        return true;
+    }
+    let mut view = base.contains(Permissions::VIEW_CHANNEL);
+    if let Some(o) = overwrites.iter().find(|o| o.kind == PermissionOverwriteType::Role && o.id.get() == guild) {
+        if o.deny.contains(Permissions::VIEW_CHANNEL) {
+            view = false;
+        }
+        if o.allow.contains(Permissions::VIEW_CHANNEL) {
+            view = true;
+        }
+    }
+    view
+}
+
 #[derive(Deserialize)]
 struct ViewQuery {
     view: Option<String>,
@@ -42,6 +81,8 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
         "settings" => Vec::new(),
         _ => ctx.db.with(|c| mail::list_open(c, guild, 100))?,
     };
+    let mut channel_options = vec![(String::new(), "None".to_owned())];
+    channel_options.extend(staff_channels(&ctx, guild).into_iter().map(|(id, n)| (id.to_string(), format!("#{n}"))));
     let base = page.path("modmail");
     let active = match view {
         "closed" => "Closed",
@@ -57,8 +98,11 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
         style { (PreEscaped(CSS)) }
         (tabs)
         @if view == "settings" {
+            @if let Some(ch) = s.channel.filter(|c| everyone_can_view(&ctx, guild, *c)) {
+                p.small { (ui::badge("Not private", Tone::Warn)) " Everyone can read conversations in " (channel_name(&ctx, guild, ch)) ". Hide it from @everyone in Discord." }
+            }
             (ui::section("Settings", None, ui::settings_form(&page, &page.path("modmail/settings"), ui::card(html! {
-                (ui::field_channel(&ctx, guild, "channel", "Staff channel", Some("A text channel gets a thread per conversation, a forum a post. Keep it private to staff. None turns modmail off."), s.channel))
+                (ui::field_select("channel", "Staff channel", Some("A text channel gets a thread per conversation, a forum a post. Keep it private to staff. None turns modmail off."), &channel_options, &s.channel.map(|c| c.to_string()).unwrap_or_default()))
                 (ui::field_role(&ctx, guild, "staff_role", "Staff role", Some("Pinged once when a conversation opens, and allowed to close one."), s.staff_role))
                 (ui::field_textarea("greeting", "Greeting", Some("Sent to the member when a conversation opens. {server} is the server's name."), &s.greeting, DEFAULT_GREETING))
                 (ui::field_textarea("closing", "Closing text", Some("Sent to the member when staff close the conversation."), &s.closing, DEFAULT_CLOSING))
@@ -187,6 +231,11 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let mut s = (*ctx.settings::<Settings>(guild, KEY)?).clone();
     s.channel = form.channel(&ctx, guild, "channel");
+    if let Some(ch) = s.channel
+        && !staff_channels(&ctx, guild).iter().any(|(id, _)| *id == ch)
+    {
+        return Err(WebError::Bad("Conversations can't open in an announcement channel. Pick a text channel or a forum.".into()));
+    }
     s.staff_role = form.role(&ctx, guild, "staff_role");
     s.greeting = text::clip(&form.text("greeting"), 1500);
     s.closing = text::clip(&form.text("closing"), 1500);
@@ -225,3 +274,25 @@ const CSS: &str = "
   .mm-side { grid-column: 2; flex-direction: row; justify-content: space-between; align-items: center; flex-wrap: wrap; }
 }
 ";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn overwrite(id: u64, allow: Permissions, deny: Permissions) -> PermissionOverwrite {
+        PermissionOverwrite { allow, deny, id: Id::new(id), kind: PermissionOverwriteType::Role }
+    }
+
+    #[test]
+    fn a_channel_hidden_from_everyone_is_private() {
+        let (guild, view) = (1, Permissions::VIEW_CHANNEL);
+        let none = Permissions::empty();
+        assert!(everyone_sees(view, &[], guild));
+        assert!(!everyone_sees(view, &[overwrite(guild, none, view)], guild));
+        // An overwrite for another role doesn't hide it from everyone.
+        assert!(everyone_sees(view, &[overwrite(5, none, view)], guild));
+        assert!(!everyone_sees(none, &[], guild));
+        assert!(everyone_sees(none, &[overwrite(guild, view, none)], guild));
+        assert!(everyone_sees(Permissions::ADMINISTRATOR, &[overwrite(guild, none, view)], guild));
+    }
+}
