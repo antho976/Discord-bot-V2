@@ -285,6 +285,17 @@ pub fn owned_counts(ctx: &Ctx, guild: u64) -> Result<HashMap<String, i64>> {
     })
 }
 
+/// Companions whose first copy joined the collection since `since`.
+pub fn first_added_since(ctx: &Ctx, guild: u64, since: i64) -> Result<i64> {
+    ctx.db.with(|c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM (SELECT pet_id FROM pets_owned WHERE guild_id = ?1 GROUP BY pet_id HAVING MIN(added_at) >= ?2)",
+            [guild as i64, since],
+            |r| r.get(0),
+        )
+    })
+}
+
 pub fn owned_total(ctx: &Ctx, guild: u64) -> Result<i64> {
     ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM pets_owned WHERE guild_id = ?1", [guild as i64], |r| r.get(0)))
 }
@@ -300,6 +311,21 @@ pub fn contributions(ctx: &Ctx, guild: u64, user: u64) -> Result<Vec<Owned>> {
             .query_map(params![guild as i64, user as i64], |r| {
                 Ok(Owned { pet_id: r.get(0)?, added_by: r.get::<_, i64>(1)? as u64, given_by: r.get::<_, i64>(2)? as u64, added_at: r.get(3)? })
             })?
+            .collect()
+    })
+}
+
+/// Copies added since `since`, one row per pet, member and time (a submission lands together):
+/// `(pet name, added by, copies, added at)`, newest first.
+pub fn recent_additions(ctx: &Ctx, guild: u64, since: i64, limit: i64) -> Result<Vec<(String, u64, i64, i64)>> {
+    ctx.db.with(|c| {
+        let mut s = c.prepare_cached(
+            "SELECT COALESCE(p.name, o.pet_id), o.added_by, COUNT(*), o.added_at FROM pets_owned o
+             LEFT JOIN pets_catalog p ON p.guild_id = o.guild_id AND p.id = o.pet_id
+             WHERE o.guild_id = ?1 AND o.added_at >= ?2
+             GROUP BY o.pet_id, p.name, o.added_by, o.added_at ORDER BY o.added_at DESC LIMIT ?3",
+        )?;
+        s.query_map(params![guild as i64, since, limit], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64, r.get(2)?, r.get(3)?)))?
             .collect()
     })
 }

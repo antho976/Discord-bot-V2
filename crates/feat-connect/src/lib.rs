@@ -17,7 +17,7 @@ use bot_core::discord::{ComponentCall, Reply, button_row};
 use bot_core::rusqlite::OptionalExtension;
 use bot_core::twilight_model::channel::message::component::ButtonStyle;
 use bot_core::twilight_model::id::Id;
-use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, rusqlite};
+use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, Need, Overview, feature_async, now_ms, rusqlite, text};
 use serde::{Deserialize, Serialize};
 
 pub const KEY: &str = "connect";
@@ -56,7 +56,7 @@ impl Feature for Connect {
             name: "App approvals",
             description: "Lets Relay, Tally, Avex and your PCs connect after an approver allows them in Discord.",
             group: Group::Tools,
-            nav: vec![NavItem { label: "App approvals", path: KEY, icon: Icon::Plug }],
+            nav: vec![NavItem { label: "App approvals", path: KEY, icon: Icon::Plug, about: "Relay, Tally, Avex and your PCs ask here before they connect." }],
         }
     }
 
@@ -72,6 +72,29 @@ impl Feature for Connect {
 
     fn routes(&self) -> bot_core::axum::Router<Ctx> {
         api::routes().merge(web::routes())
+    }
+
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> Overview {
+        if !page.user.admin {
+            return Overview::default();
+        }
+        let now = now_ms();
+        let needs = store::pending(ctx, now)
+            .unwrap_or_default()
+            .into_iter()
+            .take(3)
+            .map(|r| Need {
+                since: r.created_at,
+                people: Vec::new(),
+                icon: Icon::Plug,
+                title: format!("{} on {} wants to connect", domain::kind_name(&r.kind), r.device),
+                detail: format!("Waiting {}", text::duration((now - r.created_at) / 1000)),
+                href: page.path(KEY),
+                action: "Review",
+                alert: false,
+            })
+            .collect();
+        Overview { needs, ..Overview::default() }
     }
 
     async fn on_component(&self, ctx: &Ctx, call: &ComponentCall) -> Result<()> {

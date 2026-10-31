@@ -21,7 +21,7 @@ use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
 use bot_core::twilight_util::builder::command::{CommandBuilder, IntegerBuilder, StringBuilder, SubCommandBuilder};
 use bot_core::twilight_util::builder::embed::{EmbedBuilder, EmbedFieldBuilder, EmbedFooterBuilder, ImageSource};
-use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, text};
+use bot_core::{Ctx, Feature, FeatureMeta, Group, Happening, Icon, Migration, NavItem, Need, Overview, feature_async, now_ms, text};
 use serde::{Deserialize, Serialize};
 
 use store::{Giveaway, Pet, Status};
@@ -31,6 +31,7 @@ const COLOR: u32 = 0xf0806a;
 /// A `/pet add` confirmation button stops working after this long.
 const CONFIRM_SECS: i64 = 15 * 60;
 const WARN_BEFORE_MS: i64 = 15 * 60 * 1000;
+const DAY_MS: i64 = 24 * 3_600_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -60,7 +61,7 @@ impl Feature for Pets {
             name: "Pets",
             description: "Idleon companion collection, pet giveaways and public pet pages.",
             group: Group::Pets,
-            nav: vec![NavItem { label: "Pets", path: KEY, icon: Icon::Paw }],
+            nav: vec![NavItem { label: "Pets", path: KEY, icon: Icon::Paw, about: "The server's Idleon companion collection." }],
         }
     }
 
@@ -91,6 +92,43 @@ impl Feature for Pets {
 
     fn routes(&self) -> bot_core::axum::Router<Ctx> {
         web::routes().merge(public::routes())
+    }
+
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> Overview {
+        let guild = page.guild_id;
+        let mut o = Overview::default();
+        let pending = store::pending(ctx, guild).unwrap_or_default();
+        if let Some(oldest) = pending.first() {
+            let mut who: Vec<u64> = Vec::new();
+            for p in &pending {
+                if !who.contains(&p.user_id) {
+                    who.push(p.user_id);
+                }
+            }
+            let names: Vec<String> = who.iter().take(2).map(|u| ctx.display_name(guild, *u)).collect();
+            let more = who.len().saturating_sub(2);
+            let n = pending.len();
+            o.needs.push(Need {
+                since: oldest.requested_at,
+                people: who.iter().take(2).map(|u| ctx.member_avatar(guild, *u)).collect(),
+                icon: Icon::Paw,
+                title: format!("{n} pet {} waiting", if n == 1 { "request" } else { "requests" }),
+                detail: format!("{} · oldest {}", names_line(&names, more), text::ago(oldest.requested_at)),
+                href: page.path("pets/approvals"),
+                action: "Review",
+                alert: false,
+            });
+        }
+        let since = now_ms() - 3 * DAY_MS;
+        for (name, by, copies, at) in store::recent_additions(ctx, guild, since, 5).unwrap_or_default() {
+            o.feed.push(Happening {
+                at,
+                avatar: ctx.member_avatar(guild, by),
+                who: ctx.display_name(guild, by),
+                text: format!("added {}{name} to the pet collection", qty_label(copies)),
+            });
+        }
+        o
     }
 
     async fn on_command(&self, ctx: &Ctx, call: &CommandCall) -> Result<()> {
@@ -255,6 +293,15 @@ fn qty_label(n: i64) -> String {
     if n > 1 { format!("{n}× ") } else { String::new() }
 }
 
+/// "Mira and Teo", or "Mira and 2 more" when `more` people are left out.
+fn names_line(names: &[String], more: usize) -> String {
+    if more == 0 {
+        names.join(" and ")
+    } else {
+        format!("{} and {more} more", names.join(", "))
+    }
+}
+
 fn name(ctx: &Ctx, guild: u64, user: u64) -> String {
     ctx.display_name(guild, user)
 }
@@ -414,7 +461,7 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         ("axolotl", 3, 1, 7),
         ("koi-fish", 1, 1, 5),
         ("glimbo", 8, 1, 3),
-        ("cryosnake", 0, 1, 2),
+        ("cryosnake", 0, 1, 0),
     ];
     {
         let mut conn = ctx.db.lock();

@@ -61,7 +61,7 @@ impl Feature for Embeds {
             name: "Embed builder",
             description: "Write embeds on the dashboard and send or edit them in a channel.",
             group: Group::Tools,
-            nav: vec![NavItem { label: "Embed builder", path: KEY, icon: Icon::Brush }],
+            nav: vec![NavItem { label: "Embed builder", path: KEY, icon: Icon::Brush, about: "Write a post here, see it as Discord will, and send it or update one you sent." }],
         }
     }
 
@@ -101,6 +101,20 @@ impl Feature for Embeds {
         let find = |name: &str| channels.iter().find(|(_, n)| n == name).or(channels.first()).map(|(id, _)| *id).unwrap_or_default();
         template_save(ctx, guild, "Server rules", &rules)?;
         template_save(ctx, guild, "Stream announcement", &live)?;
+        let schedule = EmbedData {
+            title: "This week's streams".into(),
+            description: "Streams run most weeknights at 8 PM. Changes go in #stream-alerts first.".into(),
+            color: "#c3a6ff".into(),
+            ..Default::default()
+        };
+        let giveaway = EmbedData {
+            title: "Pet giveaway rules".into(),
+            description: "One entry per person. Winners are picked when the timer ends and have 48 hours to claim.".into(),
+            color: "#e3a948".into(),
+            ..Default::default()
+        };
+        template_save(ctx, guild, "Stream schedule note", &schedule)?;
+        template_save(ctx, guild, "Pet giveaway rules", &giveaway)?;
         sent_add(ctx, guild, find("welcome"), 1_300_000_000_000_000_001, Some("Server rules"), &rules, "Antho")?;
         sent_add(ctx, guild, find("announcements"), 1_300_000_000_000_000_002, None, &live, "Antho")?;
         sent_add(ctx, guild, find("welcome"), 1_300_000_000_000_000_003, None, &welcome, "Mira")?;

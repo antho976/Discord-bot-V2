@@ -23,7 +23,7 @@ use bot_core::twilight_model::id::Id;
 use bot_core::twilight_model::id::marker::{ChannelMarker, MessageMarker};
 use bot_core::twilight_model::util::Timestamp;
 use bot_core::twilight_util::builder::embed::{EmbedBuilder, EmbedFieldBuilder, EmbedFooterBuilder};
-use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, text, tracing};
+use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, Need, Overview, feature_async, now_ms, text, tracing};
 use serde::{Deserialize, Serialize};
 
 use recent::Recent;
@@ -139,6 +139,7 @@ pub struct Catch {
     pub deleted: i64,
     pub timeout_until: Option<i64>,
     pub outcome: Outcome,
+    pub acted_by: Option<u64>,
     pub acted_by_name: Option<String>,
     pub acted_at: Option<i64>,
     pub alert: Option<(u64, u64)>,
@@ -175,7 +176,7 @@ impl Feature for Guard {
             name: "Scam protection",
             description: "Catches scam messages and anyone posting in the honeypot channel.",
             group: Group::Safety,
-            nav: vec![NavItem { label: "Scam protection", path: KEY, icon: Icon::Shield }],
+            nav: vec![NavItem { label: "Scam protection", path: KEY, icon: Icon::Shield, about: "Catches scam messages and anyone posting in the honeypot channel." }],
         }
     }
 
@@ -239,6 +240,30 @@ impl Feature for Guard {
 
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         seed(ctx, guild)
+    }
+
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> Overview {
+        // Caught and still timed out (or not timed out at all) and nobody has released or banned.
+        let since = now_ms() - DAY_MS;
+        let needs = recent_unhandled(ctx, page.guild_id, since, 3)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| {
+                let head = format!("{} {}", c.outcome.label(), text::ago(c.at));
+                let detail = if c.reason.trim().is_empty() { head } else { format!("{head} · {}", text::clip(&c.reason, 60)) };
+                Need {
+                    since: c.at,
+                    people: Vec::new(),
+                    icon: Icon::Shield,
+                    title: format!("Scam caught: {}", c.user_name),
+                    detail,
+                    href: page.path(KEY),
+                    action: "Review",
+                    alert: true,
+                }
+            })
+            .collect();
+        Overview { needs, ..Overview::default() }
     }
 }
 
@@ -600,7 +625,7 @@ pub fn alert_embed(c: &Catch) -> Embed {
 
 // ---- queries ----
 
-const CATCH_COLS: &str = "id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome, acted_by_name, acted_at, alert_channel, alert_message";
+const CATCH_COLS: &str = "id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome, acted_by_name, acted_at, alert_channel, alert_message, acted_by";
 
 fn row_to_catch(r: &bot_core::rusqlite::Row) -> bot_core::rusqlite::Result<Catch> {
     let signals: String = r.get(7)?;
@@ -623,6 +648,7 @@ fn row_to_catch(r: &bot_core::rusqlite::Row) -> bot_core::rusqlite::Result<Catch
         deleted: r.get(10)?,
         timeout_until: r.get(11)?,
         outcome: Outcome::parse(&outcome),
+        acted_by: r.get::<_, Option<i64>>(17)?.map(|u| u as u64),
         acted_by_name: r.get(13)?,
         acted_at: r.get(14)?,
         alert,
@@ -636,6 +662,16 @@ pub fn catch(ctx: &Ctx, guild: u64, id: i64) -> Result<Option<Catch>> {
     })
 }
 
+/// Catches since `since` that are still open (timed out, or not), newest first.
+pub fn recent_unhandled(ctx: &Ctx, guild: u64, since: i64, limit: i64) -> Result<Vec<Catch>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare_cached(&format!(
+            "SELECT {CATCH_COLS} FROM guard_catches WHERE guild_id = ?1 AND at > ?2 AND outcome IN ('timed_out', 'not_timed_out') ORDER BY at DESC LIMIT ?3"
+        ))?;
+        st.query_map(params![guild as i64, since, limit], row_to_catch)?.collect()
+    })
+}
+
 pub fn recent_catches(ctx: &Ctx, guild: u64, limit: i64) -> Result<Vec<Catch>> {
     ctx.db.with(|c| {
         let mut st = c.prepare_cached(&format!("SELECT {CATCH_COLS} FROM guard_catches WHERE guild_id = ?1 ORDER BY at DESC LIMIT ?2"))?;
@@ -644,17 +680,70 @@ pub fn recent_catches(ctx: &Ctx, guild: u64, limit: i64) -> Result<Vec<Catch>> {
     })
 }
 
-/// `(caught in 7 days, released in 30 days, banned in 30 days)`.
-pub fn counts(ctx: &Ctx, guild: u64) -> Result<(i64, i64, i64)> {
+/// The last seven days of catches, for the dashboard's readings and chart.
+pub struct Week {
+    pub caught: i64,
+    pub banned: i64,
+    pub released: i64,
+    pub removed: i64,
+    /// Catches in each of the last seven rolling days, oldest first.
+    pub daily: [i64; 7],
+    /// The moderators who released or banned, most actions first.
+    pub handled_by: Vec<u64>,
+}
+
+pub fn week(ctx: &Ctx, guild: u64) -> Result<Week> {
     let now = now_ms();
-    ctx.db.with(|c| {
-        c.query_row(
-            "SELECT COALESCE(SUM(at > ?2), 0), COALESCE(SUM(outcome = 'released' AND at > ?3), 0), COALESCE(SUM(outcome = 'banned' AND at > ?3), 0)
-             FROM guard_catches WHERE guild_id = ?1",
-            params![guild as i64, now - 7 * DAY_MS, now - 30 * DAY_MS],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-    })
+    let rows: Vec<(i64, Outcome, i64, Option<u64>)> = ctx.db.with(|c| {
+        let mut st = c.prepare_cached("SELECT at, outcome, deleted, acted_by FROM guard_catches WHERE guild_id = ?1 AND at > ?2")?;
+        let rows = st
+            .query_map(params![guild as i64, now - 7 * DAY_MS], |r| {
+                let outcome: String = r.get(1)?;
+                Ok((r.get(0)?, Outcome::parse(&outcome), r.get(2)?, r.get::<_, Option<i64>>(3)?.map(|u| u as u64)))
+            })?
+            .collect::<bot_core::rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    })?;
+    let mut w = Week { caught: 0, banned: 0, released: 0, removed: 0, daily: [0; 7], handled_by: Vec::new() };
+    let mut by: Vec<(u64, i64)> = Vec::new();
+    for (at, outcome, deleted, who) in rows {
+        w.caught += 1;
+        w.removed += deleted;
+        match outcome {
+            Outcome::Banned => w.banned += 1,
+            Outcome::Released => w.released += 1,
+            _ => {}
+        }
+        let days_ago = ((now - at) / DAY_MS).clamp(0, 6) as usize;
+        w.daily[6 - days_ago] += 1;
+        if let Some(who) = who {
+            match by.iter_mut().find(|(u, _)| *u == who) {
+                Some(entry) => entry.1 += 1,
+                None => by.push((who, 1)),
+            }
+        }
+    }
+    by.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    w.handled_by = by.into_iter().map(|(u, _)| u).collect();
+    Ok(w)
+}
+
+/// "today", "yesterday", "2 days ago", "5 months ago", "3 years ago": how old an account is,
+/// from its id.
+pub fn account_made(user: u64) -> String {
+    let days = ((now_ms() - account_created_ms(user)) / DAY_MS).max(0);
+    match days {
+        0 => "today".into(),
+        1 => "yesterday".into(),
+        2..60 => format!("{days} days ago"),
+        60..730 => format!("{} months ago", days / 30),
+        _ => format!("{} years ago", days / 365),
+    }
+}
+
+/// A snowflake whose account was made at `ms`, for the preview's sample members.
+fn snowflake_at(ms: i64) -> u64 {
+    ((ms - 1_420_070_400_000) as u64) << 22
 }
 
 // ---- preview ----
@@ -675,35 +764,43 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     let honeypot = s.honeypot_channel.unwrap_or_default();
     let now = now_ms();
     let members = bot_core::preview::MEMBERS;
-    // (hours ago, user, name, honeypot, text, outcome, acted by)
-    type Sample<'a> = (i64, u64, &'a str, bool, &'a str, Outcome, Option<&'a str>);
+    let log = s.log_channel;
+    // (hours ago, account age in days, user (ignored when the age is set), name,
+    //  honeypot, text, outcome, moderator)
+    type Sample<'a> = (i64, Option<i64>, u64, &'a str, bool, &'a str, Outcome, Option<(u64, &'a str)>);
     let samples: &[Sample] = &[
-        (2, 1_250_000_000_000_000_001, "kaiden.trades", false, "I'm leaving CS2, giving away my whole inventory. first come first serve, send a trade offer https://steamcommunlty.com/tradeoffer/new", Outcome::TimedOut, None),
-        (9, members[5].0, members[5].1, false, "@everyone free nitro for everyone https://discord-nitro.shop/claim", Outcome::Banned, Some("Mira")),
-        (26, 1_250_000_000_000_000_002, "lunafae_", true, "hey cuties check my bio 😘", Outcome::Banned, Some("Oskar")),
-        (51, members[8].0, members[8].1, false, "is free nitro from epic still a thing? https://bit.ly/3epicnitro", Outcome::Released, Some("Mira")),
-        (77, 1_250_000_000_000_000_003, "crypto_drop_bot", false, "Huge crypto airdrop is live, connect your wallet to claim https://claim-drop.site", Outcome::NotTimedOut, None),
-        (140, members[3].0, members[3].1, false, "look at this https://gift-steam.ru/card", Outcome::Banned, Some("Mira")),
+        (2, Some(2), 1_250_000_000_000_000_001, "kaiden.trades", false, "I'm leaving CS2, giving away my whole inventory. first come first serve, send a trade offer https://steamcommunlty.com/tradeoffer/new", Outcome::TimedOut, None),
+        (9, Some(800), members[5].0, members[5].1, false, "@everyone free nitro for everyone https://discord-nitro.shop/claim", Outcome::Banned, Some((members[0].0, "Mira"))),
+        (48, Some(1), 1_250_000_000_000_000_002, "lunafae_", true, "hey cuties check my bio 😘", Outcome::Banned, Some((members[0].0, "Mira"))),
+        (51, Some(400), members[8].0, members[8].1, false, "is free nitro from epic still a thing? https://bit.ly/3epicnitro", Outcome::Released, Some((members[1].0, "Oskar"))),
+        (77, Some(0), 1_250_000_000_000_000_003, "crypto_drop_bot", false, "Huge crypto airdrop is live, connect your wallet to claim https://claim-drop.site", Outcome::NotTimedOut, None),
+        (140, Some(1500), members[3].0, members[3].1, false, "look at this https://gift-steam.ru/card", Outcome::Banned, Some((members[0].0, "Mira"))),
     ];
-    for (hours, user, name, honeypot_catch, msg, outcome, by) in samples {
+    for (hours, account_days, user, name, honeypot_catch, msg, outcome, by) in samples {
         let at = now - hours * 3_600_000;
+        let user = match account_days {
+            Some(days) => snowflake_at(now - days * DAY_MS),
+            None => *user,
+        };
         let (score, reason, signals) = if *honeypot_catch {
             let sig = vec![Signal { weight: 0, text: "Posted in the honeypot channel".into() }];
             (0, "Posted in the honeypot channel".to_owned(), sig)
         } else {
             let repeat = if *hours == 140 { 3 } else { 1 };
-            let v = score::score(msg, &Facts { account_age_days: Some(2.0), new_account_days: 7, repeat_channels: repeat, has_attachments: false, catch_ads: false });
+            let facts = Facts { account_age_days: Some(account_days.unwrap_or(365) as f64), new_account_days: 7, repeat_channels: repeat, has_attachments: false, catch_ads: false };
+            let v = score::score(msg, &facts);
             (v.score, v.reason(), v.signals)
         };
         let timeout_until = (*outcome == Outcome::TimedOut).then_some(at + DAY_MS);
+        let (by_id, by_name) = by.map_or((None, None), |(id, name)| (Some(id as i64), Some(name)));
         ctx.db.with(|c| {
             c.execute(
-                "INSERT INTO guard_catches (guild_id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome, acted_by_name, acted_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                "INSERT INTO guard_catches (guild_id, at, user_id, user_name, honeypot, score, reason, signals, content, channel_id, deleted, timeout_until, outcome, acted_by, acted_by_name, acted_at, alert_channel, alert_message)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
                 params![
-                    guild as i64, at, *user as i64, name, honeypot_catch, score, reason, bot_core::serde_json::to_string(&signals).unwrap_or_default(),
-                    msg, (if *honeypot_catch { honeypot } else { general }) as i64, 1 + (hours % 4), timeout_until, outcome.key(), by,
-                    by.map(|_| at + 600_000)
+                    guild as i64, at, user as i64, name, honeypot_catch, score, reason, bot_core::serde_json::to_string(&signals).unwrap_or_default(),
+                    msg, (if *honeypot_catch { honeypot } else { general }) as i64, 1 + (hours % 4), timeout_until, outcome.key(),
+                    by_id, by_name, by.map(|_| at + 600_000), log.map(|c| c as i64), log.map(|_| 1i64)
                 ],
             )
         })?;

@@ -136,7 +136,7 @@ impl Feature for Utility {
             name: "AFK and timezones",
             description: "AFK status with mention notices, and member timezones with /time.",
             group: Group::Tools,
-            nav: vec![NavItem { label: "AFK and timezones", path: KEY, icon: Icon::Clock }],
+            nav: vec![NavItem { label: "AFK and timezones", path: KEY, icon: Icon::Afk, about: "/afk tells people you're away, and /time shows anyone's local time." }],
         }
     }
 

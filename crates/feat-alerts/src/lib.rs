@@ -125,7 +125,7 @@ impl Feature for Alerts {
             name: "Stream alerts",
             description: "Twitch live alerts, stream schedule reminders and YouTube uploads.",
             group: Group::Streams,
-            nav: vec![NavItem { label: "Stream alerts", path: KEY, icon: Icon::Live }],
+            nav: vec![NavItem { label: "Stream alerts", path: KEY, icon: Icon::Live, about: "Twitch and YouTube posts, and the stream schedule." }],
         }
     }
 
@@ -193,6 +193,10 @@ impl Feature for Alerts {
 
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         preview_rows(ctx, guild)
+    }
+
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> bot_core::Overview {
+        web::overview(ctx, page)
     }
 }
 

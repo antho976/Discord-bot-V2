@@ -61,9 +61,9 @@ cargo run -p bot -- preview   # the dashboard with sample servers, no Discord ne
 - **Bot, Privileged Gateway Intents:** turn on Server Members and Message Content.
 - **OAuth2, Redirects:** add `<PUBLIC_URL>/auth/callback`.
 - **Bot permissions:** Manage Roles, Manage Messages, Moderate Members, Ban Members, Manage
-  Server (invite tracking), Create Private Threads, Manage Threads, Send Messages, Embed Links,
-  Attach Files, Read Message History, Add Reactions, Manage Nicknames (AFK prefix). Keep the bot's
-  role above the roles it hands out.
+  Server (invite tracking), View Audit Log (who banned, kicked or timed out someone), Create
+  Private Threads, Manage Threads, Send Messages, Embed Links, Attach Files, Read Message History,
+  Add Reactions, Manage Nicknames (AFK prefix). Keep the bot's role above the roles it hands out.
 
 ## Switching over from antho-s-bot on Render
 
@@ -119,7 +119,7 @@ when `TWITCH_EVENTSUB_SECRET` is set.
 
 ## Not tested against the real services yet
 
-Everything builds, 146 tests pass, and every dashboard page was checked in the preview. The parts
+Everything builds, 152 tests pass, and every dashboard page was checked in the preview against the agreed designs. The parts
 that talk to Discord, Twitch or YouTube have only run against sample data, so check them first
 after deploying:
 - Slash commands, buttons and DMs.
@@ -127,6 +127,13 @@ after deploying:
 - The YouTube feed.
 - The relay pairing subprocess.
 - The Docker image. Docker wasn't available where this was built.
+
+## CI and deploys
+
+GitHub Actions (`.github/workflows/ci.yml`) runs clippy with warnings as errors, the tests and a
+Docker image build on every pull request and every push to `main`. Render deploys `main`. In the
+service's settings, set Auto-Deploy to **After CI checks pass** so a red build never ships
+(`render.yaml` says the same for a Blueprint).
 
 ## Code
 

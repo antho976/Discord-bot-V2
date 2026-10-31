@@ -1,6 +1,7 @@
 //! Giveaways, polls and suggestions: slash commands, buttons and the dashboard pages.
 
 mod giveaways;
+mod overview;
 mod polls;
 mod suggestions;
 mod web;
@@ -10,8 +11,9 @@ use bot_core::discord::{CommandCall, ComponentCall, ModalCall};
 use bot_core::twilight_model::application::command::Command;
 use bot_core::twilight_model::application::interaction::Interaction;
 use bot_core::twilight_model::channel::message::component::{ActionRow, Button, ButtonStyle, Component};
+use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::guild::Permissions;
-use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, text};
+use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async};
 use serde::{Deserialize, Serialize};
 
 pub const KEY: &str = "community";
@@ -65,6 +67,20 @@ const MIGRATIONS: &[Migration] = &[Migration {
             suggestion_id INTEGER NOT NULL, user_id INTEGER NOT NULL, vote INTEGER NOT NULL,
             PRIMARY KEY (suggestion_id, user_id));
     ",
+}, Migration {
+    name: "002_community_times",
+    sql: "
+        ALTER TABLE giveaways ADD COLUMN ended_at INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE suggestions ADD COLUMN status_at INTEGER NOT NULL DEFAULT 0;
+    ",
+}, Migration {
+    name: "003_community_live",
+    sql: "
+        ALTER TABLE giveaway_entries ADD COLUMN entered_at INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE poll_votes (
+            poll_id INTEGER NOT NULL, user_id INTEGER NOT NULL, answer INTEGER NOT NULL, at INTEGER NOT NULL,
+            PRIMARY KEY (poll_id, user_id, answer));
+    ",
 }];
 
 #[feature_async]
@@ -76,15 +92,30 @@ impl Feature for Community {
             description: "Giveaways, polls and a suggestion box.",
             group: Group::Community,
             nav: vec![
-                NavItem { label: "Giveaways", path: "community/giveaways", icon: Icon::Gift },
-                NavItem { label: "Polls", path: "community/polls", icon: Icon::Poll },
-                NavItem { label: "Suggestions", path: "community/suggestions", icon: Icon::Bulb },
+                NavItem { label: "Giveaways", path: "community/giveaways", icon: Icon::Gift, about: "Members press Enter in Discord, and winners are picked when time runs out." },
+                NavItem { label: "Polls", path: "community/polls", icon: Icon::Poll, about: "Real Discord polls: members vote on the message itself." },
+                NavItem { label: "Suggestions", path: "community/suggestions", icon: Icon::Bulb, about: "/suggest posts them, and members vote with buttons." },
             ],
         }
     }
 
     fn migrations(&self) -> &'static [Migration] {
         MIGRATIONS
+    }
+
+    /// Votes on the polls posted from here, as members cast and take them back, so the
+    /// dashboard can show live counts.
+    async fn on_event(&self, ctx: &Ctx, event: &Event) -> Result<()> {
+        match event {
+            Event::MessagePollVoteAdd(v) => {
+                ctx.db.with(|c| polls::vote(c, v.message_id.get(), v.user_id.get(), v.answer_id, true))?;
+            }
+            Event::MessagePollVoteRemove(v) => {
+                ctx.db.with(|c| polls::vote(c, v.message_id.get(), v.user_id.get(), v.answer_id, false))?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn commands(&self) -> Vec<Command> {
@@ -125,6 +156,10 @@ impl Feature for Community {
         Ok(())
     }
 
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> bot_core::Overview {
+        overview::build(ctx, page)
+    }
+
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         ctx.save_settings(
             guild,
@@ -161,15 +196,6 @@ pub(crate) fn row(buttons: Vec<Component>) -> Component {
 /// A discord.com link to a message.
 pub(crate) fn message_url(guild: u64, channel: u64, message: u64) -> String {
     format!("https://discord.com/channels/{guild}/{channel}/{message}")
-}
-
-/// "in 2 h" for a future time, "3 days ago" for a past one (epoch milliseconds).
-pub(crate) fn relative(ms: i64) -> String {
-    let secs = (ms - bot_core::now_ms()) / 1000;
-    if secs <= 0 {
-        return text::ago(ms);
-    }
-    format!("in {}", span(secs))
 }
 
 fn span(secs: i64) -> String {

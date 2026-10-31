@@ -4,13 +4,14 @@ use bot_core::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
-use bot_core::rusqlite::params;
 use bot_core::twilight_model::id::Id;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
-use bot_core::{Ctx, Icon, text};
+use bot_core::{Ctx, Icon, now_ms, text};
 
 use crate::{DEFAULT_GOODBYE, DEFAULT_WELCOME, KEY, Settings, card, invites, roles};
+
+const DAY_MS: i64 = 86_400_000;
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
@@ -25,15 +26,6 @@ fn tabs(page: &Page, active: &str) -> Markup {
     ui::tabs(&[("Messages", page.path("welcome")), ("Roles", page.path("welcome/roles")), ("Invites", page.path("welcome/invites"))], active)
 }
 
-fn avatar(ctx: &Ctx, user: u64) -> String {
-    let hash = ctx.cache.user(Id::new(user)).and_then(|u| u.avatar.map(|a| a.to_string()));
-    bot_core::discord::avatar_url(user, hash.as_deref())
-}
-
-fn who(ctx: &Ctx, guild: u64, user: u64) -> Markup {
-    ui::person(&ctx.display_name(guild, user), &avatar(ctx, user), None)
-}
-
 fn channel_name(ctx: &Ctx, guild: u64, id: Option<u64>) -> String {
     id.and_then(|id| ctx.text_channels(guild).into_iter().find(|(c, _)| *c == id)).map(|(_, n)| format!("#{n}")).unwrap_or_else(|| "Off".into())
 }
@@ -46,26 +38,99 @@ fn role_names(ctx: &Ctx, guild: u64, ids: &[u64]) -> String {
         .join(", ")
 }
 
-/// Sum of a daily counter over the last `days` days.
-fn stat_sum(ctx: &Ctx, guild: u64, key: &str, days: i64) -> i64 {
-    let since = bot_core::jiff::Timestamp::now()
-        .to_zoned(bot_core::jiff::tz::TimeZone::UTC)
-        .date()
-        .checked_sub(bot_core::jiff::Span::new().days(days))
-        .map(|d| d.to_string())
-        .unwrap_or_default();
+/// "1 new member", "8 new members".
+fn counted(n: i64, one: &str, many: &str) -> String {
+    if n == 1 { format!("1 {one}") } else { format!("{} {many}", text::num(n)) }
+}
+
+/// "12 min", "1 h": the short form for times within the day.
+fn short_ago(ms: i64) -> String {
+    let mins = ((now_ms() - ms) / 60_000).max(0);
+    match mins {
+        0 => "just now".into(),
+        1..60 => format!("{mins} min"),
+        _ => format!("{} h", mins / 60),
+    }
+}
+
+/// The viewer's midnight today, in epoch milliseconds.
+fn day_start(page: &Page) -> i64 {
+    let now = page.user.local(now_ms());
+    now.start_of_day().map(|d| d.timestamp().as_millisecond()).unwrap_or_else(|_| now.timestamp().as_millisecond() - DAY_MS)
+}
+
+/// Members who left since `start`. The daily counters are kept by UTC day, so this takes every
+/// UTC day from the one `start` falls on, which can include a few hours of the day before.
+fn left_since(ctx: &Ctx, guild: u64, start: i64) -> i64 {
+    let from = bot_core::jiff::Timestamp::from_millisecond(start).unwrap_or_default().to_zoned(bot_core::jiff::tz::TimeZone::UTC).date().to_string();
     ctx.db
-        .with(|c| c.query_row("SELECT COALESCE(SUM(value), 0) FROM daily_stats WHERE guild_id = ?1 AND key = ?2 AND day > ?3", params![guild as i64, key, since], |r| r.get(0)))
+        .with(|c| {
+            c.query_row(
+                "SELECT COALESCE(SUM(value), 0) FROM daily_stats WHERE guild_id = ?1 AND key = 'leaves' AND day >= ?2",
+                bot_core::rusqlite::params![guild as i64, from],
+                |r| r.get(0),
+            )
+        })
         .unwrap_or(0)
 }
 
+/// The bot's name and avatar, as a member sees them in the channel.
+fn bot_identity(ctx: &Ctx) -> (String, String) {
+    let Some(bot) = ctx.bot_id() else { return ("Bot".into(), bot_core::discord::avatar_url(0, None)) };
+    match ctx.cache.user(Id::new(bot)) {
+        Some(u) => (
+            u.global_name.clone().unwrap_or_else(|| u.name.clone()),
+            bot_core::discord::avatar_url(bot, u.avatar.map(|a| a.to_string()).as_deref()),
+        ),
+        None => ("Bot".into(), bot_core::discord::avatar_url(bot, None)),
+    }
+}
+
+/// `9:05 PM` in the viewer's timezone.
+fn clock(page: &Page, ms: i64) -> String {
+    let z = page.user.local(ms);
+    let (h, m) = (z.hour() as i64, z.minute() as i64);
+    format!("{}:{m:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" })
+}
+
 const CSS: &str = "
-.wl-msg { background: #313338; color: #dbdee1; border-radius: 8px; padding: 12px 14px; max-width: 520px; font-size: 14px; line-height: 1.4; display: flex; flex-direction: column; gap: 8px; overflow-wrap: anywhere; }
+.wl-main { gap: 30px; }
+.wl-block { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.wl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
+.wl-faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 18px 10px; }
+.wl-face { display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center; min-width: 0; }
+.wl-face .avatar { width: 56px; height: 56px; margin-bottom: 6px; }
+.wl-face strong { font-weight: 500; font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-face .muted { font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-more { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 6px; border-radius: 50%; background: var(--control); color: var(--ink-2); font: 500 15px var(--mono); }
+.wl-preview { display: flex; flex-direction: column; gap: 18px; padding: 18px 20px; border-radius: var(--r-card); background: var(--veil); border: 1px solid var(--edge-1); }
+.wl-msg { display: flex; gap: 12px; align-items: flex-start; font-size: 14px; line-height: 1.45; min-width: 0; overflow-wrap: anywhere; }
 .wl-msg.off { opacity: .45; }
-.wl-mention { background: rgba(88, 101, 242, .3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; }
-.wl-card { display: block; width: 100%; height: auto; max-width: 420px; border-radius: 6px; }
-.wl-label { font-size: 11.5px; color: var(--ink-3); margin: 14px 0 6px; }
-.wl-label:first-child { margin-top: 0; }
+.wl-msg > .avatar { width: 40px; height: 40px; margin-top: 2px; }
+.wl-msg-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.wl-msg-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wl-msg-head strong { font-weight: 600; }
+.wl-app { display: inline-flex; align-items: center; height: 16px; padding: 0 5px; border-radius: 4px; background: var(--data); color: var(--ground); font: 600 10px var(--sans); letter-spacing: .02em; }
+.wl-msg-text { color: var(--ink); }
+.wl-mention { background: var(--data-wash); color: var(--data); border-radius: 3px; padding: 0 3px; }
+.wl-bye { font-size: 13px; color: var(--ink-2); }
+.wl-bye .avatar { width: 28px; height: 28px; }
+.wl-card { display: block; width: 100%; max-width: 440px; height: auto; border-radius: 10px; margin-top: 4px; }
+.wl-label { font-size: 12px; color: var(--ink-3); }
+.wl-inv { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13px; }
+.wl-inv .grow { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.wl-inv .grow > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-inv .mono { color: var(--ink-2); }
+.wl-back { display: flex; align-items: center; gap: 12px; }
+.wl-back p { font-size: 13px; color: var(--ink-2); }
+.wl-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.wl-chip { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px; border-radius: 13px; background: var(--control); color: var(--ink-2); font-size: 12px; }
+.wl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; }
+.wl-send { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.wl-settings { display: flex; flex-direction: column; gap: 22px; }
+.wl-settings .settings { gap: 22px; }
+.wl-big { display: flex; flex-direction: column; gap: 2px; }
+.wl-big .big-num { font-size: 26px; }
 ";
 
 const SCRIPT: &str = r#"
@@ -107,55 +172,165 @@ const SCRIPT: &str = r#"
 async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
+    let now = now_ms();
     let count = ctx.member_count(guild).map(|n| text::num(n as i64)).unwrap_or_else(|| "1".into());
+    let today = day_start(&page);
+    let (joins, _) = invites::join_counts(&ctx, guild, today)?;
+    let shown = invites::joins_since(&ctx, guild, today, 5)?;
+    let left = left_since(&ctx, guild, today);
+    let top: Vec<(u64, i64, i64)> = invites::top_inviters(&ctx, guild, now - 30 * DAY_MS, 6)?.into_iter().filter(|t| t.1 > 0).take(4).collect();
+    let back: Vec<roles::Restored> = roles::recently_restored(&ctx, guild, 25)?.into_iter().filter(|r| r.at >= now - 7 * DAY_MS).collect();
+    let known_roles = ctx.roles(guild);
+    let given: Vec<(String, String)> = s
+        .autoroles
+        .iter()
+        .filter_map(|id| known_roles.iter().find(|(r, _, _)| r == id))
+        .map(|(_, name, color)| (name.clone(), if *color == 0 { "var(--ink-3)".to_owned() } else { format!("#{color:06x}") }))
+        .collect();
+    let (bot_name, bot_avatar) = bot_identity(&ctx);
+    let max_recent = top.iter().map(|t| t.1).max().unwrap_or(1).max(1);
+    let more = joins - shown.len() as i64;
+    let faces: Vec<(u64, String, String)> = shown
+        .iter()
+        .map(|(j, came_back)| {
+            let mut parts = vec![short_ago(j.at)];
+            if *came_back {
+                parts.push("came back".to_owned());
+            } else if let Some(i) = j.inviter {
+                parts.push(format!("via {}", ctx.display_name(guild, i)));
+            }
+            (j.user, ctx.display_name(guild, j.user), parts.join(" · "))
+        })
+        .collect();
 
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Messages"))
-        (ui::readings(&[
-            ("welcome posts in", if s.welcome_on { channel_name(&ctx, guild, s.welcome_channel) } else { "Off".into() }),
-            ("goodbye posts in", if s.goodbye_on { channel_name(&ctx, guild, s.goodbye_channel) } else { "Off".into() }),
-            ("joins, 7 days", text::num(stat_sum(&ctx, guild, "joins", 7))),
-            ("leaves, 7 days", text::num(stat_sum(&ctx, guild, "leaves", 7))),
-        ]))
-        (ui::section("Preview", Some("Shown with your name and this server. Updates as you type."), html! {
-            div id="wl-preview" data-name=(user.name) data-server=(ctx.guild_name(guild)) data-count=(count)
-                data-default-welcome=(DEFAULT_WELCOME) data-default-goodbye=(DEFAULT_GOODBYE) {
-                div.wl-label { "Welcome" }
-                div.wl-msg id="wl-welcome" {
-                    div id="wl-welcome-text" {}
-                    img.wl-card id="wl-card" src=(page.path("welcome/card.png")) alt="The welcome card" width="960" height="320";
-                }
-                div.wl-label { "Goodbye" }
-                div.wl-msg id="wl-goodbye" { div id="wl-goodbye-text" {} }
-            }
-            @if page.can_edit() {
-                div.inline-form style="margin-top:14px" {
-                    @if s.welcome_channel.is_some() {
-                        form.inline method="post" action=(page.path("welcome/test")) {
-                            button.btn type="submit" { "Send a test" }
-                        }
-                        span.muted.small { "Posts the welcome for you in " (channel_name(&ctx, guild, s.welcome_channel)) ", using the saved settings." }
+        div.with-rail {
+            div.stack.wl-main {
+                div.wl-block {
+                    div.wl-head {
+                        h2 { "Joined today" }
+                        span.muted.small { (counted(joins, "new member", "new members")) " · " (text::num(left)) " left" }
+                    }
+                    @if shown.is_empty() {
+                        (ui::empty(Icon::Door, "Nobody has joined yet today", "New members show up here with how long ago they came in and who invited them."))
                     } @else {
-                        span.muted.small { "Pick a welcome channel and save to send a test." }
+                        div.wl-faces {
+                            @for (user_id, name, detail) in &faces {
+                                div.wl-face {
+                                    img.avatar src=(ctx.member_avatar(guild, *user_id)) alt="" loading="lazy";
+                                    strong { (name) }
+                                    span.muted { (detail) }
+                                }
+                            }
+                            @if more > 0 {
+                                div.wl-face {
+                                    span.wl-more { "+" (more) }
+                                    strong { (more) " more" }
+                                    span.muted { "earlier today" }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                div.wl-block {
+                    h2 { "What new members see" }
+                    div.wl-preview id="wl-preview" data-name=(user.name) data-server=(ctx.guild_name(guild)) data-count=(count)
+                        data-default-welcome=(DEFAULT_WELCOME) data-default-goodbye=(DEFAULT_GOODBYE) {
+                        div.wl-msg id="wl-welcome" {
+                            img.avatar src=(bot_avatar) alt="" loading="lazy";
+                            div.wl-msg-body {
+                                div.wl-msg-head {
+                                    strong { (bot_name) }
+                                    span.wl-app { "APP" }
+                                    span.muted.small { "Today at " (clock(&page, now)) }
+                                }
+                                div.wl-msg-text id="wl-welcome-text" {}
+                                img.wl-card id="wl-card" src=(page.path("welcome/card.png")) alt="The welcome card" width="960" height="320";
+                            }
+                        }
+                        div.wl-label { "When someone leaves" }
+                        div.wl-msg.wl-bye id="wl-goodbye" {
+                            img.avatar src=(bot_avatar) alt="" loading="lazy";
+                            div.wl-msg-body {
+                                div.wl-msg-head { strong { (bot_name) } span.wl-app { "APP" } }
+                                div id="wl-goodbye-text" {}
+                            }
+                        }
+                    }
+                    @if page.can_edit() && s.welcome_channel.is_some() {
+                        div.wl-send {
+                            form.inline method="post" action=(page.path("welcome/test")) {
+                                button.btn.small type="submit" { "Send a test" }
+                            }
+                            span.muted.small { "Posts the welcome for you in " (channel_name(&ctx, guild, s.welcome_channel)) ", using the saved settings." }
+                        }
+                    } @else if page.can_edit() {
+                        p.muted.small { "Pick a welcome channel and save to send a test." }
+                    }
+                }
+
+                div.wl-settings {
+                    (ui::settings_form(&page, &page.path("welcome"), html! {
+                        (ui::card(html! {
+                            (ui::field_toggle("welcome_on", "Welcome new members", None, s.welcome_on))
+                            (ui::field_channel(&ctx, guild, "welcome_channel", "Post in", None, s.welcome_channel))
+                            (ui::field_textarea("welcome_text", "Message", Some("{user} mentions them, {name} is their name, {server} the server and {count} their member number. Only they are mentioned."), &s.welcome_text, DEFAULT_WELCOME))
+                            (ui::field_toggle("welcome_card", "Attach the welcome card", Some("An image with their avatar, name and member number."), s.welcome_card))
+                        }))
+                        (ui::card(html! {
+                            (ui::field_toggle("goodbye_on", "Say goodbye", Some("Posts when someone leaves."), s.goodbye_on))
+                            (ui::field_channel(&ctx, guild, "goodbye_channel", "Goodbye in", None, s.goodbye_channel))
+                            (ui::field_textarea("goodbye_text", "Goodbye message", Some("{name}, {server} and {count} work here. Nobody is mentioned."), &s.goodbye_text, DEFAULT_GOODBYE))
+                        }))
+                    }))
+                }
+                script { (PreEscaped(SCRIPT)) }
+            }
+
+            aside.rail {
+                div.rail-block {
+                    h2 { "Top inviters, 30 days" }
+                    @if top.is_empty() {
+                        p.muted.small { "Nobody has brought anyone in this month. Counts start once invites are read." }
+                    }
+                    @for (inviter, recent, _) in &top {
+                        div.wl-inv {
+                            img.avatar src=(ctx.member_avatar(guild, *inviter)) alt="" width="28" height="28" loading="lazy";
+                            div.grow {
+                                span { (ctx.display_name(guild, *inviter)) }
+                                span.meter { span style={ "width:" (*recent * 100 / max_recent) "%" } {} }
+                            }
+                            span.mono { (text::num(*recent)) }
+                        }
+                    }
+                }
+                div.rail-block {
+                    h2 { "Back again" }
+                    @if back.is_empty() {
+                        p.muted.small { "Nobody has rejoined with their roles this week. Members who come back get their saved roles here." }
+                    } @else {
+                        div.wl-back {
+                            (ui::avatars(&back.iter().take(3).map(|r| ctx.member_avatar(guild, r.user)).collect::<Vec<_>>(), 3))
+                            p { (counted(back.len() as i64, "member has", "members have")) " rejoined this week and got their roles back." }
+                        }
+                    }
+                }
+                div.rail-block {
+                    h2 { "Given on join" }
+                    @if given.is_empty() {
+                        p.muted.small { "Nothing is given on join. Pick auto-roles on the Roles tab." }
+                    }
+                    div.wl-chips {
+                        @for (name, color) in &given {
+                            span.wl-chip { span.wl-dot style={ "background:" (color) } {} (name) }
+                        }
                     }
                 }
             }
-        }))
-        (ui::settings_form(&page, &page.path("welcome"), html! {
-            (ui::section("Welcome message", None, ui::card(html! {
-                (ui::field_toggle("welcome_on", "Welcome new members", None, s.welcome_on))
-                (ui::field_channel(&ctx, guild, "welcome_channel", "Channel", None, s.welcome_channel))
-                (ui::field_textarea("welcome_text", "Message", Some("{user} mentions them, {name} is their name, {server} the server and {count} their member number. Only they are mentioned."), &s.welcome_text, DEFAULT_WELCOME))
-                (ui::field_toggle("welcome_card", "Attach a welcome card", Some("An image with their avatar, name and member number."), s.welcome_card))
-            })))
-            (ui::section("Goodbye message", None, ui::card(html! {
-                (ui::field_toggle("goodbye_on", "Say goodbye", Some("Posts when someone leaves."), s.goodbye_on))
-                (ui::field_channel(&ctx, guild, "goodbye_channel", "Channel", None, s.goodbye_channel))
-                (ui::field_textarea("goodbye_text", "Message", Some("{name}, {server} and {count} work here. Nobody is mentioned."), &s.goodbye_text, DEFAULT_GOODBYE))
-            })))
-        }))
-        script { (PreEscaped(SCRIPT)) }
+        }
     };
     Ok(ui::layout(&ctx, &page, "Welcome", None, body).into_response())
 }
@@ -211,42 +386,55 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
     let stuck: Vec<u64> = s.autoroles.iter().copied().filter(|r| !roles::assignable(&ctx, guild, *r)).collect();
 
     let body = html! {
+        style { (PreEscaped(CSS)) }
         (tabs(&page, "Roles"))
-        (ui::readings(&[
-            ("auto-roles", s.autoroles.len().to_string()),
-            ("members with roles saved", text::num(waiting)),
-            ("restored recently", restored.len().to_string()),
-        ]))
-        @if !stuck.is_empty() {
-            p.small { (ui::badge("Can't give", Tone::Warn)) " " (role_names(&ctx, guild, &stuck)) ". These sit above the bot's own role, or the server manages them." }
-        }
-        (ui::settings_form(&page, &page.path("welcome/roles"), html! {
-            (ui::section("Auto-roles", None, ui::card(html! {
-                (ui::field_roles(&ctx, guild, "autoroles", "Roles for new members", Some("The bot can only give roles below its own role."), &s.autoroles))
-                (ui::field_toggle("autorole_bots", "Include bots", Some("Off: bots that join get no auto-roles."), s.autorole_bots))
-            })))
-            (ui::section("Roles back on rejoin", None, ui::card(html! {
-                (ui::field_toggle("rejoin_on", "Give roles back", Some("A member who leaves and returns gets the roles they left with."), s.rejoin_on))
-                (ui::field_number("rejoin_days", "Keep for", Some("After this long, a leaver's saved roles are deleted."), days, 1, 3650, Some("days")))
-                (ui::field_roles(&ctx, guild, "rejoin_exclude", "Never give back", Some("Useful for staff or punishment roles."), &s.rejoin_exclude))
-            })))
-        }))
-        (ui::section("Recently restored", Some("Members who came back and got their roles."), html! {
-            @if restored.is_empty() {
-                (ui::empty(Icon::Users, "Nobody restored yet", "Members who leave and return show up here with the roles they got back."))
-            } @else {
-                div.table-wrap { table.table {
-                    thead { tr { th { "Member" } th { "Roles" } th { "When" } } }
-                    tbody { @for r in &restored {
-                        tr {
-                            td { (who(&ctx, guild, r.user)) }
-                            td { (role_names(&ctx, guild, &r.roles)) }
-                            td.muted { (text::ago(r.at)) }
+        div.with-rail {
+            div.stack.wl-main {
+                @if !stuck.is_empty() {
+                    p.small { (ui::badge("Can't give", Tone::Warn)) " " (role_names(&ctx, guild, &stuck)) ". These sit above the bot's own role, or the server manages them." }
+                }
+                (ui::settings_form(&page, &page.path("welcome/roles"), html! {
+                    (ui::section("Auto-roles", None, ui::card(html! {
+                        (ui::field_roles(&ctx, guild, "autoroles", "Roles for new members", Some("The bot can only give roles below its own role."), &s.autoroles))
+                        (ui::field_toggle("autorole_bots", "Include bots", Some("Off: bots that join get no auto-roles."), s.autorole_bots))
+                    })))
+                    (ui::section("Roles back on rejoin", None, ui::card(html! {
+                        (ui::field_toggle("rejoin_on", "Give roles back", Some("A member who leaves and returns gets the roles they left with."), s.rejoin_on))
+                        (ui::field_number("rejoin_days", "Keep for", Some("After this long, a leaver's saved roles are deleted."), days, 1, 3650, Some("days")))
+                        (ui::field_roles(&ctx, guild, "rejoin_exclude", "Never give back", Some("Useful for staff or punishment roles."), &s.rejoin_exclude))
+                    })))
+                }))
+                div.block-head {
+                    h2 { "Recently restored" }
+                    p.muted { "Members who came back and got their roles." }
+                }
+                @if restored.is_empty() {
+                    (ui::empty(Icon::Users, "Nobody restored yet", "Members who leave and return show up here with the roles they got back."))
+                } @else {
+                    div.list {
+                        @for r in &restored {
+                            div.list-item {
+                                img.avatar src=(ctx.member_avatar(guild, r.user)) alt="" width="32" height="32" loading="lazy";
+                                div.grow {
+                                    strong.clip { (ctx.display_name(guild, r.user)) }
+                                    div.muted.small.clip { (role_names(&ctx, guild, &r.roles)) }
+                                }
+                                span.meta { (text::ago(r.at)) }
+                            }
                         }
-                    } }
-                } }
+                    }
+                }
             }
-        }))
+            aside.rail {
+                div.rail-block {
+                    h2 { "Waiting to come back" }
+                    div.wl-big {
+                        span.big-num { (text::num(waiting)) }
+                        span.muted.small { "members left with roles saved, in the last " (days) " days" }
+                    }
+                }
+            }
+        }
     };
     Ok(ui::layout(&ctx, &page, "Welcome", None, body).into_response())
 }
@@ -282,8 +470,8 @@ async fn save_roles(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
 async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let now = bot_core::now_ms();
-    let month = now - 30 * 86_400_000;
+    let now = now_ms();
+    let month = now - 30 * DAY_MS;
     let (joins, known) = invites::join_counts(&ctx, guild, month)?;
     let top = invites::top_inviters(&ctx, guild, month, 15)?;
     let recent = invites::recent_joins(&ctx, guild, 25)?;
@@ -304,45 +492,78 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     };
 
     let body = html! {
+        style { (PreEscaped(CSS)) }
         (tabs(&page, "Invites"))
-        (ui::readings(&[
-            ("joins, 30 days", text::num(joins)),
-            ("with a known inviter", if joins > 0 { format!("{}%", known * 100 / joins) } else { "-".into() }),
-            ("invites watched", state.as_ref().map(|s| s.codes.to_string()).unwrap_or_else(|| "0".into())),
-        ]))
-        p { (status) }
-        (ui::settings_form(&page, &page.path("welcome/invites"), ui::card(html! {
-            (ui::field_toggle("track_invites", "Track invites", Some("Works out which invite each new member used. The bot needs the Manage Server permission to read invites."), s.track_invites))
-        })))
-        (ui::section("Top inviters", Some("Members whose invites brought people in."), html! {
-            @if top.is_empty() {
-                (ui::empty(Icon::Users, "No invited joins yet", "Joins through a member's invite are counted here once tracking has taken its first reading."))
-            } @else {
-                div.table-wrap { table.table {
-                    thead { tr { th { "Member" } th.num { "Last 30 days" } th.num { "All time" } } }
-                    tbody { @for (inviter, recent, all) in &top {
-                        tr { td { (who(&ctx, guild, *inviter)) } td.num { (recent) } td.num { (all) } }
-                    } }
-                } }
-            }
-        }))
-        (ui::section("Recent joins", None, html! {
-            @if recent.is_empty() {
-                (ui::empty(Icon::Door, "No joins recorded", "New members appear here with the invite they came through."))
-            } @else {
-                div.table-wrap { table.table {
-                    thead { tr { th { "Member" } th { "Invited by" } th { "Invite" } th { "Joined" } } }
-                    tbody { @for j in &recent {
-                        tr {
-                            td { (who(&ctx, guild, j.user)) }
-                            td { @if let Some(i) = j.inviter { (who(&ctx, guild, i)) } @else { span.muted { "Unknown" } } }
-                            td { @if let Some(c) = &j.code { code { (c) } } @else { span.muted { "-" } } }
-                            td.muted { (text::ago(j.at)) }
+        div.with-rail {
+            div.stack.wl-main {
+                p { (status) }
+                (ui::settings_form(&page, &page.path("welcome/invites"), ui::card(html! {
+                    (ui::field_toggle("track_invites", "Track invites", Some("Works out which invite each new member used. The bot needs the Manage Server permission to read invites."), s.track_invites))
+                })))
+                (ui::section("Top inviters", Some("Members whose invites brought people in."), html! {
+                    @if top.is_empty() {
+                        (ui::empty(Icon::Users, "No invited joins yet", "Joins through a member's invite are counted here once tracking has taken its first reading."))
+                    } @else {
+                        div.list {
+                            @for (inviter, recent, all) in &top {
+                                div.list-item {
+                                    img.avatar src=(ctx.member_avatar(guild, *inviter)) alt="" width="32" height="32" loading="lazy";
+                                    div.grow { strong.clip { (ctx.display_name(guild, *inviter)) } }
+                                    span.meta { (text::num(*recent)) " in 30 days · " (text::num(*all)) " all time" }
+                                }
+                            }
                         }
-                    } }
-                } }
+                    }
+                }))
+                (ui::section("Recent joins", None, html! {
+                    @if recent.is_empty() {
+                        (ui::empty(Icon::Door, "No joins recorded", "New members appear here with the invite they came through."))
+                    } @else {
+                        div.list {
+                            @for j in &recent {
+                                div.list-item {
+                                    img.avatar src=(ctx.member_avatar(guild, j.user)) alt="" width="32" height="32" loading="lazy";
+                                    div.grow {
+                                        strong.clip { (ctx.display_name(guild, j.user)) }
+                                        div.muted.small.clip {
+                                            @match j.inviter {
+                                                Some(i) => { "invited by " (ctx.display_name(guild, i)) },
+                                                None => { "invite unknown" },
+                                            }
+                                            @if let Some(c) = &j.code { " · " code { (c) } }
+                                        }
+                                    }
+                                    span.meta { (text::ago(j.at)) }
+                                }
+                            }
+                        }
+                    }
+                }))
             }
-        }))
+            aside.rail {
+                div.rail-block {
+                    h2 { "Joins, 30 days" }
+                    div.wl-big {
+                        span.big-num { (text::num(joins)) }
+                        span.muted.small { "members came in" }
+                    }
+                }
+                div.rail-block {
+                    h2 { "With a known inviter" }
+                    div.wl-big {
+                        span.big-num { @if joins > 0 { (known * 100 / joins) "%" } @else { "-" } }
+                        span.muted.small { "of joins matched to an invite" }
+                    }
+                }
+                div.rail-block {
+                    h2 { "Invites watched" }
+                    div.wl-big {
+                        span.big-num { (state.as_ref().map(|s| s.codes).unwrap_or(0)) }
+                        span.muted.small { "invites the bot reads each hour" }
+                    }
+                }
+            }
+        }
     };
     Ok(ui::layout(&ctx, &page, "Welcome", None, body).into_response())
 }

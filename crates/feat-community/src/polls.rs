@@ -34,6 +34,8 @@ pub struct Poll {
     pub ends_at: i64,
     /// Final counts, in answer order. Empty once we've given up fetching them.
     pub results: Option<Vec<i64>>,
+    pub created_by: u64,
+    pub created_at: i64,
 }
 
 impl Poll {
@@ -42,7 +44,7 @@ impl Poll {
     }
 }
 
-const COLS: &str = "id, guild_id, channel_id, message_id, question, answers, multi, ends_at, results";
+const COLS: &str = "id, guild_id, channel_id, message_id, question, answers, multi, ends_at, results, created_by, created_at";
 
 fn from_row(r: &Row) -> bot_core::rusqlite::Result<Poll> {
     let answers: String = r.get(5)?;
@@ -57,6 +59,8 @@ fn from_row(r: &Row) -> bot_core::rusqlite::Result<Poll> {
         multi: r.get::<_, i64>(6)? != 0,
         ends_at: r.get(7)?,
         results: results.and_then(|s| serde_json::from_str(&s).ok()),
+        created_by: r.get::<_, i64>(9)? as u64,
+        created_at: r.get(10)?,
     })
 }
 
@@ -101,6 +105,51 @@ pub fn shares(poll: &Poll) -> Vec<(String, i64, i64)> {
             (a.clone(), n, if total > 0 { (n * 100 + total / 2) / total } else { 0 })
         })
         .collect()
+}
+
+/// Record a vote, or take one back. `answer_id` is Discord's, counting from 1. Votes on polls
+/// that weren't posted from here are ignored.
+pub fn vote(c: &Connection, message: u64, user: u64, answer_id: u8, add: bool) -> bot_core::rusqlite::Result<usize> {
+    let answer = answer_id as i64 - 1;
+    if add {
+        c.execute(
+            "INSERT OR IGNORE INTO poll_votes (poll_id, user_id, answer, at) SELECT id, ?2, ?3, ?4 FROM polls WHERE message_id = ?1",
+            params![id_i64(message), id_i64(user), answer, now_ms()],
+        )
+    } else {
+        c.execute(
+            "DELETE FROM poll_votes WHERE poll_id IN (SELECT id FROM polls WHERE message_id = ?1) AND user_id = ?2 AND answer = ?3",
+            params![id_i64(message), id_i64(user), answer],
+        )
+    }
+}
+
+/// Live counts for an open poll, from the votes the bot has seen: per answer, the count and
+/// the latest few voters. Also the number of different members who voted.
+pub struct Live {
+    pub answers: Vec<(String, i64, i64, Vec<u64>)>,
+    pub voters: i64,
+}
+
+pub fn live(c: &Connection, poll: &Poll) -> bot_core::rusqlite::Result<Live> {
+    let mut st = c.prepare_cached("SELECT answer, user_id FROM poll_votes WHERE poll_id = ?1 ORDER BY at DESC")?;
+    let rows: Vec<(i64, u64)> = st.query_map([poll.id], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? as u64)))?.collect::<Result<_, _>>()?;
+    let total = rows.len() as i64;
+    let mut voters: Vec<u64> = rows.iter().map(|r| r.1).collect();
+    voters.sort_unstable();
+    voters.dedup();
+    let answers = poll
+        .answers
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            let mine: Vec<u64> = rows.iter().filter(|r| r.0 == i as i64).map(|r| r.1).collect();
+            let n = mine.len() as i64;
+            let pct = if total > 0 { (n * 100 + total / 2) / total } else { 0 };
+            (a.clone(), n, pct, mine.into_iter().take(3).collect())
+        })
+        .collect();
+    Ok(Live { answers, voters: voters.len() as i64 })
 }
 
 pub fn command() -> Command {
@@ -277,7 +326,20 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
                     now - (i as i64 + 1) * 5 * hour,
                     results.map(|r| serde_json::to_string(r).unwrap_or_default()),
                 ],
-            )
+            )?;
+            // Votes on the open polls, so the live counts have something to show.
+            if results.is_none() {
+                let id = c.last_insert_rowid();
+                let members = bot_core::preview::MEMBERS;
+                for (n, (user, _)) in members.iter().enumerate() {
+                    let answer = [0, 0, 1, 0, 2, 1, 0, 3, 0, 1][n] % answers.len();
+                    c.execute(
+                        "INSERT INTO poll_votes (poll_id, user_id, answer, at) VALUES (?1, ?2, ?3, ?4)",
+                        params![id, id_i64(*user), answer as i64, now - (n as i64 + 1) * 600_000],
+                    )?;
+                }
+            }
+            Ok(())
         })?;
     }
     Ok(())
@@ -315,6 +377,8 @@ mod tests {
             multi: false,
             ends_at: 0,
             results: Some(vec![1, 1, 2]),
+            created_by: 0,
+            created_at: 0,
         };
         let s = shares(&p);
         assert_eq!(s.iter().map(|x| x.2).collect::<Vec<_>>(), vec![25, 25, 50]);

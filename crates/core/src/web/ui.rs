@@ -6,7 +6,9 @@ use maud::{DOCTYPE, Markup, PreEscaped, html};
 use super::auth::{Level, Page};
 use crate::{Ctx, Group};
 
-/// Icons drawn on one 16-unit grid with a 1.5 stroke.
+/// The dashboard's icons. The ones that stand for a page are the custom set drawn for the
+/// dashboard on a 24-unit grid; small utility glyphs stay on a 16-unit grid. Both draw at the
+/// same weight.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Icon {
     Home,
@@ -23,6 +25,7 @@ pub enum Icon {
     Ticket,
     Star,
     Clock,
+    Afk,
     Moon,
     Paw,
     Shield,
@@ -45,49 +48,53 @@ pub enum Icon {
 }
 
 impl Icon {
-    fn paths(self) -> &'static str {
+    /// `(grid, svg body)`.
+    fn draw(self) -> (u8, &'static str) {
         match self {
-            Icon::Home => r#"<path d="M2.5 7 8 2.5 13.5 7v6a.5.5 0 0 1-.5.5H10V10H6v3.5H3a.5.5 0 0 1-.5-.5z"/>"#,
-            Icon::Live => r#"<circle cx="8" cy="8" r="1.5"/><path d="M5.2 5.2a4 4 0 0 0 0 5.6M10.8 5.2a4 4 0 0 1 0 5.6M3.1 3.1a7 7 0 0 0 0 9.8M12.9 3.1a7 7 0 0 1 0 9.8"/>"#,
-            Icon::Calendar => r#"<rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>"#,
-            Icon::Play => r#"<rect x="1.5" y="3.5" width="13" height="9" rx="2.5"/><path d="m6.75 6 3.25 2-3.25 2z"/>"#,
-            Icon::Trophy => r#"<path d="M5 2.5h6v4a3 3 0 0 1-6 0zM5 4H2.5v1a2.5 2.5 0 0 0 2.6 2.5M11 4h2.5v1a2.5 2.5 0 0 1-2.6 2.5M8 9.5v2.5M5.5 13.5h5"/>"#,
-            Icon::Log => r#"<path d="M4 2.5h6l2.5 2.5v8.5H4zM6.5 7h4M6.5 9.5h4M6.5 12h2"/>"#,
-            Icon::Wave => r#"<path d="M5 8.5V4a1 1 0 0 1 2 0v3.5V3a1 1 0 0 1 2 0v4.5V4a1 1 0 0 1 2 0v5a4.5 4.5 0 0 1-8.2 2.5L1.9 9.8a1 1 0 0 1 1.6-1.1z"/>"#,
-            Icon::Door => r#"<path d="M3.5 13.5V3a.5.5 0 0 1 .5-.5h6v11M10 4.5h2.5v9M2 13.5h12M7.5 8.25v.5"/>"#,
-            Icon::Gift => r#"<rect x="2" y="5.5" width="12" height="3" rx=".5"/><path d="M3 8.5v5h10v-5M8 5.5v8M8 5.5C7 3 4.5 2.5 4.5 4s2 1.5 3.5 1.5ZM8 5.5C9 3 11.5 2.5 11.5 4S9.5 5.5 8 5.5Z"/>"#,
-            Icon::Poll => r#"<path d="M3 13.5V8M8 13.5V3M13 13.5V6"/>"#,
-            Icon::Bulb => r#"<path d="M6 11.5h4M6.5 13.5h3M5.75 9.5a4 4 0 1 1 4.5 0V11h-4.5z"/>"#,
-            Icon::Ticket => r#"<path d="M2.5 4.5h11v2a1.5 1.5 0 0 0 0 3v2h-11v-2a1.5 1.5 0 0 0 0-3zM9.5 4.5v7" stroke-dasharray="1.5 1.5"/>"#,
-            Icon::Star => r#"<path d="m8 2 1.8 3.8 4.2.5-3.1 2.9.8 4.1L8 11.3l-3.7 2 .8-4.1L2 6.3l4.2-.5z"/>"#,
-            Icon::Clock => r#"<circle cx="8" cy="8" r="5.75"/><path d="M8 4.75V8l2.25 1.5"/>"#,
-            Icon::Moon => r#"<path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z"/>"#,
-            Icon::Paw => r#"<ellipse cx="8" cy="11" rx="2.75" ry="2.25"/><circle cx="4" cy="7.5" r="1.25"/><circle cx="12" cy="7.5" r="1.25"/><circle cx="6.25" cy="4.25" r="1.25"/><circle cx="9.75" cy="4.25" r="1.25"/>"#,
-            Icon::Shield => r#"<path d="M8 2 13 4v4c0 3-2.2 5-5 6-2.8-1-5-3-5-6V4z"/><path d="m6 8 1.5 1.5L10.25 6.75"/>"#,
-            Icon::Plug => r#"<path d="M6 2v3M10 2v3M4.5 5h7v2.5a3.5 3.5 0 0 1-7 0zM8 11v3"/>"#,
-            Icon::Brush => r#"<rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M2.5 6h11M6 6v7.5"/>"#,
-            Icon::Chart => r#"<path d="M2.5 2.5v11h11"/><path d="m5 10 2.5-3 2 2L13 5"/>"#,
-            Icon::Users => r#"<circle cx="6" cy="5.5" r="2.25"/><path d="M2 13c.4-2.2 2-3.5 4-3.5s3.6 1.3 4 3.5"/><path d="M10.5 3.5a2 2 0 0 1 0 4M12 9.75c1 .5 1.8 1.6 2 3.25"/>"#,
-            Icon::Toggle => r#"<rect x="1.5" y="4.5" width="13" height="7" rx="3.5"/><circle cx="11" cy="8" r="1.75"/>"#,
-            Icon::Activity => r#"<path d="M1.5 8h3l2-4.5 3 9 2-4.5h3"/>"#,
-            Icon::Bell => r#"<path d="M4 11V7a4 4 0 0 1 8 0v4l1 1.5H3zM6.5 14h3"/>"#,
-            Icon::Plus => r#"<path d="M8 3v10M3 8h10"/>"#,
-            Icon::Trash => r#"<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.5 9h6l.5-9"/>"#,
-            Icon::Check => r#"<path d="m3 8.5 3 3 7-7"/>"#,
-            Icon::Close => r#"<path d="m4 4 8 8M12 4l-8 8"/>"#,
-            Icon::Chevron => r#"<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>"#,
-            Icon::External => r#"<path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3"/>"#,
-            Icon::Menu => r#"<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>"#,
-            Icon::Logout => r#"<path d="M6.5 13.5h-3a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h3M10.5 11 13.5 8l-3-3M13.5 8H6"/>"#,
-            Icon::Hash => r#"<path d="M6 2.5 5 13.5M11 2.5l-1 11M2.75 6h11M2.25 10h11"/>"#,
+            Icon::Home => (24, r#"<path d="M5.5 4h4A1.5 1.5 0 0 1 11 5.5v4A1.5 1.5 0 0 1 9.5 11h-4A1.5 1.5 0 0 1 4 9.5v-4A1.5 1.5 0 0 1 5.5 4ZM14.5 4h4A1.5 1.5 0 0 1 20 5.5v4a1.5 1.5 0 0 1-1.5 1.5h-4A1.5 1.5 0 0 1 13 9.5v-4A1.5 1.5 0 0 1 14.5 4ZM5.5 13h4a1.5 1.5 0 0 1 1.5 1.5v4A1.5 1.5 0 0 1 9.5 20h-4A1.5 1.5 0 0 1 4 18.5v-4A1.5 1.5 0 0 1 5.5 13ZM13 17h2l1.5-3 2 6 1.5-3h1"/>"#),
+            Icon::Live => (24, r#"<path d="M10.25 9a1.75 1.75 0 1 0 3.5 0 1.75 1.75 0 1 0-3.5 0M12 11v9M9 20h6M8.1 5.1a5.5 5.5 0 0 0 0 7.8M15.9 5.1a5.5 5.5 0 0 1 0 7.8M5.3 2.3a9.5 9.5 0 0 0 0 13.4M18.7 2.3a9.5 9.5 0 0 1 0 13.4"/>"#),
+            Icon::Calendar => (16, r#"<rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/><path d="M2.5 6.5h11M5.5 2v3M10.5 2v3"/>"#),
+            Icon::Play => (16, r#"<rect x="1.5" y="3.5" width="13" height="9" rx="2.5"/><path d="m6.75 6 3.25 2-3.25 2z"/>"#),
+            Icon::Trophy => (24, r#"<path d="m6 19.5 6-4 6 4M6 14l6-4 6 4M12 3l1.2 2.4 2.6.4-1.9 1.8.5 2.6L12 9l-2.4 1.2.5-2.6-1.9-1.8 2.6-.4z"/>"#),
+            Icon::Log => (24, r#"<path d="M6.5 3h8l4 4v13a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM14.5 3v4h4M8.5 14.5s1.5-2.5 3.5-2.5 3.5 2.5 3.5 2.5-1.5 2.5-3.5 2.5-3.5-2.5-3.5-2.5zM11.25 14.5a.75.75 0 1 0 1.5 0 .75.75 0 1 0-1.5 0"/>"#),
+            Icon::Wave => (24, r#"<path d="M8 13.5V7a1.5 1.5 0 0 1 3 0v4.5V5a1.5 1.5 0 0 1 3 0v6.5-5a1.5 1.5 0 0 1 3 0v7c0 4-2.5 7-6.5 7-2.4 0-4-1.2-5.5-3.4l-1.8-2.7a1.5 1.5 0 0 1 2.5-1.7L8 15M19.5 3.5c.8.6 1.3 1.5 1.5 2.5M3 8c.3-1 .9-1.8 1.7-2.4"/>"#),
+            Icon::Door => (16, r#"<path d="M3.5 13.5V3a.5.5 0 0 1 .5-.5h6v11M10 4.5h2.5v9M2 13.5h12M7.5 8.25v.5"/>"#),
+            Icon::Gift => (24, r#"<path d="M6 11h12a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 18 20H6a1.5 1.5 0 0 1-1.5-1.5v-6A1.5 1.5 0 0 1 6 11ZM4 7.5h16a1 1 0 0 1 1 1V10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8.5a1 1 0 0 1 1-1ZM12 7.5V20M12 7.5C10.6 4.6 7.2 4 7.2 5.8S10.2 7.5 12 7.5zM12 7.5c1.4-2.9 4.8-3.5 4.8-1.7S13.8 7.5 12 7.5z"/>"#),
+            Icon::Poll => (24, r#"<path d="M5 4.5h14A1.5 1.5 0 0 1 20.5 6v9.5A1.5 1.5 0 0 1 19 17h-9l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 5 4.5zM8.5 13.5V11M12 13.5V8M15.5 13.5v-4"/>"#),
+            Icon::Bulb => (24, r#"<path d="M9.5 18h5M10.5 21h3M8.6 14.6a5.5 5.5 0 1 1 6.8 0c-.8.6-1.4 1.5-1.4 2.4h-4c0-.9-.6-1.8-1.4-2.4zM19.5 2.5v3M18 4h3"/>"#),
+            Icon::Ticket => (24, r#"<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h14a1.5 1.5 0 0 1 1.5 1.5v2.25a2.25 2.25 0 0 0 0 4.5v2.25A1.5 1.5 0 0 1 19 18H5a1.5 1.5 0 0 1-1.5-1.5v-2.25a2.25 2.25 0 0 0 0-4.5zM15 6.5V8M15 11v2M15 16v1.5M7 10.5h4.5M7 13.5h3"/>"#),
+            Icon::Star => (24, r#"<path d="m10.5 5 2 4.4 4.8.6-3.6 3.3 1 4.7-4.2-2.4-4.2 2.4 1-4.7L3.7 10l4.8-.6zM19 3v3M17.5 4.5h3M19.5 14.5v2M18.5 15.5h2"/>"#),
+            Icon::Clock => (16, r#"<circle cx="8" cy="8" r="5.75"/><path d="M8 4.75V8l2.25 1.5"/>"#),
+            Icon::Afk => (24, r#"<path d="M3.5 13.5a7 7 0 1 0 14 0 7 7 0 1 0-14 0M10.5 10v3.5l2.5 1.5M19 2.5a3 3 0 1 0 2.5 4.6A2.6 2.6 0 0 1 19 2.5z"/>"#),
+            Icon::Moon => (16, r#"<path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z"/>"#),
+            Icon::Paw => (24, r#"<path d="M4.9 10.5a1.6 2.1 0 1 0 3.2 0 1.6 2.1 0 1 0-3.2 0M8.3 6.9a1.6 2.1 0 1 0 3.2 0 1.6 2.1 0 1 0-3.2 0M12.5 6.9a1.6 2.1 0 1 0 3.2 0 1.6 2.1 0 1 0-3.2 0M15.9 10.5a1.6 2.1 0 1 0 3.2 0 1.6 2.1 0 1 0-3.2 0M12 12.5c-2.6 0-5 2.7-5 4.8 0 1.4 1.1 2.4 2.4 2.4 1 0 1.6-.5 2.6-.5s1.6.5 2.6.5c1.3 0 2.4-1 2.4-2.4 0-2.1-2.4-4.8-5-4.8z"/>"#),
+            Icon::Shield => (24, r#"<path d="m12 3 7 3v5c0 4.6-3 8-7 10-4-2-7-5.4-7-10V6zM12.5 7v6a2.25 2.25 0 0 1-4.5 0v-1M12.5 7H14"/>"#),
+            Icon::Plug => (24, r#"<path d="M6 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM8 17.5h2M16 11.5l2 2 4-4"/>"#),
+            Icon::Brush => (24, r#"<path d="M5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13A1.5 1.5 0 0 1 5.5 4ZM7.5 4v16M10.5 9h6M10.5 12.5h4M10.5 16h5"/>"#),
+            Icon::Chart => (16, r#"<path d="M2.5 2.5v11h11"/><path d="m5 10 2.5-3 2 2L13 5"/>"#),
+            Icon::Users => (24, r#"<path d="M6 8.5a3 3 0 1 0 6 0 3 3 0 1 0-6 0M3 20c.5-3.5 3-5.5 6-5.5s5.5 2 6 5.5M14.5 5.9a3 3 0 1 1 1.5 5.6M17.6 14.6c1.8.8 3 2.6 3.4 5.4"/>"#),
+            Icon::Toggle => (24, r#"<path d="M6 4.5h8a3 3 0 0 1 0 6H6a3 3 0 0 1 0-6ZM10 13.5h8a3 3 0 0 1 0 6h-8a3 3 0 0 1 0-6ZM12.75 7.5a1.25 1.25 0 1 0 2.5 0 1.25 1.25 0 1 0-2.5 0M8.75 16.5a1.25 1.25 0 1 0 2.5 0 1.25 1.25 0 1 0-2.5 0"/>"#),
+            Icon::Activity => (24, r#"<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M12 7v5l4 2"/>"#),
+            Icon::Bell => (24, r#"<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15l1.5-2M10 21h4"/>"#),
+            Icon::Plus => (16, r#"<path d="M8 3v10M3 8h10"/>"#),
+            Icon::Trash => (16, r#"<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.5 9h6l.5-9"/>"#),
+            Icon::Check => (16, r#"<path d="m3 8.5 3 3 7-7"/>"#),
+            Icon::Close => (16, r#"<path d="m4 4 8 8M12 4l-8 8"/>"#),
+            Icon::Chevron => (16, r#"<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>"#),
+            Icon::External => (16, r#"<path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3"/>"#),
+            Icon::Menu => (16, r#"<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>"#),
+            Icon::Logout => (24, r#"<path d="M10 4.5H6.5A1.5 1.5 0 0 0 5 6v12a1.5 1.5 0 0 0 1.5 1.5H10M14.5 8l4 4-4 4M18.5 12h-9"/>"#),
+            Icon::Hash => (16, r#"<path d="M6 2.5 5 13.5M11 2.5l-1 11M2.75 6h11M2.25 10h11"/>"#),
         }
     }
 }
 
 pub fn icon(i: Icon) -> Markup {
+    let (grid, body) = i.draw();
+    let (view, stroke) = if grid == 24 { ("0 0 24 24", "1.75") } else { ("0 0 16 16", "1.3") };
     html! {
-        svg.icon viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" {
-            (PreEscaped(i.paths()))
+        svg.icon viewBox=(view) width="16" height="16" fill="none" stroke="currentColor" stroke-width=(stroke) stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" {
+            (PreEscaped(body))
         }
     }
 }
@@ -110,11 +117,65 @@ pub fn head(title: &str) -> Markup {
 }
 
 /// The signed-in shell: sidebar with the server switcher and the pages this person can open,
-/// then the page itself. `actions` sits at the right of the title.
+/// then the page with its header (the page's icon, title, one line on what it does, the bell).
+/// `actions` sits at the right of the title.
 pub fn layout(ctx: &Ctx, page: &Page, title: &str, actions: Option<Markup>, body: Markup) -> Markup {
+    let (ic, line) = identity(ctx, page, title);
+    let head = html! {
+        header.page-head {
+            span.head-icon { (icon(ic)) }
+            div.head-text {
+                h1 { (title) }
+                @if let Some(l) = line { p { (l) } }
+            }
+            div.head-actions {
+                @if let Some(a) = actions { (a) }
+                (bell(ctx, page))
+            }
+        }
+    };
+    shell(ctx, page, title, head, html! { div.page-body { (body) } })
+}
+
+/// The shell with a page that draws its own header (the overview's banner). Put [`bell`] in it.
+pub fn layout_custom(ctx: &Ctx, page: &Page, title: &str, body: Markup) -> Markup {
+    shell(ctx, page, title, html! {}, body)
+}
+
+/// The notification bell with its unread count.
+pub fn bell(ctx: &Ctx, page: &Page) -> Markup {
+    let unread = unread_count(ctx, page);
+    html! {
+        a.icon-btn.bell href={ "/g/" (page.guild_id) "/notifications" } title="Notifications" aria-label={ "Notifications, " (unread) " new" } {
+            (icon(Icon::Bell))
+            @if unread > 0 { span.count { (if unread > 99 { "99+".to_owned() } else { unread.to_string() }) } }
+        }
+    }
+}
+
+/// The icon and the one line under the title: the feature's own, or the core page's.
+fn identity(ctx: &Ctx, page: &Page, title: &str) -> (Icon, Option<&'static str>) {
+    match page.key {
+        "overview" => (Icon::Home, None),
+        "features" => (Icon::Toggle, Some("A feature that's off ignores the server, and its commands disappear there.")),
+        "users" => (Icon::Users, Some("Only people you add can open the dashboard, and they see only the pages you give them.")),
+        "activity" => (Icon::Activity, Some("Every change made on the dashboard, with who made it.")),
+        "notifications" => (Icon::Bell, Some("What features flagged for you, newest first.")),
+        key => match ctx.feature(key) {
+            Some(f) => {
+                let meta = f.meta();
+                let nav = meta.nav.iter().find(|n| n.label == title).or(meta.nav.first());
+                let ic = nav.map(|n| n.icon).unwrap_or(Icon::Toggle);
+                (ic, Some(nav.map(|n| n.about).filter(|a| !a.is_empty()).unwrap_or(meta.description)))
+            }
+            None => (Icon::Home, None),
+        },
+    }
+}
+
+fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Markup {
     let guild = page.guild_id;
     let guilds = ctx.guilds_for(&page.user);
-    let unread = unread_count(ctx, page);
     type Link = (&'static str, &'static str, Icon, &'static str);
     let mut groups: Vec<(Group, Vec<Link>)> = Vec::new();
     for f in ctx.features() {
@@ -186,17 +247,8 @@ pub fn layout(ctx: &Ctx, page: &Page, title: &str, actions: Option<Markup>, body
                         }
                     }
                     main.page {
-                        header.page-head {
-                            h1 { (title) }
-                            div.head-actions {
-                                @if let Some(a) = actions { (a) }
-                                a.icon-btn.bell href={ "/g/" (guild) "/notifications" } title="Notifications" aria-label={ "Notifications, " (unread) " new" } {
-                                    (icon(Icon::Bell))
-                                    @if unread > 0 { span.count { (if unread > 99 { "99+".to_owned() } else { unread.to_string() }) } }
-                                }
-                            }
-                        }
-                        div.page-body { (body) }
+                        (top)
+                        (body)
                     }
                 }
             }
@@ -515,6 +567,63 @@ pub fn bar_chart(series: &[(String, i64)], color: &str, unit: &str) -> Markup {
                 div.axis { span { (first.0) } span { (last.0) } }
             }
             figcaption.muted.small { "Peak " (crate::text::num(max)) " · total " (crate::text::num(total)) " " (unit) }
+        }
+    }
+}
+
+/// A smooth area chart for a daily series, `(label, value)`, oldest first, in the data colour.
+/// Hovering a day shows its value. Labels the first, middle and last day under it.
+pub fn area_chart(series: &[(String, i64)], unit: &str) -> Markup {
+    let n = series.len();
+    let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
+    let (w, h) = (1000.0, 130.0);
+    let step = if n > 1 { w / (n - 1) as f64 } else { w };
+    let pts: Vec<(f64, f64)> = series.iter().enumerate().map(|(i, (_, v))| (i as f64 * step, h - 2.0 - (*v as f64 / max) * (h - 14.0))).collect();
+    // Catmull-Rom through the points, as cubic Béziers.
+    let mut line = String::new();
+    for (i, p) in pts.iter().enumerate() {
+        if i == 0 {
+            line.push_str(&format!("M{:.1} {:.1}", p.0, p.1));
+            continue;
+        }
+        let p0 = if i >= 2 { pts[i - 2] } else { pts[i - 1] };
+        let p1 = pts[i - 1];
+        let p3 = pts.get(i + 1).copied().unwrap_or(*p);
+        let c1 = (p1.0 + (p.0 - p0.0) / 6.0, p1.1 + (p.1 - p0.1) / 6.0);
+        let c2 = (p.0 - (p3.0 - p1.0) / 6.0, p.1 - (p3.1 - p1.1) / 6.0);
+        line.push_str(&format!(" C{:.1} {:.1} {:.1} {:.1} {:.1} {:.1}", c1.0, c1.1.min(h), c2.0, c2.1.min(h), p.0, p.1));
+    }
+    let area = format!("{line} L{w} {h} L0 {h} Z");
+    let total: i64 = series.iter().map(|(_, v)| v).sum();
+    html! {
+        figure.area {
+            svg viewBox={ "0 0 " (w) " " (h) } preserveAspectRatio="none" role="img" aria-label={ (crate::text::num(total)) " " (unit) " in " (n) " days" } {
+                defs {
+                    linearGradient id="area-fill" x1="0" y1="0" x2="0" y2="1" {
+                        stop offset="0" stop-color="var(--data)" stop-opacity="0.32" {}
+                        stop offset="1" stop-color="var(--data)" stop-opacity="0.04" {}
+                    }
+                }
+                path d=(area) fill="url(#area-fill)" {}
+                path d=(line) fill="none" stroke="var(--data)" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" {}
+                @for (i, (label, v)) in series.iter().enumerate() {
+                    rect.hit x=((i as f64 * step - step / 2.0).max(0.0)) y="0" width=(step) height=(h) {
+                        title { (label) ": " (crate::text::num(*v)) " " (unit) }
+                    }
+                }
+            }
+            @if n > 1 {
+                div.axis { span { (series[0].0) } span { (series[n / 2].0) } span { "Today" } }
+            }
+        }
+    }
+}
+
+/// Up to `max` overlapping avatars.
+pub fn avatars(urls: &[String], max: usize) -> Markup {
+    html! {
+        span.avatars {
+            @for u in urls.iter().take(max) { img.avatar src=(u) alt="" width="26" height="26" loading="lazy"; }
         }
     }
 }

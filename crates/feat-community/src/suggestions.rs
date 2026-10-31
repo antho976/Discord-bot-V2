@@ -81,6 +81,7 @@ pub struct Suggestion {
     pub status: Status,
     pub reason: String,
     pub staff_id: Option<u64>,
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -89,7 +90,7 @@ pub struct Tally {
     pub down: i64,
 }
 
-const COLS: &str = "id, guild_id, channel_id, message_id, author_id, content, anonymous, status, reason, staff_id";
+const COLS: &str = "id, guild_id, channel_id, message_id, author_id, content, anonymous, status, reason, staff_id, created_at";
 
 fn from_row(r: &Row) -> bot_core::rusqlite::Result<Suggestion> {
     let status: String = r.get(7)?;
@@ -104,6 +105,7 @@ fn from_row(r: &Row) -> bot_core::rusqlite::Result<Suggestion> {
         status: Status::parse(&status).unwrap_or(Status::Open),
         reason: r.get(8)?,
         staff_id: r.get::<_, Option<i64>>(9)?.map(|m| m as u64),
+        created_at: r.get(10)?,
     })
 }
 
@@ -127,7 +129,33 @@ pub fn list(c: &Connection, guild: u64, limit: i64) -> bot_core::rusqlite::Resul
            (SELECT COALESCE(SUM(vote = -1), 0) FROM suggestion_votes v WHERE v.suggestion_id = suggestions.id)
          FROM suggestions WHERE guild_id = ?1 ORDER BY created_at DESC, id DESC LIMIT ?2"
     ))?;
-    s.query_map(params![id_i64(guild), limit], |r| Ok((from_row(r)?, Tally { up: r.get(10)?, down: r.get(11)? })))?.collect()
+    s.query_map(params![id_i64(guild), limit], |r| Ok((from_row(r)?, Tally { up: r.get(11)?, down: r.get(12)? })))?.collect()
+}
+
+/// Suggestions waiting for staff.
+pub fn open_count(c: &Connection, guild: u64) -> bot_core::rusqlite::Result<i64> {
+    c.query_row("SELECT COUNT(*) FROM suggestions WHERE guild_id = ?1 AND status = 'open'", [id_i64(guild)], |r| r.get(0))
+}
+
+/// Since `since` (epoch ms): suggestions made, approved and marked implemented.
+pub fn month_stats(c: &Connection, guild: u64, since: i64) -> bot_core::rusqlite::Result<(i64, i64, i64)> {
+    c.query_row(
+        "SELECT COALESCE(SUM(created_at >= ?2), 0),
+                COALESCE(SUM(status = 'approved' AND status_at >= ?2), 0),
+                COALESCE(SUM(status = 'implemented' AND status_at >= ?2), 0)
+         FROM suggestions WHERE guild_id = ?1",
+        params![id_i64(guild), since],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+}
+
+/// Members who have cast the most votes in a server, most first, with their vote counts.
+pub fn top_voters(c: &Connection, guild: u64, limit: i64) -> bot_core::rusqlite::Result<Vec<(u64, i64)>> {
+    let mut s = c.prepare_cached(
+        "SELECT v.user_id, COUNT(*) AS n FROM suggestion_votes v JOIN suggestions s ON s.id = v.suggestion_id
+         WHERE s.guild_id = ?1 GROUP BY v.user_id ORDER BY n DESC, v.user_id LIMIT ?2",
+    )?;
+    s.query_map(params![id_i64(guild), limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
 }
 
 /// What a vote press does: the same button again takes the vote back, the other one switches.
@@ -301,8 +329,14 @@ pub async fn set_status(ctx: &Ctx, id: i64, status: Status, reason: &str, staff:
     let reason = if status == Status::Open { String::new() } else { text::clip(reason.trim(), MAX_REASON) };
     let changed = ctx.db.with(|c| {
         c.execute(
-            "UPDATE suggestions SET status = ?2, reason = ?3, staff_id = ?4 WHERE id = ?1",
-            params![id, status.as_str(), reason, if status == Status::Open { None } else { Some(id_i64(staff)) }],
+            "UPDATE suggestions SET status = ?2, reason = ?3, staff_id = ?4, status_at = ?5 WHERE id = ?1",
+            params![
+                id,
+                status.as_str(),
+                reason,
+                if status == Status::Open { None } else { Some(id_i64(staff)) },
+                if status == Status::Open { 0 } else { now_ms() }
+            ],
         )
     })?;
     if changed == 0 {
@@ -352,8 +386,8 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     for (i, (author, body, status, reason, ups, downs)) in rows.into_iter().enumerate() {
         ctx.db.with(|c| {
             c.execute(
-                "INSERT INTO suggestions (guild_id, channel_id, message_id, author_id, content, status, reason, staff_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO suggestions (guild_id, channel_id, message_id, author_id, content, status, reason, staff_id, created_at, status_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     id_i64(guild),
                     id_i64(guild + 70),
@@ -363,14 +397,15 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
                     status.as_str(),
                     reason,
                     (status != Status::Open).then(|| id_i64(who(0))),
-                    now - (i as i64 + 1) * 9 * hour
+                    now - (i as i64 + 1) * 9 * hour,
+                    if status == Status::Open { 0 } else { now - (i as i64 + 1) * 4 * hour }
                 ],
             )?;
             let id = c.last_insert_rowid();
             for n in 0..ups + downs {
                 c.execute(
                     "INSERT OR IGNORE INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (?1, ?2, ?3)",
-                    params![id, id_i64(MEMBERS[0].0 + 100 + n as u64), if n < ups { 1 } else { -1 }],
+                    params![id, id_i64(who(n)), if n < ups { 1 } else { -1 }],
                 )?;
             }
             Ok(())
@@ -416,5 +451,27 @@ mod tests {
         }
         assert_eq!(Status::parse("nope"), None);
         assert!(Status::Approved.is_decided() && !Status::Considering.is_decided() && !Status::Open.is_decided());
+    }
+
+    #[test]
+    fn board_totals_read_empty_and_filled_tables() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        db.with(|c| {
+            assert_eq!(open_count(c, 1)?, 0);
+            assert_eq!(month_stats(c, 1, 0)?, (0, 0, 0));
+            assert!(top_voters(c, 1, 3)?.is_empty());
+            c.execute("INSERT INTO suggestions (guild_id, channel_id, author_id, content, created_at) VALUES (1, 2, 3, 'a', 10)", [])?;
+            c.execute(
+                "INSERT INTO suggestions (guild_id, channel_id, author_id, content, status, created_at, status_at) VALUES (1, 2, 3, 'b', 'approved', 10, 20)",
+                [],
+            )?;
+            c.execute("INSERT INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (1, 9, 1), (2, 9, -1), (2, 8, 1)", [])?;
+            assert_eq!(open_count(c, 1)?, 1);
+            assert_eq!(month_stats(c, 1, 5)?, (2, 1, 0));
+            assert_eq!(top_voters(c, 1, 3)?, vec![(9, 2), (8, 1)]);
+            Ok(())
+        })
+        .unwrap();
     }
 }

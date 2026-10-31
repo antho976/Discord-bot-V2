@@ -47,11 +47,18 @@ pub struct User {
     pub name: String,
     pub avatar: Option<String>,
     pub admin: bool,
+    /// The browser's timezone, from the `tz` cookie app.js sets. UTC until it's known.
+    pub tz: jiff::tz::TimeZone,
 }
 
 impl User {
     pub fn avatar_url(&self) -> String {
         crate::discord::avatar_url(self.id, self.avatar.as_deref())
+    }
+
+    /// An epoch-millisecond time in this person's timezone.
+    pub fn local(&self, ms: i64) -> jiff::Zoned {
+        jiff::Timestamp::from_millisecond(ms).unwrap_or_default().to_zoned(self.tz.clone())
     }
 }
 
@@ -158,6 +165,7 @@ impl FromRequestParts<Ctx> for User {
                         name: r.get(1)?,
                         avatar: r.get(2)?,
                         admin: r.get(3)?,
+                        tz: jiff::tz::TimeZone::UTC,
                     })
                 },
             )
@@ -166,6 +174,9 @@ impl FromRequestParts<Ctx> for User {
         let mut user = user.ok_or(WebError::Login)?;
         if user.id == ctx.cfg.owner_id {
             user.admin = true;
+        }
+        if let Some(tz) = cookie(&parts.headers, "tz").and_then(|t| jiff::tz::TimeZone::get(&t.replace("%2F", "/")).ok()) {
+            user.tz = tz;
         }
         Ok(user)
     }
