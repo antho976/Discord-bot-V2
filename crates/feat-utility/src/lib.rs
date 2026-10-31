@@ -377,13 +377,15 @@ impl Feature for Utility {
             (0, "Lunch, back soon", 25 * 60_000),
             (3, "", 3 * 3_600_000 + 12 * 60_000),
             (6, "Exam week, slow replies", 26 * 3_600_000),
+            (9, "Driving, back tonight", 50 * 60_000),
         ];
         for (i, reason, ago) in away {
             afk_set(ctx, guild, &Afk { user_id: members[i].0, reason: reason.into(), since_ms: now - ago, prev_nick: None, prefixed: false, name: members[i].1.into() })?;
         }
+        // Two pairs share a zone, so a clock and a pin on the band show more than one face.
         let zones = [
             "Europe/Warsaw", "America/New_York", "Asia/Tokyo", "Europe/London", "Australia/Sydney",
-            "America/Los_Angeles", "Asia/Kolkata", "Europe/Berlin",
+            "America/Los_Angeles", "Asia/Kolkata", "Europe/Berlin", "Europe/London", "Europe/Warsaw",
         ];
         for (i, zone) in zones.iter().enumerate() {
             tz_set(ctx, members[i].0, zone)?;

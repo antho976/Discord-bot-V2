@@ -294,7 +294,16 @@ fn seed(ctx: &Ctx) -> Result<()> {
         "INSERT INTO connect_hosts (id, request_id, name, token_hash, created_at, last_seen_at) VALUES ('a1b2c3d4e5f60718', 'seed', 'antho-desktop', ?1, ?2, ?3)",
         rusqlite::params![domain::sha256_hex(&domain::sha256_hex("preview-pc")), now - 9 * 86_400_000, now - 20_000],
     )?;
+    conn.execute(
+        "INSERT INTO connect_hosts (id, request_id, name, token_hash, created_at, last_seen_at) VALUES ('0f1e2d3c4b5a6978', 'seed-2', 'studio-laptop', ?1, ?2, ?3)",
+        rusqlite::params![domain::sha256_hex(&domain::sha256_hex("preview-pc-2")), now - 41 * 86_400_000, now - 5 * 3_600_000],
+    )?;
     drop(conn);
+    // The newest request reached both approvers' DMs.
+    let newest = &domain::sha256_hex("preview-request-0")[..32];
+    for (i, user) in [ctx.cfg.owner_id, MEMBERS[0].0].into_iter().enumerate() {
+        store::add_dm(ctx, newest, user, 1_400_000_000_000_000_001 + i as u64, 1_400_000_000_000_000_101 + i as u64)?;
+    }
     save_approvers(ctx, vec![ctx.cfg.owner_id, MEMBERS[0].0])
 }
 
