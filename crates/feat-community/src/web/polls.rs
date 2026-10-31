@@ -223,7 +223,7 @@ fn recent_item(p: &Poll) -> Markup {
             @if total == 0 {
                 span.muted { "No votes" }
             } @else if leaders.len() == 1 {
-                span.cm-chip.data { (leaders[0].0) " · " (leaders[0].2) "%" }
+                span.cm-chip.data title=(leaders[0].0) { span.cm-chip-text { (leaders[0].0) } span.pct { "· " (leaders[0].2) "%" } }
             } @else {
                 span.cm-chip.data { "Tie" }
             }

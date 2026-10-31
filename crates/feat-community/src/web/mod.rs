@@ -123,13 +123,17 @@ const STYLE: &str = r#"
 .cm-link { display: inline-flex; align-items: center; height: 28px; padding: 0 9px; border-radius: var(--r-key); font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
 .cm-link:hover { color: var(--ink); background: var(--hover); }
 .cm-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.cm-main { min-width: 0; }
+.cm-main, .cm-main + .rail { min-width: 0; }
+.cm-recent { max-width: 100%; }
 .cm-tile { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: var(--r-key); background: var(--control); color: var(--ink-2); }
 .cm-tile .icon { width: 20px; height: 20px; }
 .cm-emoji { font-size: 22px; line-height: 1; }
 .cm-tile.big .cm-emoji { font-size: 60px; }
 .cm-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; width: fit-content; padding: 0 10px; border-radius: 12px; font-size: 12px; white-space: nowrap; }
 .cm-chip .icon { width: 14px; height: 14px; }
+.cm-chip { max-width: 100%; min-width: 0; }
+.cm-chip > .cm-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cm-chip > .pct { flex: none; }
 .cm-chip.warn { color: var(--waiting); background: rgba(227, 169, 72, 0.14); }
 .cm-chip.data { color: var(--data); background: var(--data-wash); }
 .cm-list { display: flex; flex-direction: column; }
