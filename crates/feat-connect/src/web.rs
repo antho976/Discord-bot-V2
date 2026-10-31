@@ -93,7 +93,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
     let history = store::history(&ctx, now, 8)?;
     let hosts = store::hosts(&ctx)?;
     let approvers = crate::approvers(&ctx);
-    let cloud = ctx.cfg.relay_public_url.is_some();
+    let cloud = crate::api::cloud(&ctx);
 
     let body = html! {
         style { (PreEscaped(CSS)) }
@@ -346,7 +346,13 @@ async fn add_approver(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 
 async fn remove_approver(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, u64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    if id == ctx.cfg.owner_id {
+        return Err(WebError::Bad("The bot's owner can't be removed.".into()));
+    }
     let mut list = crate::approvers(&ctx);
+    if !list.contains(&id) {
+        return Err(WebError::NotFound);
+    }
     list.retain(|u| *u != id);
     if list.is_empty() {
         return Err(WebError::Bad("Keep at least one approver, or nobody can let an app in.".into()));

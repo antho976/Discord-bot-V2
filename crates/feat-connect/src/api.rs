@@ -54,7 +54,7 @@ fn hex_field<'a>(o: &'a bot_core::serde_json::Map<String, Value>, key: &str, len
 }
 
 /// Whether this server carries Relay's cloud copy (RELAY_PUBLIC_URL is set).
-fn cloud(ctx: &Ctx) -> bool {
+pub fn cloud(ctx: &Ctx) -> bool {
     ctx.cfg.relay_public_url.as_deref().is_some_and(|u| !u.trim().trim_end_matches('/').is_empty())
 }
 
@@ -163,14 +163,24 @@ pub async fn claim_answer(ctx: &Ctx, bytes: &[u8]) -> Answer {
     if state != ClaimState::Ready {
         return status(state);
     }
+    let busy = || (StatusCode::SERVICE_UNAVAILABLE, json!({ "status": "error", "reason": "The server could not answer. Try again in a minute." }));
+    // Count the claim first: another claim at the same moment may have taken the last one.
+    match store::reserve_claim(ctx, &row.id, now) {
+        Ok(true) => {}
+        Ok(false) => return status(ClaimState::Spent),
+        Err(e) => {
+            bot_core::tracing::error!(error = %e, "couldn't count a claim");
+            return busy();
+        }
+    }
 
     if row.kind == "relay" {
-        let _ = store::mark_claimed(ctx, &row.id, now);
         return (StatusCode::OK, json!({ "status": "ready", "link": row.pc_link }));
     }
 
     let Some(link) = mint_pair_link(&ctx.cfg.relay_bin, Duration::from_secs(15)).await else {
         bot_core::tracing::error!(bin = %ctx.cfg.relay_bin, "relay remote pair gave no link: is the cloud engine running?");
+        let _ = store::release_claim(ctx, &row.id);
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             json!({ "status": "error", "reason": "The server could not open a pairing window. Try again in a minute." }),
@@ -179,13 +189,17 @@ pub async fn claim_answer(ctx: &Ctx, bytes: &[u8]) -> Answer {
     let mut answer = json!({ "status": "ready", "link": link });
     if row.kind == "pc" {
         let (token, hash) = domain::new_host_token();
-        if let Err(e) = store::upsert_host(ctx, &row.id, &row.device, &hash, now) {
-            bot_core::tracing::error!(error = %e, "couldn't store a PC's token");
-            return (StatusCode::SERVICE_UNAVAILABLE, json!({ "status": "error", "reason": "The server could not answer. Try again in a minute." }));
+        match store::upsert_host(ctx, &row.id, &row.device, &hash, now) {
+            Ok(true) => answer["hostToken"] = json!(token),
+            // Forgotten on the dashboard since it was allowed.
+            Ok(false) => return status(ClaimState::Spent),
+            Err(e) => {
+                bot_core::tracing::error!(error = %e, "couldn't store a PC's token");
+                let _ = store::release_claim(ctx, &row.id);
+                return busy();
+            }
         }
-        answer["hostToken"] = json!(token);
     }
-    let _ = store::mark_claimed(ctx, &row.id, now);
     (StatusCode::OK, answer)
 }
 
@@ -400,6 +414,70 @@ mod tests {
         // Nothing was handed out, so the device can try again.
         assert_eq!(store::get(&ctx, &req.id).unwrap().unwrap().claims, 0);
         assert_eq!(store::count_hosts(&ctx).unwrap(), 0);
+    }
+
+    /// A stand-in for `relay` that prints a pairing link, in a directory of its own.
+    fn fake_relay() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("connect-test-{}", domain::random_hex(4)));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("relay");
+        std::fs::write(&fake, "#!/bin/sh\necho 'relay://pair?v=1&room=r&code=ZZ99'\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        fake
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_forgotten_pc_cant_claim_its_way_back() {
+        let fake = fake_relay();
+        let mut cfg = bot_core::Config::preview(0);
+        cfg.relay_bin = fake.to_str().unwrap().into();
+        let ctx = Ctx::new(cfg, bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Connect)]).unwrap();
+        let challenge = domain::sha256_hex(&verifier(1));
+        let req = store::create(&ctx, &NewRequest { kind: "pc", device: "desk", challenge: &challenge, ip: None }, now_ms()).unwrap().unwrap();
+        crate::decide(&ctx, &req.id, true, 1, crate::Via::Discord("Antho".into())).await.unwrap().unwrap();
+
+        let (s, v) = claim_answer(&ctx, &claim_body(&req.id, 1)).await;
+        assert_eq!((s, v["status"].as_str()), (StatusCode::OK, Some("ready")));
+        assert!(v["hostToken"].is_string());
+        let host = store::hosts(&ctx).unwrap().remove(0);
+        // A retry inside the window still works and replaces the token.
+        assert!(claim_answer(&ctx, &claim_body(&req.id, 1)).await.1["hostToken"].is_string());
+
+        store::revoke_host(&ctx, &host.id, now_ms()).unwrap().unwrap();
+        assert_eq!(claim_answer(&ctx, &claim_body(&req.id, 1)).await, (StatusCode::OK, json!({ "status": "spent" })));
+        assert_eq!(store::count_hosts(&ctx).unwrap(), 0);
+        // Even with the request's count put back, the host isn't revived.
+        let (_, hash) = domain::new_host_token();
+        assert!(!store::upsert_host(&ctx, &req.id, "desk", &hash, now_ms()).unwrap());
+        assert_eq!(store::count_hosts(&ctx).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(fake.parent().unwrap());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn claims_are_counted_before_a_link_goes_out() {
+        let ctx = testing::ctx();
+        let challenge = domain::sha256_hex(&verifier(1));
+        let req = store::create(&ctx, &NewRequest { kind: "tally", device: "x", challenge: &challenge, ip: None }, now_ms()).unwrap().unwrap();
+        let now = now_ms();
+        // Not allowed yet: nothing to claim.
+        assert!(!store::reserve_claim(&ctx, &req.id, now).unwrap());
+        crate::decide(&ctx, &req.id, true, 1, crate::Via::Discord("Antho".into())).await.unwrap().unwrap();
+        ctx.db.with(|c| c.execute("UPDATE connect_requests SET claims = ?2 WHERE id = ?1", bot_core::rusqlite::params![req.id, domain::MAX_CLAIMS - 1])).unwrap();
+        // Two claims at once for the last link: one gets it.
+        assert!(store::reserve_claim(&ctx, &req.id, now).unwrap());
+        assert!(!store::reserve_claim(&ctx, &req.id, now).unwrap());
+        // A claim given back from the first link puts the request back to allowed.
+        ctx.db.with(|c| c.execute("UPDATE connect_requests SET claims = 1 WHERE id = ?1", [&req.id])).unwrap();
+        store::release_claim(&ctx, &req.id).unwrap();
+        let row = store::get(&ctx, &req.id).unwrap().unwrap();
+        assert_eq!((row.status.as_str(), row.claims), ("allowed", 0));
+        // Past the window, no claim.
+        assert!(!store::reserve_claim(&ctx, &req.id, row.expires_at).unwrap());
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
