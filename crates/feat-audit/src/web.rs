@@ -41,16 +41,10 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     // "Today" starts at midnight in the viewer's own timezone.
     let since = page.user.local(now_ms()).start_of_day()?.timestamp().as_millisecond();
     let today = store::today(&ctx, guild, since)?;
-    let mods = store::mod_actions(&ctx, guild, now_ms() - crate::KEEP_DAYS * 86_400_000)?;
-    let week_ago = now_ms() - 7 * 86_400_000;
-    let mut week: Vec<(u64, i64)> = Vec::new();
-    for a in mods.iter().filter(|a| a.at >= week_ago) {
-        match week.iter_mut().find(|w| w.0 == a.moderator) {
-            Some(w) => w.1 += 1,
-            None => week.push((a.moderator, 1)),
-        }
-    }
-    week.sort_by_key(|w| -w.1);
+    // Only the actions that can explain the entries shown.
+    let oldest = rows.last().map_or(now_ms(), |r| r.at);
+    let mods = store::mod_actions(&ctx, guild, oldest - store::MATCH_MS)?;
+    let week = store::moderator_counts(&ctx, guild, now_ms() - 7 * 86_400_000, ctx.bot_id())?;
     let has_channel = s.channel.is_some() || s.message_channel.is_some() || s.member_channel.is_some();
     let search_value = search.as_deref().unwrap_or_default();
 
@@ -172,9 +166,13 @@ fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row, mods: &[store::ModAction])
                 span.au-icon { (ui::icon(Icon::Log)) }
             }
             div.au-body {
-                @let by = store::moderator_for(mods, r.kind, r.user_id, r.at).filter(|m| Some(*m) != r.user_id).map(|m| ctx.display_name(guild, m));
+                @let action = store::moderator_for(mods, r.kind, r.user_id, r.channel_id, r.at).filter(|a| Some(a.moderator) != r.user_id);
+                @let by = action.map(|a| ctx.display_name(guild, a.moderator));
                 (headline(r.kind, name.as_deref(), &chan, by.as_deref()))
                 (detail(r))
+                @if let Some(reason) = action.and_then(|a| a.reason.as_deref()) {
+                    p.muted.small { "Reason: " (reason) }
+                }
             }
         }
     }

@@ -97,15 +97,15 @@ pub struct ModAction {
     pub moderator: u64,
     pub action: String,
     pub target: Option<u64>,
+    /// For a deleted message, the channel it was in.
+    pub channel: Option<u64>,
+    pub reason: Option<String>,
 }
 
-/// Remember who did what, for the actions moderators take by hand. The bot's own actions
-/// (scam protection's timeouts and bans) are left out.
+/// Remember who did what. The bot's own actions (scam protection, reward roles) are kept too, so
+/// they aren't put down to a moderator who acted on the same member a moment before.
 pub fn record_moderator(ctx: &Ctx, e: &AuditLogEntry) -> Result<()> {
     let (Some(guild), Some(moderator)) = (e.guild_id, e.user_id) else { return Ok(()) };
-    if ctx.bot_id() == Some(moderator.get()) {
-        return Ok(());
-    }
     let action = match e.action_type {
         AuditLogEventType::MemberBanAdd => "ban",
         AuditLogEventType::MemberBanRemove => "unban",
@@ -124,10 +124,12 @@ pub fn record_moderator(ctx: &Ctx, e: &AuditLogEntry) -> Result<()> {
         }
         _ => return Ok(()),
     };
+    let channel = e.options.as_ref().and_then(|o| o.channel_id).map(|c| c.get() as i64);
+    let reason = e.reason.as_deref().map(str::trim).filter(|r| !r.is_empty()).map(|r| bot_core::text::clip(r, 300));
     ctx.db.with(|c| {
         c.execute(
-            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![guild.get() as i64, bot_core::now_ms(), moderator.get() as i64, action, e.target_id.map(|t| t.get() as i64)],
+            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, channel_id, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![guild.get() as i64, bot_core::now_ms(), moderator.get() as i64, action, e.target_id.map(|t| t.get() as i64), channel, reason],
         )
     })?;
     Ok(())
@@ -137,18 +139,42 @@ pub fn record_moderator(ctx: &Ctx, e: &AuditLogEntry) -> Result<()> {
 pub fn mod_actions(ctx: &Ctx, guild: u64, since: i64) -> Result<Vec<ModAction>> {
     ctx.db.with(|c| {
         let mut st = c.prepare_cached(
-            "SELECT at, moderator_id, action, target_id FROM audit_mod_actions WHERE guild_id = ?1 AND at >= ?2 ORDER BY at DESC LIMIT 2000",
+            "SELECT at, moderator_id, action, target_id, channel_id, reason FROM audit_mod_actions WHERE guild_id = ?1 AND at >= ?2 ORDER BY at DESC LIMIT 2000",
         )?;
         st.query_map(params![guild as i64, since], |r| {
-            Ok(ModAction { at: r.get(0)?, moderator: r.get::<_, i64>(1)? as u64, action: r.get(2)?, target: r.get::<_, Option<i64>>(3)?.map(|t| t as u64) })
+            Ok(ModAction {
+                at: r.get(0)?,
+                moderator: r.get::<_, i64>(1)? as u64,
+                action: r.get(2)?,
+                target: r.get::<_, Option<i64>>(3)?.map(|t| t as u64),
+                channel: r.get::<_, Option<i64>>(4)?.map(|c| c as u64),
+                reason: r.get(5)?,
+            })
         })?
         .collect()
     })
 }
 
-/// The moderator behind a logged event: the same kind of action on the same member within a
-/// minute of it.
-pub fn moderator_for(actions: &[ModAction], kind: Kind, target: Option<u64>, at: i64) -> Option<u64> {
+/// Moderators by how many actions they took since `since`, most first, leaving out `skip` (the bot).
+pub fn moderator_counts(ctx: &Ctx, guild: u64, since: i64, skip: Option<u64>) -> Result<Vec<(u64, i64)>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare_cached(
+            "SELECT moderator_id, COUNT(*) AS n FROM audit_mod_actions WHERE guild_id = ?1 AND at >= ?2 AND moderator_id != ?3
+             GROUP BY moderator_id ORDER BY n DESC, MAX(at) DESC LIMIT 12",
+        )?;
+        st.query_map(params![guild as i64, since, skip.map_or(-1, |s| s as i64)], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
+    })
+}
+
+/// How far apart an event and its audit entry may be. Discord sends the entry a moment before or
+/// after the event; a minute leaves room for a slow gateway.
+pub const MATCH_MS: i64 = 60_000;
+
+/// The moderator action behind a logged event: the same kind of action on the same member (and,
+/// for a deleted message, in the same channel) closest in time to it, within a minute either way.
+/// Closest, not newest, so two moderators acting on one member in the same minute each get their
+/// own event.
+pub fn moderator_for(actions: &[ModAction], kind: Kind, target: Option<u64>, channel: Option<u64>, at: i64) -> Option<&ModAction> {
     let want = match kind {
         Kind::Ban => "ban",
         Kind::Unban => "unban",
@@ -160,7 +186,12 @@ pub fn moderator_for(actions: &[ModAction], kind: Kind, target: Option<u64>, at:
         _ => return None,
     };
     let target = target?;
-    actions.iter().find(|a| a.action == want && a.target == Some(target) && (a.at - at).abs() < 60_000).map(|a| a.moderator)
+    // Discord says which channel a deleted message was in; a delete elsewhere is someone else's.
+    let same_channel = |a: &ModAction| kind != Kind::MessageDelete || a.channel.is_none() || channel.is_none() || a.channel == channel;
+    actions
+        .iter()
+        .filter(|a| a.action == want && a.target == Some(target) && (a.at - at).abs() < MATCH_MS && same_channel(a))
+        .min_by_key(|a| (a.at - at).abs())
 }
 
 fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
@@ -287,15 +318,16 @@ pub fn seed_preview(ctx: &Ctx, guild: u64) -> Result<()> {
             params![guild as i64, now - ago * min, kind.key(), user, name, channel.map(|c| c as i64), summary],
         )?;
     }
-    // Who did the moderation, as Discord's audit log would report it: (minutes ago, moderator, action, member).
-    let mods: [(i64, usize, &str, usize); 9] = [
-        (95, 1, "timeout", 6), (96, 1, "delete", 6), (420, 1, "roles", 0), (600, 0, "ban", 7), (1500, 1, "untimeout", 6),
-        (1700, 0, "unban", 7), (2100, 1, "delete", 2), (5900, 3, "roles", 5), (7000, 0, "delete", 3),
+    // Who did the moderation, as Discord's audit log would report it: (minutes ago, moderator, action, member, reason).
+    let mods: [(i64, usize, &str, usize, Option<&str>); 9] = [
+        (95, 1, "timeout", 6, Some("Arguing after a warning")), (96, 1, "delete", 6, None), (420, 1, "roles", 0, None),
+        (600, 0, "ban", 7, Some("Selling accounts in DMs")), (1500, 1, "untimeout", 6, None), (1700, 0, "unban", 7, Some("Appealed")),
+        (2100, 1, "delete", 2, None), (5900, 3, "roles", 5, None), (7000, 0, "delete", 3, None),
     ];
-    for (ago, moderator, action, target) in mods {
+    for (ago, moderator, action, target, reason) in mods {
         tx.execute(
-            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![guild as i64, now - ago * min, m(moderator).0 as i64, action, m(target).0 as i64],
+            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![guild as i64, now - ago * min, m(moderator).0 as i64, action, m(target).0 as i64, reason],
         )?;
     }
     tx.commit()?;

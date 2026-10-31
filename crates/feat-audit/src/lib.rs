@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use bot_core::anyhow::Result;
 use bot_core::discord::avatar_url;
+use bot_core::twilight_model::channel::message::embed::EmbedField;
 use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::id::Id;
@@ -19,7 +20,7 @@ use bot_core::twilight_util::builder::embed::{EmbedAuthorBuilder, EmbedBuilder, 
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, text};
 use serde::{Deserialize, Serialize};
 
-use batch::Batcher;
+use batch::{Batcher, Queued, Who};
 
 pub const KEY: &str = "audit";
 
@@ -217,6 +218,12 @@ const MIGRATIONS: &[Migration] = &[Migration {
             id INTEGER PRIMARY KEY, guild_id INTEGER NOT NULL, at INTEGER NOT NULL,
             moderator_id INTEGER NOT NULL, action TEXT NOT NULL, target_id INTEGER);
         CREATE INDEX audit_mod_actions_by_time ON audit_mod_actions(guild_id, at DESC);
+    ",
+}, Migration {
+    name: "003_audit_mod_reasons",
+    sql: "
+        ALTER TABLE audit_mod_actions ADD COLUMN channel_id INTEGER;
+        ALTER TABLE audit_mod_actions ADD COLUMN reason TEXT;
     ",
 }];
 
@@ -538,21 +545,73 @@ impl Audit {
         if let Err(e) = store::record(ctx, item.guild, item.kind, item.user, &name, item.channel, &item.summary) {
             bot_core::tracing::warn!(guild = item.guild, error = %e, "couldn't store an audit entry");
         }
-        if self.batcher.push(target, item.embed) {
+        let who = match (item.kind, item.user) {
+            (Kind::Ban | Kind::Unban | Kind::Timeout | Kind::TimeoutEnd | Kind::MessageDelete | Kind::Roles | Kind::Leave, Some(target)) => {
+                Some(Who { guild: item.guild, kind: item.kind, target, channel: item.channel, at: now_ms() })
+            }
+            _ => None,
+        };
+        if self.batcher.push(target, item.embed, who) {
             let (ctx, batcher) = (ctx.clone(), self.batcher.clone());
             bot_core::tokio::spawn(async move { flush(ctx, batcher, target).await });
         }
     }
 }
 
+/// How long after an event its post waits for Discord's audit entry to say who did it.
+const LATE_MS: i64 = 5_000;
+
 /// Wait out the window, then post everything that gathered for the channel.
 async fn flush(ctx: Ctx, batcher: Arc<Batcher>, channel: u64) {
     bot_core::tokio::time::sleep(batch::WINDOW).await;
-    for embeds in batcher.drain(channel) {
+    let mut queued = batcher.drain(channel);
+    attribute(&ctx, &mut queued).await;
+    for embeds in batch::chunk(queued.into_iter().map(|q| q.embed).collect()) {
         let sent = ctx.http.create_message(Id::new(channel)).embeds(&embeds).allowed_mentions(Some(&AllowedMentions::default())).await;
         if let Err(e) = sent {
             bot_core::tracing::warn!(channel, error = %e, "couldn't post to the audit log channel");
         }
+    }
+}
+
+/// Add who did it, and why, to the posts a moderator may be behind. The audit entry usually comes
+/// with the event, before or after it; one still missing gets until `LATE_MS` after its event.
+async fn attribute(ctx: &Ctx, queued: &mut [Queued]) {
+    for pass in 0..2 {
+        let waiting: Vec<Who> = queued.iter().filter_map(|q| q.who).collect();
+        let (Some(first), Some(last)) = (waiting.iter().map(|w| w.at).min(), waiting.iter().map(|w| w.at).max()) else { return };
+        if pass == 1 {
+            let wait = LATE_MS - (now_ms() - last);
+            if wait > 0 {
+                bot_core::tokio::time::sleep(Duration::from_millis(wait as u64)).await;
+            }
+        }
+        let actions = match store::mod_actions(ctx, waiting[0].guild, first - store::MATCH_MS) {
+            Ok(a) => a,
+            Err(e) => {
+                bot_core::tracing::warn!(error = %e, "couldn't read moderator actions");
+                return;
+            }
+        };
+        for q in queued.iter_mut() {
+            let Some(who) = q.who else { continue };
+            if let Some(a) = store::moderator_for(&actions, who.kind, Some(who.target), who.channel, who.at).filter(|a| a.moderator != who.target) {
+                add_moderator(&mut q.embed, who.kind, a.moderator, a.reason.as_deref());
+                q.who = None;
+            }
+        }
+    }
+}
+
+/// "By @Mira" and the reason on a posted entry. A leave with a kick behind it becomes a kick.
+pub fn add_moderator(e: &mut Embed, kind: Kind, moderator: u64, reason: Option<&str>) {
+    if kind == Kind::Leave {
+        e.title = Some("Member kicked".into());
+    }
+    let field = |name: &str, value: String| EmbedField { name: name.into(), value, inline: true };
+    e.fields.push(field("By", format!("<@{moderator}>")));
+    if let Some(r) = reason {
+        e.fields.push(field("Reason", text::clip(r, 500)));
     }
 }
 
@@ -777,6 +836,100 @@ mod tests {
     fn file_names_come_from_urls() {
         assert_eq!(file_name("https://cdn.discordapp.com/attachments/1/2/cat.png?ex=1&hm=2"), "cat.png");
         assert_eq!(file_name("https://x.dev/"), "file");
+    }
+
+    fn action(at: i64, moderator: u64, action: &str, target: u64, channel: Option<u64>) -> store::ModAction {
+        store::ModAction { at, moderator, action: action.into(), target: Some(target), channel, reason: None }
+    }
+
+    #[test]
+    fn the_audit_entry_can_come_before_or_after_the_event() {
+        let at = 1_000_000;
+        let after = [action(at + 800, 9, "ban", 5, None)];
+        assert_eq!(store::moderator_for(&after, Kind::Ban, Some(5), None, at).map(|a| a.moderator), Some(9));
+        let before = [action(at - 800, 9, "ban", 5, None)];
+        assert_eq!(store::moderator_for(&before, Kind::Ban, Some(5), None, at).map(|a| a.moderator), Some(9));
+        // Too far apart, another member, or another kind of action: nobody.
+        assert!(store::moderator_for(&[action(at - 61_000, 9, "ban", 5, None)], Kind::Ban, Some(5), None, at).is_none());
+        assert!(store::moderator_for(&after, Kind::Ban, Some(6), None, at).is_none());
+        assert!(store::moderator_for(&after, Kind::Unban, Some(5), None, at).is_none());
+        assert!(store::moderator_for(&after, Kind::Join, Some(5), None, at).is_none());
+    }
+
+    #[test]
+    fn several_at_once_each_get_their_own_moderator() {
+        let at = 1_000_000;
+        // Newest first, as `mod_actions` returns them: two moderators change one member's roles
+        // seconds apart, and a third bans two members together.
+        let actions = [
+            action(at + 9_000, 2, "roles", 5, None),
+            action(at + 300, 1, "roles", 5, None),
+            action(at + 200, 3, "ban", 6, None),
+            action(at + 100, 3, "ban", 7, None),
+        ];
+        let by = |kind, target, when| store::moderator_for(&actions, kind, Some(target), None, when).map(|a| a.moderator);
+        assert_eq!(by(Kind::Roles, 5, at), Some(1));
+        assert_eq!(by(Kind::Roles, 5, at + 8_500), Some(2));
+        assert_eq!(by(Kind::Ban, 6, at), Some(3));
+        assert_eq!(by(Kind::Ban, 7, at), Some(3));
+    }
+
+    #[test]
+    fn a_deleted_message_matches_its_channel() {
+        let at = 1_000_000;
+        let actions = [action(at + 100, 9, "delete", 5, Some(20))];
+        assert_eq!(store::moderator_for(&actions, Kind::MessageDelete, Some(5), Some(20), at).map(|a| a.moderator), Some(9));
+        // The author deleting their own message in another channel at the same moment.
+        assert!(store::moderator_for(&actions, Kind::MessageDelete, Some(5), Some(21), at).is_none());
+    }
+
+    #[test]
+    fn posts_say_who_and_why() {
+        let mut e = embed_without_ctx("Member left");
+        add_moderator(&mut e, Kind::Leave, 9, Some("raid account"));
+        assert_eq!(e.title.as_deref(), Some("Member kicked"));
+        let fields: Vec<(&str, &str)> = e.fields.iter().map(|f| (f.name.as_str(), f.value.as_str())).collect();
+        assert_eq!(fields, [("By", "<@9>"), ("Reason", "raid account")]);
+        let mut e = embed_without_ctx("Member banned");
+        add_moderator(&mut e, Kind::Ban, 9, None);
+        assert_eq!((e.title.as_deref(), e.fields.len()), (Some("Member banned"), 1));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_post_waits_a_moment_for_a_late_audit_entry() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![Arc::new(Audit::default())]).unwrap();
+        let now = now_ms();
+        let queued = |kind, target, at| Queued { embed: embed_without_ctx("x"), who: Some(Who { guild: 1, kind, target, channel: None, at }) };
+        // A ban whose entry is already in, a timeout whose entry comes while the post waits, and
+        // a member who left on their own.
+        let record = |ctx: &Ctx, action: &str, target: i64| {
+            ctx.db
+                .with(|c| {
+                    c.execute(
+                        "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, reason) VALUES (1, ?1, 9, ?2, ?3, 'spam')",
+                        bot_core::rusqlite::params![now_ms(), action, target],
+                    )
+                })
+                .unwrap();
+        };
+        record(&ctx, "ban", 5);
+        let mut items = vec![queued(Kind::Ban, 5, now - 4_000), queued(Kind::Timeout, 6, now - 3_500), queued(Kind::Leave, 7, now - 3_500)];
+        let late = ctx.clone();
+        bot_core::tokio::spawn(async move {
+            bot_core::tokio::time::sleep(Duration::from_millis(400)).await;
+            record(&late, "timeout", 6);
+        });
+        attribute(&ctx, &mut items).await;
+        let by = |q: &Queued| q.embed.fields.iter().find(|f| f.name == "By").map(|f| f.value.clone());
+        assert_eq!(by(&items[0]).as_deref(), Some("<@9>"));
+        assert_eq!(by(&items[1]).as_deref(), Some("<@9>"));
+        assert_eq!(by(&items[2]), None);
+        assert_eq!(items[2].embed.title.as_deref(), Some("x"));
+    }
+
+    fn embed_without_ctx(title: &str) -> Embed {
+        EmbedBuilder::new().title(title).build()
     }
 
     #[test]
