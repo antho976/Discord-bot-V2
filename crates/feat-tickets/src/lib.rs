@@ -13,10 +13,11 @@ use bot_core::discord::{CommandCall, ComponentCall, ModalCall};
 use bot_core::twilight_model::application::command::{Command, CommandType};
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_util::builder::command::{CommandBuilder, StringBuilder, SubCommandBuilder};
-use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async};
+use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, Need, Overview, feature_async, now_ms, text};
 use serde::{Deserialize, Serialize};
 
 pub const KEY: &str = "tickets";
+const DAY_MS: i64 = 86_400_000;
 
 pub const DEFAULT_PANEL_TITLE: &str = "Support";
 pub const DEFAULT_PANEL_TEXT: &str =
@@ -188,6 +189,30 @@ impl Feature for Tickets {
         ctx.save_settings(guild, KEY, &settings)?;
         tickets::seed(ctx, guild)?;
         starboard::seed(ctx, guild)
+    }
+
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> Overview {
+        let guild = page.guild_id;
+        let now = now_ms();
+        let open = ctx.db.with(|c| tickets::open_before(c, guild, now - DAY_MS, 3)).unwrap_or_default();
+        let needs = open
+            .into_iter()
+            .map(|t| {
+                let days = (now - t.opened_at) / DAY_MS;
+                let span = if days == 1 { "1 day".to_owned() } else { format!("{days} days") };
+                Need {
+                    since: t.opened_at,
+                    people: vec![ctx.member_avatar(guild, t.opener_id)],
+                    icon: Icon::Ticket,
+                    title: format!("Ticket {:04} open for {span}", t.number),
+                    detail: format!("{} · {}", ctx.display_name(guild, t.opener_id), text::clip(&t.subject, 60)),
+                    href: page.path("tickets?status=open"),
+                    action: "Open",
+                    alert: false,
+                }
+            })
+            .collect();
+        Overview { needs, ..Overview::default() }
     }
 }
 

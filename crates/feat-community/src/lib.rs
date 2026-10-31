@@ -1,6 +1,7 @@
 //! Giveaways, polls and suggestions: slash commands, buttons and the dashboard pages.
 
 mod giveaways;
+mod overview;
 mod polls;
 mod suggestions;
 mod web;
@@ -65,6 +66,12 @@ const MIGRATIONS: &[Migration] = &[Migration {
             suggestion_id INTEGER NOT NULL, user_id INTEGER NOT NULL, vote INTEGER NOT NULL,
             PRIMARY KEY (suggestion_id, user_id));
     ",
+}, Migration {
+    name: "002_community_times",
+    sql: "
+        ALTER TABLE giveaways ADD COLUMN ended_at INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE suggestions ADD COLUMN status_at INTEGER NOT NULL DEFAULT 0;
+    ",
 }];
 
 #[feature_async]
@@ -123,6 +130,10 @@ impl Feature for Community {
         giveaways::tick(ctx).await;
         polls::tick(ctx).await;
         Ok(())
+    }
+
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> bot_core::Overview {
+        overview::build(ctx, page)
     }
 
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {

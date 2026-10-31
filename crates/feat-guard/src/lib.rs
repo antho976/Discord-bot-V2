@@ -23,7 +23,7 @@ use bot_core::twilight_model::id::Id;
 use bot_core::twilight_model::id::marker::{ChannelMarker, MessageMarker};
 use bot_core::twilight_model::util::Timestamp;
 use bot_core::twilight_util::builder::embed::{EmbedBuilder, EmbedFieldBuilder, EmbedFooterBuilder};
-use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, text, tracing};
+use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, Need, Overview, feature_async, now_ms, text, tracing};
 use serde::{Deserialize, Serialize};
 
 use recent::Recent;
@@ -239,6 +239,30 @@ impl Feature for Guard {
 
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         seed(ctx, guild)
+    }
+
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> Overview {
+        // Caught and still timed out (or not timed out at all) and nobody has released or banned.
+        let since = now_ms() - DAY_MS;
+        let needs = recent_unhandled(ctx, page.guild_id, since, 3)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| {
+                let head = format!("{} {}", c.outcome.label(), text::ago(c.at));
+                let detail = if c.reason.trim().is_empty() { head } else { format!("{head} · {}", text::clip(&c.reason, 60)) };
+                Need {
+                    since: c.at,
+                    people: Vec::new(),
+                    icon: Icon::Shield,
+                    title: format!("Scam caught: {}", c.user_name),
+                    detail,
+                    href: page.path(KEY),
+                    action: "Review",
+                    alert: true,
+                }
+            })
+            .collect();
+        Overview { needs, ..Overview::default() }
     }
 }
 
@@ -633,6 +657,16 @@ pub fn catch(ctx: &Ctx, guild: u64, id: i64) -> Result<Option<Catch>> {
     ctx.db.with(|c| {
         c.query_row(&format!("SELECT {CATCH_COLS} FROM guard_catches WHERE guild_id = ?1 AND id = ?2"), params![guild as i64, id], row_to_catch)
             .optional()
+    })
+}
+
+/// Catches since `since` that are still open (timed out, or not), newest first.
+pub fn recent_unhandled(ctx: &Ctx, guild: u64, since: i64, limit: i64) -> Result<Vec<Catch>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare_cached(&format!(
+            "SELECT {CATCH_COLS} FROM guard_catches WHERE guild_id = ?1 AND at > ?2 AND outcome IN ('timed_out', 'not_timed_out') ORDER BY at DESC LIMIT ?3"
+        ))?;
+        st.query_map(params![guild as i64, since, limit], row_to_catch)?.collect()
     })
 }
 

@@ -347,7 +347,7 @@ pub enum RerollOutcome {
 pub async fn end(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
     let Some(g) = ctx.db.with(|c| get(c, id))? else { return Ok(EndOutcome::Missing) };
     // Only one caller wins the race to end it.
-    let claimed = ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 1 WHERE id = ?1 AND ended = 0", [id]))?;
+    let claimed = ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 1, ended_at = ?2 WHERE id = ?1 AND ended = 0", params![id, now_ms()]))?;
     if claimed == 0 {
         return Ok(EndOutcome::AlreadyEnded);
     }
@@ -441,7 +441,7 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
         ("Discord Nitro, 3 months", 1, 2 * 24 * hour + 5 * hour, None, 8, &[]),
         ("Signed poster from the next stream", 2, 9 * hour, Some(guild + 300), 5, &[]),
         ("Steam key: Hades II", 1, 40 * 60_000, None, 3, &[]),
-        ("Idleon account boost", 1, -3 * 24 * hour, None, 9, &[2]),
+        ("Idleon account boost", 1, -5 * hour, None, 9, &[2]),
         ("Merch pack", 3, -10 * 24 * hour, Some(guild + 100), 7, &[0, 4, 5]),
     ];
     for (prize, winners, ends_in, role, entrants, picked) in rows {
@@ -450,9 +450,9 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
         let message = 1_300_000_000_000_000_000u64 + now as u64 % 1000;
         ctx.db.with(|c| {
             c.execute(
-                "INSERT INTO giveaways (guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, created_at, ended, winner_ids)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                params![id_i64(guild), id_i64(guild + 30), id_i64(message), prize, winners, now + ends_in, role.map(id_i64), id_i64(who(0)), now - 5 * 24 * hour, ended as i64, ids.join(",")],
+                "INSERT INTO giveaways (guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, created_at, ended, winner_ids, ended_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![id_i64(guild), id_i64(guild + 30), id_i64(message), prize, winners, now + ends_in, role.map(id_i64), id_i64(who(0)), now - 5 * 24 * hour, ended as i64, ids.join(","), if ended { now + ends_in } else { 0 }],
             )?;
             let id = c.last_insert_rowid();
             for n in 0..entrants {

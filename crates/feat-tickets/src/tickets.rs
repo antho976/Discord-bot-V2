@@ -144,6 +144,12 @@ pub fn list(conn: &Connection, guild: u64, filter: Filter, limit: i64) -> bot_co
     stmt.query_map(params![guild as i64, limit], from_row)?.collect()
 }
 
+/// Open tickets opened before `before`, oldest first: the ones nobody has come back to.
+pub fn open_before(conn: &Connection, guild: u64, before: i64, limit: i64) -> bot_core::rusqlite::Result<Vec<Ticket>> {
+    let mut stmt = conn.prepare(&format!("SELECT {COLUMNS} FROM tickets WHERE guild_id = ?1 AND status = 'open' AND opened_at < ?2 ORDER BY opened_at LIMIT ?3"))?;
+    stmt.query_map(params![guild as i64, before, limit], from_row)?.collect()
+}
+
 pub struct Stats {
     pub open: i64,
     pub this_week: i64,

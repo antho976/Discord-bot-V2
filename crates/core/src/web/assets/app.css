@@ -252,7 +252,8 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .need-icon.alert { background: rgba(236, 106, 94, 0.14); color: var(--held); }
 .avatars { display: inline-flex; flex: none; }
 .avatars .avatar { box-shadow: 0 0 0 2px var(--page); }
-.avatars .avatar + .avatar { margin-left: -9px; }
+.avatars .avatar + .avatar { margin-left: -8px; }
+.need .avatars .avatar { width: 30px; height: 30px; }
 .ov-feed { display: flex; flex-direction: column; gap: 12px; }
 .happen { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--ink-2); }
 .happen strong { color: var(--ink); font-weight: 500; }

@@ -301,8 +301,14 @@ pub async fn set_status(ctx: &Ctx, id: i64, status: Status, reason: &str, staff:
     let reason = if status == Status::Open { String::new() } else { text::clip(reason.trim(), MAX_REASON) };
     let changed = ctx.db.with(|c| {
         c.execute(
-            "UPDATE suggestions SET status = ?2, reason = ?3, staff_id = ?4 WHERE id = ?1",
-            params![id, status.as_str(), reason, if status == Status::Open { None } else { Some(id_i64(staff)) }],
+            "UPDATE suggestions SET status = ?2, reason = ?3, staff_id = ?4, status_at = ?5 WHERE id = ?1",
+            params![
+                id,
+                status.as_str(),
+                reason,
+                if status == Status::Open { None } else { Some(id_i64(staff)) },
+                if status == Status::Open { 0 } else { now_ms() }
+            ],
         )
     })?;
     if changed == 0 {
@@ -352,8 +358,8 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     for (i, (author, body, status, reason, ups, downs)) in rows.into_iter().enumerate() {
         ctx.db.with(|c| {
             c.execute(
-                "INSERT INTO suggestions (guild_id, channel_id, message_id, author_id, content, status, reason, staff_id, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                "INSERT INTO suggestions (guild_id, channel_id, message_id, author_id, content, status, reason, staff_id, created_at, status_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     id_i64(guild),
                     id_i64(guild + 70),
@@ -363,7 +369,8 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
                     status.as_str(),
                     reason,
                     (status != Status::Open).then(|| id_i64(who(0))),
-                    now - (i as i64 + 1) * 9 * hour
+                    now - (i as i64 + 1) * 9 * hour,
+                    if status == Status::Open { 0 } else { now - (i as i64 + 1) * 4 * hour }
                 ],
             )?;
             let id = c.last_insert_rowid();

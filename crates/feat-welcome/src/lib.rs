@@ -163,6 +163,26 @@ impl Feature for Welcome {
         Ok(())
     }
 
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> bot_core::Overview {
+        let guild = page.guild_id;
+        let since = bot_core::now_ms() - 2 * 86_400_000;
+        let feed = invites::recent_joins(ctx, guild, 5)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|j| j.at >= since)
+            .map(|j| bot_core::Happening {
+                at: j.at,
+                avatar: ctx.member_avatar(guild, j.user),
+                who: ctx.display_name(guild, j.user),
+                text: match j.inviter {
+                    Some(inviter) => format!("joined, invited by {}", ctx.display_name(guild, inviter)),
+                    None => "joined".into(),
+                },
+            })
+            .collect();
+        bot_core::Overview { feed, ..Default::default() }
+    }
+
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         seed(ctx, guild)
     }
@@ -324,13 +344,14 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     let now = bot_core::now_ms();
     let day = 86_400_000;
     let codes = [("hX9d2Q", 0usize), ("Lm3vTz", 1), ("q8WnRb", 0), ("vanity", 99)];
-    let hours = [3, 20, 31, 52, 70, 120, 200, 300, 410, 520, 700, 900, 1500, 2100, 2600, 3300];
+    let hours = [1, 4, 31, 52, 70, 120, 200, 300, 410, 520, 700, 900, 1500, 2100, 2600, 3300];
     ctx.db.with(|c| {
         for (i, h) in hours.iter().enumerate() {
             let user = MEMBERS[(i + 3) % MEMBERS.len()].0;
             let (code, who) = codes[i % codes.len()];
             let inviter = MEMBERS.get(who).map(|m| m.0);
-            let known = inviter.is_some() && i % 7 != 5;
+            // The second join came in through a vanity link, so the feed shows both forms.
+            let known = inviter.is_some() && i % 7 != 5 && i != 1;
             c.execute(
                 "INSERT INTO welcome_joins (guild_id, user_id, inviter_id, code, joined_at) VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![

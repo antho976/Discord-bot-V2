@@ -154,7 +154,8 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         feed.extend(o.feed);
         panel.extend(o.panel);
     }
-    needs.sort_by_key(|n| n.since);
+    // Alerts first, then whatever has waited longest.
+    needs.sort_by_key(|n| (!n.alert, n.since));
     feed.sort_by_key(|h| -h.at);
     feed.truncate(6);
     panel.sort_by_key(|p| p.0);
@@ -286,7 +287,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
 fn short_ago(ms: i64) -> String {
     let secs = ((crate::now_ms() - ms) / 1000).max(0);
     match secs {
-        0..60 => "now".into(),
+        0..60 => "just now".into(),
         60..3600 => format!("{} min", secs / 60),
         3600..86400 => format!("{} h", secs / 3600),
         _ => format!("{} d", secs / 86400),
