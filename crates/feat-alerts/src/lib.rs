@@ -245,6 +245,12 @@ pub(crate) fn state_set(ctx: &Ctx, key: &str, value: &str) {
     }
 }
 
+pub(crate) fn state_del(ctx: &Ctx, key: &str) {
+    if let Err(e) = ctx.db.with(|c| c.execute("DELETE FROM alerts_state WHERE key = ?1", [key])) {
+        bot_core::tracing::warn!(key, error = %e, "couldn't clear alerts state");
+    }
+}
+
 /// True (and the clock reset) when `every_ms` has passed since this key last fired.
 pub(crate) fn due(ctx: &Ctx, key: &str, every_ms: i64) -> bool {
     let last: i64 = state_get(ctx, &format!("at:{key}")).and_then(|v| v.parse().ok()).unwrap_or(0);

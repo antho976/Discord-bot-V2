@@ -553,7 +553,8 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
             let start = twitch::latest_vod_start(&ctx, &b.user_id).await;
             let recorded = start.is_some_and(|st| recent.iter().any(|r| r.broadcaster_id == b.user_id && (r.started_at - st).abs() < 15 * 60_000));
             let last = twitch::last_event(&ctx, &b.user_id).map(|e| e.0);
-            start.filter(|st| twitch::missed_stream(Some(*st), last, recorded, now)).map(|st| (st, last))
+            let since = twitch::online_since(&ctx, &b.user_id);
+            start.filter(|st| twitch::missed_stream(Some(*st), since, last, recorded, now)).map(|st| (st, last))
         }
         _ => None,
     };

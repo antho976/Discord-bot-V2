@@ -20,7 +20,7 @@ use bot_core::{Ctx, discord::link_row, jiff, now_ms, text, tracing};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::{COLOR, DEFAULT_LIVE_MESSAGE, KEY, Settings, alert_guilds, due, logins, state_get, state_set};
+use crate::{COLOR, DEFAULT_LIVE_MESSAGE, KEY, Settings, alert_guilds, due, logins, state_del, state_get, state_set};
 
 const HELIX: &str = "https://api.twitch.tv/helix";
 /// EventSub subscription types and versions kept for every broadcaster.
@@ -321,6 +321,27 @@ pub type SubStates = HashMap<String, HashMap<String, String>>;
 fn save_sub_states(ctx: &Ctx, states: &SubStates) {
     state_set(ctx, "subs", &serde_json::to_string(states).unwrap_or_default());
     state_set(ctx, "subs_at", &now_ms().to_string());
+    for (bid, kinds) in states {
+        note_online_state(ctx, bid, kinds.get("stream.online").map(String::as_str));
+    }
+}
+
+/// Keep when a broadcaster's go-live subscription was first seen working: set the first time
+/// it's enabled, cleared when it stops. Streams from before then can't have been missed.
+fn note_online_state(ctx: &Ctx, bid: &str, status: Option<&str>) {
+    let key = format!("online_since:{bid}");
+    if status == Some("enabled") {
+        if state_get(ctx, &key).is_none() {
+            state_set(ctx, &key, &now_ms().to_string());
+        }
+    } else {
+        state_del(ctx, &key);
+    }
+}
+
+/// Since when the go-live subscription has been working, if it is.
+pub fn online_since(ctx: &Ctx, bid: &str) -> Option<i64> {
+    state_get(ctx, &format!("online_since:{bid}")).and_then(|v| v.parse().ok())
 }
 
 /// The subscription states from the last check, and when that was.
@@ -336,20 +357,37 @@ pub fn last_event(ctx: &Ctx, bid: &str) -> Option<(i64, String)> {
     Some((at.parse().ok()?, kind.to_owned()))
 }
 
-/// When Twitch's newest VOD of a broadcaster started, if it has one. One Helix call, given up
-/// after 3 seconds so a slow Twitch doesn't hold the page.
+/// Broadcaster id -> (when read, newest VOD start), so page loads within a few minutes share one
+/// Helix call.
+type VodStarts = HashMap<String, (i64, Option<i64>)>;
+static VOD_STARTS: LazyLock<Mutex<VodStarts>> = LazyLock::new(Default::default);
+
+/// When Twitch's newest VOD of a broadcaster started, if it has one. One Helix call every five
+/// minutes at most, given up after 3 seconds so a slow Twitch doesn't hold the page.
 pub async fn latest_vod_start(ctx: &Ctx, bid: &str) -> Option<i64> {
+    let now = now_ms();
+    if let Some((at, start)) = VOD_STARTS.lock().unwrap().get(bid)
+        && now - at < FIVE_MIN
+    {
+        return *start;
+    }
     let q = [("user_id", bid.to_owned()), ("type", "archive".into()), ("first", "1".into())];
     let call = get::<List<HVideo>>(ctx, "videos", &q);
-    let list = bot_core::tokio::time::timeout(std::time::Duration::from_secs(3), call).await.ok()?.ok()??;
-    list.data.first()?.created_at.parse::<jiff::Timestamp>().ok().map(|t| t.as_millisecond())
+    // A timeout or error isn't cached, so the next load tries again.
+    let list = bot_core::tokio::time::timeout(std::time::Duration::from_secs(3), call).await.ok()?.ok()?;
+    let start = list.and_then(|l| l.data.into_iter().next()).and_then(|v| v.created_at.parse::<jiff::Timestamp>().ok()).map(|t| t.as_millisecond());
+    let mut cache = VOD_STARTS.lock().unwrap();
+    cache.retain(|_, (at, _)| now - *at < FIVE_MIN);
+    cache.insert(bid.to_owned(), (now, start));
+    start
 }
 
 /// Push mode looks broken for a stream when Twitch shows it started more than 15 minutes ago,
-/// no event has arrived since it started, and the bot has no record of it.
-pub fn missed_stream(vod_start: Option<i64>, last_event: Option<i64>, recorded: bool, now: i64) -> bool {
-    let Some(start) = vod_start else { return false };
-    now - start > 15 * 60_000 && last_event.is_none_or(|e| e < start) && !recorded
+/// after the go-live subscription was working, no event has arrived since it started, and the
+/// bot has no record of it. A stream from before the subscription worked wasn't missed.
+pub fn missed_stream(vod_start: Option<i64>, online_since: Option<i64>, last_event: Option<i64>, recorded: bool, now: i64) -> bool {
+    let (Some(start), Some(since)) = (vod_start, online_since) else { return false };
+    start >= since && now - start > 15 * 60_000 && last_event.is_none_or(|e| e < start) && !recorded
 }
 
 /// When a message older than this arrives, it's refused (Twitch's replay advice).
@@ -409,6 +447,9 @@ pub async fn webhook(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) ->
                 let (mut states, _) = sub_states(&ctx);
                 states.entry(bid.to_owned()).or_default().insert(t.to_owned(), status.to_owned());
                 state_set(&ctx, "subs", &serde_json::to_string(&states).unwrap_or_default());
+                if t == "stream.online" {
+                    note_online_state(&ctx, bid, Some(status));
+                }
             }
             ctx.notify(None, KEY, format!("Twitch stopped sending {t} events ({status}). The bot subscribes again within a day."), None);
             StatusCode::NO_CONTENT.into_response()
@@ -1011,14 +1052,18 @@ mod tests {
         let min = 60_000;
         let now = 1_000 * min;
         let start = now - 60 * min;
+        let since = Some(start - 60 * min);
         // Twitch has a stream from an hour ago, nothing arrived, nothing recorded.
-        assert!(missed_stream(Some(start), None, false, now));
-        assert!(missed_stream(Some(start), Some(start - min), false, now));
+        assert!(missed_stream(Some(start), since, None, false, now));
+        assert!(missed_stream(Some(start), since, Some(start - min), false, now));
         // An event after it started, a recorded stream, or a fresh one: fine.
-        assert!(!missed_stream(Some(start), Some(start + min), false, now));
-        assert!(!missed_stream(Some(start), None, true, now));
-        assert!(!missed_stream(Some(now - 5 * min), None, false, now));
-        assert!(!missed_stream(None, None, false, now));
+        assert!(!missed_stream(Some(start), since, Some(start + min), false, now));
+        assert!(!missed_stream(Some(start), since, None, true, now));
+        assert!(!missed_stream(Some(now - 5 * min), since, None, false, now));
+        assert!(!missed_stream(None, since, None, false, now));
+        // Push mode was set up after that stream, or isn't working at all: nothing was missed.
+        assert!(!missed_stream(Some(start), Some(start + min), None, false, now));
+        assert!(!missed_stream(Some(start), None, None, false, now));
     }
 
     #[test]
