@@ -98,13 +98,23 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
 
 ### E: teal-marten
 `crates/feat-community` (giveaways, polls, suggestions), `crates/feat-pets`.
-- [ ] Polls: live counts miss votes cast while the bot was offline. On start, and when a poll
+- [x] Polls: live counts miss votes cast while the bot was offline. On start, and when a poll
       page is opened, catch up from Discord's poll voters endpoint for open polls (rate-limit
       aware).
-- [ ] Giveaways: let the creator pick an emoji for the prize tile.
-- [ ] Suggestions: vote timestamps so "Most votes given" can be per month.
-- [ ] Pets: polish the Approvals, Giveaways, Catalog and Bans tabs to the Collection tab's
+- [x] Giveaways: let the creator pick an emoji for the prize tile.
+- [x] Suggestions: vote timestamps so "Most votes given" can be per month.
+- [x] Pets: polish the Approvals, Giveaways, Catalog and Bans tabs to the Collection tab's
       standard. Restyle the public pet page in the same look.
+- [x] Found: an early-ended giveaway's post said "Ended in 2 days" (the scheduled end).
+- [x] Found: a second reroll could pick the winners the first reroll replaced.
+- [x] Found: the poll avatars and the suggestions top voters shared a class, so phones hid
+      the top voters.
+- [x] Found: the pets Approvals tab counted quantities (5) where the rail and overview count
+      requests (4).
+- [x] Found: pets Bans "Given" and public stats "givers" read the top-ten list, so they
+      undercounted.
+- [x] Found: dashes for an unknown confirmation rate on pets pages; overview polls without
+      their live votes; editors had no "Open in Discord" on suggestions.
 
 ### Lead: sharp-hare
 - Review every pull request (correctness, scope, look) and leave comments; check CI.
