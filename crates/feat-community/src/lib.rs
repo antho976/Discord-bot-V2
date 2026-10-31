@@ -12,7 +12,7 @@ use bot_core::twilight_model::application::command::Command;
 use bot_core::twilight_model::application::interaction::Interaction;
 use bot_core::twilight_model::channel::message::component::{ActionRow, Button, ButtonStyle, Component};
 use bot_core::twilight_model::guild::Permissions;
-use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, text};
+use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async};
 use serde::{Deserialize, Serialize};
 
 pub const KEY: &str = "community";
@@ -172,15 +172,6 @@ pub(crate) fn row(buttons: Vec<Component>) -> Component {
 /// A discord.com link to a message.
 pub(crate) fn message_url(guild: u64, channel: u64, message: u64) -> String {
     format!("https://discord.com/channels/{guild}/{channel}/{message}")
-}
-
-/// "in 2 h" for a future time, "3 days ago" for a past one (epoch milliseconds).
-pub(crate) fn relative(ms: i64) -> String {
-    let secs = (ms - bot_core::now_ms()) / 1000;
-    if secs <= 0 {
-        return text::ago(ms);
-    }
-    format!("in {}", span(secs))
 }
 
 fn span(secs: i64) -> String {

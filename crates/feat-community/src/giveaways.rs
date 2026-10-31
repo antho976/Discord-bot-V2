@@ -38,9 +38,12 @@ pub struct Giveaway {
     pub created_by: u64,
     pub ended: bool,
     pub winner_ids: Vec<u64>,
+    pub created_at: i64,
+    /// When it was ended. 0 for rows ended before this was kept, and for running ones.
+    pub ended_at: i64,
 }
 
-const COLS: &str = "id, guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, ended, winner_ids";
+const COLS: &str = "id, guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, ended, winner_ids, created_at, ended_at";
 
 fn from_row(r: &Row) -> bot_core::rusqlite::Result<Giveaway> {
     let winners: String = r.get(10)?;
@@ -56,6 +59,8 @@ fn from_row(r: &Row) -> bot_core::rusqlite::Result<Giveaway> {
         created_by: r.get::<_, i64>(8)? as u64,
         ended: r.get::<_, i64>(9)? != 0,
         winner_ids: winners.split(',').filter_map(|s| s.parse().ok()).collect(),
+        created_at: r.get(11)?,
+        ended_at: r.get(12)?,
     })
 }
 
@@ -73,15 +78,42 @@ pub fn entry_count(c: &Connection, id: i64) -> bot_core::rusqlite::Result<i64> {
     c.query_row("SELECT COUNT(*) FROM giveaway_entries WHERE giveaway_id = ?1", [id], |r| r.get(0))
 }
 
-/// Giveaways of a server with their entry counts: running ones soonest first, ended ones newest
-/// first.
+/// Up to `limit` of the newest entrants, for the avatars on a card.
+pub fn newest_entrants(c: &Connection, id: i64, limit: i64) -> bot_core::rusqlite::Result<Vec<u64>> {
+    let mut s = c.prepare_cached("SELECT user_id FROM giveaway_entries WHERE giveaway_id = ?1 ORDER BY rowid DESC LIMIT ?2")?;
+    s.query_map(params![id, limit], |r| Ok(r.get::<_, i64>(0)? as u64))?.collect()
+}
+
+/// Running and ended giveaway counts for a server.
+pub fn counts(c: &Connection, guild: u64) -> bot_core::rusqlite::Result<(i64, i64)> {
+    c.query_row(
+        "SELECT COALESCE(SUM(ended = 0), 0), COALESCE(SUM(ended = 1), 0) FROM giveaways WHERE guild_id = ?1",
+        [id_i64(guild)],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+}
+
+/// Giveaways started since `since` (epoch ms): how many, the entries they got, and how many
+/// different people entered.
+pub fn since_totals(c: &Connection, guild: u64, since: i64) -> bot_core::rusqlite::Result<(i64, i64, i64)> {
+    c.query_row(
+        "SELECT COUNT(DISTINCT g.id), COUNT(e.user_id), COUNT(DISTINCT e.user_id)
+         FROM giveaways g LEFT JOIN giveaway_entries e ON e.giveaway_id = g.id
+         WHERE g.guild_id = ?1 AND g.created_at >= ?2",
+        params![id_i64(guild), since],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )
+}
+
+/// Giveaways of a server with their entry counts: running ones soonest first, ended ones most
+/// recently ended first.
 pub fn list(c: &Connection, guild: u64, ended: bool, limit: i64) -> bot_core::rusqlite::Result<Vec<(Giveaway, i64)>> {
-    let order = if ended { "ends_at DESC" } else { "ends_at ASC" };
+    let order = if ended { "CASE WHEN ended_at > 0 THEN ended_at ELSE ends_at END DESC" } else { "ends_at ASC" };
     let mut s = c.prepare(&format!(
         "SELECT {COLS}, (SELECT COUNT(*) FROM giveaway_entries e WHERE e.giveaway_id = giveaways.id)
          FROM giveaways WHERE guild_id = ?1 AND ended = ?2 ORDER BY {order} LIMIT ?3"
     ))?;
-    s.query_map(params![id_i64(guild), ended as i64, limit], |r| Ok((from_row(r)?, r.get(11)?)))?.collect()
+    s.query_map(params![id_i64(guild), ended as i64, limit], |r| Ok((from_row(r)?, r.get(13)?)))?.collect()
 }
 
 /// Add the member to the giveaway, or take them out if they're already in. True when they're in
@@ -518,6 +550,24 @@ mod tests {
             assert_eq!(entry_count(c, 1)?, 2);
             assert!(!toggle_entry(c, 1, 42)?);
             assert_eq!(entries(c, 1)?, vec![43]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn dashboard_totals_read_empty_and_filled_tables() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        db.with(|c| {
+            assert_eq!(counts(c, 1)?, (0, 0));
+            assert_eq!(since_totals(c, 1, 0)?, (0, 0, 0));
+            assert!(newest_entrants(c, 1, 5)?.is_empty());
+            c.execute("INSERT INTO giveaways (guild_id, channel_id, prize, ends_at, created_at) VALUES (1, 2, 'x', 10, 5)", [])?;
+            c.execute("INSERT INTO giveaway_entries (giveaway_id, user_id) VALUES (1, 7), (1, 8)", [])?;
+            assert_eq!(counts(c, 1)?, (1, 0));
+            assert_eq!(since_totals(c, 1, 0)?, (1, 2, 2));
+            assert_eq!(newest_entrants(c, 1, 1)?, vec![8]);
             Ok(())
         })
         .unwrap();

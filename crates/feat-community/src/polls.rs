@@ -34,6 +34,8 @@ pub struct Poll {
     pub ends_at: i64,
     /// Final counts, in answer order. Empty once we've given up fetching them.
     pub results: Option<Vec<i64>>,
+    pub created_by: u64,
+    pub created_at: i64,
 }
 
 impl Poll {
@@ -42,7 +44,7 @@ impl Poll {
     }
 }
 
-const COLS: &str = "id, guild_id, channel_id, message_id, question, answers, multi, ends_at, results";
+const COLS: &str = "id, guild_id, channel_id, message_id, question, answers, multi, ends_at, results, created_by, created_at";
 
 fn from_row(r: &Row) -> bot_core::rusqlite::Result<Poll> {
     let answers: String = r.get(5)?;
@@ -57,6 +59,8 @@ fn from_row(r: &Row) -> bot_core::rusqlite::Result<Poll> {
         multi: r.get::<_, i64>(6)? != 0,
         ends_at: r.get(7)?,
         results: results.and_then(|s| serde_json::from_str(&s).ok()),
+        created_by: r.get::<_, i64>(9)? as u64,
+        created_at: r.get(10)?,
     })
 }
 
@@ -315,6 +319,8 @@ mod tests {
             multi: false,
             ends_at: 0,
             results: Some(vec![1, 1, 2]),
+            created_by: 0,
+            created_at: 0,
         };
         let s = shares(&p);
         assert_eq!(s.iter().map(|x| x.2).collect::<Vec<_>>(), vec![25, 25, 50]);
