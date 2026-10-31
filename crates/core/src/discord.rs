@@ -458,6 +458,17 @@ pub fn why_refused(e: &twilight_http::Error) -> String {
 }
 
 /// [`why_refused`] for an error that may wrap a Discord one.
+/// Why `register_commands` failed, in words for the bell. A 403 there means the invite lacks the
+/// applications.commands scope, not a channel permission.
+pub fn why_not_registered(e: &anyhow::Error) -> String {
+    match e.downcast_ref::<twilight_http::Error>().map(|h| h.kind()) {
+        Some(twilight_http::error::ErrorType::Response { status, .. }) if status.get() == 403 => {
+            "The bot isn't allowed to add slash commands here. Invite it again with the applications.commands scope.".into()
+        }
+        _ => why_refused_any(e),
+    }
+}
+
 pub fn why_refused_any(e: &anyhow::Error) -> String {
     match e.downcast_ref::<twilight_http::Error>() {
         Some(http) => why_refused(http),

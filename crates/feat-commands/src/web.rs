@@ -58,23 +58,12 @@ fn reregister(ctx: &Ctx, guild: u64) {
                 guild,
                 KEY,
                 "register",
-                format!("The custom commands didn't reach Discord. {}", why_not_registered(&e)),
+                format!("The custom commands didn't reach Discord. {}", bot_core::discord::why_not_registered(&e)),
                 Some(format!("/g/{guild}/commands")),
                 std::time::Duration::from_secs(3600),
             );
         }
     });
-}
-
-/// Why Discord refused the server's commands. A 403 here is the bot's invite, not a channel.
-fn why_not_registered(e: &bot_core::anyhow::Error) -> String {
-    use bot_core::twilight_http::error::ErrorType;
-    match e.downcast_ref::<bot_core::twilight_http::Error>().map(|h| h.kind()) {
-        Some(ErrorType::Response { status, .. }) if status.get() == 403 => {
-            "The bot isn't allowed to add slash commands here. Invite it again with the applications.commands scope.".into()
-        }
-        _ => bot_core::discord::why_refused_any(e),
-    }
 }
 
 // ---- commands ----
