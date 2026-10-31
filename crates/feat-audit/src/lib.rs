@@ -928,6 +928,45 @@ mod tests {
         assert_eq!(items[2].embed.title.as_deref(), Some("x"));
     }
 
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn search_matches_what_the_page_shows() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![Arc::new(Audit::default())]).unwrap();
+        let g = 1;
+        let roles = r#"{"added":[{"name":"Mods","color":0}],"removed":[{"name":"Regulars","color":5}]}"#;
+        store::record(&ctx, g, Kind::MessageEdit, Some(11), "kasia", Some(20), &diff_json(Some("see you at 8"), Some("see you at 9"))).unwrap();
+        store::record(&ctx, g, Kind::Nickname, Some(12), "pavel", None, &diff_json(None, Some("Pavel (afk)"))).unwrap();
+        store::record(&ctx, g, Kind::Roles, Some(13), "mira", None, roles).unwrap();
+        store::record(&ctx, g, Kind::MessageDelete, Some(14), "noor", Some(21), "anyone up for a raid").unwrap();
+        store::record(&ctx, g, Kind::Ban, Some(15), "lu", None, "").unwrap();
+        ctx.db
+            .with(|c| c.execute("INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, reason) VALUES (1, ?1, 99, 'ban', 15, 'Selling accounts')", [now_ms()]))
+            .unwrap();
+        let find = |search: store::Search| -> Vec<String> {
+            let f = store::Filter { group: store::Group::All, search: Some(search) };
+            let mut names: Vec<String> = store::recent(&ctx, g, &f, 50).unwrap().0.into_iter().map(|r| r.user_name).collect();
+            names.sort();
+            names
+        };
+        let text = |t: &str| store::Search { text: t.into(), ..Default::default() };
+        assert_eq!(find(text("at 9")), ["kasia"]);
+        assert_eq!(find(text("at 8")), ["kasia"]);
+        assert_eq!(find(text("afk")), ["pavel"]);
+        assert_eq!(find(text("regulars")), ["mira"]);
+        assert_eq!(find(text("raid")), ["noor"]);
+        assert_eq!(find(text("selling")), ["lu"]);
+        assert_eq!(find(text("15")), ["lu"]);
+        // The JSON around the text isn't searched.
+        assert!(find(text("before")).is_empty());
+        assert!(find(text("color")).is_empty());
+        assert!(find(text("added")).is_empty());
+        // Names, channels, moderators and labels resolved from the cache.
+        assert_eq!(find(store::Search { text: "zz".into(), users: vec![12], ..Default::default() }), ["pavel"]);
+        assert_eq!(find(store::Search { text: "zz".into(), channels: vec![21], ..Default::default() }), ["noor"]);
+        assert_eq!(find(store::Search { text: "zz".into(), moderators: vec![99], ..Default::default() }), ["lu"]);
+        assert_eq!(find(store::Search { text: "zz".into(), kinds: vec![Kind::Nickname], ..Default::default() }), ["pavel"]);
+    }
+
     fn embed_without_ctx(title: &str) -> Embed {
         EmbedBuilder::new().title(title).build()
     }

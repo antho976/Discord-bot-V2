@@ -2,6 +2,7 @@
 
 use bot_core::Ctx;
 use bot_core::anyhow::Result;
+use bot_core::twilight_model::id::Id;
 use bot_core::rusqlite::{ToSql, params, params_from_iter};
 use bot_core::twilight_model::guild::audit_log::{AuditLogChange, AuditLogEntry, AuditLogEventType};
 
@@ -68,7 +69,61 @@ impl Group {
 #[derive(Debug, Clone)]
 pub struct Filter {
     pub group: Group,
-    pub search: Option<String>,
+    pub search: Option<Search>,
+}
+
+/// A search, and what it matches outside the stored rows: names and channels as the page shows
+/// them now, from the cache.
+#[derive(Debug, Clone, Default)]
+pub struct Search {
+    /// Lowercase.
+    pub text: String,
+    /// Members whose name now contains the text.
+    pub users: Vec<u64>,
+    /// Channels whose name contains it.
+    pub channels: Vec<u64>,
+    /// Moderators whose name contains it.
+    pub moderators: Vec<u64>,
+    /// Kinds of event whose label contains it ("banned", "joined").
+    pub kinds: Vec<Kind>,
+}
+
+impl Search {
+    pub fn new(ctx: &Ctx, guild: u64, q: &str) -> Search {
+        let text = q.trim().to_lowercase();
+        let has = |name: &str| name.to_lowercase().contains(&text);
+        let g = Id::new(guild);
+        let users = ctx
+            .cache
+            .guild_members(g)
+            .map(|set| set.iter().map(|u| u.get()).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|u| has(&ctx.display_name(guild, *u)))
+            .take(500)
+            .collect();
+        let bare = text.trim_start_matches('#');
+        let channels = ctx
+            .cache
+            .guild_channels(g)
+            .map(|set| set.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| !bare.is_empty() && ctx.cache.channel(*c).and_then(|c| c.name.clone()).is_some_and(|n| n.to_lowercase().contains(bare)))
+            .map(|c| c.get())
+            .collect();
+        let moderators = moderator_ids(ctx, guild).unwrap_or_default().into_iter().filter(|m| has(&ctx.display_name(guild, *m))).collect();
+        let kinds = Kind::ALL.into_iter().filter(|k| has(k.label())).collect();
+        Search { text, users, channels, moderators, kinds }
+    }
+}
+
+/// Everyone who took a moderator action in the last two weeks.
+fn moderator_ids(ctx: &Ctx, guild: u64) -> Result<Vec<u64>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare_cached("SELECT DISTINCT moderator_id FROM audit_mod_actions WHERE guild_id = ?1")?;
+        st.query_map([guild as i64], |r| Ok(r.get::<_, i64>(0)? as u64))?.collect()
+    })
 }
 
 pub fn record(ctx: &Ctx, guild: u64, kind: Kind, user: Option<u64>, user_name: &str, channel: Option<u64>, summary: &str) -> Result<()> {
@@ -194,20 +249,54 @@ pub fn moderator_for(actions: &[ModAction], kind: Kind, target: Option<u64>, cha
         .min_by_key(|a| (a.at - at).abs())
 }
 
+/// `'a', 'b'`: the keys are fixed words from `Kind::key`, so they can go in as text.
+fn kind_list(kinds: &[Kind]) -> String {
+    kinds.iter().map(|k| format!("'{}'", k.key())).collect::<Vec<_>>().join(", ")
+}
+
+/// `1, 2, 3`, or `NULL` for none (so `IN (NULL)` matches nothing).
+fn id_list(ids: &[u64]) -> String {
+    if ids.is_empty() { "NULL".into() } else { ids.iter().map(|i| (*i as i64).to_string()).collect::<Vec<_>>().join(", ") }
+}
+
+/// What a search matches, in the words the page shows: the member's name then or now, their id,
+/// the channel, the event's label, the deleted text, an edit's or nickname's before and after,
+/// the roles' names, and the moderator behind it and their reason.
+const SEARCH_SQL: &str = "
+    instr(lower(e.user_name), ?Q) > 0 OR e.user_id = ?N OR e.user_id IN ({users}) OR e.channel_id IN ({channels}) OR e.kind IN ({kinds})
+    OR (e.kind IN ('message_edit', 'nickname') AND json_valid(e.summary)
+        AND (instr(lower(COALESCE(json_extract(e.summary, '$.before'), '')), ?Q) > 0
+             OR instr(lower(COALESCE(json_extract(e.summary, '$.after'), '')), ?Q) > 0))
+    OR (e.kind = 'roles' AND json_valid(e.summary) AND (
+        EXISTS (SELECT 1 FROM json_each(e.summary, '$.added') j WHERE instr(lower(json_extract(j.value, '$.name')), ?Q) > 0)
+        OR EXISTS (SELECT 1 FROM json_each(e.summary, '$.removed') j WHERE instr(lower(json_extract(j.value, '$.name')), ?Q) > 0)))
+    OR (e.kind NOT IN ('message_edit', 'nickname', 'roles') AND instr(lower(e.summary), ?Q) > 0)
+    OR EXISTS (SELECT 1 FROM audit_mod_actions a
+               WHERE a.guild_id = e.guild_id AND a.target_id = e.user_id AND abs(a.at - e.at) < 60000
+                 AND a.action = CASE e.kind WHEN 'ban' THEN 'ban' WHEN 'unban' THEN 'unban' WHEN 'timeout' THEN 'timeout'
+                     WHEN 'timeout_end' THEN 'untimeout' WHEN 'message_delete' THEN 'delete' WHEN 'roles' THEN 'roles'
+                     WHEN 'leave' THEN 'kick' END
+                 AND (a.moderator_id IN ({moderators}) OR a.moderator_id = ?N OR instr(lower(COALESCE(a.reason, '')), ?Q) > 0))";
+
 fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
-    let mut sql = "guild_id = ?1".to_owned();
+    let mut sql = "e.guild_id = ?1".to_owned();
     let mut args: Vec<Box<dyn ToSql>> = vec![Box::new(guild as i64)];
     let kinds = f.group.kinds();
     if !kinds.is_empty() {
-        // The keys are fixed words from `Kind::key`, so they can go in as text.
-        let list = kinds.iter().map(|k| format!("'{}'", k.key())).collect::<Vec<_>>().join(", ");
-        sql.push_str(&format!(" AND kind IN ({list})"));
+        sql.push_str(&format!(" AND e.kind IN ({})", kind_list(kinds)));
     }
-    if let Some(q) = f.search.as_deref().filter(|q| !q.is_empty()) {
-        args.push(Box::new(q.to_owned()));
-        let name = args.len();
-        args.push(Box::new(q.parse::<i64>().unwrap_or(-1)));
-        sql.push_str(&format!(" AND (instr(lower(user_name), lower(?{name})) > 0 OR user_id = ?{})", args.len()));
+    if let Some(q) = f.search.as_ref().filter(|q| !q.text.is_empty()) {
+        args.push(Box::new(q.text.clone()));
+        args.push(Box::new(q.text.parse::<i64>().unwrap_or(-1)));
+        let kinds = if q.kinds.is_empty() { "NULL".to_owned() } else { kind_list(&q.kinds) };
+        let clause = SEARCH_SQL
+            .replace("?Q", "?2")
+            .replace("?N", "?3")
+            .replace("{users}", &id_list(&q.users))
+            .replace("{channels}", &id_list(&q.channels))
+            .replace("{moderators}", &id_list(&q.moderators))
+            .replace("{kinds}", &kinds);
+        sql.push_str(&format!(" AND ({clause})"));
     }
     (sql, args)
 }
@@ -216,9 +305,9 @@ fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
 pub fn recent(ctx: &Ctx, guild: u64, f: &Filter, limit: i64) -> Result<(Vec<Row>, i64)> {
     let (clause, args) = where_clause(guild, f);
     ctx.db.with(|c| {
-        let total: i64 = c.query_row(&format!("SELECT COUNT(*) FROM audit_events WHERE {clause}"), params_from_iter(args.iter().map(|a| a.as_ref())), |r| r.get(0))?;
+        let total: i64 = c.query_row(&format!("SELECT COUNT(*) FROM audit_events e WHERE {clause}"), params_from_iter(args.iter().map(|a| a.as_ref())), |r| r.get(0))?;
         let mut stmt = c.prepare(&format!(
-            "SELECT at, kind, user_id, user_name, channel_id, summary FROM audit_events WHERE {clause} ORDER BY at DESC, id DESC LIMIT {limit}"
+            "SELECT e.at, e.kind, e.user_id, e.user_name, e.channel_id, e.summary FROM audit_events e WHERE {clause} ORDER BY e.at DESC, e.id DESC LIMIT {limit}"
         ))?;
         let rows = stmt
             .query_map(params_from_iter(args.iter().map(|a| a.as_ref())), |r| {

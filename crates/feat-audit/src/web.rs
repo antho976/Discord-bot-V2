@@ -35,7 +35,7 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let group = q.group.as_deref().and_then(Group::from_key).unwrap_or(Group::All);
     let search = q.q.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_owned);
-    let filter = Filter { group, search: search.clone() };
+    let filter = Filter { group, search: search.as_deref().map(|q| store::Search::new(&ctx, guild, q)) };
     let filtered = group != Group::All || search.is_some();
     let (rows, total) = store::recent(&ctx, guild, &filter, SHOWN)?;
     // "Today" starts at midnight in the viewer's own timezone.
@@ -62,7 +62,7 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                     }
                     form method="get" action=(page.path(KEY)) {
                         input type="hidden" name="group" value=(group.key());
-                        input.input.au-search type="search" name="q" value=(search_value) placeholder="Member name or ID" aria-label="Search the log";
+                        input.input.au-search type="search" name="q" value=(search_value) placeholder="Name, channel or text" aria-label="Search the log";
                     }
                 }
                 @if rows.is_empty() {
