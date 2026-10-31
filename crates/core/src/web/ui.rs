@@ -50,6 +50,10 @@ pub enum Icon {
     Search,
     Mail,
     Rules,
+    /// Custom commands: a key with a slash.
+    Slash,
+    /// Account reviews: a clipboard with a ticked line.
+    Review,
 }
 
 impl Icon {
@@ -93,6 +97,8 @@ impl Icon {
             Icon::Hash => (16, r#"<path d="M6 2.5 5 13.5M11 2.5l-1 11M2.75 6h11M2.25 10h11"/>"#),
             Icon::Mail => (24, r#"<path d="M5 5.5h14A1.5 1.5 0 0 1 20.5 7v10a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 17V7A1.5 1.5 0 0 1 5 5.5zM4 7l8 6 8-6"/>"#),
             Icon::Rules => (24, r#"<path d="M10 4 8.25 20M16.5 4l-.9 8.5M4.5 9h15M4 15h8.5M14 17.5l2 2 4-4"/>"#),
+            Icon::Slash => (24, r#"<path d="M6 4.5h12A1.5 1.5 0 0 1 19.5 6v12a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 18V6A1.5 1.5 0 0 1 6 4.5ZM14 8.5l-4 7"/>"#),
+            Icon::Review => (24, r#"<path d="M8.5 5H7a1.5 1.5 0 0 0-1.5 1.5v13A1.5 1.5 0 0 0 7 21h10a1.5 1.5 0 0 0 1.5-1.5v-13A1.5 1.5 0 0 0 17 5h-1.5M9.5 3.5h5a1 1 0 0 1 1 1V6a1 1 0 0 1-1 1h-5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1ZM8.75 12.25l1.5 1.5 2.75-2.75M14.75 12.5h.5M8.75 17h6.5"/>"#),
         }
     }
 }

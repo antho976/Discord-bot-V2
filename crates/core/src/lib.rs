@@ -157,6 +157,15 @@ pub trait Feature: Send + Sync + 'static {
         Vec::new()
     }
 
+    /// Slash commands that differ per server (ones people define on the dashboard, or one a
+    /// setting switches on), registered next to [`Feature::commands`]. Calls to them reach
+    /// `on_command` like the others. Called on every registration and for commands no
+    /// feature lists in `commands`, so read cached settings only. After a change, call
+    /// [`discord::register_commands`] for that server.
+    fn guild_commands(&self, _ctx: &Ctx, _guild: u64) -> Vec<Command> {
+        Vec::new()
+    }
+
     /// Dashboard pages and endpoints. Pages go under `/g/{guild}/{key}`, public pages under
     /// `/p/...`, machine endpoints under `/api/...`.
     fn routes(&self) -> axum::Router<Ctx> {

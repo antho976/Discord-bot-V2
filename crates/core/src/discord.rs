@@ -277,17 +277,29 @@ fn track_member_count(ctx: &Ctx, event: &Event) {
     }
 }
 
-/// Replace a server's slash commands with those of the features switched on there. One at a
-/// time, reading the switches once it's this call's turn, so two quick toggles can't finish out
-/// of order and leave the older set registered.
+/// Replace a server's slash commands with those of the features switched on there, fixed and
+/// per server. One at a time, reading the switches once it's this call's turn, so two quick
+/// toggles can't finish out of order and leave the older set registered. Does nothing in the
+/// preview, which has no Discord connection.
 pub async fn register_commands(ctx: &Ctx, guild_id: u64) -> Result<()> {
+    if ctx.cfg.preview {
+        return Ok(());
+    }
     static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _turn = ONE_AT_A_TIME.lock().await;
+    let mut seen = HashSet::new();
     let commands: Vec<_> = ctx
         .features()
         .iter()
         .filter(|f| ctx.enabled(guild_id, f.meta().key))
-        .flat_map(|f| f.commands())
+        .flat_map(|f| {
+            let mut c = f.commands();
+            c.extend(f.guild_commands(ctx, guild_id));
+            c
+        })
+        // Discord refuses the whole set over one repeated name; the first feature keeps it,
+        // the same one `route_interaction` sends the call to.
+        .filter(|c| seen.insert(c.name.clone()))
         .collect();
     ctx.interaction().set_guild_commands(Id::new(guild_id), &commands).await?;
     tracing::info!(guild = guild_id, count = commands.len(), "registered commands");
@@ -339,7 +351,11 @@ async fn route_interaction(ctx: &Ctx, i: &Interaction) {
             let owner = ctx
                 .features()
                 .iter()
-                .find(|f| f.commands().iter().any(|c| c.name == data.name));
+                .find(|f| f.commands().iter().any(|c| c.name == data.name))
+                .or_else(|| {
+                    let g = guild?;
+                    ctx.features().iter().find(|f| f.guild_commands(ctx, g).iter().any(|c| c.name == data.name))
+                });
             match owner {
                 Some(f) if usable(f.meta().key) => {
                     let call = CommandCall { interaction: i.clone(), data: (**data).clone() };
