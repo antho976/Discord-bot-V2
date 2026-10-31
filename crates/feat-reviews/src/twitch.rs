@@ -20,6 +20,8 @@ const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";
 pub const SCOPE: &str = "channel:manage:redemptions";
 /// How often a connected server's redemptions are fetched on their own.
 pub const SYNC_EVERY_MS: i64 = 5 * 60_000;
+/// Pages of 50 unfulfilled redemptions read per sync, newest first.
+const SYNC_PAGES: usize = 5;
 
 /// The broadcaster a server connected. Tokens stay in here.
 pub struct Conn {
@@ -277,20 +279,30 @@ pub async fn create_reward(ctx: &Ctx, guild: u64, title: &str, cost: i64) -> Res
     Ok(r)
 }
 
-/// Turn unfulfilled redemptions of `reward_id` into requests. Returns (added, moved up).
+/// Turn unfulfilled redemptions of `reward_id` into requests, and retry the fulfils and
+/// cancels Twitch didn't take before. Reads newest first, so a new redemption always arrives
+/// however many old ones wait, and adds them oldest first. Returns (added, merged into a
+/// request already waiting).
 pub async fn sync(ctx: &Ctx, guild: u64, reward_id: &str) -> Result<(usize, usize)> {
     let _ = ctx.db.with(|c| c.execute("UPDATE reviews_twitch SET synced_at = ?2 WHERE guild_id = ?1", params![guild as i64, now_ms()]));
-    let v = helix(
-        ctx,
-        guild,
-        Method::GET,
-        "channel_points/custom_rewards/redemptions",
-        &[("reward_id", reward_id), ("status", "UNFULFILLED"), ("sort", "OLDEST"), ("first", "50")],
-        None,
-    )
-    .await?;
+    let mut redemptions = Vec::new();
+    let mut cursor = String::new();
+    for _ in 0..SYNC_PAGES {
+        let mut query = vec![("reward_id", reward_id), ("status", "UNFULFILLED"), ("sort", "NEWEST"), ("first", "50")];
+        if !cursor.is_empty() {
+            query.push(("after", cursor.as_str()));
+        }
+        let mut v = helix(ctx, guild, Method::GET, "channel_points/custom_rewards/redemptions", &query, None).await?;
+        if let Value::Array(page) = v["data"].take() {
+            redemptions.extend(page);
+        }
+        cursor = v["pagination"]["cursor"].as_str().unwrap_or_default().to_owned();
+        if cursor.is_empty() {
+            break;
+        }
+    }
     let (mut added, mut merged) = (0, 0);
-    for r in v["data"].as_array().into_iter().flatten() {
+    for r in redemptions.iter().rev() {
         let Some(req) = request_from(r, reward_id) else { continue };
         match store::add(ctx, guild, &req)? {
             Added::New(_) => added += 1,
@@ -298,7 +310,10 @@ pub async fn sync(ctx: &Ctx, guild: u64, reward_id: &str) -> Result<(usize, usiz
             Added::Known => {}
         }
     }
-    note_error(ctx, guild, None);
+    let retry = store::pending_twitch(ctx, guild)?;
+    if settle(ctx, guild, &retry).await == 0 {
+        note_error(ctx, guild, None);
+    }
     Ok((added, merged))
 }
 
@@ -350,7 +365,7 @@ pub async fn settle(ctx: &Ctx, guild: u64, list: &[Redemption]) -> usize {
                 failed += 1;
                 bot_core::tracing::warn!(guild, error = %e, "couldn't set a redemption's status");
                 let what = if r.status == "CANCELED" { "cancel" } else { "fulfil" };
-                note_error(ctx, guild, Some(&format!("Couldn't {what} a channel points redemption. {e}")));
+                note_error(ctx, guild, Some(&format!("Couldn't {what} a channel points redemption; the bot tries again at the next sync. {e}")));
             }
             _ => {
                 let _ = store::twitch_settled(ctx, guild, &r.id);

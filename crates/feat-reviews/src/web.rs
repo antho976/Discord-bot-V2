@@ -224,9 +224,20 @@ fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, num
                             div { button.btn.small.primary type="submit" { "Complete" } }
                         }
                     }))
-                    (ui::action_button(&page.path(&format!("{base}/remove")), "Remove", Tone::Bad, true))
+                    (remove_button(page, r))
                 }
             }
+        }
+    }
+}
+
+/// Remove, asking for a second click. With channel points, the second click says the points go
+/// back to the viewer.
+fn remove_button(page: &Page, r: &Review) -> Markup {
+    let confirm = if r.redemption_id.is_some() { "Click again to remove and refund the points" } else { "Click again to confirm" };
+    html! {
+        form.inline method="post" action=(page.path(&format!("reviews/{}/remove", r.id))) {
+            button.btn.small.danger type="submit" data-confirm=(confirm) { "Remove" }
         }
     }
 }
@@ -375,6 +386,9 @@ async fn remove(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64
     let r = find(&ctx, guild, id).await?;
     store::set_status(&ctx, guild, id, "removed", &page.user.name)?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Removed {} from the review queue", r.name));
+    // Cancelling gives the viewer their points back and takes it off Twitch's queue.
+    let redemptions = store::set_twitch(&ctx, guild, id, "CANCELED")?;
+    twitch::settle(&ctx, guild, &redemptions).await;
     Ok(saved(&page.path("reviews")))
 }
 
@@ -449,7 +463,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_textarea("done_message", "Closing message", Some("Filled in when you complete a request. You can change or clear it each time."), &s.done_message, DEFAULT_DONE))
             })))
         }))
-        (ui::section("Twitch channel points", Some("Redemptions of a channel points reward join the queue ahead of everyone else. Completing one marks it fulfilled on Twitch."), twitch_block(&ctx, &page, &s, conn.as_ref(), rewards, q.twitch.as_deref())))
+        (ui::section("Twitch channel points", Some("Redemptions of a channel points reward join the queue ahead of everyone else. Completing one marks it fulfilled on Twitch; removing one cancels it and refunds the points."), twitch_block(&ctx, &page, &s, conn.as_ref(), rewards, q.twitch.as_deref())))
     };
     Ok(ui::layout(&ctx, &page, "Account reviews", None, body).into_response())
 }

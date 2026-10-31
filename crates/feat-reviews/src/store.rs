@@ -247,6 +247,14 @@ pub fn set_twitch(ctx: &Ctx, guild: u64, review: i64, status: &str) -> Result<Ve
     })
 }
 
+/// Redemptions whose status Twitch hasn't taken yet, oldest first, for the next sync to retry.
+pub fn pending_twitch(ctx: &Ctx, guild: u64) -> Result<Vec<Redemption>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare("SELECT ext_id, reward_id, twitch FROM reviews_sources WHERE guild_id = ?1 AND twitch_pending = 1 AND reward_id IS NOT NULL AND twitch IS NOT NULL ORDER BY rowid LIMIT 50")?;
+        st.query_map([guild as i64], |r| Ok(Redemption { id: r.get(0)?, reward_id: r.get(1)?, status: r.get(2)? }))?.collect()
+    })
+}
+
 /// Twitch took the status, or the redemption is gone from its queue.
 pub fn twitch_settled(ctx: &Ctx, guild: u64, redemption: &str) -> Result<()> {
     ctx.db.with(|c| c.execute("UPDATE reviews_sources SET twitch_pending = 0 WHERE guild_id = ?1 AND kind = 'redemption' AND ext_id = ?2", params![guild as i64, redemption]))?;
@@ -442,8 +450,10 @@ mod tests {
         // One Twitch took stays done; the other is still pending.
         twitch_settled(&ctx, 1, "rd1").unwrap();
         assert_eq!(ids(set_twitch(&ctx, 1, id, "FULFILLED").unwrap()), [f("rd2")]);
+        assert_eq!(ids(pending_twitch(&ctx, 1).unwrap()), [f("rd2")]);
         twitch_settled(&ctx, 1, "rd2").unwrap();
         assert!(set_twitch(&ctx, 1, id, "FULFILLED").unwrap().is_empty());
+        assert!(pending_twitch(&ctx, 1).unwrap().is_empty());
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
