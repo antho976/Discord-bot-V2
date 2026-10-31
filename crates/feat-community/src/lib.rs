@@ -87,6 +87,9 @@ const MIGRATIONS: &[Migration] = &[Migration {
 }, Migration {
     name: "005_suggestion_vote_times",
     sql: "ALTER TABLE suggestion_votes ADD COLUMN at INTEGER NOT NULL DEFAULT 0;",
+}, Migration {
+    name: "006_giveaway_emoji",
+    sql: "ALTER TABLE giveaways ADD COLUMN emoji TEXT NOT NULL DEFAULT '';",
 }];
 
 #[feature_async]

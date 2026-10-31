@@ -125,6 +125,8 @@ const STYLE: &str = r#"
 .cm-main { min-width: 0; }
 .cm-tile { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: var(--r-key); background: var(--control); color: var(--ink-2); }
 .cm-tile .icon { width: 20px; height: 20px; }
+.cm-emoji { font-size: 22px; line-height: 1; }
+.cm-tile.big .cm-emoji { font-size: 60px; }
 .cm-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; width: fit-content; padding: 0 10px; border-radius: 12px; font-size: 12px; white-space: nowrap; }
 .cm-chip .icon { width: 14px; height: 14px; }
 .cm-chip.warn { color: var(--waiting); background: rgba(227, 169, 72, 0.14); }
@@ -213,10 +215,13 @@ const STYLE: &str = r#"
 @media (max-width: 820px) {
   .cm-hero { flex-direction: column; align-items: flex-start; padding: 16px; gap: 16px; }
   .cm-tile.big { width: 96px; height: 96px; }
+  .cm-tile.big .cm-emoji { font-size: 46px; }
   .cm-row { flex-wrap: wrap; gap: 10px 14px; }
   .cm-row-main { flex-basis: calc(100% - 60px); }
   .cm-entries { min-width: 0; text-align: left; }
-  .cm-row-actions { padding-left: 58px; }
+  .cm-row > .avatars { display: none; }
+  .cm-row > .avatars + .cm-entries, .cm-row-main + .cm-entries, .cm-winners { margin-left: 58px; }
+  .cm-row-actions { margin-left: auto; }
   .cm-winners { max-width: none; }
   .cm-poll { padding: 16px; }
   .cm-poll-head .status { margin-left: 0; }

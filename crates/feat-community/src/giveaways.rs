@@ -24,6 +24,8 @@ use crate::{CORAL, KEY, NEUTRAL, button, id_i64, row};
 const MIN_SECS: i64 = 60;
 const MAX_SECS: i64 = 90 * 86_400;
 pub const MAX_WINNERS: i64 = 25;
+/// Enough for flags, skin tones and joined emoji like 👩‍💻.
+const MAX_EMOJI_CHARS: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct Giveaway {
@@ -43,6 +45,8 @@ pub struct Giveaway {
     pub ended_at: i64,
     /// Earlier winners that a reroll replaced. They aren't picked again.
     pub passed_ids: Vec<u64>,
+    /// The creator's pick for the prize tile and the post's title. Empty for the gift icon.
+    pub emoji: String,
 }
 
 impl Giveaway {
@@ -54,7 +58,7 @@ impl Giveaway {
 }
 
 const COLS: &str =
-    "id, guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, ended, winner_ids, created_at, ended_at, passed_ids";
+    "id, guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, ended, winner_ids, created_at, ended_at, passed_ids, emoji";
 
 fn ids(s: &str) -> Vec<u64> {
     s.split(',').filter_map(|s| s.parse().ok()).collect()
@@ -80,6 +84,7 @@ fn from_row(r: &Row) -> bot_core::rusqlite::Result<Giveaway> {
         created_at: r.get(11)?,
         ended_at: r.get(12)?,
         passed_ids: ids(&r.get::<_, String>(13)?),
+        emoji: r.get(14)?,
     })
 }
 
@@ -132,7 +137,7 @@ pub fn list(c: &Connection, guild: u64, ended: bool, limit: i64) -> bot_core::ru
         "SELECT {COLS}, (SELECT COUNT(*) FROM giveaway_entries e WHERE e.giveaway_id = giveaways.id)
          FROM giveaways WHERE guild_id = ?1 AND ended = ?2 ORDER BY {order} LIMIT ?3"
     ))?;
-    s.query_map(params![id_i64(guild), ended as i64, limit], |r| Ok((from_row(r)?, r.get(14)?)))?.collect()
+    s.query_map(params![id_i64(guild), ended as i64, limit], |r| Ok((from_row(r)?, r.get(15)?)))?.collect()
 }
 
 /// Add the member to the giveaway, or take them out if they're already in. True when they're in
@@ -172,8 +177,22 @@ pub fn parse_span(input: &str) -> Result<i64, &'static str> {
     Ok(secs)
 }
 
+/// Check an emoji for the prize. Empty is fine and means the gift icon. Custom Discord emoji
+/// aren't taken: the dashboard can't draw them.
+pub fn parse_emoji(input: &str) -> Result<String, &'static str> {
+    let e = input.trim();
+    if e.is_empty() {
+        return Ok(String::new());
+    }
+    if e.chars().count() > MAX_EMOJI_CHARS || e.chars().any(|c| c.is_ascii() || c.is_whitespace()) {
+        return Err("Use one emoji, like 🎁, or leave it empty.");
+    }
+    Ok(e.to_owned())
+}
+
 pub fn embed(g: &Giveaway, entries: i64) -> Embed {
-    let mut b = EmbedBuilder::new().title(text::clip(&g.prize, 250)).footer(EmbedFooterBuilder::new(format!("Giveaway #{}", g.id)));
+    let title = if g.emoji.is_empty() { g.prize.clone() } else { format!("{} {}", g.emoji, g.prize) };
+    let mut b = EmbedBuilder::new().title(text::clip(&title, 250)).footer(EmbedFooterBuilder::new(format!("Giveaway #{}", g.id)));
     if g.ended {
         let winners = if g.winner_ids.is_empty() {
             "Nobody entered".to_owned()
@@ -215,7 +234,8 @@ pub fn command() -> Command {
                 .option(StringBuilder::new("duration", "How long it runs, like 30m, 2h or 1d 12h").required(true))
                 .option(IntegerBuilder::new("winners", "How many winners").required(true).min_value(1).max_value(MAX_WINNERS))
                 .option(ChannelBuilder::new("channel", "Where to post it, default this channel").channel_types([ChannelType::GuildText, ChannelType::GuildAnnouncement]))
-                .option(RoleBuilder::new("required_role", "Only members with this role can enter")),
+                .option(RoleBuilder::new("required_role", "Only members with this role can enter"))
+                .option(StringBuilder::new("emoji", "An emoji for the prize, like 🎁").max_length(MAX_EMOJI_CHARS as u16)),
         )
         .option(
             SubCommandBuilder::new("end", "End a giveaway now and pick winners")
@@ -247,13 +267,17 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
             if prize.is_empty() {
                 return say("Say what's being given away.".into()).await;
             }
+            let emoji = match parse_emoji(opts.str("emoji").unwrap_or_default()) {
+                Ok(e) => e,
+                Err(e) => return say(e.into()).await,
+            };
             let Some(channel) = opts.channel("channel").map(|c| c.get()).or(call.channel_id()) else { return Ok(()) };
             if ctx.channel_in(guild, Some(channel)).is_none() {
                 return say("That channel isn't in this server.".into()).await;
             }
             let role = opts.role("required_role").map(|r| r.get());
             ctx.defer(&call.interaction, true).await?;
-            let msg = match create(ctx, New { guild, channel, prize, winners, ends_at: now_ms() + secs * 1000, role, by: call.user_id() }).await {
+            let msg = match create(ctx, New { guild, channel, prize, emoji: &emoji, winners, ends_at: now_ms() + secs * 1000, role, by: call.user_id() }).await {
                 Ok(id) => format!("Giveaway #{id} is running in <#{channel}>."),
                 Err(e) => {
                     tracing::warn!(guild, error = %e, "couldn't start a giveaway");
@@ -351,6 +375,8 @@ pub struct New<'a> {
     pub guild: u64,
     pub channel: u64,
     pub prize: &'a str,
+    /// Checked with `parse_emoji`.
+    pub emoji: &'a str,
     pub winners: i64,
     pub ends_at: i64,
     pub role: Option<u64>,
@@ -359,13 +385,13 @@ pub struct New<'a> {
 
 /// Post a giveaway and store it. Returns its number.
 pub async fn create(ctx: &Ctx, new: New<'_>) -> Result<i64> {
-    let New { guild, channel, prize, winners, ends_at, role, by } = new;
+    let New { guild, channel, prize, emoji, winners, ends_at, role, by } = new;
     let prize = text::clip(prize.trim(), 200);
     let id = ctx.db.with(|c| {
         c.execute(
-            "INSERT INTO giveaways (guild_id, channel_id, prize, winners, ends_at, required_role, created_by, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![id_i64(guild), id_i64(channel), prize, winners, ends_at, role.map(id_i64), id_i64(by), now_ms()],
+            "INSERT INTO giveaways (guild_id, channel_id, prize, emoji, winners, ends_at, required_role, created_by, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![id_i64(guild), id_i64(channel), prize, emoji, winners, ends_at, role.map(id_i64), id_i64(by), now_ms()],
         )?;
         Ok(c.last_insert_rowid())
     })?;
@@ -493,24 +519,24 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     let who = |i: usize| MEMBERS[i % MEMBERS.len()].0;
     let hour = 3_600_000i64;
     let now = now_ms();
-    // (prize, winners, ends_in_ms, role, entrants, winners picked)
-    type Row = (&'static str, i64, i64, Option<u64>, usize, &'static [usize]);
+    // (prize, emoji, winners, ends_in_ms, role, entrants, winners picked)
+    type Row = (&'static str, &'static str, i64, i64, Option<u64>, usize, &'static [usize]);
     let rows: [Row; 5] = [
-        ("Discord Nitro, 3 months", 1, 2 * 24 * hour + 5 * hour, None, 8, &[]),
-        ("Signed poster from the next stream", 2, 9 * hour, Some(guild + 300), 5, &[]),
-        ("Steam key: Hades II", 1, 40 * 60_000, None, 3, &[]),
-        ("Idleon account boost", 1, -5 * hour, None, 9, &[2]),
-        ("Merch pack", 3, -10 * 24 * hour, Some(guild + 100), 7, &[0, 4, 5]),
+        ("Discord Nitro, 3 months", "💎", 1, 2 * 24 * hour + 5 * hour, None, 8, &[]),
+        ("Signed poster from the next stream", "🖼️", 2, 9 * hour, Some(guild + 300), 5, &[]),
+        ("Steam key: Hades II", "🎮", 1, 40 * 60_000, None, 3, &[]),
+        ("Idleon account boost", "🚀", 1, -5 * hour, None, 9, &[2]),
+        ("Merch pack", "👕", 3, -10 * 24 * hour, Some(guild + 100), 7, &[0, 4, 5]),
     ];
-    for (prize, winners, ends_in, role, entrants, picked) in rows {
+    for (prize, emoji, winners, ends_in, role, entrants, picked) in rows {
         let ended = ends_in < 0;
         let ids: Vec<String> = picked.iter().map(|i| who(*i).to_string()).collect();
         let message = 1_300_000_000_000_000_000u64 + now as u64 % 1000;
         ctx.db.with(|c| {
             c.execute(
-                "INSERT INTO giveaways (guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, created_at, ended, winner_ids, ended_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![id_i64(guild), id_i64(guild + 30), id_i64(message), prize, winners, now + ends_in, role.map(id_i64), id_i64(who(0)), now - 5 * 24 * hour, ended as i64, ids.join(","), if ended { now + ends_in } else { 0 }],
+                "INSERT INTO giveaways (guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, created_at, ended, winner_ids, ended_at, emoji)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![id_i64(guild), id_i64(guild + 30), id_i64(message), prize, winners, now + ends_in, role.map(id_i64), id_i64(who(0)), now - 5 * 24 * hour, ended as i64, ids.join(","), if ended { now + ends_in } else { 0 }, emoji],
             )?;
             let id = c.last_insert_rowid();
             for n in 0..entrants {
@@ -567,6 +593,18 @@ mod tests {
         assert!(parse_span("30s").is_err());
         assert!(parse_span("100d").is_err());
         assert!(parse_span("soon").is_err());
+    }
+
+    #[test]
+    fn emoji_is_one_emoji_or_nothing() {
+        assert_eq!(parse_emoji("  ").unwrap(), "");
+        assert_eq!(parse_emoji(" 🎁 ").unwrap(), "🎁");
+        assert_eq!(parse_emoji("👩‍💻").unwrap(), "👩‍💻");
+        assert_eq!(parse_emoji("🇨🇦").unwrap(), "🇨🇦");
+        assert!(parse_emoji("gift").is_err());
+        assert!(parse_emoji("<:pog:123>").is_err());
+        assert!(parse_emoji("🎁 🎁").is_err());
+        assert!(parse_emoji(&"🎁".repeat(11)).is_err());
     }
 
     #[test]

@@ -89,7 +89,7 @@ fn running_view(ctx: &Ctx, page: &Page, guild: u64, running: &[(Giveaway, i64)],
 fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64], edit: bool) -> Markup {
     html! {
         article.cm-hero {
-            div.cm-tile.big { (ui::icon(Icon::Gift)) }
+            (tile(g, true))
             div.cm-hero-body {
                 span.cm-chip.warn { (ui::icon(Icon::Clock)) (until("Ends in", g.ends_at)) }
                 h2.cm-hero-title { (g.prize) }
@@ -117,7 +117,7 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64]
 fn row_running(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64], edit: bool) -> Markup {
     html! {
         div.cm-row {
-            div.cm-tile { (ui::icon(Icon::Gift)) }
+            (tile(g, false))
             div.cm-row-main {
                 strong.clip { (g.prize) }
                 span.muted.small {
@@ -143,7 +143,7 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
             div.cm-list {
                 @for (g, n) in ended {
                     div.cm-row {
-                        div.cm-tile { (ui::icon(Icon::Gift)) }
+                        (tile(g, false))
                         div.cm-row-main {
                             strong.clip { (g.prize) }
                             span.muted.small { "Ended " (text::ago(g.finished_at())) " · " (channel_name(ctx, guild, g.channel_id)) " · " (winners_text(g)) }
@@ -170,12 +170,22 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
     }
 }
 
+/// The prize tile: the creator's emoji, or the gift icon.
+fn tile(g: &Giveaway, big: bool) -> Markup {
+    html! {
+        div.cm-tile.big[big] aria-hidden="true" {
+            @if g.emoji.is_empty() { (ui::icon(Icon::Gift)) } @else { span.cm-emoji { (g.emoji) } }
+        }
+    }
+}
+
 /// The form in the "Start a giveaway" popover.
 fn start_form(ctx: &Ctx, page: &Page, guild: u64) -> Markup {
     html! {
         form.settings method="post" action=(page.path("community/giveaways")) {
             (ui::card(html! {
                 (ui::field_text("prize", "Prize", None, "", "Discord Nitro, 3 months"))
+                (ui::field_text("emoji", "Emoji", Some("Shown on the prize tile and the post. Empty uses the gift icon."), "", "🎁"))
                 (ui::field_text("duration", "Runs for", Some("Like 30m, 2h or 1d 12h. A bare number is minutes."), "", "1d"))
                 (ui::field_number("winners", "Winners", None, 1, 1, gw::MAX_WINNERS, None))
                 (channel_select(ctx, guild, "channel", "Channel", None))
@@ -210,11 +220,12 @@ pub async fn create(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
     if prize.is_empty() {
         return Err(WebError::Bad("Say what's being given away.".into()));
     }
+    let emoji = gw::parse_emoji(&form.string("emoji")).map_err(|e| WebError::Bad(e.into()))?;
     let secs = gw::parse_span(&form.string("duration")).map_err(|e| WebError::Bad(e.into()))?;
     let winners = form.int_in("winners", 1, gw::MAX_WINNERS, 1);
     let channel = channel_in(&ctx, guild, form.id("channel"))?;
     let role = form.id("role").filter(|r| ctx.roles(guild).iter().any(|(id, _, _)| id == r));
-    let id = gw::create(&ctx, gw::New { guild, channel, prize: &prize, winners, ends_at: now_ms() + secs * 1000, role, by: page.user.id })
+    let id = gw::create(&ctx, gw::New { guild, channel, prize: &prize, emoji: &emoji, winners, ends_at: now_ms() + secs * 1000, role, by: page.user.id })
         .await
         .map_err(|e| {
             bot_core::tracing::warn!(guild, error = %e, "couldn't start a giveaway from the dashboard");
