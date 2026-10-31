@@ -183,6 +183,7 @@ dependencies = [
  "feat-levels",
  "feat-modmail",
  "feat-pets",
+ "feat-rules",
  "feat-tickets",
  "feat-utility",
  "feat-welcome",
@@ -589,6 +590,15 @@ dependencies = [
 
 [[package]]
 name = "feat-pets"
+version = "0.1.0"
+dependencies = [
+ "bot-core",
+ "maud",
+ "serde",
+]
+
+[[package]]
+name = "feat-rules"
 version = "0.1.0"
 dependencies = [
  "bot-core",
