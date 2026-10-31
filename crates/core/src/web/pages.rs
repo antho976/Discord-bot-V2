@@ -268,11 +268,11 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             }
             div.ov-top {
                 @if ctx.cfg.preview {
-                    span.status { span.dot.waiting {} "Preview" }
+                    (ui::status(ui::Dot::Waiting, "Preview"))
                 } @else if ctx.bot_id().is_some() {
-                    span.status { span.dot.live {} "Online" }
+                    (ui::status(ui::Dot::Live, "Online"))
                 } @else {
-                    span.status { span.dot.waiting {} "Connecting" }
+                    (ui::status(ui::Dot::Waiting, "Connecting"))
                 }
                 (ui::bell(&ctx, &page))
             }
@@ -557,18 +557,13 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
     let page = admin_page(&ctx, &user, guild, "users")?;
     let list = people(&ctx);
     let owner = ctx.cfg.owner_id;
-    let add = html! {
-        details.pop {
-            summary.btn.primary { (ui::icon(Icon::Plus)) "Add someone" }
-            div.pop-body {
-                form.inline-form method="post" action="/users" {
-                    input.input.mono type="text" name="id" placeholder="Discord user ID" inputmode="numeric" pattern="[0-9]{15,21}" required autofocus;
-                    button.btn.primary type="submit" { "Add" }
-                }
-                p.muted.small { "In Discord: Settings, Advanced, turn on Developer Mode, then right-click their name and Copy User ID. People who try to sign in see their ID too. Until you give them pages, they see nothing." }
-            }
+    let add = ui::pop("", "Add someone", Some(Icon::Plus), "primary", html! {
+        form.inline-form method="post" action="/users" {
+            input.input.mono type="text" name="id" placeholder="Discord user ID" inputmode="numeric" pattern="[0-9]{15,21}" required autofocus;
+            button.btn.primary type="submit" { "Add" }
         }
-    };
+        p.muted.small { "In Discord: Settings, Advanced, turn on Developer Mode, then right-click their name and Copy User ID. People who try to sign in see their ID too. Until you give them pages, they see nothing." }
+    });
     let body = html! {
         div.people {
             @for p in &list {
@@ -698,16 +693,13 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
     let title = if person.name.is_empty() { "Access".to_owned() } else { format!("{display}'s access") };
     let actions = html! {
         @if !is_owner && !person.admin && !others.is_empty() {
-            details.pop {
-                summary.btn.small.outline { "Same as…" }
-                div.pop-body {
-                    form.stack method="post" action={ "/users/" (id) "/copy" } {
-                        (ui::select("from", &others, ""))
-                        p.muted.small { "Replaces their pages on every server with that person's. Admin stays as it is." }
-                        div { button.btn.primary.small type="submit" { "Copy access" } }
-                    }
+            (ui::pop("", "Same as…", None, "small outline", html! {
+                form.stack method="post" action={ "/users/" (id) "/copy" } {
+                    (ui::select("from", &others, ""))
+                    p.muted.small { "Replaces their pages on every server with that person's. Admin stays as it is." }
+                    div { button.btn.primary.small type="submit" { "Copy access" } }
                 }
-            }
+            }))
         }
         a.btn.small.outline.wide-only href="/users" { "All people" }
     };

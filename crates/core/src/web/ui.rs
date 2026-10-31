@@ -549,10 +549,93 @@ pub fn action_button(action: &str, label: &str, tone: Tone, destructive: bool) -
 
 /// Sub-page switcher inside a feature: `(label, href)`.
 pub fn tabs(items: &[(&str, String)], active: &str) -> Markup {
+    let items: Vec<_> = items.iter().map(|(l, h)| (*l, h.clone(), None)).collect();
+    tabs_counted(&items, active)
+}
+
+/// [`tabs`] with a count after a label where something waits: `(label, href, count)`, e.g.
+/// ("Running", href, Some(3)). `active` is the open tab's label, without the count.
+pub fn tabs_counted(items: &[(&str, String, Option<i64>)], active: &str) -> Markup {
     html! {
         nav.tabs {
-            @for (label, href) in items {
-                a.tab.on[*label == active] href=(href) aria-current=[(*label == active).then_some("page")] { (label) }
+            @for (label, href, count) in items {
+                a.tab.on[*label == active] href=(href) aria-current=[(*label == active).then_some("page")] {
+                    (label)
+                    @if let Some(n) = count { span.tab-count { (crate::text::num(*n)) } }
+                }
+            }
+        }
+    }
+}
+
+/// How a [`status`] pill's dot reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dot {
+    /// Green: connected, running, live.
+    Live,
+    /// Amber: partly on, connecting, waiting.
+    Waiting,
+    /// Grey: off.
+    Off,
+}
+
+/// A state pill for a page header or a rail heading: "Twitch connected · instant alerts".
+pub fn status(dot: Dot, label: &str) -> Markup {
+    let class = match dot {
+        Dot::Live => "dot live",
+        Dot::Waiting => "dot waiting",
+        Dot::Off => "dot",
+    };
+    html! { span.status { span class=(class) {} (label) } }
+}
+
+/// A button that opens a small form under it, for a header or a row action. `button` is the
+/// button's classes after `btn` ("primary", "small outline"); `class` goes on the popover for
+/// a feature's own styling ("" for none). With an icon the label hides on a phone and stays
+/// the button's name. app.js closes it on a click outside or Escape.
+pub fn pop(class: &str, label: &str, ic: Option<Icon>, button: &str, body: Markup) -> Markup {
+    html! {
+        details class={ "pop " (class) } {
+            summary class={ "btn " (button) } aria-label=[ic.is_some().then_some(label)] {
+                @if let Some(i) = ic { (icon(i)) span.pop-label { (label) } } @else { (label) }
+            }
+            div.pop-body { (body) }
+        }
+    }
+}
+
+/// A switch with its label and help, for a rail or a short list of options outside a card.
+/// Submits with the form around it, like [`field_toggle`].
+pub fn switch_row(name: &str, label: &str, help: Option<&str>, on: bool) -> Markup {
+    html! {
+        div.switch-row {
+            div.grow {
+                label for=(name) { (label) }
+                @if let Some(h) = help { p.help { (h) } }
+            }
+            label.switch {
+                input type="checkbox" id=(name) name=(name) checked[on];
+                span.track { span.thumb {} }
+            }
+        }
+    }
+}
+
+/// Small bars for a short series in a rail, `(label, value)`, oldest first: the latest in lilac,
+/// the rest dimmer. Hovering a bar shows its label and value with `unit`. `about` names the
+/// chart for screen readers ("Hours streamed in each of the last 12 weeks").
+pub fn mini_bars(series: &[(String, i64)], unit: &str, about: &str) -> Markup {
+    let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
+    let n = series.len();
+    html! {
+        div.mini-bars {
+            svg viewBox={ "0 0 " ((n * 10).saturating_sub(4)) " 48" } preserveAspectRatio="none" role="img" aria-label=(about) {
+                @for (i, (label, v)) in series.iter().enumerate() {
+                    @let h = (*v as f64 / max * 46.0).max(if *v > 0 { 2.0 } else { 0.0 });
+                    rect x=(i * 10) y=(48.0 - h) width="6" height=(h) fill=(if i + 1 == n { "var(--data)" } else { "var(--data-dim)" }) {
+                        title { (label) ": " (crate::text::num(*v)) " " (unit) }
+                    }
+                }
             }
         }
     }

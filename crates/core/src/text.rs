@@ -31,6 +31,19 @@ pub fn ago(ms: i64) -> String {
     }
 }
 
+/// "today", "yesterday", "12 days ago", "5 months ago", "3 years ago": how long ago something
+/// was made, such as an account (`made_ago(discord::snowflake_ms(user))`).
+pub fn made_ago(ms: i64) -> String {
+    let days = ((crate::now_ms() - ms) / 86_400_000).max(0);
+    match days {
+        0 => "today".into(),
+        1 => "yesterday".into(),
+        2..60 => format!("{days} days ago"),
+        60..730 => format!("{} months ago", days / 30),
+        _ => format!("{} years ago", days / 365),
+    }
+}
+
 /// "1 h 25 min" for a duration in seconds.
 pub fn duration(secs: i64) -> String {
     let (h, m) = (secs / 3600, (secs % 3600) / 60);
@@ -103,6 +116,20 @@ mod tests {
         assert_eq!(parse_duration("0"), None);
         assert_eq!(parse_duration("-5"), None);
         assert_eq!(parse_duration("99999999999999999d"), None);
+    }
+
+    #[test]
+    fn ages_read_in_the_right_unit() {
+        let day = 86_400_000;
+        let now = crate::now_ms();
+        assert_eq!(made_ago(now - 1000), "today");
+        assert_eq!(made_ago(now - day - 1000), "yesterday");
+        assert_eq!(made_ago(now - 12 * day), "12 days ago");
+        assert_eq!(made_ago(now - 150 * day), "5 months ago");
+        assert_eq!(made_ago(now - 1100 * day), "3 years ago");
+        assert_eq!(made_ago(now + day), "today");
+        // 2020-01-01T00:00:00Z as a Discord id.
+        assert_eq!(crate::discord::snowflake_ms((1_577_836_800_000 - 1_420_070_400_000) << 22), 1_577_836_800_000);
     }
 
     #[test]

@@ -187,6 +187,8 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tab { padding: 0 0 10px; margin-bottom: -1px; border-bottom: 2px solid transparent; font-size: 13px; color: var(--ink-2); }
 .tab:hover { color: var(--ink); }
 .tab.on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 500; }
+.tab-count { margin-left: 6px; font: 12px var(--mono); color: var(--ink-3); }
+.tab.on .tab-count { color: var(--ink-2); }
 /* A small segmented choice (None, View, Edit; 7 days, 30 days). */
 .seg { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--well); }
 .seg > * { position: relative; white-space: nowrap; padding: 3px 10px; border-radius: 6px; font-size: 12px; color: var(--ink-3); cursor: pointer; }
@@ -314,6 +316,13 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .rail h2 { font-size: 14px; }
 .rail-person { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .rail-person .grow { display: flex; flex-direction: column; gap: 5px; }
+/* A switch with its label in a rail or a short list (ui::switch_row). */
+.switch-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.switch-row + .switch-row { border-top: 1px solid var(--edge-1); }
+.switch-row label { font-size: 13px; font-weight: 500; }
+.switch-row .help { margin-top: 2px; }
+.switch-row .switch { flex: none; }
+.mini-bars svg { display: block; width: 100%; height: 52px; overflow: visible; }
 .meter { display: block; height: 5px; border-radius: 3px; background: var(--edge-1); overflow: hidden; }
 .meter > span { display: block; height: 100%; border-radius: 3px; background: var(--data); }
 
@@ -345,6 +354,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .pop summary::-webkit-details-marker { display: none; }
 .pop-body { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: 380px; max-width: calc(100vw - 32px); background: var(--solid); border: 1px solid var(--edge-2); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .pop-body .inline-form .input { max-width: none; }
+.pop > summary .pop-label { white-space: nowrap; }
 .access-head { display: flex; align-items: center; gap: 10px; }
 
 /* ---- activity ---- */
@@ -399,6 +409,8 @@ body.public { background: var(--page); }
   .row-control:has(> .switch) { justify-content: flex-start; }
   .row:has(> .row-control > .seg) { grid-template-columns: minmax(0, 1fr) auto; }
   .wide-only { display: none; }
+  .pop > summary:has(.icon) .pop-label { display: none; }
+  .pop > summary:has(.icon) { padding: 0 10px; }
   .split { grid-template-columns: 1fr; }
   .with-rail { grid-template-columns: 1fr; }
   .rail { position: static; }

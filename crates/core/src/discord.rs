@@ -891,6 +891,11 @@ impl Ctx {
     }
 }
 
+/// When a Discord id was made, in epoch milliseconds: an account's creation, a message's send.
+pub fn snowflake_ms(id: u64) -> i64 {
+    ((id >> 22) + 1_420_070_400_000) as i64
+}
+
 /// Avatar URL for a user, or Discord's default avatar.
 pub fn avatar_url(user_id: u64, avatar: Option<&str>) -> String {
     match avatar {
