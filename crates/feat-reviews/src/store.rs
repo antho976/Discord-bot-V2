@@ -44,6 +44,14 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
             SELECT guild_id, 'redemption', redemption_id, id, reward_id, CASE status WHEN 'done' THEN 'FULFILLED' END, status = 'done'
             FROM reviews WHERE redemption_id IS NOT NULL;
     ",
+}, Migration {
+    name: "003_reviews_waitlist",
+    // status can also be waiting: someone asked again soon after their last review, and joins
+    // the queue at eligible_at.
+    sql: "
+        ALTER TABLE reviews ADD COLUMN eligible_at INTEGER;
+        CREATE INDEX reviews_waiting ON reviews(eligible_at) WHERE status = 'waiting';
+    ",
 }];
 
 /// Names at least this alike are the same request, like the old bot.
@@ -67,9 +75,11 @@ pub struct Review {
     pub pinged_at: Option<i64>,
     pub closed_at: Option<i64>,
     pub closed_by: Option<String>,
+    /// On the waitlist: when it joins the queue.
+    pub eligible_at: Option<i64>,
 }
 
-const COLS: &str = "id, name, user_id, thread_id, twitch_user, reward_id, redemption_id, redeemed_at, requested_at, status, notes, source, pinged_at, closed_at, closed_by";
+const COLS: &str = "id, name, user_id, thread_id, twitch_user, reward_id, redemption_id, redeemed_at, requested_at, status, notes, source, pinged_at, closed_at, closed_by, eligible_at";
 
 fn row(r: &Row) -> bot_core::rusqlite::Result<Review> {
     Ok(Review {
@@ -88,6 +98,7 @@ fn row(r: &Row) -> bot_core::rusqlite::Result<Review> {
         pinged_at: r.get(12)?,
         closed_at: r.get(13)?,
         closed_by: r.get(14)?,
+        eligible_at: r.get(15)?,
     })
 }
 
@@ -101,6 +112,43 @@ fn open_in(c: &Connection, guild: u64) -> bot_core::rusqlite::Result<Vec<Review>
         "SELECT {COLS} FROM reviews WHERE guild_id = ?1 AND status = 'open' ORDER BY redeemed_at IS NULL, requested_at, id"
     ))?;
     st.query_map([guild as i64], row)?.collect()
+}
+
+/// The waitlist: the soonest to join the queue first.
+pub fn waiting(ctx: &Ctx, guild: u64) -> Result<Vec<Review>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare(&format!("SELECT {COLS} FROM reviews WHERE guild_id = ?1 AND status = 'waiting' ORDER BY eligible_at, requested_at, id"))?;
+        st.query_map([guild as i64], row)?.collect()
+    })
+}
+
+/// How many are in the queue and on the waitlist.
+pub fn counts(ctx: &Ctx, guild: u64) -> Result<(usize, usize)> {
+    ctx.db.with(|c| {
+        c.query_row(
+            "SELECT COALESCE(SUM(status = 'open'), 0), COALESCE(SUM(status = 'waiting'), 0) FROM reviews WHERE guild_id = ?1 AND status IN ('open', 'waiting')",
+            [guild as i64],
+            |r| Ok((r.get::<_, i64>(0)? as usize, r.get::<_, i64>(1)? as usize)),
+        )
+    })
+}
+
+/// When this member or Twitch viewer last had a review completed.
+pub fn last_done(c: &Connection, guild: u64, user: Option<u64>, viewer: Option<&str>) -> bot_core::rusqlite::Result<Option<i64>> {
+    if user.is_none() && viewer.is_none() {
+        return Ok(None);
+    }
+    c.query_row(
+        "SELECT MAX(closed_at) FROM reviews WHERE guild_id = ?1 AND status = 'done'
+         AND ((?2 IS NOT NULL AND user_id = ?2) OR (?3 IS NOT NULL AND twitch_user = ?3 COLLATE NOCASE))",
+        params![guild as i64, user.map(|u| u as i64), viewer],
+        |r| r.get(0),
+    )
+}
+
+/// Move waitlisted requests whose time has come into the queue, keeping when they first asked.
+pub fn promote_due(ctx: &Ctx, now: i64) -> Result<usize> {
+    ctx.db.with(|c| c.execute("UPDATE reviews SET status = 'open' WHERE status = 'waiting' AND eligible_at <= ?1", [now]))
 }
 
 /// The last 50 finished or removed, newest first.
@@ -139,16 +187,42 @@ pub struct Request {
 pub enum Added {
     /// A new open request with this id.
     New(i64),
-    /// The same as this open request: what it lacked (thread, member, channel points) was added.
+    /// Someone asked again within the wait after their last review: on the waitlist with this
+    /// id until the time given.
+    Waiting(i64, i64),
+    /// The same as this open or waitlisted request: what it lacked (thread, member, channel
+    /// points) was added.
     Merged(i64),
     /// Its thread or redemption was seen before, whatever happened to it since.
     Known,
 }
 
+/// What a scan or a sync did with what it found.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Tally {
+    pub added: usize,
+    pub waiting: usize,
+    pub merged: usize,
+    pub known: usize,
+}
+
+impl Tally {
+    pub fn count(&mut self, a: Added) {
+        match a {
+            Added::New(_) => self.added += 1,
+            Added::Waiting(..) => self.waiting += 1,
+            Added::Merged(_) => self.merged += 1,
+            Added::Known => self.known += 1,
+        }
+    }
+}
+
 /// Add a request unless it's already here. A thread or redemption is never added twice, even
-/// after it was finished or removed, or merged into another request. Among open requests, the
-/// same member, the same Twitch viewer or a name at least [`SAME_NAME`] alike is the same request.
-pub fn add(ctx: &Ctx, guild: u64, r: &Request) -> Result<Added> {
+/// after it was finished or removed, or merged into another request. Among open and waitlisted
+/// requests, the same member, the same Twitch viewer or a name at least [`SAME_NAME`] alike is
+/// the same request. Someone whose last review was completed less than `wait_ms` ago goes on the
+/// waitlist until then; 0 turns the waitlist off.
+pub fn add(ctx: &Ctx, guild: u64, r: &Request, wait_ms: i64) -> Result<Added> {
     let mut conn = ctx.db.lock();
     let tx = conn.transaction()?;
     let sources: Vec<(&str, String)> = r.thread_id.map(|t| ("thread", t.to_string())).into_iter().chain(r.redemption_id.clone().map(|d| ("redemption", d))).collect();
@@ -161,8 +235,12 @@ pub fn add(ctx: &Ctx, guild: u64, r: &Request) -> Result<Added> {
             return Ok(Added::Known);
         }
     }
-    let open = open_in(&tx, guild)?;
-    let (id, added) = match duplicate_of(&open, r) {
+    let mut active = open_in(&tx, guild)?;
+    {
+        let mut st = tx.prepare(&format!("SELECT {COLS} FROM reviews WHERE guild_id = ?1 AND status = 'waiting' ORDER BY requested_at, id"))?;
+        active.extend(st.query_map([guild as i64], row)?.collect::<bot_core::rusqlite::Result<Vec<_>>>()?);
+    }
+    let (id, added) = match duplicate_of(&active, r) {
         Some(d) => {
             // The request keeps its first post and redemption for links; the rest are in
             // reviews_sources.
@@ -187,9 +265,11 @@ pub fn add(ctx: &Ctx, guild: u64, r: &Request) -> Result<Added> {
             (d.id, Added::Merged(d.id))
         }
         None => {
+            let last = last_done(&tx, guild, r.user_id, r.twitch_user.as_deref())?;
+            let eligible = waitlist_until(last, wait_ms, now_ms());
             tx.execute(
-                "INSERT INTO reviews (guild_id, name, user_id, thread_id, twitch_user, reward_id, redemption_id, redeemed_at, requested_at, notes, source)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                "INSERT INTO reviews (guild_id, name, user_id, thread_id, twitch_user, reward_id, redemption_id, redeemed_at, requested_at, notes, source, status, eligible_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     guild as i64,
                     r.name,
@@ -202,10 +282,12 @@ pub fn add(ctx: &Ctx, guild: u64, r: &Request) -> Result<Added> {
                     r.requested_at,
                     r.notes,
                     r.source,
+                    if eligible.is_some() { "waiting" } else { "open" },
+                    eligible,
                 ],
             )?;
             let id = tx.last_insert_rowid();
-            (id, Added::New(id))
+            (id, eligible.map_or(Added::New(id), |at| Added::Waiting(id, at)))
         }
     };
     for (kind, ext) in &sources {
@@ -213,6 +295,13 @@ pub fn add(ctx: &Ctx, guild: u64, r: &Request) -> Result<Added> {
     }
     tx.commit()?;
     Ok(added)
+}
+
+/// When a new request from someone whose last review was completed at `last` joins the queue,
+/// if it has to wait at all.
+pub fn waitlist_until(last: Option<i64>, wait_ms: i64, now: i64) -> Option<i64> {
+    let at = last? + wait_ms;
+    (wait_ms > 0 && at > now).then_some(at)
 }
 
 /// Record a post or redemption as part of a request.
@@ -261,7 +350,7 @@ pub fn twitch_settled(ctx: &Ctx, guild: u64, redemption: &str) -> Result<()> {
     Ok(())
 }
 
-/// The open request this one repeats, if any. Two similar names from two different known
+/// The open or waitlisted request this one repeats, if any. Two similar names from two different known
 /// members, or two different Twitch viewers, are two requests (two people titling their posts
 /// "Account review", or two viewers typing "main").
 pub fn duplicate_of<'a>(open: &'a [Review], r: &Request) -> Option<&'a Review> {
@@ -312,19 +401,36 @@ pub fn mark_pinged(ctx: &Ctx, guild: u64, id: i64) -> Result<()> {
     Ok(())
 }
 
-/// Move a request to `status` if it may go there from where it is, and say whether it moved,
-/// so a second click or a stale page does nothing. `done` and `removed` come from `open`.
-/// `open` comes from `done`, or from `removed` when it had no channel points (those were
-/// refunded). Back in the queue, a fulfil Twitch hasn't taken yet is dropped.
-pub fn claim(ctx: &Ctx, guild: u64, id: i64, status: &str, by: &str) -> Result<bool> {
+/// What staff do to a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Move {
+    /// Open to done.
+    Complete,
+    /// Open or waitlisted to removed.
+    Remove,
+    /// Done, or removed without channel points (those were refunded), back to open.
+    Reopen,
+    /// Waitlisted to open now.
+    Promote,
+}
+
+/// Move a request if it may go there from where it is, and say whether it moved, so a second
+/// click or a stale page does nothing. Back in the queue, a fulfil Twitch hasn't taken yet is
+/// dropped.
+pub fn claim(ctx: &Ctx, guild: u64, id: i64, to: Move, by: &str) -> Result<bool> {
     let mut conn = ctx.db.lock();
     let tx = conn.transaction()?;
-    let moved = match status {
-        "done" | "removed" => tx.execute(
-            "UPDATE reviews SET status = ?3, closed_at = ?4, closed_by = ?5 WHERE guild_id = ?1 AND id = ?2 AND status = 'open'",
-            params![guild as i64, id, status, now_ms(), by],
+    let moved = match to {
+        Move::Complete => tx.execute(
+            "UPDATE reviews SET status = 'done', closed_at = ?3, closed_by = ?4 WHERE guild_id = ?1 AND id = ?2 AND status = 'open'",
+            params![guild as i64, id, now_ms(), by],
         )?,
-        "open" => {
+        Move::Remove => tx.execute(
+            "UPDATE reviews SET status = 'removed', closed_at = ?3, closed_by = ?4 WHERE guild_id = ?1 AND id = ?2 AND status IN ('open', 'waiting')",
+            params![guild as i64, id, now_ms(), by],
+        )?,
+        Move::Promote => tx.execute("UPDATE reviews SET status = 'open' WHERE guild_id = ?1 AND id = ?2 AND status = 'waiting'", params![guild as i64, id])?,
+        Move::Reopen => {
             let n = tx.execute(
                 "UPDATE reviews SET status = 'open', closed_at = NULL, closed_by = NULL
                  WHERE guild_id = ?1 AND id = ?2 AND (status = 'done' OR (status = 'removed' AND redemption_id IS NULL))",
@@ -335,7 +441,6 @@ pub fn claim(ctx: &Ctx, guild: u64, id: i64, status: &str, by: &str) -> Result<b
             }
             n
         }
-        _ => 0,
     };
     tx.commit()?;
     Ok(moved > 0)
@@ -389,6 +494,7 @@ mod tests {
             pinged_at: None,
             closed_at: None,
             closed_by: None,
+            eligible_at: None,
         }
     }
 
@@ -434,19 +540,19 @@ mod tests {
         let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
         ctx.db.migrate("reviews", MIGRATIONS).unwrap();
         let thread = Request { name: "AnthoMain".into(), user_id: Some(10), thread_id: Some(500), requested_at: 1, source: "thread", ..Request::default() };
-        let Added::New(id) = add(&ctx, 1, &thread).unwrap() else { panic!("first add is new") };
-        assert_eq!(add(&ctx, 1, &thread).unwrap(), Added::Known);
+        let Added::New(id) = add(&ctx, 1, &thread, 0).unwrap() else { panic!("first add is new") };
+        assert_eq!(add(&ctx, 1, &thread, 0).unwrap(), Added::Known);
         // The same thread in another server is another request.
-        assert!(matches!(add(&ctx, 2, &thread).unwrap(), Added::New(_)));
+        assert!(matches!(add(&ctx, 2, &thread, 0).unwrap(), Added::New(_)));
         // A redemption for the same account moves it up instead of adding a second one.
         let points = Request { name: "anthomain".into(), twitch_user: Some("antho".into()), reward_id: Some("rw".into()), redemption_id: Some("rd1".into()), redeemed_at: Some(5), requested_at: 5, source: "twitch", ..Request::default() };
-        assert_eq!(add(&ctx, 1, &points).unwrap(), Added::Merged(id));
+        assert_eq!(add(&ctx, 1, &points, 0).unwrap(), Added::Merged(id));
         let r = get(&ctx, 1, id).unwrap().unwrap();
         assert_eq!((r.redeemed_at, r.redemption_id.as_deref(), r.reward_id.as_deref(), r.thread_id), (Some(5), Some("rd1"), Some("rw"), Some(500)));
         // Removed stays as a marker: neither the thread nor the redemption comes back.
-        assert!(claim(&ctx, 1, id, "removed", "Antho").unwrap());
-        assert_eq!(add(&ctx, 1, &thread).unwrap(), Added::Known);
-        assert_eq!(add(&ctx, 1, &points).unwrap(), Added::Known);
+        assert!(claim(&ctx, 1, id, Move::Remove, "Antho").unwrap());
+        assert_eq!(add(&ctx, 1, &thread, 0).unwrap(), Added::Known);
+        assert_eq!(add(&ctx, 1, &points, 0).unwrap(), Added::Known);
         assert!(open(&ctx, 1).unwrap().is_empty());
     }
 
@@ -456,17 +562,17 @@ mod tests {
         ctx.db.migrate("reviews", MIGRATIONS).unwrap();
         // A second post from the same member merges, and stays known after Complete.
         let post = |thread: u64| Request { name: "AnthoMain".into(), user_id: Some(10), thread_id: Some(thread), requested_at: 1, source: "thread", ..Request::default() };
-        let Added::New(id) = add(&ctx, 1, &post(500)).unwrap() else { panic!("first post is new") };
-        assert_eq!(add(&ctx, 1, &post(501)).unwrap(), Added::Merged(id));
-        assert!(claim(&ctx, 1, id, "done", "Antho").unwrap());
-        assert_eq!(add(&ctx, 1, &post(501)).unwrap(), Added::Known);
+        let Added::New(id) = add(&ctx, 1, &post(500), 0).unwrap() else { panic!("first post is new") };
+        assert_eq!(add(&ctx, 1, &post(501), 0).unwrap(), Added::Merged(id));
+        assert!(claim(&ctx, 1, id, Move::Complete, "Antho").unwrap());
+        assert_eq!(add(&ctx, 1, &post(501), 0).unwrap(), Added::Known);
         assert!(open(&ctx, 1).unwrap().is_empty());
         // A second redemption from the same viewer merges, is known on the next sync, and is
         // fulfilled with the first.
         let points = |rd: &str| Request { name: "Moonfrost".into(), twitch_user: Some("pavel_tv".into()), reward_id: Some("rw".into()), redemption_id: Some(rd.into()), redeemed_at: Some(5), requested_at: 5, source: "twitch", ..Request::default() };
-        let Added::New(id) = add(&ctx, 1, &points("rd1")).unwrap() else { panic!("first redemption is new") };
-        assert_eq!(add(&ctx, 1, &points("rd2")).unwrap(), Added::Merged(id));
-        assert_eq!(add(&ctx, 1, &points("rd2")).unwrap(), Added::Known);
+        let Added::New(id) = add(&ctx, 1, &points("rd1"), 0).unwrap() else { panic!("first redemption is new") };
+        assert_eq!(add(&ctx, 1, &points("rd2"), 0).unwrap(), Added::Merged(id));
+        assert_eq!(add(&ctx, 1, &points("rd2"), 0).unwrap(), Added::Known);
         let ids = |list: Vec<Redemption>| list.into_iter().map(|r| (r.id, r.status)).collect::<Vec<_>>();
         let f = |id: &str| (id.to_owned(), "FULFILLED".to_owned());
         assert_eq!(ids(set_twitch(&ctx, 1, id, "FULFILLED").unwrap()), [f("rd1"), f("rd2")]);
@@ -484,20 +590,69 @@ mod tests {
         let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
         ctx.db.migrate("reviews", MIGRATIONS).unwrap();
         let post = Request { name: "Teo".into(), user_id: Some(10), thread_id: Some(500), requested_at: 1, source: "thread", ..Request::default() };
-        let Added::New(id) = add(&ctx, 1, &post).unwrap() else { panic!("new") };
-        assert!(claim(&ctx, 1, id, "done", "Antho").unwrap());
+        let Added::New(id) = add(&ctx, 1, &post, 0).unwrap() else { panic!("new") };
+        assert!(claim(&ctx, 1, id, Move::Complete, "Antho").unwrap());
         // A double click completes once, and a done request can't be removed.
-        assert!(!claim(&ctx, 1, id, "done", "Antho").unwrap());
-        assert!(!claim(&ctx, 1, id, "removed", "Antho").unwrap());
-        assert!(claim(&ctx, 1, id, "open", "Antho").unwrap());
-        assert!(!claim(&ctx, 1, id, "open", "Antho").unwrap());
+        assert!(!claim(&ctx, 1, id, Move::Complete, "Antho").unwrap());
+        assert!(!claim(&ctx, 1, id, Move::Remove, "Antho").unwrap());
+        assert!(claim(&ctx, 1, id, Move::Reopen, "Antho").unwrap());
+        assert!(!claim(&ctx, 1, id, Move::Reopen, "Antho").unwrap());
         // A removed post can come back; a removed redemption was refunded and can't.
-        assert!(claim(&ctx, 1, id, "removed", "Antho").unwrap());
-        assert!(claim(&ctx, 1, id, "open", "Antho").unwrap());
+        assert!(claim(&ctx, 1, id, Move::Remove, "Antho").unwrap());
+        assert!(claim(&ctx, 1, id, Move::Reopen, "Antho").unwrap());
         let points = Request { name: "Moonfrost".into(), twitch_user: Some("pavel_tv".into()), reward_id: Some("rw".into()), redemption_id: Some("rd1".into()), redeemed_at: Some(5), requested_at: 5, source: "twitch", ..Request::default() };
-        let Added::New(paid) = add(&ctx, 1, &points).unwrap() else { panic!("new") };
-        assert!(claim(&ctx, 1, paid, "removed", "Antho").unwrap());
-        assert!(!claim(&ctx, 1, paid, "open", "Antho").unwrap());
+        let Added::New(paid) = add(&ctx, 1, &points, 0).unwrap() else { panic!("new") };
+        assert!(claim(&ctx, 1, paid, Move::Remove, "Antho").unwrap());
+        assert!(!claim(&ctx, 1, paid, Move::Reopen, "Antho").unwrap());
+    }
+
+    #[test]
+    fn the_waitlist_runs_from_the_last_review() {
+        let day = 86_400_000;
+        // Reviewed 2 days ago with a 7-day wait: joins 5 days from now.
+        assert_eq!(waitlist_until(Some(10 * day), 7 * day, 12 * day), Some(17 * day));
+        // The wait is over, there was no review, or the waitlist is off.
+        assert_eq!(waitlist_until(Some(10 * day), 7 * day, 17 * day), None);
+        assert_eq!(waitlist_until(None, 7 * day, 12 * day), None);
+        assert_eq!(waitlist_until(Some(10 * day), 0, 12 * day), None);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn asking_again_soon_goes_on_the_waitlist() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        let week = 7 * 86_400_000;
+        let post = |thread: u64, name: &str| Request { name: name.into(), user_id: Some(10), thread_id: Some(thread), requested_at: thread as i64, source: "thread", ..Request::default() };
+        let Added::New(first) = add(&ctx, 1, &post(500, "AnthoMain"), week).unwrap() else { panic!("first is new") };
+        assert!(claim(&ctx, 1, first, Move::Complete, "Antho").unwrap());
+        let done_at = get(&ctx, 1, first).unwrap().unwrap().closed_at.unwrap();
+        // A new post from the same member is a re-request, waiting until a week after the review.
+        let Added::Waiting(again, at) = add(&ctx, 1, &post(501, "AnthoMain"), week).unwrap() else { panic!("a re-request waits") };
+        assert_eq!(at, done_at + week);
+        // The old post never comes back, and a second re-request merges into the waiting one.
+        assert_eq!(add(&ctx, 1, &post(500, "AnthoMain"), week).unwrap(), Added::Known);
+        assert_eq!(add(&ctx, 1, &post(502, "Alt account"), week).unwrap(), Added::Merged(again));
+        assert!(open(&ctx, 1).unwrap().is_empty());
+        assert_eq!(counts(&ctx, 1).unwrap(), (0, 1));
+        // Someone else goes straight in.
+        let other = Request { name: "Noor".into(), user_id: Some(11), thread_id: Some(600), requested_at: 600, source: "thread", ..Request::default() };
+        let Added::New(noor) = add(&ctx, 1, &other, week).unwrap() else { panic!("someone else is new") };
+        // A Twitch viewer reviewed before waits too, with their channel points.
+        let points = |rd: &str| Request { name: "Moonfrost".into(), twitch_user: Some("Pavel_TV".into()), reward_id: Some("rw".into()), redemption_id: Some(rd.into()), redeemed_at: Some(700), requested_at: 700, source: "twitch", ..Request::default() };
+        let Added::New(paid) = add(&ctx, 1, &points("rd1"), week).unwrap() else { panic!("new") };
+        assert!(claim(&ctx, 1, paid, Move::Complete, "Antho").unwrap());
+        let Added::Waiting(paid_again, _) = add(&ctx, 1, &points("rd2"), week).unwrap() else { panic!("a viewer's re-request waits") };
+        // Nothing is due yet; once it is, both join the queue with when they asked, points first.
+        assert_eq!(promote_due(&ctx, done_at + 1000).unwrap(), 0);
+        assert_eq!(promote_due(&ctx, now_ms() + week).unwrap(), 2);
+        let queue: Vec<(i64, i64)> = open(&ctx, 1).unwrap().into_iter().map(|r| (r.id, r.requested_at)).collect();
+        assert_eq!(queue[0], (paid_again, 700));
+        assert!(queue.contains(&(again, 501)));
+        // Staff can move one to the queue early, once.
+        assert!(claim(&ctx, 1, noor, Move::Complete, "Antho").unwrap());
+        let Added::Waiting(early, _) = add(&ctx, 1, &Request { thread_id: Some(601), ..other }, week).unwrap() else { panic!("waits") };
+        assert!(claim(&ctx, 1, early, Move::Promote, "Antho").unwrap());
+        assert!(!claim(&ctx, 1, early, Move::Promote, "Antho").unwrap());
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
@@ -514,9 +669,9 @@ mod tests {
             .unwrap();
         ctx.db.migrate("reviews", MIGRATIONS).unwrap();
         let req = |thread: Option<u64>, rd: Option<&str>| Request { name: "Someone new".into(), thread_id: thread, redemption_id: rd.map(Into::into), source: "thread", ..Request::default() };
-        assert_eq!(add(&ctx, 1, &req(Some(500), None)).unwrap(), Added::Known);
-        assert_eq!(add(&ctx, 1, &req(Some(501), None)).unwrap(), Added::Known);
-        assert_eq!(add(&ctx, 1, &req(None, Some("rd1"))).unwrap(), Added::Known);
+        assert_eq!(add(&ctx, 1, &req(Some(500), None), 0).unwrap(), Added::Known);
+        assert_eq!(add(&ctx, 1, &req(Some(501), None), 0).unwrap(), Added::Known);
+        assert_eq!(add(&ctx, 1, &req(None, Some("rd1")), 0).unwrap(), Added::Known);
         // A done request's redemption is retried once in case its fulfil failed.
         let pending: i64 = ctx.db.with(|c| c.query_row("SELECT twitch_pending FROM reviews_sources WHERE ext_id = 'rd1'", [], |r| r.get(0))).unwrap();
         assert_eq!(pending, 1);
@@ -527,7 +682,7 @@ mod tests {
         let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
         ctx.db.migrate("reviews", MIGRATIONS).unwrap();
         for (name, user, at, redeemed) in [("Old", 1, 10, None), ("Newer", 2, 20, None), ("Paid", 3, 30, Some(30))] {
-            add(&ctx, 1, &Request { name: name.into(), user_id: Some(user), requested_at: at, redeemed_at: redeemed, source: "thread", ..Request::default() }).unwrap();
+            add(&ctx, 1, &Request { name: name.into(), user_id: Some(user), requested_at: at, redeemed_at: redeemed, source: "thread", ..Request::default() }, 0).unwrap();
         }
         let names: Vec<String> = open(&ctx, 1).unwrap().into_iter().map(|r| r.name).collect();
         assert_eq!(names, ["Paid", "Old", "Newer"]);

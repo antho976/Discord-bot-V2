@@ -13,7 +13,7 @@ use bot_core::{Ctx, Icon, now_ms, text};
 use bot_core::rand::RngExt as _;
 use serde::Deserialize;
 
-use crate::store::{self, Review};
+use crate::store::{self, Move, Review, Tally};
 use crate::twitch::{self, Conn};
 use crate::{DEFAULT_DONE, DEFAULT_PING, KEY, Settings};
 
@@ -23,6 +23,7 @@ const DAY_MS: i64 = 86_400_000;
 pub fn routes() -> Router<Ctx> {
     Router::new()
         .route("/g/{guild}/reviews", get(queue_page))
+        .route("/g/{guild}/reviews/waitlist", get(waitlist_page))
         .route("/g/{guild}/reviews/done", get(done_page))
         .route("/g/{guild}/reviews/settings", get(settings_page).post(save_settings))
         .route("/g/{guild}/reviews/scan", post(scan))
@@ -30,6 +31,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/reviews/{id}/ping", post(ping))
         .route("/g/{guild}/reviews/{id}/complete", post(complete))
         .route("/g/{guild}/reviews/{id}/remove", post(remove))
+        .route("/g/{guild}/reviews/{id}/promote", post(promote))
         .route("/g/{guild}/reviews/{id}/reopen", post(reopen))
         .route("/g/{guild}/reviews/{id}/notes", post(save_notes))
         .route("/g/{guild}/reviews/twitch/connect", get(twitch_connect))
@@ -39,15 +41,30 @@ pub fn routes() -> Router<Ctx> {
         .route("/reviews/twitch/callback", get(twitch_callback))
 }
 
-fn tabs(page: &Page, waiting: usize, active: &str) -> Markup {
-    ui::tabs_counted(
-        &[
-            ("Queue", page.path("reviews"), Some(waiting as i64).filter(|n| *n > 0)),
-            ("Done", page.path("reviews/done"), None),
-            ("Settings", page.path("reviews/settings"), None),
-        ],
-        active,
-    )
+/// The sub-pages, with how many wait in the queue and on the waitlist. The Waitlist tab shows
+/// while the waitlist is on or someone is still on it.
+fn tabs(ctx: &Ctx, page: &Page, s: &Settings, active: &str) -> WebResult<Markup> {
+    let (open, waiting) = store::counts(ctx, page.guild_id)?;
+    let count = |n: usize| Some(n as i64).filter(|n| *n > 0);
+    let mut items = vec![("Queue", page.path("reviews"), count(open))];
+    if s.wait_days > 0 || waiting > 0 {
+        items.push(("Waitlist", page.path("reviews/waitlist"), count(waiting)));
+    }
+    items.extend([("Done", page.path("reviews/done"), None), ("Settings", page.path("reviews/settings"), None)]);
+    Ok(ui::tabs_counted(&items, active))
+}
+
+/// "today, 14:00", "tomorrow", "Friday", then "Nov 12": when a waitlisted request joins the
+/// queue, in the viewer's timezone.
+fn joins_words(page: &Page, at: i64, now: i64) -> String {
+    let z = page.user.local(at);
+    match (z.date() - page.user.local(now).date()).get_days() {
+        ..=0 if at <= now => "in a minute".to_owned(),
+        ..=0 => format!("today, {}", z.strftime("%H:%M")),
+        1 => "tomorrow".to_owned(),
+        2..=6 => z.strftime("%A").to_string(),
+        _ => z.strftime("%b %-d").to_string(),
+    }
 }
 
 /// "40 min", "5 h", "3 days".
@@ -99,6 +116,7 @@ struct QueueQuery {
     added: Option<usize>,
     skipped: Option<usize>,
     moved: Option<usize>,
+    waiting: Option<usize>,
     from: Option<String>,
 }
 
@@ -126,7 +144,7 @@ async fn queue_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
     });
     let body = html! {
         style { (PreEscaped(CSS)) }
-        (tabs(&page, open.len(), "Queue"))
+        (tabs(&ctx, &page, &s, "Queue")?)
         div.with-rail {
             div.stack.rv-main {
                 (ui::readings(&[
@@ -164,19 +182,23 @@ async fn queue_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
 /// What a scan or sync just did.
 fn result_note(q: &QueueQuery) -> Option<String> {
     let plural = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
-    match q.from.as_deref()? {
-        "scan" => Some(format!(
+    let mut note = match q.from.as_deref()? {
+        "scan" => format!(
             "The scan added {}; {} already here.",
             plural(q.added.unwrap_or(0), "request", "requests"),
             plural(q.skipped.unwrap_or(0), "post was", "posts were")
-        )),
-        "sync" => Some(format!(
+        ),
+        "sync" => format!(
             "Twitch sync added {}; {} requests already waiting.",
             plural(q.added.unwrap_or(0), "request", "requests"),
             plural(q.moved.unwrap_or(0), "redemption joined", "redemptions joined")
-        )),
-        _ => None,
+        ),
+        _ => return None,
+    };
+    if let Some(n) = q.waiting.filter(|n| *n > 0) {
+        note.push_str(&format!(" {} to the waitlist.", plural(n, "request went", "requests went")));
     }
+    Some(note)
 }
 
 fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, numbered: bool) -> Markup {
@@ -277,13 +299,75 @@ fn sources_block(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>) -> M
     }
 }
 
+async fn waitlist_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::View)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let waiting = store::waiting(&ctx, guild)?;
+    let now = now_ms();
+    let days = |n: i64| format!("{n} {}", if n == 1 { "day" } else { "days" });
+    let body = html! {
+        style { (PreEscaped(CSS)) }
+        (tabs(&ctx, &page, &s, "Waitlist")?)
+        div.stack.rv-main {
+            @if s.wait_days > 0 {
+                p.muted.small { "Someone who asks again within " (days(s.wait_days)) " of their last review waits here, and joins the queue on their own when the time is up, in the place they asked." }
+            } @else {
+                p.muted.small { "The waitlist is off, so new requests go straight to the queue. The ones still here join it at their time." }
+            }
+            @if waiting.is_empty() {
+                (ui::empty(Icon::Review, "No one is on the waitlist", &format!("Someone who asks again within {} of their last review shows up here.", days(s.wait_days.max(1)))))
+            } @else {
+                div.rv-list {
+                    @for r in &waiting { (waitlist_row(&ctx, &page, r, now)) }
+                }
+            }
+        }
+    };
+    Ok(ui::layout(&ctx, &page, "Account reviews", None, body).into_response())
+}
+
+fn waitlist_row(ctx: &Ctx, page: &Page, r: &Review, now: i64) -> Markup {
+    let guild = page.guild_id;
+    let last = ctx.db.with(|c| store::last_done(c, guild, r.user_id, r.twitch_user.as_deref())).ok().flatten();
+    let stamp = |ms: i64| page.user.local(ms).strftime("%b %-d, %H:%M").to_string();
+    html! {
+        div.rv-row {
+            span.rv-place {}
+            (face(ctx, guild, r))
+            div.rv-body {
+                div.rv-title {
+                    strong { (r.name) }
+                    @if r.redeemed_at.is_some() { (ui::badge("Channel points", Tone::Muted)) }
+                }
+                p.muted.small {
+                    @if let Some(w) = who(ctx, guild, r) { (w) " · " }
+                    @if let Some(l) = last { span title=(stamp(l)) { "last review " (text::ago(l)) } " · " }
+                    span title=(stamp(r.requested_at)) { "asked " (text::ago(r.requested_at)) }
+                    @if let Some(t) = r.thread_id { " · " a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { "Open post" } }
+                }
+                @if let Some(at) = r.eligible_at { p.small.rv-joins title=(stamp(at)) { "Joins the queue " (joins_words(page, at, now)) } }
+                @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
+            }
+            @if page.can_edit() {
+                div.rv-acts {
+                    (ui::action_button(&page.path(&format!("reviews/{}/promote", r.id)), "Move to queue now", Tone::Muted, false))
+                    (ui::pop("rv-pop", "More", None, "small", html! {
+                        p.help { "Removing takes them off the waitlist" @if r.redemption_id.is_some() { " and refunds their channel points" } "." }
+                        div { (remove_button(page, r)) }
+                    }))
+                }
+            }
+        }
+    }
+}
+
 async fn done_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
-    let open = store::open(&ctx, guild)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
     let closed = store::closed(&ctx, guild)?;
     let body = html! {
         style { (PreEscaped(CSS)) }
-        (tabs(&page, open.len(), "Done"))
+        (tabs(&ctx, &page, &s, "Done")?)
         div.stack.rv-main {
             p.muted.small { "The last 50 completed or removed. Removed requests stay here so their post or redemption isn't added again. A removed one with channel points was refunded, so it can't go back to the queue." }
             @if closed.is_empty() {
@@ -368,7 +452,7 @@ async fn complete(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let r = find(&ctx, guild, id).await?;
     // Claim it first, so a second click doesn't post the closing message twice.
-    if !store::claim(&ctx, guild, id, "done", &page.user.name)? {
+    if !store::claim(&ctx, guild, id, Move::Complete, &page.user.name)? {
         return Ok(Redirect::to(&page.path("reviews")).into_response());
     }
     let message = form.text("message");
@@ -376,7 +460,7 @@ async fn complete(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u
         && !message.trim().is_empty()
         && let Err(e) = post_in(&ctx, thread, &fill(message.trim(), &r), r.user_id).await
     {
-        store::claim(&ctx, guild, id, "open", &page.user.name)?;
+        store::claim(&ctx, guild, id, Move::Reopen, &page.user.name)?;
         return Err(WebError::Bad(format!("The closing message didn't post: {e} Clear the message to complete without it.")));
     }
     ctx.audit(&page.user, Some(guild), KEY, format!("Completed {}'s account review", r.name));
@@ -388,20 +472,32 @@ async fn complete(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u
 async fn remove(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let r = find(&ctx, guild, id).await?;
-    if !store::claim(&ctx, guild, id, "removed", &page.user.name)? {
-        return Ok(Redirect::to(&page.path("reviews")).into_response());
+    let back = page.path(if r.status == "waiting" { "reviews/waitlist" } else { "reviews" });
+    if !store::claim(&ctx, guild, id, Move::Remove, &page.user.name)? {
+        return Ok(Redirect::to(&back).into_response());
     }
     ctx.audit(&page.user, Some(guild), KEY, format!("Removed {} from the review queue", r.name));
     // Cancelling gives the viewer their points back and takes it off Twitch's queue.
     let redemptions = store::set_twitch(&ctx, guild, id, "CANCELED")?;
     twitch::settle(&ctx, guild, &redemptions).await;
-    Ok(saved(&page.path("reviews")))
+    Ok(saved(&back))
+}
+
+/// Staff move someone off the waitlist before their time.
+async fn promote(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let r = find(&ctx, guild, id).await?;
+    if !store::claim(&ctx, guild, id, Move::Promote, &page.user.name)? {
+        return Ok(Redirect::to(&page.path("reviews/waitlist")).into_response());
+    }
+    ctx.audit(&page.user, Some(guild), KEY, format!("Moved {} from the waitlist to the review queue", r.name));
+    Ok(saved(&page.path("reviews/waitlist")))
 }
 
 async fn reopen(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let r = find(&ctx, guild, id).await?;
-    if !store::claim(&ctx, guild, id, "open", &page.user.name)? {
+    if !store::claim(&ctx, guild, id, Move::Reopen, &page.user.name)? {
         return Ok(Redirect::to(&page.path("reviews/done")).into_response());
     }
     ctx.audit(&page.user, Some(guild), KEY, format!("Put {} back in the review queue", r.name));
@@ -420,29 +516,29 @@ async fn scan(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let channel = s.channel.ok_or_else(|| WebError::Bad("Pick the review channel on the Settings tab first.".into()))?;
-    let (added, skipped) = if ctx.cfg.preview {
-        (0, 0)
+    let t = if ctx.cfg.preview {
+        Tally::default()
     } else {
-        crate::scan(&ctx, guild, channel).await.map_err(|e| WebError::Bad(format!("The scan didn't work: {}", bot_core::discord::why_refused_any(&e))))?
+        crate::scan(&ctx, guild, channel, s.wait_ms()).await.map_err(|e| WebError::Bad(format!("The scan didn't work: {}", bot_core::discord::why_refused_any(&e))))?
     };
-    ctx.audit(&page.user, Some(guild), KEY, format!("Scanned the review channel: {added} added"));
-    Ok(Redirect::to(&format!("{}?from=scan&added={added}&skipped={skipped}", page.path("reviews"))).into_response())
+    ctx.audit(&page.user, Some(guild), KEY, format!("Scanned the review channel: {} added", t.added));
+    Ok(Redirect::to(&format!("{}?from=scan&added={}&skipped={}&waiting={}", page.path("reviews"), t.added, t.merged + t.known, t.waiting)).into_response())
 }
 
 async fn sync(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let reward = s.reward_id.clone().ok_or_else(|| WebError::Bad("Pick the channel points reward on the Settings tab first.".into()))?;
-    let (added, moved) = if ctx.cfg.preview {
-        (0, 0)
+    let t = if ctx.cfg.preview {
+        Tally::default()
     } else {
-        twitch::sync(&ctx, guild, &reward).await.map_err(|e| {
+        twitch::sync(&ctx, guild, &reward, s.wait_ms()).await.map_err(|e| {
             twitch::note_error(&ctx, guild, Some(&e.to_string()));
             WebError::Bad(format!("The Twitch sync didn't work. {e}"))
         })?
     };
-    ctx.audit(&page.user, Some(guild), KEY, format!("Synced channel points: {added} added"));
-    Ok(Redirect::to(&format!("{}?from=sync&added={added}&moved={moved}", page.path("reviews"))).into_response())
+    ctx.audit(&page.user, Some(guild), KEY, format!("Synced channel points: {} added", t.added));
+    Ok(Redirect::to(&format!("{}?from=sync&added={}&moved={}&waiting={}", page.path("reviews"), t.added, t.merged, t.waiting)).into_response())
 }
 
 // ---- settings and Twitch ----
@@ -455,16 +551,16 @@ struct SettingsQuery {
 async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<SettingsQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let open = store::open(&ctx, guild)?;
     let conn = twitch::conn(&ctx, guild)?;
     let ready = conn.as_ref().is_some_and(|c| c.connected() && c.can_manage());
     let rewards = if ready && page.can_edit() { Some(twitch::rewards(&ctx, guild).await.map_err(|e| e.to_string())) } else { None };
     let body = html! {
         style { (PreEscaped(CSS)) }
-        (tabs(&page, open.len(), "Settings"))
+        (tabs(&ctx, &page, &s, "Settings")?)
         (ui::settings_form(&page, &page.path("reviews/settings"), html! {
             (ui::section("Requests", None, ui::card(html! {
                 (ui::field_channel(&ctx, guild, "channel", "Review channel", Some("Each new post in this forum joins the queue, named after its title. A text channel works too: each new thread joins. Scan posts on the Queue tab picks up open posts and archived ones from the last 30 days."), s.channel))
+                (ui::field_number("wait_days", "Wait before another review", Some("Someone who asks again this soon after their last review waits on the waitlist, then joins the queue on their own. 0 turns the waitlist off."), s.wait_days, 0, 365, Some("days")))
             })))
             (ui::section("Messages", Some("{mention} pings the member, or names them when there's no member. {name} is the request's name."), ui::card(html! {
                 (ui::field_textarea("ping_message", "Ping", Some("Posted in their post when you press Ping."), &s.ping_message, DEFAULT_PING))
@@ -562,6 +658,7 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     s.channel = form.channel(&ctx, guild, "channel");
     s.ping_message = text::clip(form.text("ping_message").trim(), 1500);
     s.done_message = text::clip(form.text("done_message").trim(), 1500);
+    s.wait_days = form.int_in("wait_days", 0, 365, 7);
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed the account review settings");
     Ok(saved(&page.path("reviews/settings")))
@@ -661,7 +758,7 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
     let tx = conn.transaction()?;
     // (name, member, thread, twitch viewer, redeemed, asked hours ago, status, notes, pinged, closed hours ago, by)
     type Row<'a> = (&'a str, Option<i64>, Option<i64>, Option<&'a str>, bool, i64, &'a str, &'a str, Option<i64>, Option<i64>, Option<&'a str>);
-    let rows: [Row; 9] = [
+    let rows: [Row; 11] = [
         ("Kasia", m(4), Some(901), Some("kasia_plays"), true, 3, "open", "https://idleontoolbox.com/?profile=Kasia\nWants help with W5 sailing.", None, None, None),
         ("Moonfrost", None, None, Some("pavel_tv"), true, 1, "open", "Redeemed by Pavel_TV on Twitch", None, None, None),
         ("bramblepaw", m(5), Some(902), None, false, 77, "open", "", Some(2), None, None),
@@ -671,11 +768,13 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
         ("Oskar", m(1), Some(906), None, false, 120, "done", "Alchemy bubbles behind, told him to level cauldrons.", None, Some(6), Some("Antho")),
         ("juniper.fern", m(2), Some(907), Some("juniper_fern"), true, 60, "done", "", None, Some(30), Some("Mira")),
         ("Review please", m(9), Some(908), None, false, 90, "removed", "Duplicate of Pavel's earlier post.", None, Some(48), Some("Antho")),
+        ("Oskar", m(1), Some(909), None, false, 2, "waiting", "Did the cauldrons, wants a second look.", None, None, None),
+        ("juniper.fern", None, None, Some("juniper_fern"), true, 1, "waiting", "", None, None, None),
     ];
     for (name, user, thread, viewer, redeemed, ago, status, notes, pinged, closed, by) in rows {
         let asked = now - ago * h;
         let thread = thread.map(|t| guild as i64 + t);
-        let redemption = redeemed.then(|| format!("preview-{name}"));
+        let redemption = redeemed.then(|| format!("preview-{name}-{status}"));
         tx.execute(
             "INSERT INTO reviews (guild_id, name, user_id, thread_id, twitch_user, reward_id, redemption_id, redeemed_at, requested_at, status, notes, source, pinged_at, closed_at, closed_by)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
@@ -705,6 +804,12 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
             store::add_source(&tx, guild, "redemption", d, id, Some("preview-reward"))?;
         }
     }
+    // Waitlisted ones join a week after their last review.
+    tx.execute(
+        "UPDATE reviews SET eligible_at = (SELECT MAX(d.closed_at) FROM reviews d WHERE d.guild_id = reviews.guild_id AND d.status = 'done' AND d.name = reviews.name) + ?2
+         WHERE guild_id = ?1 AND status = 'waiting'",
+        params![guild as i64, s.wait_ms()],
+    )?;
     tx.execute(
         "INSERT OR REPLACE INTO reviews_twitch (guild_id, broadcaster_id, login, access_token, refresh_token, expires_at, scopes, synced_at) VALUES (?1, '1', 'antho', NULL, 'preview', 0, ?2, ?3)",
         params![guild as i64, twitch::SCOPE, now - 3 * 60_000],
@@ -731,6 +836,7 @@ const CSS: &str = "
 .rv-notes { font-size: 12.5px; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; border-left: 2px solid var(--edge-2); padding-left: 9px; margin-top: 3px; }
 .rv-acts { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
 .rv-acts .pop-body { width: 280px; right: 0; left: auto; }
+.rv-joins { color: var(--ink-2); }
 .rv-pop-foot { border-top: 1px solid var(--edge-1); padding-top: 10px; }
 .rv-closed .rv-title strong { color: var(--ink-2); }
 .rv-twitch { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
@@ -768,6 +874,8 @@ mod tests {
         assert_eq!(result_note(&q).as_deref(), Some("The scan added 1 request; 3 posts were already here."));
         let q = QueueQuery { from: Some("sync".into()), added: Some(0), moved: Some(1), ..QueueQuery::default() };
         assert_eq!(result_note(&q).as_deref(), Some("Twitch sync added 0 requests; 1 redemption joined requests already waiting."));
+        let q = QueueQuery { from: Some("scan".into()), added: Some(0), skipped: Some(1), waiting: Some(2), ..QueueQuery::default() };
+        assert_eq!(result_note(&q).as_deref(), Some("The scan added 0 requests; 1 post was already here. 2 requests went to the waitlist."));
         assert_eq!(result_note(&QueueQuery::default()), None);
     }
 
@@ -789,6 +897,7 @@ mod tests {
             pinged_at: None,
             closed_at: None,
             closed_by: None,
+            eligible_at: None,
         };
         assert_eq!(fill("{mention}, your turn ({name})", &r), "**Moonfrost**, your turn (Moonfrost)");
         r.user_id = Some(42);

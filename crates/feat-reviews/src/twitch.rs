@@ -13,7 +13,7 @@ use bot_core::serde_json::{Value, json};
 use bot_core::{Ctx, now_ms, text};
 use serde::Deserialize;
 
-use crate::store::{self, Added, Redemption, Request};
+use crate::store::{self, Redemption, Request, Tally};
 
 const HELIX: &str = "https://api.twitch.tv/helix";
 const TOKEN_URL: &str = "https://id.twitch.tv/oauth2/token";
@@ -288,9 +288,9 @@ pub async fn create_reward(ctx: &Ctx, guild: u64, title: &str, cost: i64) -> Res
 
 /// Turn unfulfilled redemptions of `reward_id` into requests, and retry the fulfils and
 /// cancels Twitch didn't take before. Reads newest first, so a new redemption always arrives
-/// however many old ones wait, and adds them oldest first. Returns (added, merged into a
-/// request already waiting).
-pub async fn sync(ctx: &Ctx, guild: u64, reward_id: &str) -> Result<(usize, usize)> {
+/// however many old ones wait, and adds them oldest first. A viewer reviewed within
+/// `wait_ms` goes on the waitlist.
+pub async fn sync(ctx: &Ctx, guild: u64, reward_id: &str, wait_ms: i64) -> Result<Tally> {
     let _ = ctx.db.with(|c| c.execute("UPDATE reviews_twitch SET synced_at = ?2 WHERE guild_id = ?1", params![guild as i64, now_ms()]));
     let mut redemptions = Vec::new();
     let mut cursor = String::new();
@@ -308,20 +308,16 @@ pub async fn sync(ctx: &Ctx, guild: u64, reward_id: &str) -> Result<(usize, usiz
             break;
         }
     }
-    let (mut added, mut merged) = (0, 0);
+    let mut tally = Tally::default();
     for r in redemptions.iter().rev() {
         let Some(req) = request_from(r, reward_id) else { continue };
-        match store::add(ctx, guild, &req)? {
-            Added::New(_) => added += 1,
-            Added::Merged(_) => merged += 1,
-            Added::Known => {}
-        }
+        tally.count(store::add(ctx, guild, &req, wait_ms)?);
     }
     let retry = store::pending_twitch(ctx, guild)?;
     if settle(ctx, guild, &retry).await == 0 {
         note_error(ctx, guild, None);
     }
-    Ok((added, merged))
+    Ok(tally)
 }
 
 /// A queue request from one redemption: the account typed in, or the viewer's name.

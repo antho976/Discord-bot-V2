@@ -14,7 +14,7 @@ use bot_core::twilight_model::id::marker::TagMarker;
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, Need, Overview, feature_async, now_ms, text};
 use serde::{Deserialize, Serialize};
 
-use store::{Added, Request};
+use store::{Added, Request, Tally};
 
 pub const KEY: &str = "reviews";
 /// Forum tags that mean a post was dealt with; a scan skips those posts.
@@ -37,11 +37,20 @@ pub struct Settings {
     /// The channel points reward whose redemptions are requests.
     pub reward_id: Option<String>,
     pub reward_title: String,
+    /// Days after someone's last completed review before a new request of theirs joins the
+    /// queue; until then it waits on the waitlist. 0 turns the waitlist off.
+    pub wait_days: i64,
+}
+
+impl Settings {
+    pub fn wait_ms(&self) -> i64 {
+        self.wait_days.max(0) * 86_400_000
+    }
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { channel: None, ping_message: DEFAULT_PING.into(), done_message: DEFAULT_DONE.into(), reward_id: None, reward_title: String::new() }
+        Self { channel: None, ping_message: DEFAULT_PING.into(), done_message: DEFAULT_DONE.into(), reward_id: None, reward_title: String::new(), wait_days: 7 }
     }
 }
 
@@ -78,7 +87,8 @@ impl Feature for Reviews {
             return Ok(());
         }
         let Some(req) = request_from_thread(ctx, &t.0, "thread") else { return Ok(()) };
-        if let Added::New(_) = store::add(ctx, guild, &req)? {
+        // A waitlisted request gets no notice; it joins the queue quietly when its time comes.
+        if let Added::New(_) = store::add(ctx, guild, &req, s.wait_ms())? {
             let who = req.user_id.map(|u| ctx.display_name(guild, u)).unwrap_or_else(|| "Someone".into());
             ctx.notify(Some(guild), KEY, format!("{who} asked for an account review: {}", req.name), Some(format!("/g/{guild}/reviews")));
         }
@@ -87,17 +97,20 @@ impl Feature for Reviews {
 
     /// Fetches channel points redemptions every 5 minutes for servers that connected Twitch,
     /// in the background so a slow Twitch doesn't hold up the other features' minute.
+    /// Also moves waitlisted requests whose time has come into the queue.
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
         let now = now_ms();
+        store::promote_due(ctx, now)?;
         for guild in ctx.enabled_guilds(KEY) {
             let s = ctx.settings::<Settings>(guild, KEY)?;
             let Some(reward) = s.reward_id.clone() else { continue };
+            let wait = s.wait_ms();
             if !twitch::due(ctx, guild, now) {
                 continue;
             }
             let ctx = ctx.clone();
             bot_core::tokio::spawn(async move {
-                if let Err(e) = twitch::sync(&ctx, guild, &reward).await {
+                if let Err(e) = twitch::sync(&ctx, guild, &reward, wait).await {
                     bot_core::tracing::warn!(guild, error = %e, "couldn't sync channel points redemptions");
                     twitch::note_error(&ctx, guild, Some(&e.to_string()));
                 }
@@ -153,9 +166,9 @@ fn created_ms(t: &Channel) -> i64 {
 }
 
 /// Look through the channel's open posts, and up to 50 archived ones made in the last 30 days,
-/// for requests missed while the bot was away, skipping posts tagged as done. Returns (added,
-/// already here or merged).
-pub async fn scan(ctx: &Ctx, guild: u64, channel: u64) -> Result<(usize, usize)> {
+/// for requests missed while the bot was away, skipping posts tagged as done. Someone reviewed
+/// within `wait_ms` goes on the waitlist.
+pub async fn scan(ctx: &Ctx, guild: u64, channel: u64, wait_ms: i64) -> Result<Tally> {
     let done: Vec<Id<TagMarker>> = ctx
         .cache
         .channel(Id::new(channel))
@@ -182,16 +195,13 @@ pub async fn scan(ctx: &Ctx, guild: u64, channel: u64) -> Result<(usize, usize)>
         }
         Err(e) => bot_core::tracing::warn!(guild, channel, error = %e, "couldn't list archived posts"),
     }
-    let (mut added, mut skipped) = (0, 0);
+    let mut tally = Tally::default();
     for t in &threads {
         if t.applied_tags.as_ref().is_some_and(|tags| tags.iter().any(|id| done.contains(id))) {
             continue;
         }
         let Some(req) = request_from_thread(ctx, t, "scan") else { continue };
-        match store::add(ctx, guild, &req)? {
-            Added::New(_) => added += 1,
-            Added::Merged(_) | Added::Known => skipped += 1,
-        }
+        tally.count(store::add(ctx, guild, &req, wait_ms)?);
     }
-    Ok((added, skipped))
+    Ok(tally)
 }
