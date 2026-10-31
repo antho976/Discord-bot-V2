@@ -169,12 +169,13 @@ impl Ticket {
     }
 }
 
-/// Set a closed ticket open again. False when it was already open.
-pub fn mark_reopened(conn: &Connection, guild: u64, number: i64) -> bot_core::rusqlite::Result<bool> {
+/// Set a closed ticket open again. False when it was already open. The waiting clock starts at
+/// `now`, so the days it spent closed don't count as waiting on staff.
+pub fn mark_reopened(conn: &Connection, guild: u64, number: i64, now: i64) -> bot_core::rusqlite::Result<bool> {
     let n = conn.execute(
-        "UPDATE tickets SET status = 'open', closed_at = NULL, closed_by = NULL, close_reason = NULL
+        "UPDATE tickets SET status = 'open', closed_at = NULL, closed_by = NULL, close_reason = NULL, last_message_at = ?3
          WHERE guild_id = ?1 AND number = ?2 AND status != 'open'",
-        params![guild as i64, number],
+        params![guild as i64, number, now],
     )?;
     Ok(n > 0)
 }
@@ -246,7 +247,8 @@ pub fn on_message(ctx: &Ctx, guild: u64, channel: u64, author: u64, bot: bool, a
 
 pub struct Stats {
     pub open: i64,
-    /// Open tickets where the member wrote last.
+    /// Open tickets where the member wrote last, counted like [`waiting_on_staff`]: a ticket
+    /// from before the bot kept the last author counts as waiting.
     pub waiting: i64,
     pub this_week: i64,
     /// Median seconds from opening to closing, over tickets closed in the last 30 days.
@@ -256,7 +258,7 @@ pub struct Stats {
 pub fn stats(conn: &Connection, guild: u64, now: i64) -> bot_core::rusqlite::Result<Stats> {
     let g = guild as i64;
     let (open, waiting) = conn.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(last_author_id = opener_id), 0) FROM tickets WHERE guild_id = ?1 AND status = 'open'",
+        "SELECT COUNT(*), COALESCE(SUM(last_author_id IS NULL OR last_author_id = opener_id), 0) FROM tickets WHERE guild_id = ?1 AND status = 'open'",
         [g],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
@@ -589,7 +591,7 @@ pub async fn reopen_from_dashboard(ctx: &Ctx, guild: u64, number: i64, by: u64) 
             "Couldn't unarchive the thread. The bot needs the Manage Threads permission in the ticket channel.".into()
         });
     }
-    ctx.db.with(|c| mark_reopened(c, guild, number)).map_err(|e| e.to_string())?;
+    ctx.db.with(|c| mark_reopened(c, guild, number, now_ms())).map_err(|e| e.to_string())?;
     let _ = ctx.say(t.thread_id, &format!("Reopened by <@{by}>.")).await;
     Ok(())
 }
@@ -832,6 +834,9 @@ mod tests {
         let t = by_number(&c, 1, 1).unwrap().unwrap();
         assert_eq!((t.first_reply_at, t.last_message_at), (Some(3000), Some(4000)));
         assert_eq!(stats(&c, 1, 5000).unwrap().waiting, 1);
+        // A ticket from before the last author was kept counts as waiting, as on the overview.
+        c.execute("UPDATE tickets SET last_author_id = NULL WHERE number = 1", []).unwrap();
+        assert_eq!(stats(&c, 1, 5000).unwrap().waiting, 1);
         // Another thread, or a closed ticket, isn't touched.
         assert!(!record_message(&c, 1, 556, 10, 5000).unwrap());
         mark_closed(&c, 1, 1, Some(99), None, CLOSED, 6000).unwrap();
@@ -878,10 +883,13 @@ mod tests {
         let t = by_number(&c, 1, 1).unwrap().unwrap();
         assert!(t.can_reopen(2000 + REOPEN_DAYS * DAY_MS));
         assert!(!t.can_reopen(2001 + REOPEN_DAYS * DAY_MS));
-        assert!(mark_reopened(&c, 1, 1).unwrap());
-        assert!(!mark_reopened(&c, 1, 1).unwrap());
+        assert!(mark_reopened(&c, 1, 1, 9 * DAY_MS).unwrap());
+        assert!(!mark_reopened(&c, 1, 1, 9 * DAY_MS).unwrap());
         let t = by_number(&c, 1, 1).unwrap().unwrap();
         assert_eq!((t.status.as_str(), t.closed_at, t.closed_by, t.reason.as_deref()), (OPEN, None, None, None));
+        // The days it was closed aren't counted as waiting.
+        assert_eq!(t.last_message_at, Some(9 * DAY_MS));
+        assert!(waiting_on_staff(&c, 1, 9 * DAY_MS, 10).unwrap().is_empty());
         assert!(!t.can_reopen(3000));
         // The member is at their limit again.
         assert!(matches!(reserve(&mut c, 1, 10, "b", "", 1, 4000).unwrap(), Reserved::Full(555)));
