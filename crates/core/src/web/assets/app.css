@@ -115,7 +115,7 @@ main.page:focus { outline: none; }
 .guild:hover::before { height: 20px; }
 .guild.on::before { height: 36px; }
 .guild.mark { background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); box-shadow: 0 8px 20px -8px var(--accent-glow); }
-.guild.mark img { width: 26px; height: 26px; border-radius: 0; }
+.guild.mark .icon { width: 26px; height: 26px; color: #fff; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.3)); }
 .guilds-sep { width: 30px; height: 2px; border-radius: 1px; background: var(--edge-2); margin: 2px 0; flex: none; }
 .guilds-list { display: flex; flex-direction: column; gap: 8px; align-items: center; }
 .guilds-foot { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; }
@@ -412,8 +412,8 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
    A server with no banner still gets a picture: its icon, enormous and blurred, under slow
    drifting light in the server's colours. */
 .art { position: absolute; inset: 0; overflow: hidden; background: radial-gradient(120% 90% at 30% 10%, color-mix(in oklab, var(--accent) 35%, #0c0c12), #0c0c12 70%); }
-.art-icon { position: absolute; inset: -30%; background: center / cover no-repeat; filter: blur(48px) saturate(1.7); opacity: 0.75; transform: scale(1.2); }
-.art-blob { position: absolute; width: 60%; aspect-ratio: 1; border-radius: 50%; mix-blend-mode: screen; filter: blur(40px); opacity: 0.55; }
+.art-icon { position: absolute; inset: -30%; background: center / cover no-repeat; filter: blur(44px) saturate(2.2) brightness(1.1); opacity: 0.85; transform: scale(1.2); }
+.art-blob { position: absolute; width: 60%; aspect-ratio: 1; border-radius: 50%; mix-blend-mode: screen; filter: blur(40px); opacity: 0.7; }
 .art-blob.a { left: -10%; top: -40%; background: radial-gradient(closest-side, var(--accent), transparent); animation: drift-a 22s ease-in-out infinite alternate; }
 .art-blob.b { right: -15%; top: -20%; background: radial-gradient(closest-side, var(--data-2), transparent); animation: drift-b 28s ease-in-out infinite alternate; }
 .art-blob.c { left: 30%; bottom: -60%; background: radial-gradient(closest-side, var(--signal), transparent); opacity: 0.35; animation: drift-c 25s ease-in-out infinite alternate; }
@@ -574,6 +574,12 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .prow:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .prow .avatar { width: 40px !important; height: 40px !important; }
 .prow strong { font-size: 13.5px; font-weight: 600; }
+.prow-face { position: relative; flex: none; }
+.prow-face .dot { position: absolute; right: 0; bottom: 1px; width: 11px; height: 11px; box-shadow: 0 0 0 2.5px var(--page); }
+.access-tiles { display: inline-flex; align-items: center; gap: 4px; }
+.access-tiles .nav-ic { width: 26px; height: 26px; border-radius: 8px; }
+.access-tiles .nav-ic.edit { background: var(--hue); color: #0b0b10; }
+.access-tiles .more { font: 600 11px var(--mono); color: var(--ink-3); padding-left: 4px; }
 .pop { position: relative; }
 .pop summary { list-style: none; }
 .pop summary::-webkit-details-marker { display: none; }
@@ -619,7 +625,9 @@ body.bare::after { right: -30vmax; bottom: -40vmax; background: radial-gradient(
 .notice { width: min(400px, 100%); display: flex; flex-direction: column; gap: 14px; align-items: flex-start; padding: 32px; border-radius: 22px; background: color-mix(in oklab, var(--raised) 85%, transparent); box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--edge-2); backdrop-filter: blur(20px); animation: pal-in 0.6s var(--ease) both; }
 .notice h1 { font-size: 26px; letter-spacing: -0.035em; }
 .notice .mark { width: 52px; height: 52px; margin-bottom: 6px; display: grid; place-items: center; border-radius: 16px; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); box-shadow: 0 14px 30px -10px var(--accent-glow); }
-.notice .mark img, .notice .mark svg { width: 28px; height: 28px; }
+.notice .mark .icon { width: 30px; height: 30px; color: #fff; }
+.btn.discord { height: 40px; padding: 0 20px; background: linear-gradient(180deg, #6d79f6, #5865f2 60%, #4752c4); color: #fff; font-weight: 600; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 10px 26px -10px #5865f2; }
+.btn.discord:hover { background: linear-gradient(180deg, #7b86f7, #5865f2 50%, #4752c4); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 14px 32px -10px #5865f2; }
 .notice p { color: var(--ink-2); }
 .notice .btn { margin-top: 6px; }
 .copyable { user-select: all; background: var(--control); padding: 6px 10px; border-radius: var(--r-icon); font-size: 13px; }
@@ -708,7 +716,7 @@ html.vt .page-body > *, html.vt .head-icon, html.vt .head-text, html.vt .head-ac
   .rail { position: static; }
   .change > .clip { display: none; }
   .ov-hero { min-height: 240px; padding: 14px 18px 26px; }
-  .ov-hello { padding-top: 56px; gap: 14px; }
+  .ov-hello { padding-top: 40px; gap: 12px; flex-direction: column; align-items: flex-start; }
   .ov-icon { width: 64px; height: 64px; border-radius: 20px; }
   .ov-hello h1 { font-size: 27px; }
   .ov-stat b { font-size: 24px; }

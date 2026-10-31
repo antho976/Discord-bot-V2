@@ -293,10 +293,10 @@ async fn login_page() -> Response {
             head { (ui::head("Sign in")) }
             body.bare {
                 main.notice {
-                    img.mark src="/static/icon.svg" alt="" width="36" height="36";
+                    span.mark { (ui::mark()) }
                     h1 { "Bot dashboard" }
-                    p { "Sign in with the Discord account the owner added." }
-                    a.btn.primary href="/auth/discord" { "Sign in with Discord" }
+                    p { "Sign in with the Discord account the owner added. Only people the owner adds get in, and each sees only the pages they were given." }
+                    a.btn.discord href="/auth/discord" { "Sign in with Discord" }
                 }
             }
         }
@@ -393,6 +393,7 @@ async fn callback(State(ctx): State<Ctx>, headers: HeaderMap, Query(q): Query<Ca
                 head { (ui::head("No access yet")) }
                 body.bare {
                     main.notice {
+                        span.mark { (ui::mark()) }
                         h1 { "You're not on the list yet" }
                         p { "Signed in as " strong { (name) } ". Send the owner your Discord ID so they can add you:" }
                         p.mono.copyable { (id) }

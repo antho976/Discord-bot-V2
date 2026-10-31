@@ -269,7 +269,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                 div.scrim {}
                 div.shell {
                     nav.guilds aria-label="Servers" {
-                        a.guild.mark href="/" data-tip="Dashboard" aria-label="Dashboard home" { img src="/static/icon.svg" alt=""; }
+                        a.guild.mark href="/" data-tip="Dashboard" aria-label="Dashboard home" { (mark()) }
                         span.guilds-sep {}
                         div.guilds-list {
                             @for g in &guilds {
@@ -322,7 +322,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                             kbd.mac-only { "⌘K" }
                         }
                         div.side-links {
-                            a.nav.on[key == "overview"] data-hue="core" href={ "/g/" (guild) } data-path={ "/g/" (guild) } data-about="home summary overview" aria-current=[(key == "overview").then_some("page")] {
+                            a.nav.on[key == "overview"] data-hue="core" href={ "/g/" (guild) } data-about="home summary overview" aria-current=[(key == "overview").then_some("page")] {
                                 @if key == "overview" { span.nav-pill {} }
                                 span.nav-ic { (icon(Icon::Home)) }
                                 span.grow { "Overview" }
@@ -389,6 +389,18 @@ pub fn art(icon_url: Option<&str>, still: bool) -> Markup {
         div.art.still[still] aria-hidden="true" {
             @if let Some(i) = icon_url { div.art-icon style={ "background-image:url(" (i) ")" } {} }
             span.art-blob.a {} span.art-blob.b {} span.art-blob.c {}
+        }
+    }
+}
+
+/// The bot's mark: a speech bubble with two eyes, drawn in the current colour. It sits on a
+/// tile of the server's colour in the rail and on the sign-in card.
+pub fn mark() -> Markup {
+    html! {
+        svg.icon viewBox="5 4.5 22 22" width="26" height="26" fill="none" aria-hidden="true" {
+            path d="M8 11a3.5 3.5 0 0 1 3.5-3.5h9A3.5 3.5 0 0 1 24 11v6.5a3.5 3.5 0 0 1-3.5 3.5H15l-4.5 3.5V21A2.5 2.5 0 0 1 8 18.5z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" {}
+            circle cx="13" cy="14.25" r="1.6" fill="currentColor" {}
+            circle cx="19" cy="14.25" r="1.6" fill="currentColor" {}
         }
     }
 }

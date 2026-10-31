@@ -610,7 +610,27 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
         }
         p.muted.small { "In Discord: Settings, Advanced, turn on Developer Mode, then right-click their name and Copy User ID. People who try to sign in see their ID too. Until you give them pages, they see nothing." }
     });
+    // Which pages each person holds, across servers: (page key, edit?) by person.
+    let mut access: HashMap<u64, Vec<(String, bool)>> = HashMap::new();
+    let rows: Vec<(i64, String, i64)> = ctx
+        .db
+        .with(|c| {
+            let mut s = c.prepare("SELECT user_id, page, MAX(level) FROM dash_perms WHERE level > 0 GROUP BY user_id, page ORDER BY page")?;
+            let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .unwrap_or_default();
+    for (uid, key, level) in rows {
+        access.entry(uid as u64).or_default().push((key, level >= 2));
+    }
+    let admins = list.iter().filter(|p| p.admin || p.id == owner).count();
+    let today = list.iter().filter(|p| p.signed_in.is_some_and(|at| crate::now_ms() - at < 86_400_000)).count();
     let body = html! {
+        div.readings {
+            div.reading { b data-count { (list.len()) } span { "people can sign in" } }
+            div.reading { b data-count { (admins) } span { "see everything" } }
+            div.reading { b data-count { (today) } span { "signed in today" } }
+        }
         div.people {
             @for p in &list {
                 @let seen = match p.signed_in {
@@ -618,16 +638,31 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
                     Some(at) => format!("Signed in {}", text::ago(at)),
                     None => format!("Added {} · hasn't signed in yet", text::ago(p.created_at)),
                 };
+                @let online = p.signed_in.is_some_and(|at| crate::now_ms() - at < 3_600_000);
+                @let pages = access.get(&p.id).map(Vec::as_slice).unwrap_or_default();
                 div.prow {
-                    img.avatar src=(crate::discord::avatar_url(p.id, p.avatar.as_deref())) alt="" width="36" height="36" loading="lazy";
+                    span.prow-face {
+                        img.avatar src=(crate::discord::avatar_url(p.id, p.avatar.as_deref())) alt="" width="40" height="40" loading="lazy";
+                        @if online { span.dot.live title="Signed in within the hour" {} }
+                    }
                     div.grow {
                         strong { (name_or_id(p)) }
                         p.muted.small { (seen) @if let Some(by) = p.added_by.as_ref().filter(|_| p.id != owner) { " · added by " (by) } }
                     }
                     @if p.id == owner { (ui::badge("Owner", Tone::Accent)) }
-                    @else if p.admin { (ui::badge("Admin", Tone::Muted)) }
-                    @else if p.grants == 0 { (ui::badge("No pages yet", Tone::Warn)) }
-                    @else { (ui::badge(&format!("{} {}", p.grants, if p.grants == 1 { "page" } else { "pages" }), Tone::Muted)) }
+                    @else if p.admin { (ui::badge("Admin, every page", Tone::Muted)) }
+                    @else if pages.is_empty() { (ui::badge("No pages yet", Tone::Warn)) }
+                    @else {
+                        span.access-tiles {
+                            @for (key, edit) in pages.iter().take(7) {
+                                @let f = ctx.feature(key);
+                                @let label = f.and_then(|f| f.meta().nav.first().map(|n| n.label)).unwrap_or(key.as_str());
+                                @let ic = f.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Toggle);
+                                span.nav-ic.edit[*edit] data-hue=(ui::feature_hue(&ctx, key)) data-tip={ (label) ": " (if *edit { "can edit" } else { "can view" }) } { (ui::icon(ic)) }
+                            }
+                            @if pages.len() > 7 { span.more { "+" (pages.len() - 7) } }
+                        }
+                    }
                     @if p.id != owner { a.btn.small.outline href={ "/users/" (p.id) } { "Edit access" } }
                 }
             }
