@@ -1,6 +1,6 @@
 use bot_core::axum::body::Bytes;
 use bot_core::axum::extract::{DefaultBodyLimit, Path, Query, State};
-use bot_core::axum::response::{IntoResponse, Json};
+use bot_core::axum::response::{IntoResponse, Json, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::axum::Router;
 use bot_core::maud::{Markup, html};
@@ -14,10 +14,11 @@ use crate::{KEY, Settings, curve, import};
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
-        .route("/g/{guild}/levels", get(settings_page).post(save_settings))
-        .route("/g/{guild}/levels/rewards", post(add_reward))
+        .route("/g/{guild}/levels", get(members_page))
+        .route("/g/{guild}/levels/settings", get(settings_page).post(save_settings))
+        .route("/g/{guild}/levels/rewards", get(rewards_page).post(add_reward))
         .route("/g/{guild}/levels/rewards/{level}/delete", post(delete_reward))
-        .route("/g/{guild}/levels/members", get(members_page))
+        .route("/g/{guild}/levels/members", get(|Path(guild): Path<u64>| async move { Redirect::to(&format!("/g/{guild}/levels")) }))
         .route("/g/{guild}/levels/members/{user}", post(set_member_xp))
         .route("/g/{guild}/levels/import", get(import_page).post(import_upload).layer(DefaultBodyLimit::max(64 * 1024 * 1024)))
         .route("/g/{guild}/levels/import-local", post(import_local))
@@ -26,8 +27,9 @@ pub fn routes() -> Router<Ctx> {
 fn tabs(page: &Page, active: &str) -> Markup {
     ui::tabs(
         &[
-            ("Settings", page.path("levels")),
-            ("Members", page.path("levels/members")),
+            ("Leaderboard", page.path("levels")),
+            ("Rewards", page.path("levels/rewards")),
+            ("Settings", page.path("levels/settings")),
             ("Import", page.path("levels/import")),
         ],
         active,
@@ -37,8 +39,6 @@ fn tabs(page: &Page, active: &str) -> Markup {
 async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let rewards = crate::rewards(&ctx, guild)?;
-    let members = crate::count(&ctx, guild)?;
     let custom = !s.custom_curve.is_empty();
     let first_levels: Vec<String> = (1..=5u32)
         .map(|l| text::num(curve::xp_to_reach(l, s.curve_base, s.curve_factor, &s.custom_curve)))
@@ -46,12 +46,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
 
     let body = html! {
         (tabs(&page, "Settings"))
-        (ui::readings(&[
-            ("members with XP", text::num(members)),
-            ("reward roles", rewards.len().to_string()),
-            ("XP per message", format!("{}–{}", s.xp_min, s.xp_max)),
-        ]))
-        (ui::settings_form(&page, &page.path("levels"), html! {
+        (ui::settings_form(&page, &page.path("levels/settings"), html! {
             (ui::section("Earning XP", None, ui::card(html! {
                 (ui::field_number("xp_min", "XP per message, lowest", None, s.xp_min, 0, 1000, Some("XP")))
                 (ui::field_number("xp_max", "XP per message, highest", Some("Each message earns a random amount between the two."), s.xp_max, 0, 1000, Some("XP")))
@@ -81,29 +76,6 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_roles(&ctx, guild, "no_xp_roles", "Roles", Some("Members with any of these roles earn nothing."), &s.no_xp_roles))
                 (ui::field_toggle("stack_rewards", "Keep earlier reward roles", Some("Off: members only keep the reward role for their highest level."), s.stack_rewards))
             })))
-        }))
-        (ui::section("Reward roles", Some("Given automatically when a member reaches the level."), html! {
-            @if rewards.is_empty() {
-                (ui::empty(Icon::Trophy, "No reward roles", "Add a role below and members get it at that level."))
-            } @else {
-                div.table-wrap { table.table {
-                    thead { tr { th { "Level" } th { "Role" } th {} } }
-                    tbody { @for (level, role) in &rewards {
-                        tr {
-                            td.num style="text-align:left" { (level) }
-                            td { (role_name(&ctx, guild, *role)) }
-                            td.actions { @if page.can_edit() { (ui::action_button(&page.path(&format!("levels/rewards/{level}/delete")), "Remove", Tone::Bad, true)) } }
-                        }
-                    } }
-                } }
-            }
-            @if page.can_edit() {
-                form.inline-form method="post" action=(page.path("levels/rewards")) {
-                    input.input.num type="number" name="level" min="1" max="500" placeholder="Level" required style="max-width:110px";
-                    (ui::select("role", &std::iter::once((String::new(), "Pick a role".to_owned())).chain(ctx.roles(guild).into_iter().map(|(id, n, _)| (id.to_string(), format!("@{n}")))).collect::<Vec<_>>(), ""))
-                    button.btn type="submit" { "Add reward" }
-                }
-            }
         }))
     };
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
@@ -142,7 +114,7 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         recompute_levels(&ctx, guild, &s)?;
     }
     ctx.audit(&page.user, Some(guild), KEY, "Changed XP settings");
-    Ok(saved(&page.path("levels")))
+    Ok(saved(&page.path("levels/settings")))
 }
 
 /// After a curve change, every stored level is recomputed from XP. Roles catch up on the
@@ -176,14 +148,14 @@ async fn add_reward(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
         )
     })?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Set the level {level} reward to {}", role_name(&ctx, guild, role)));
-    Ok(saved(&page.path("levels")))
+    Ok(saved(&page.path("levels/rewards")))
 }
 
 async fn delete_reward(State(ctx): State<Ctx>, user: User, Path((guild, level)): Path<(u64, i64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     ctx.db.with(|c| c.execute("DELETE FROM level_rewards WHERE guild_id = ?1 AND level = ?2", params![guild as i64, level]))?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Removed the level {level} reward"));
-    Ok(saved(&page.path("levels")))
+    Ok(saved(&page.path("levels/rewards")))
 }
 
 #[derive(Deserialize)]
@@ -195,7 +167,7 @@ struct MembersQuery {
 async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<MembersQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let per = 50;
+    let per = 25;
     let n = q.page.unwrap_or(0).max(0);
     let search = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let ids: Option<Vec<u64>> = search.map(|needle| {
@@ -210,46 +182,135 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             .chain(by_id)
             .collect()
     });
-    let rows = crate::top(&ctx, guild, n * per, per, ids.as_deref())?;
     let total = crate::count(&ctx, guild)?;
-    let body = html! {
-        (tabs(&page, "Members"))
-        form.inline-form method="get" action=(page.path("levels/members")) {
-            input.input type="search" name="q" value=(search.unwrap_or_default()) placeholder="Search by name or ID";
-            button.btn type="submit" { "Search" }
+    // The podium shows on the first page without a search; the list starts after it.
+    let podium = if search.is_none() && n == 0 { crate::top(&ctx, guild, 0, 3, None)? } else { Vec::new() };
+    let start = if search.is_none() { 3 + n * per } else { 0 };
+    let rows = crate::top(&ctx, guild, start, per, ids.as_deref())?;
+    let rewards = crate::rewards(&ctx, guild)?;
+    let roles = ctx.roles(guild);
+    let at_least = |level: u32| -> i64 {
+        ctx.db
+            .with(|c| c.query_row("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND level >= ?2", params![guild as i64, level as i64], |r| r.get(0)))
+            .unwrap_or(0)
+    };
+    let week: (i64, i64) = ctx
+        .db
+        .with(|c| {
+            c.query_row(
+                "SELECT COALESCE(SUM(l.xp - COALESCE(w.xp, 0)), 0), COUNT(*) FROM levels l
+                 LEFT JOIN level_week w ON w.guild_id = l.guild_id AND w.user_id = l.user_id
+                 WHERE l.guild_id = ?1 AND l.xp > COALESCE(w.xp, 0)",
+                [guild as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+        })
+        .unwrap_or((0, 0));
+    let name = |u: u64| ctx.display_name(guild, u);
+    let line = |m: &crate::Member| format!("Level {} · {} XP", s.progress(m.xp).level, text::num(m.xp));
+    let earning = {
+        let mut parts = vec![format!("{} to {} per message, once every {}.", s.xp_min, s.xp_max, text::duration(s.cooldown_secs))];
+        if s.voice_xp > 0 {
+            parts.push(format!("{} per minute in voice with someone else{}.", s.voice_xp, if s.voice_require_active { ", unmuted" } else { "" }));
         }
-        @if rows.is_empty() {
+        if s.reaction_xp > 0 {
+            parts.push(format!("{} for a reaction.", s.reaction_xp));
+        }
+        parts.join(" ")
+    };
+
+    let main = html! {
+        @if !podium.is_empty() {
+            div.podium {
+                @for (place, i) in [(2usize, 1usize), (1, 0), (3, 2)] {
+                    @if let Some(m) = podium.get(i) {
+                        div class={ "step p" (place) } {
+                            img.avatar src=(ctx.member_avatar(guild, m.user_id)) alt="" loading="lazy";
+                            strong { (name(m.user_id)) }
+                            span.muted.small { (line(m)) }
+                            div.block { (place) }
+                        }
+                    }
+                }
+            }
+        }
+        div.list-head {
+            h2 { @if podium.is_empty() { "Members" } @else { "Everyone else" } }
+            form method="get" action=(page.path("levels")) {
+                input.input.search type="search" name="q" value=(search.unwrap_or_default()) placeholder="Search members";
+            }
+        }
+        @if rows.is_empty() && podium.is_empty() {
             @if search.is_some() {
                 (ui::empty(Icon::Users, "No match", "Nobody with XP matches that name or ID."))
             } @else {
                 (ui::empty(Icon::Trophy, "Nobody has XP yet", "Members show up here once they chat, or after you import XP from the old bot."))
             }
         } @else {
-            div.table-wrap { table.table {
-                thead { tr { th.num style="text-align:left" { "#" } th { "Member" } th.num { "Level" } th.num { "XP" } th.num { "Messages" } th.num { "Voice" } @if page.can_edit() { th { "Set XP" } } } }
-                tbody { @for (i, m) in rows.iter().enumerate() {
+            div.ranks {
+                @for (i, m) in rows.iter().enumerate() {
                     @let p = s.progress(m.xp);
-                    tr {
-                        td.num style="text-align:left" { @if search.is_none() { (n * per + i as i64 + 1) } }
-                        td { (ui::person(&ctx.display_name(guild, m.user_id), &member_avatar(&ctx, guild, m.user_id), None)) }
-                        td.num { (p.level) }
-                        td.num { (text::num(m.xp)) }
-                        td.num { (text::num(m.messages)) }
-                        td.num { (text::duration(m.voice_minutes * 60)) }
+                    @let pct = if p.needed > 0 { (p.into * 100 / p.needed).clamp(0, 100) } else { 0 };
+                    div.rank {
+                        span.mono.muted.pos { @if search.is_none() { (start + i as i64 + 1) } }
+                        img.avatar src=(ctx.member_avatar(guild, m.user_id)) alt="" width="28" height="28" loading="lazy";
+                        div.who { strong { (name(m.user_id)) } span.muted.small { "Level " (p.level) } }
+                        div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% to level " (p.level + 1) } }
+                        span.mono.xp { (text::num(m.xp)) " XP" }
                         @if page.can_edit() {
-                            td { form.inline-form method="post" action=(page.path(&format!("levels/members/{}", m.user_id))) {
-                                input.input.num type="number" name="xp" value=(m.xp) min="0" style="max-width:110px;min-width:0";
-                                button.btn.small type="submit" { "Set" }
-                            } }
+                            details.pop.set-xp {
+                                summary.btn.small.outline { "Set XP" }
+                                div.pop-body {
+                                    form.inline-form method="post" action=(page.path(&format!("levels/members/{}", m.user_id))) {
+                                        input.input.num type="number" name="xp" value=(m.xp) min="0";
+                                        button.btn.primary type="submit" { "Set" }
+                                    }
+                                    p.muted.small { "Their level and reward roles follow the new XP." }
+                                }
+                            }
                         }
                     }
-                } }
-            } }
-            @if search.is_none() && total > per {
+                }
+            }
+            @if search.is_none() && total > start + per {
                 div.inline-form {
-                    @if n > 0 { a.btn.small href={ (page.path("levels/members")) "?page=" (n - 1) } { "Previous" } }
-                    span.muted.small { "Page " (n + 1) " of " ((total + per - 1) / per) }
-                    @if (n + 1) * per < total { a.btn.small href={ (page.path("levels/members")) "?page=" (n + 1) } { "Next" } }
+                    @if n > 0 { a.btn.small.outline href={ (page.path("levels")) "?page=" (n - 1) } { "Previous" } }
+                    span.muted.small { "Page " (n + 1) " of " (((total - 3).max(1) + per - 1) / per) }
+                    a.btn.small.outline href={ (page.path("levels")) "?page=" (n + 1) } { "Next" }
+                }
+            } @else if search.is_none() && n > 0 {
+                div { a.btn.small.outline href={ (page.path("levels")) "?page=" (n - 1) } { "Previous" } }
+            }
+        }
+    };
+    let body = html! {
+        (tabs(&page, "Leaderboard"))
+        div.with-rail {
+            div.stack.lb { (main) }
+            aside.rail {
+                div.rail-block {
+                    h2 { "Reward roles" }
+                    @if rewards.is_empty() {
+                        p.muted.small { "None yet. " a href=(page.path("levels/rewards")) { "Add one" } " and members get it at that level." }
+                    }
+                    @for (level, role) in &rewards {
+                        @let r = roles.iter().find(|x| x.0 == *role);
+                        div.mini {
+                            span.lvl { (level) }
+                            span.dot style={ "background:" (r.map(|r| if r.2 == 0 { "var(--ink-3)".to_owned() } else { format!("#{:06x}", r.2) }).unwrap_or_else(|| "var(--ink-3)".into())) } {}
+                            div.grow { span { (r.map(|r| r.1.clone()).unwrap_or_else(|| "Deleted role".into())) } }
+                            span.mono { (text::num(at_least(*level))) }
+                        }
+                    }
+                }
+                div.rail-block {
+                    h2 { "XP earned this week" }
+                    div.big-num { (text::num(week.0)) }
+                    span.muted.small { "by " (text::num(week.1)) " members since Monday" }
+                }
+                div.rail-block {
+                    h2 { "How XP is earned" }
+                    p.muted.small { (earning) }
                 }
             }
         }
@@ -257,10 +318,40 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
 }
 
-fn member_avatar(ctx: &Ctx, guild: u64, user: u64) -> String {
-    let _ = guild;
-    let hash = ctx.cache.user(bot_core::twilight_model::id::Id::new(user)).and_then(|u| u.avatar.map(|a| a.to_string()));
-    bot_core::discord::avatar_url(user, hash.as_deref())
+async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::View)?;
+    let rewards = crate::rewards(&ctx, guild)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let body = html! {
+        (tabs(&page, "Rewards"))
+        (ui::section("Reward roles", Some(if s.stack_rewards { "Given when a member reaches the level. Members keep earlier rewards." } else { "Given when a member reaches the level. Members keep only the reward for their highest level." }), html! {
+            @if rewards.is_empty() {
+                (ui::empty(Icon::Trophy, "No reward roles", "Add a role below and members get it at that level."))
+            } @else {
+                div.table-wrap { table.table {
+                    thead { tr { th { "Level" } th { "Role" } th.num { "Members" } th {} } }
+                    tbody { @for (level, role) in &rewards {
+                        tr {
+                            td.num style="text-align:left" { (level) }
+                            td { (role_name(&ctx, guild, *role)) }
+                            td.num {
+                                (text::num(ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND level >= ?2", params![guild as i64, *level as i64], |r| r.get::<_, i64>(0))).unwrap_or(0)))
+                            }
+                            td.actions { @if page.can_edit() { (ui::action_button(&page.path(&format!("levels/rewards/{level}/delete")), "Remove", Tone::Bad, true)) } }
+                        }
+                    } }
+                } }
+            }
+            @if page.can_edit() {
+                form.inline-form method="post" action=(page.path("levels/rewards")) {
+                    input.input.num type="number" name="level" min="1" max="500" placeholder="Level" required style="max-width:110px";
+                    (ui::select("role", &std::iter::once((String::new(), "Pick a role".to_owned())).chain(ctx.roles(guild).into_iter().map(|(id, n, _)| (id.to_string(), format!("@{n}")))).collect::<Vec<_>>(), ""))
+                    button.btn type="submit" { "Add reward" }
+                }
+            }
+        }))
+    };
+    Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
 }
 
 async fn set_member_xp(State(ctx): State<Ctx>, user: User, Path((guild, member)): Path<(u64, u64)>, form: FormData) -> WebResult {
@@ -268,7 +359,7 @@ async fn set_member_xp(State(ctx): State<Ctx>, user: User, Path((guild, member))
     let xp = form.i64("xp").filter(|x| *x >= 0).ok_or_else(|| WebError::Bad("XP must be 0 or more.".into()))?;
     crate::set_xp(&ctx, guild, member, xp).await?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Set {}'s XP to {}", ctx.display_name(guild, member), text::num(xp)));
-    Ok(saved(&page.path("levels/members")))
+    Ok(saved(&page.path("levels")))
 }
 
 async fn import_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
@@ -397,7 +488,7 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
         o.panel.push((20, html! {
             h2 { "Most XP this week" }
             @for (user, gain) in &week {
-                a.mini href=(page.path("levels/members")) {
+                a.mini href=(page.path("levels")) {
                     img.avatar src=(ctx.member_avatar(guild, *user)) alt="" width="24" height="24" loading="lazy";
                     div.grow { span { (ctx.display_name(guild, *user)) } }
                     span.mono { "+" (text::num(*gain)) }
