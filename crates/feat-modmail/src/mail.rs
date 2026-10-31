@@ -1,6 +1,7 @@
 //! Conversations: carrying DMs to a staff thread and replies back, opening and closing, and the
 //! queries behind the dashboard.
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use bot_core::anyhow::{self, Result};
@@ -135,6 +136,12 @@ pub fn open_in(conn: &Connection, guild: u64, user: u64) -> bot_core::rusqlite::
         from_row,
     )
     .optional()
+}
+
+/// The staff threads of every open conversation.
+pub fn open_threads(conn: &Connection) -> bot_core::rusqlite::Result<HashSet<u64>> {
+    let mut stmt = conn.prepare("SELECT thread_id FROM modmail WHERE status = 'open' AND thread_id != 0")?;
+    stmt.query_map([], |r| r.get::<_, i64>(0).map(|t| t as u64))?.collect()
 }
 
 /// A member's open conversations in every server.
@@ -306,15 +313,20 @@ enum Route {
 }
 
 pub async fn on_dm(f: &Modmail, ctx: &Ctx, m: &Message) -> Result<()> {
+    // A pin or another system message in the DM isn't something to pass on.
+    if !matches!(m.kind, MessageType::Regular | MessageType::Reply) {
+        return Ok(());
+    }
     let user = m.author.id.get();
     let name = m.author.global_name.clone().unwrap_or_else(|| m.author.name.clone());
     let avatar = avatar_url(user, m.author.avatar.map(|a| a.to_string()).as_deref());
     let incoming = Incoming::of(m);
-    let _turn = f.dm_lock.lock().await;
+    let turn = f.turn(user);
+    let _turn = turn.lock().await;
     let open: Vec<u64> = ctx.db.with(|c| open_for_user(c, user))?.into_iter().map(|c| c.guild_id).filter(|g| takes_mail(ctx, *g)).collect();
     let shared = if open.is_empty() { shared_servers(ctx, user) } else { Vec::new() };
     match route(&open, &shared) {
-        Route::To(guild) => deliver(ctx, guild, user, &name, &avatar, &[incoming]).await,
+        Route::To(guild) => deliver(f, ctx, guild, user, &name, &avatar, &[incoming]).await,
         Route::Pick(guilds) => hold(f, ctx, user, name, avatar, incoming, &guilds).await,
         // Nobody to pass it to: the bot also gets DMs that aren't meant for staff.
         Route::Nowhere => Ok(()),
@@ -372,12 +384,12 @@ async fn hold(f: &Modmail, ctx: &Ctx, user: u64, name: String, avatar: String, m
 
 /// Carry DMs into the member's conversation in `guild`, opening one if needed. A thread that
 /// was deleted without the bot noticing closes its conversation, and a new one opens.
-async fn deliver(ctx: &Ctx, guild: u64, user: u64, name: &str, avatar: &str, messages: &[Incoming]) -> Result<()> {
+async fn deliver(f: &Modmail, ctx: &Ctx, guild: u64, user: u64, name: &str, avatar: &str, messages: &[Incoming]) -> Result<()> {
     let s = ctx.settings::<Settings>(guild, KEY)?;
     for attempt in 0..2 {
         let conv = match ctx.db.with(|c| open_in(c, guild, user))?.filter(|c| c.thread_id != 0) {
             Some(c) => c,
-            None => match open(ctx, guild, &s, user, name).await? {
+            None => match open(f, ctx, guild, &s, user, name).await? {
                 Some(c) => c,
                 None => return Ok(()),
             },
@@ -386,6 +398,7 @@ async fn deliver(ctx: &Ctx, guild: u64, user: u64, name: &str, avatar: &str, mes
             Ok(()) => return Ok(()),
             Err(e) if attempt == 0 && e.downcast_ref::<bot_core::twilight_http::Error>().is_some_and(is_not_found) => {
                 ctx.db.with(|c| mark_closed(c, conv.id, None, now_ms()))?;
+                f.drop_thread(conv.thread_id);
             }
             Err(e) => {
                 bot_core::tracing::warn!(guild, thread = conv.thread_id, error = %e, "couldn't carry a DM to staff");
@@ -423,7 +436,7 @@ fn embed(author: &str, avatar: &str, description: &str, footer: Option<&str>) ->
 }
 
 /// Open a conversation: a thread (or forum post) in the staff channel, then the greeting by DM.
-async fn open(ctx: &Ctx, guild: u64, s: &Settings, user: u64, name: &str) -> Result<Option<Conv>> {
+async fn open(f: &Modmail, ctx: &Ctx, guild: u64, s: &Settings, user: u64, name: &str) -> Result<Option<Conv>> {
     let Some(channel) = s.channel else { return Ok(None) };
     let Some(id) = ctx.db.with(|c| insert(c, guild, user, name, now_ms()))? else {
         return ctx.db.with(|c| open_in(c, guild, user));
@@ -440,6 +453,7 @@ async fn open(ctx: &Ctx, guild: u64, s: &Settings, user: u64, name: &str) -> Res
         }
     };
     ctx.db.with(|c| set_thread(c, id, thread))?;
+    f.add_thread(thread);
     let server = ctx.guild_name(guild);
     let greeting = if s.greeting.trim().is_empty() { crate::DEFAULT_GREETING } else { s.greeting.trim() };
     ctx.dm(user, &text::fill(greeting, &[("server", &server)]), &[], &[]).await?;
@@ -489,16 +503,18 @@ async fn make_thread(ctx: &Ctx, channel: u64, s: &Settings, id: i64, user: u64, 
 
 // ---- staff replies ----
 
-/// Every message in a server where modmail is on comes through here, so the thread's parent is
-/// checked against the cached settings before anything else.
-pub async fn on_staff_message(ctx: &Ctx, guild: u64, m: &Message) -> Result<()> {
-    let s = ctx.settings::<Settings>(guild, KEY)?;
-    let Some(staff_channel) = s.channel else { return Ok(()) };
-    let parent = ctx.cache.channel(m.channel_id).and_then(|c| c.parent_id).map(|p| p.get());
-    if parent != Some(staff_channel) || !matches!(m.kind, MessageType::Regular | MessageType::Reply) || m.content.trim_start().starts_with("//") {
+/// Every message in a server where modmail is on comes through here, so the channel is checked
+/// against the open conversations' threads, held in memory, before anything else. That set, not
+/// the current staff channel, decides: conversations opened before the channel changed keep
+/// working in their old threads.
+pub async fn on_staff_message(f: &Modmail, ctx: &Ctx, guild: u64, m: &Message) -> Result<()> {
+    if !matches!(m.kind, MessageType::Regular | MessageType::Reply) || m.content.trim_start().starts_with("//") || !f.is_staff_thread(ctx, m.channel_id.get())? {
         return Ok(());
     }
-    let Some(conv) = ctx.db.with(|c| by_thread(c, guild, m.channel_id.get()))? else { return Ok(()) };
+    let Some(conv) = ctx.db.with(|c| by_thread(c, guild, m.channel_id.get()))? else {
+        f.drop_thread(m.channel_id.get());
+        return Ok(());
+    };
     let staff = m.author.id.get();
     let staff_name = m
         .member
@@ -547,11 +563,12 @@ async fn archive(ctx: &Ctx, thread: u64) {
 }
 
 /// Close from the button or the command, in the thread itself.
-async fn close_here(ctx: &Ctx, i: &Interaction, guild: u64, conv: &Conv) -> Result<()> {
+async fn close_here(f: &Modmail, ctx: &Ctx, i: &Interaction, guild: u64, conv: &Conv) -> Result<()> {
     let Some(by) = i.author_id().map(|u| u.get()) else { return Ok(()) };
     if !ctx.db.with(|c| mark_closed(c, conv.id, Some(by), now_ms()))? {
         return ctx.reply(i, Reply::text("This conversation is already closed.").ephemeral()).await;
     }
+    f.drop_thread(conv.thread_id);
     ctx.reply(i, Reply::text(format!("Closed by <@{by}>. {} gets the closing text by DM.", conv.name(ctx, guild)))).await?;
     send_closing(ctx, guild, conv.user_id).await;
     archive(ctx, conv.thread_id).await;
@@ -572,12 +589,13 @@ pub async fn close_from_dashboard(ctx: &Ctx, guild: u64, id: i64, by: u64) -> Re
     Ok(true)
 }
 
-/// A staff thread was deleted, or archived and locked, outside the bot.
-pub async fn on_thread_gone(ctx: &Ctx, guild: u64, parent: u64, thread: u64) -> Result<()> {
-    let s = ctx.settings::<Settings>(guild, KEY)?;
-    if s.channel != Some(parent) {
+/// A staff thread was deleted, or archived and locked, outside the bot. Threads in an earlier
+/// staff channel count too.
+pub async fn on_thread_gone(f: &Modmail, ctx: &Ctx, guild: u64, thread: u64) -> Result<()> {
+    if !f.is_staff_thread(ctx, thread)? {
         return Ok(());
     }
+    f.drop_thread(thread);
     let Some(conv) = ctx.db.with(|c| by_thread(c, guild, thread))? else { return Ok(()) };
     if ctx.db.with(|c| mark_closed(c, conv.id, None, now_ms()))? {
         send_closing(ctx, guild, conv.user_id).await;
@@ -587,7 +605,7 @@ pub async fn on_thread_gone(ctx: &Ctx, guild: u64, parent: u64, thread: u64) -> 
 
 // ---- commands and components ----
 
-pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
+pub async fn on_command(f: &Modmail, ctx: &Ctx, call: &CommandCall) -> Result<()> {
     let Some(guild) = call.guild_id() else { return Ok(()) };
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let conv = match call.channel_id() {
@@ -600,7 +618,7 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
     if !is_staff(&call.interaction, &s) {
         return ctx.reply(&call.interaction, Reply::text("Only staff can close modmail.").ephemeral()).await;
     }
-    close_here(ctx, &call.interaction, guild, &conv).await
+    close_here(f, ctx, &call.interaction, guild, &conv).await
 }
 
 pub async fn on_component(f: &Modmail, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
@@ -616,7 +634,7 @@ pub async fn on_component(f: &Modmail, ctx: &Ctx, call: &ComponentCall) -> Resul
             if !is_staff(&call.interaction, &s) {
                 return ctx.reply(&call.interaction, Reply::text("Only staff can close modmail.").ephemeral()).await;
             }
-            close_here(ctx, &call.interaction, guild, &conv).await
+            close_here(f, ctx, &call.interaction, guild, &conv).await
         }
         _ => Ok(()),
     }
@@ -636,8 +654,9 @@ async fn pick(f: &Modmail, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
         return ctx.update(&call.interaction, Reply::text("That choice timed out. Send your message again.")).await;
     };
     ctx.update(&call.interaction, Reply::text(format!("Sending to the staff of {}.", ctx.guild_name(guild)))).await?;
-    let _turn = f.dm_lock.lock().await;
-    deliver(ctx, guild, user, &held.name, &held.avatar, &held.messages).await
+    let turn = f.turn(user);
+    let _turn = turn.lock().await;
+    deliver(f, ctx, guild, user, &held.name, &held.avatar, &held.messages).await
 }
 
 // ---- preview ----
@@ -727,6 +746,20 @@ mod tests {
         // A failed thread gives the slot back; one with its thread stays.
         discard(&c, again).unwrap();
         assert!(by_id(&c, 1, again).unwrap().is_some());
+    }
+
+    #[test]
+    fn staff_threads_are_the_open_ones() {
+        let db = db();
+        let c = db.lock();
+        let a = insert(&c, 1, 10, "Mira", 1000).unwrap().unwrap();
+        set_thread(&c, a, 500).unwrap();
+        let b = insert(&c, 2, 11, "Oskar", 1000).unwrap().unwrap();
+        set_thread(&c, b, 501).unwrap();
+        // Still making its thread.
+        insert(&c, 1, 12, "Ada", 1000).unwrap().unwrap();
+        mark_closed(&c, b, None, 2000).unwrap();
+        assert_eq!(open_threads(&c).unwrap(), HashSet::from([500]));
     }
 
     #[test]

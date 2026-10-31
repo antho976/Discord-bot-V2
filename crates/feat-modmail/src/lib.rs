@@ -4,8 +4,8 @@
 mod mail;
 mod web;
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use bot_core::anyhow::Result;
 use bot_core::discord::{CommandCall, ComponentCall};
@@ -60,10 +60,47 @@ const MIGRATIONS: &[Migration] = &[Migration {
 
 #[derive(Default)]
 pub struct Modmail {
-    /// One DM at a time, so two quick messages can't open two conversations.
-    dm_lock: bot_core::tokio::sync::Mutex<()>,
+    /// One DM at a time per member, so two quick messages can't open two conversations. Other
+    /// members don't wait on them.
+    turns: Mutex<HashMap<u64, Arc<bot_core::tokio::sync::Mutex<()>>>>,
     /// Messages from members who share several servers with modmail on, held until they pick one.
     held: Mutex<HashMap<u64, mail::Held>>,
+    /// Staff threads of open conversations, loaded on first use, so a message in any other
+    /// channel costs no query. May hold a few closed ones; those drop out when looked up.
+    threads: Mutex<Option<HashSet<u64>>>,
+}
+
+impl Modmail {
+    /// The lock that keeps one member's DMs in order. Locks nobody holds or waits on are dropped
+    /// once there are many.
+    fn turn(&self, user: u64) -> Arc<bot_core::tokio::sync::Mutex<()>> {
+        let mut turns = self.turns.lock().unwrap();
+        if turns.len() > 256 {
+            turns.retain(|_, t| Arc::strong_count(t) > 1);
+        }
+        turns.entry(user).or_default().clone()
+    }
+
+    /// Whether `thread` may be an open conversation's staff thread.
+    fn is_staff_thread(&self, ctx: &Ctx, thread: u64) -> Result<bool> {
+        let mut threads = self.threads.lock().unwrap();
+        if threads.is_none() {
+            *threads = Some(ctx.db.with(mail::open_threads)?);
+        }
+        Ok(threads.as_ref().is_some_and(|t| t.contains(&thread)))
+    }
+
+    fn add_thread(&self, thread: u64) {
+        if let Some(t) = self.threads.lock().unwrap().as_mut() {
+            t.insert(thread);
+        }
+    }
+
+    fn drop_thread(&self, thread: u64) {
+        if let Some(t) = self.threads.lock().unwrap().as_mut() {
+            t.remove(&thread);
+        }
+    }
 }
 
 #[feature_async]
@@ -98,15 +135,15 @@ impl Feature for Modmail {
         match event {
             Event::MessageCreate(m) if !m.author.bot => match m.guild_id {
                 None => mail::on_dm(self, ctx, m).await?,
-                Some(guild) => mail::on_staff_message(ctx, guild.get(), m).await?,
+                Some(guild) => mail::on_staff_message(self, ctx, guild.get(), m).await?,
             },
-            Event::ThreadDelete(t) => mail::on_thread_gone(ctx, t.guild_id.get(), t.parent_id.get(), t.id.get()).await?,
+            Event::ThreadDelete(t) => mail::on_thread_gone(self, ctx, t.guild_id.get(), t.id.get()).await?,
             Event::ThreadUpdate(t) => {
-                if let (Some(guild), Some(parent), Some(meta)) = (t.guild_id, t.parent_id, &t.thread_metadata)
+                if let (Some(guild), Some(meta)) = (t.guild_id, &t.thread_metadata)
                     && meta.archived
                     && meta.locked
                 {
-                    mail::on_thread_gone(ctx, guild.get(), parent.get(), t.id.get()).await?;
+                    mail::on_thread_gone(self, ctx, guild.get(), t.id.get()).await?;
                 }
             }
             _ => {}
@@ -115,7 +152,7 @@ impl Feature for Modmail {
     }
 
     async fn on_command(&self, ctx: &Ctx, call: &CommandCall) -> Result<()> {
-        mail::on_command(ctx, call).await
+        mail::on_command(self, ctx, call).await
     }
 
     async fn on_component(&self, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
