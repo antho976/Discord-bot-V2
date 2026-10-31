@@ -25,6 +25,7 @@ pub(super) fn routes() -> Router<Ctx> {
         .route("/users", get(users_page).post(add_user))
         .route("/users/{id}", get(user_page).post(save_user))
         .route("/users/{id}/delete", post(delete_user))
+        .route("/users/{id}/copy", post(copy_access))
         .route("/activity", get(activity))
 }
 
@@ -579,7 +580,7 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
                 div.prow {
                     img.avatar src=(crate::discord::avatar_url(p.id, p.avatar.as_deref())) alt="" width="36" height="36" loading="lazy";
                     div.grow {
-                        strong { (if p.name.is_empty() { p.id.to_string() } else { p.name.clone() }) }
+                        strong { (name_or_id(p)) }
                         p.muted.small { (seen) @if let Some(by) = p.added_by.as_ref().filter(|_| p.id != owner) { " · added by " (by) } }
                     }
                     @if p.id == owner { (ui::badge("Owner", Tone::Accent)) }
@@ -634,6 +635,13 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
     let level_of = |g: u64, key: &str| grants.iter().find(|(gg, k, _)| *gg == g && k == key).map(|x| x.2).unwrap_or(0);
     let is_owner = id == ctx.cfg.owner_id;
     let display = if person.name.is_empty() { "Not signed in yet".to_owned() } else { person.name.clone() };
+    let grantable = |g: u64| ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key) && !f.admin_only()).collect::<Vec<_>>();
+    // People whose pages can be copied over: not admins (they have no grants to copy), not this one.
+    let others: Vec<(String, String)> = people(&ctx)
+        .into_iter()
+        .filter(|p| p.id != id && !p.admin && p.id != ctx.cfg.owner_id && p.grants > 0)
+        .map(|p| (p.id.to_string(), format!("{} · {} {}", name_or_id(&p), p.grants, if p.grants == 1 { "page" } else { "pages" })))
+        .collect();
 
     let body = html! {
         form.settings.narrow method="post" action={ "/users/" (id) } {
@@ -645,9 +653,18 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                 }
             }))
             @if !person.admin && !is_owner {
+                p.muted.small { "Per server: None hides a page, View shows it read-only, Edit lets them change it." }
                 @for g in ctx.guild_ids() {
-                    (ui::section(&ctx.guild_name(g), Some("No access hides the page. View shows it read-only. Edit lets them change it."), ui::card(html! {
-                        @for f in ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key) && !f.admin_only()) {
+                    @let feats = grantable(g);
+                    @let given = feats.iter().filter(|f| level_of(g, f.meta().key) > 0).count();
+                    section.block {
+                        div.access-head {
+                            (ui::guild_avatar(&ctx, g))
+                            h2.grow { (ctx.guild_name(g)) }
+                            @if !feats.is_empty() { span.muted.small { (given) " of " (feats.len()) " pages" } }
+                        }
+                        (ui::card(html! {
+                        @for f in &feats {
                             @let m = f.meta();
                             @let name = format!("p:{}:{}", g, m.key);
                             @let cur = level_of(g, m.key);
@@ -662,10 +679,11 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                                 }
                             }))
                         }
-                        @if ctx.features().iter().all(|f| !ctx.enabled(g, f.meta().key) || f.admin_only()) {
+                        @if feats.is_empty() {
                             (ui::empty(Icon::Toggle, "No features on here", "Turn features on for this server first."))
                         }
-                    })))
+                        }))
+                    }
                 }
             }
             div.save-bar { button.btn.primary type="submit" { "Save" } }
@@ -678,7 +696,22 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
         }
     };
     let title = if person.name.is_empty() { "Access".to_owned() } else { format!("{display}'s access") };
-    Ok(ui::layout(&ctx, &page, &title, Some(html! { a.btn.small.outline href="/users" { "All people" } }), body).into_response())
+    let actions = html! {
+        @if !is_owner && !person.admin && !others.is_empty() {
+            details.pop {
+                summary.btn.small.outline { "Same as…" }
+                div.pop-body {
+                    form.stack method="post" action={ "/users/" (id) "/copy" } {
+                        (ui::select("from", &others, ""))
+                        p.muted.small { "Replaces their pages on every server with that person's. Admin stays as it is." }
+                        div { button.btn.primary.small type="submit" { "Copy access" } }
+                    }
+                }
+            }
+        }
+        a.btn.small.outline.wide-only href="/users" { "All people" }
+    };
+    Ok(ui::layout(&ctx, &page, &title, Some(actions), body).into_response())
 }
 
 async fn save_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>, form: FormData) -> WebResult {
@@ -706,8 +739,42 @@ async fn save_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>, form
     }
     tx.commit()?;
     drop(conn);
-    ctx.audit(&user, None, "users", format!("Changed access for {id}"));
+    ctx.audit(&user, None, "users", format!("Changed {}'s access", person_name(&ctx, id)));
     Ok(saved(&format!("/users/{id}")))
+}
+
+/// Give someone exactly the pages another person has, on every server.
+async fn copy_access(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>, form: FormData) -> WebResult {
+    let guild = any_guild(&ctx, &user)?;
+    admin_page(&ctx, &user, guild, "users")?;
+    let list = people(&ctx);
+    let target = list.iter().find(|p| p.id == id).ok_or(WebError::NotFound)?;
+    let from = form.id("from").and_then(|f| list.iter().find(|p| p.id == f)).ok_or_else(|| WebError::Bad("Pick whose access to copy.".into()))?;
+    if from.id == id || id == ctx.cfg.owner_id {
+        return Err(WebError::Bad("Pick someone else to copy from.".into()));
+    }
+    let mut conn = ctx.db.lock();
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM dash_perms WHERE user_id = ?1", [id as i64])?;
+    tx.execute(
+        "INSERT INTO dash_perms (user_id, guild_id, page, level) SELECT ?1, guild_id, page, level FROM dash_perms WHERE user_id = ?2",
+        params![id as i64, from.id as i64],
+    )?;
+    tx.commit()?;
+    drop(conn);
+    ctx.audit(&user, None, "users", format!("Gave {} the same access as {}", name_or_id(target), name_or_id(from)));
+    Ok(saved(&format!("/users/{id}")))
+}
+
+fn name_or_id(p: &Person) -> String {
+    if p.name.is_empty() { p.id.to_string() } else { p.name.clone() }
+}
+
+/// A dashboard person's name for the activity log; their id until they've signed in.
+fn person_name(ctx: &Ctx, id: u64) -> String {
+    ctx.db
+        .with(|c| c.query_row("SELECT name FROM dash_users WHERE id = ?1 AND name != ''", [id as i64], |r| r.get::<_, String>(0)))
+        .unwrap_or_else(|_| id.to_string())
 }
 
 async fn delete_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> WebResult {
@@ -716,12 +783,13 @@ async fn delete_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) ->
     if id == ctx.cfg.owner_id {
         return Err(WebError::Bad("The owner can't be removed.".into()));
     }
+    let name = person_name(&ctx, id);
     ctx.db.with(|c| {
         c.execute("DELETE FROM dash_perms WHERE user_id = ?1", [id as i64])?;
         c.execute("DELETE FROM dash_sessions WHERE user_id = ?1", [id as i64])?;
         c.execute("DELETE FROM dash_users WHERE id = ?1", [id as i64])
     })?;
-    ctx.audit(&user, None, "users", format!("Removed {id}"));
+    ctx.audit(&user, None, "users", format!("Removed {name} from the dashboard"));
     Ok(saved("/users"))
 }
 
