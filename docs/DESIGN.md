@@ -3,7 +3,8 @@
 The dashboard was redesigned on 2026-10-31 after the owner found the calm V1 look dull. The
 reference is Relay design 16, artboard **A3 · Pulse, with life**: the server's banner fading into
 the page, faces wherever people appear. V1 is kept on the `design-v1` branch and in Relay design
-17. Run `bot preview` to see every page with sample pictures.
+17. Run `bot preview` to see every page with sample pictures; `docs/ui/` holds a screenshot of
+each (1440x900, and the overview at 390 px).
 
 ## The look in one paragraph
 
