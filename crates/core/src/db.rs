@@ -166,4 +166,14 @@ const CORE_MIGRATIONS: &[Migration] = &[
             PRIMARY KEY (user_id, guild_id));
     ",
     },
+    // A banner uploaded on the dashboard for the overview and the sidebar, already resized by
+    // the browser. One row per server.
+    Migration {
+        name: "003_banners",
+        sql: "
+        CREATE TABLE guild_banners (
+            guild_id INTEGER PRIMARY KEY, mime TEXT NOT NULL, data BLOB NOT NULL,
+            updated_at INTEGER NOT NULL);
+    ",
+    },
 ];

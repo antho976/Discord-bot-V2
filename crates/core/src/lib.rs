@@ -75,6 +75,19 @@ impl Group {
             Group::Tools => "Tools",
         }
     }
+
+    /// The group's colour on the dashboard, as a `data-hue` value: its icon tiles, page
+    /// headers and empty states take it.
+    pub fn hue(self) -> &'static str {
+        match self {
+            Group::Streams => "streams",
+            Group::Community => "community",
+            Group::Members => "members",
+            Group::Safety => "safety",
+            Group::Pets => "pets",
+            Group::Tools => "tools",
+        }
+    }
 }
 
 /// A sidebar link. `path` is relative to `/g/{guild}/`, so `"levels"` becomes `/g/123/levels`.

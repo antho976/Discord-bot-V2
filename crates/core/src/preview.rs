@@ -8,6 +8,59 @@ use twilight_model::gateway::payload::incoming::GuildCreate;
 
 use crate::Ctx;
 
+/// Set while `bot preview` runs, so sample members show the faces in `crates/core/preview/`
+/// instead of Discord's default avatars.
+pub static ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether this process is a preview.
+pub fn on() -> bool {
+    ON.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A sample picture's address, for a feature's preview seed: `picture("stream.jpg")`.
+pub fn picture(name: &str) -> String {
+    format!("/preview/{name}")
+}
+
+/// A sample member's face: each of [`MEMBERS`] has their own, the owner another, and anyone
+/// else one picked by their id.
+pub fn avatar(user_id: u64) -> String {
+    let n = match MEMBERS.iter().position(|(id, _)| *id == user_id) {
+        Some(i) => i + 1,
+        None if user_id == 1 => 11,
+        None => (user_id % 12) as usize + 1,
+    };
+    picture(&format!("av{n}.jpg"))
+}
+
+/// Serves `crates/core/preview/` at `/preview/<file>`. Read from the source tree at run time, so
+/// none of it is compiled into the bot.
+pub(crate) fn routes() -> axum::Router<Ctx> {
+    use axum::extract::Path;
+    use axum::http::{StatusCode, header};
+    use axum::response::IntoResponse;
+    axum::Router::new().route(
+        "/preview/{file}",
+        axum::routing::get(|Path(file): Path<String>| async move {
+            if file.contains('/') || file.contains("..") {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("preview").join(&file);
+            let kind = match file.rsplit('.').next() {
+                Some("png") => "image/png",
+                Some("jpg" | "jpeg") => "image/jpeg",
+                Some("webp") => "image/webp",
+                _ => return StatusCode::NOT_FOUND.into_response(),
+            };
+            // Preview only, a few small files: a blocking read is fine here.
+            match std::fs::read(path) {
+                Ok(bytes) => ([(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, "public, max-age=3600")], bytes).into_response(),
+                Err(_) => StatusCode::NOT_FOUND.into_response(),
+            }
+        }),
+    )
+}
+
 pub const GUILD_A: u64 = 1_100_000_000_000_000_001;
 pub const GUILD_B: u64 = 1_100_000_000_000_000_002;
 
@@ -164,6 +217,7 @@ pub fn seed(ctx: &Ctx) -> Result<()> {
 /// this from `examples/preview.rs` so each can be looked at on its own:
 /// `cargo run -p feat-x --example preview -- 3101`, then open `http://localhost:3101/dev/login`.
 pub async fn run(features: Vec<std::sync::Arc<dyn crate::Feature>>, port: u16) -> Result<()> {
+    ON.store(true, std::sync::atomic::Ordering::Relaxed);
     let cfg = crate::Config::preview(port);
     let db = crate::Db::open(&cfg.database_path)?;
     let ctx = Ctx::new(cfg, db)?;

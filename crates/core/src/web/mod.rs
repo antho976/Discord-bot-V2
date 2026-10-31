@@ -2,6 +2,7 @@
 //! one stylesheet, with a few lines of script for toasts and two-step deletes.
 
 pub mod auth;
+pub mod banner;
 pub mod form;
 pub mod pages;
 pub mod ui;
@@ -81,7 +82,11 @@ pub fn router(ctx: Ctx) -> Router {
         .route("/static/icon.svg", get(|| async { ([(header::CONTENT_TYPE, "image/svg+xml"), (header::CACHE_CONTROL, "public, max-age=86400")], include_str!("assets/icon.svg")) }))
         .route("/healthz", get(|| async { "ok" }))
         .merge(auth::routes(ctx.cfg.preview))
-        .merge(pages::routes());
+        .merge(pages::routes())
+        .merge(banner::routes());
+    if ctx.cfg.preview {
+        app = app.merge(crate::preview::routes());
+    }
     for f in ctx.features() {
         app = app.merge(f.routes());
     }
