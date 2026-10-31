@@ -149,13 +149,15 @@ pub fn month_stats(c: &Connection, guild: u64, since: i64) -> bot_core::rusqlite
     )
 }
 
-/// Members who have cast the most votes in a server, most first, with their vote counts.
-pub fn top_voters(c: &Connection, guild: u64, limit: i64) -> bot_core::rusqlite::Result<Vec<(u64, i64)>> {
+/// Members who have cast the most votes in a server since `since` (epoch ms), most first, with
+/// their vote counts. A vote counts from when it was last cast or switched; votes from before
+/// they were dated have no time and are left out.
+pub fn top_voters(c: &Connection, guild: u64, since: i64, limit: i64) -> bot_core::rusqlite::Result<Vec<(u64, i64)>> {
     let mut s = c.prepare_cached(
         "SELECT v.user_id, COUNT(*) AS n FROM suggestion_votes v JOIN suggestions s ON s.id = v.suggestion_id
-         WHERE s.guild_id = ?1 GROUP BY v.user_id ORDER BY n DESC, v.user_id LIMIT ?2",
+         WHERE s.guild_id = ?1 AND v.at >= ?2 AND v.at > 0 GROUP BY v.user_id ORDER BY n DESC, v.user_id LIMIT ?3",
     )?;
-    s.query_map(params![id_i64(guild), limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
+    s.query_map(params![id_i64(guild), since, limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
 }
 
 /// What a vote press does: the same button again takes the vote back, the other one switches.
@@ -167,7 +169,10 @@ pub fn cast_vote(c: &Connection, id: i64, user: u64, pressed: i64) -> bot_core::
     let existing: Option<i64> =
         c.query_row("SELECT vote FROM suggestion_votes WHERE suggestion_id = ?1 AND user_id = ?2", params![id, id_i64(user)], |r| r.get(0)).optional()?;
     match next_vote(existing, pressed) {
-        Some(v) => c.execute("INSERT OR REPLACE INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (?1, ?2, ?3)", params![id, id_i64(user), v])?,
+        Some(v) => c.execute(
+            "INSERT OR REPLACE INTO suggestion_votes (suggestion_id, user_id, vote, at) VALUES (?1, ?2, ?3, ?4)",
+            params![id, id_i64(user), v, now_ms()],
+        )?,
         None => c.execute("DELETE FROM suggestion_votes WHERE suggestion_id = ?1 AND user_id = ?2", params![id, id_i64(user)])?,
     };
     tally(c, id)
@@ -247,7 +252,15 @@ async fn post(ctx: &Ctx, settings: &Settings, guild: u64, channel: u64, author: 
     let embeds = [embed(ctx, &s)];
     let sent = ctx.http.create_message(Id::new(channel)).embeds(&embeds).components(&components(&s, Tally::default())).await;
     let message = match sent {
-        Ok(r) => r.model().await?,
+        Ok(r) => match r.model().await {
+            Ok(m) => m,
+            // Posted, but Discord's reply couldn't be read: the buttons still work (they carry the
+            // number), so don't tell the member it failed and invite a second post.
+            Err(e) => {
+                tracing::warn!(suggestion = id, error = %e, "posted a suggestion but couldn't read the message back");
+                return Ok((id, format!("<#{channel}>")));
+            }
+        },
         Err(e) => {
             ctx.db.with(|c| c.execute("DELETE FROM suggestions WHERE id = ?1", [id]))?;
             return Err(e.into());
@@ -284,7 +297,12 @@ pub async fn on_component(ctx: &Ctx, call: &ComponentCall, args: &[&str]) -> Res
             if !is_staff(&call.interaction, &settings) {
                 return ctx.reply(&call.interaction, Reply::text("Only staff can review suggestions.").ephemeral()).await;
             }
-            let pick = |st: Status, label: &str, style: ButtonStyle| button(&format!("{KEY}:sg:set:{id}:{}", st.as_str()), label, style, s.status == st);
+            // The current decision's button edits its reply instead; "Reopen" on an open one does nothing.
+            let pick = |st: Status, label: &str, style: ButtonStyle| {
+                let current = s.status == st;
+                let label = if current && st != Status::Open { "Edit reply" } else { label };
+                button(&format!("{KEY}:sg:set:{id}:{}", st.as_str()), label, style, current && st == Status::Open)
+            };
             let rows = vec![row(vec![
                 pick(Status::Considering, "Considering", ButtonStyle::Secondary),
                 pick(Status::Approved, "Approve", ButtonStyle::Success),
@@ -300,8 +318,10 @@ pub async fn on_component(ctx: &Ctx, call: &ComponentCall, args: &[&str]) -> Res
                 return ctx.reply(&call.interaction, Reply::text("Only staff can review suggestions.").ephemeral()).await;
             }
             let Some(status) = args.get(2).and_then(|s| Status::parse(s)) else { return Ok(()) };
-            let title = format!("{} suggestion #{id}", if status == Status::Open { "Reopen" } else { status.label() });
-            ctx.modal(&call.interaction, &format!("{KEY}:sg:status:{id}:{}", status.as_str()), &title, &[("reason", "Reason (optional)", true, false, None)]).await
+            let editing = s.status == status;
+            let title = if editing { format!("Edit the reply on #{id}") } else { format!("{} suggestion #{id}", if status == Status::Open { "Reopen" } else { status.label() }) };
+            let current = editing.then_some(s.reason.as_str()).filter(|r| !r.is_empty());
+            ctx.modal(&call.interaction, &format!("{KEY}:sg:status:{id}:{}", status.as_str()), &title, &[("reason", "Reason (optional)", true, false, current)]).await
         }
         _ => Ok(()),
     }
@@ -314,34 +334,28 @@ pub async fn on_modal(ctx: &Ctx, call: &ModalCall, args: &[&str]) -> Result<()> 
     if !is_staff(&call.interaction, &settings) {
         return ctx.reply(&call.interaction, Reply::text("Only staff can review suggestions.").ephemeral()).await;
     }
-    if ctx.db.with(|c| get(c, id))?.is_none_or(|s| s.guild_id != guild) {
+    let Some(before) = ctx.db.with(|c| get(c, id))?.filter(|s| s.guild_id == guild) else {
         return ctx.reply(&call.interaction, Reply::text("This suggestion doesn't exist any more.").ephemeral()).await;
-    }
+    };
     let reason = call.value("reason").unwrap_or_default();
     ctx.defer(&call.interaction, true).await?;
     set_status(ctx, id, status, &reason, call.user_id()).await?;
-    ctx.edit_original(&call.interaction, Reply::text(format!("Suggestion #{id} is now {}.", status.label().to_lowercase()))).await
+    let msg = if before.status == status && status != Status::Open {
+        format!("Updated the reply on suggestion #{id}.")
+    } else {
+        format!("Suggestion #{id} is now {}.", status.label().to_lowercase())
+    };
+    ctx.edit_original(&call.interaction, Reply::text(msg)).await
 }
 
 /// Record a status, rewrite the suggestion's message and tell the author. Used by the buttons and
-/// the dashboard.
+/// the dashboard. Saving the status it already has edits the reply: the message changes, but the
+/// decision keeps its date and the author isn't told again.
 pub async fn set_status(ctx: &Ctx, id: i64, status: Status, reason: &str, staff: u64) -> Result<Option<Suggestion>> {
     let reason = if status == Status::Open { String::new() } else { text::clip(reason.trim(), MAX_REASON) };
-    let changed = ctx.db.with(|c| {
-        c.execute(
-            "UPDATE suggestions SET status = ?2, reason = ?3, staff_id = ?4, status_at = ?5 WHERE id = ?1",
-            params![
-                id,
-                status.as_str(),
-                reason,
-                if status == Status::Open { None } else { Some(id_i64(staff)) },
-                if status == Status::Open { 0 } else { now_ms() }
-            ],
-        )
-    })?;
-    if changed == 0 {
-        return Ok(None);
-    }
+    let Some(before) = ctx.db.with(|c| get(c, id))? else { return Ok(None) };
+    let decided = status != before.status;
+    ctx.db.with(|c| record_status(c, id, status, &reason, staff, now_ms()))?;
     let Some(s) = ctx.db.with(|c| get(c, id))? else { return Ok(None) };
     if let Some(message) = s.message_id {
         let t = ctx.db.with(|c| tally(c, id))?;
@@ -352,7 +366,7 @@ pub async fn set_status(ctx: &Ctx, id: i64, status: Status, reason: &str, staff:
             tracing::warn!(suggestion = id, error = %e, "couldn't edit the suggestion message");
         }
     }
-    if status != Status::Open {
+    if decided && status != Status::Open {
         let mut dm = EmbedBuilder::new()
             .color(status.color())
             .title(format!("Your suggestion was {}", status.label().to_lowercase()))
@@ -366,6 +380,17 @@ pub async fn set_status(ctx: &Ctx, id: i64, status: Status, reason: &str, staff:
         }
     }
     Ok(Some(s))
+}
+
+/// Store a status and reply. A new status is dated `now`; the same status keeps its date.
+fn record_status(c: &Connection, id: i64, status: Status, reason: &str, staff: u64, now: i64) -> bot_core::rusqlite::Result<usize> {
+    let open = status == Status::Open;
+    c.execute(
+        "UPDATE suggestions SET reason = ?3, staff_id = ?4,
+           status_at = CASE WHEN ?5 THEN 0 WHEN status = ?2 THEN status_at ELSE ?6 END, status = ?2
+         WHERE id = ?1",
+        params![id, status.as_str(), reason, (!open).then(|| id_i64(staff)), open, now],
+    )
 }
 
 pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
@@ -404,8 +429,8 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
             let id = c.last_insert_rowid();
             for n in 0..ups + downs {
                 c.execute(
-                    "INSERT OR IGNORE INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (?1, ?2, ?3)",
-                    params![id, id_i64(who(n)), if n < ups { 1 } else { -1 }],
+                    "INSERT OR IGNORE INTO suggestion_votes (suggestion_id, user_id, vote, at) VALUES (?1, ?2, ?3, ?4)",
+                    params![id, id_i64(who(n)), if n < ups { 1 } else { -1 }, now - ((i + n) as i64 % 9 + 1) * 5 * hour],
                 )?;
             }
             Ok(())
@@ -445,6 +470,26 @@ mod tests {
     }
 
     #[test]
+    fn editing_a_reply_keeps_the_decision_date() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        db.with(|c| {
+            c.execute("INSERT INTO suggestions (guild_id, channel_id, author_id, content) VALUES (1, 2, 3, 'a')", [])?;
+            let at = |c: &Connection| c.query_row("SELECT status, reason, status_at FROM suggestions WHERE id = 1", [], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)));
+            record_status(c, 1, Status::Approved, "Yes", 9, 100)?;
+            assert_eq!(at(c)?, ("approved".into(), "Yes".into(), 100));
+            record_status(c, 1, Status::Approved, "Yes, this week", 9, 200)?;
+            assert_eq!(at(c)?, ("approved".into(), "Yes, this week".into(), 100));
+            record_status(c, 1, Status::Implemented, "Done", 9, 300)?;
+            assert_eq!(at(c)?, ("implemented".into(), "Done".into(), 300));
+            record_status(c, 1, Status::Open, "", 9, 400)?;
+            assert_eq!(at(c)?, ("open".into(), "".into(), 0));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn statuses_round_trip() {
         for st in Status::ALL {
             assert_eq!(Status::parse(st.as_str()), Some(st));
@@ -460,16 +505,19 @@ mod tests {
         db.with(|c| {
             assert_eq!(open_count(c, 1)?, 0);
             assert_eq!(month_stats(c, 1, 0)?, (0, 0, 0));
-            assert!(top_voters(c, 1, 3)?.is_empty());
+            assert!(top_voters(c, 1, 0, 3)?.is_empty());
             c.execute("INSERT INTO suggestions (guild_id, channel_id, author_id, content, created_at) VALUES (1, 2, 3, 'a', 10)", [])?;
             c.execute(
                 "INSERT INTO suggestions (guild_id, channel_id, author_id, content, status, created_at, status_at) VALUES (1, 2, 3, 'b', 'approved', 10, 20)",
                 [],
             )?;
-            c.execute("INSERT INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (1, 9, 1), (2, 9, -1), (2, 8, 1)", [])?;
+            c.execute("INSERT INTO suggestion_votes (suggestion_id, user_id, vote, at) VALUES (1, 9, 1, 30), (2, 9, -1, 40), (2, 8, 1, 10)", [])?;
+            // A vote from before votes were dated.
+            c.execute("INSERT INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (1, 7, 1)", [])?;
             assert_eq!(open_count(c, 1)?, 1);
             assert_eq!(month_stats(c, 1, 5)?, (2, 1, 0));
-            assert_eq!(top_voters(c, 1, 3)?, vec![(9, 2), (8, 1)]);
+            assert_eq!(top_voters(c, 1, 0, 3)?, vec![(9, 2), (8, 1)]);
+            assert_eq!(top_voters(c, 1, 35, 3)?, vec![(9, 1)]);
             Ok(())
         })
         .unwrap();

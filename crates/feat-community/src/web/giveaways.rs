@@ -7,7 +7,7 @@ use bot_core::{Ctx, Icon, now_ms, text};
 
 use super::{TabQuery, channel_in, channel_name, channel_select, face_row, header_pop, month_start, open_link, role_name, style, tabs, until};
 use crate::KEY;
-use crate::giveaways::{self as gw, EndOutcome, Giveaway, RerollOutcome};
+use crate::giveaways::{self as gw, EditOutcome, EndOutcome, Giveaway, RerollOutcome};
 
 pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<TabQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
@@ -48,7 +48,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                                 img.avatar src=(ctx.member_avatar(guild, *w)) alt="" width="32" height="32" loading="lazy";
                                 div.grow {
                                     span { strong { (ctx.display_name(guild, *w)) } " won " (g.prize) }
-                                    span.muted.small { (text::ago(ended_at(g))) " · out of " (entries_text(*n)) }
+                                    span.muted.small { (text::ago(g.finished_at())) " · out of " (entries_text(*n)) }
                                 }
                             }
                         }
@@ -89,7 +89,7 @@ fn running_view(ctx: &Ctx, page: &Page, guild: u64, running: &[(Giveaway, i64)],
 fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64], edit: bool) -> Markup {
     html! {
         article.cm-hero {
-            div.cm-tile.big { (ui::icon(Icon::Gift)) }
+            (tile(g, true))
             div.cm-hero-body {
                 span.cm-chip.warn { (ui::icon(Icon::Clock)) (until("Ends in", g.ends_at)) }
                 h2.cm-hero-title { (g.prize) }
@@ -106,7 +106,10 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64]
                 }
                 span.meter { span style=(format!("width:{}%", elapsed(g))) {} }
                 div.cm-actions {
-                    @if edit { (ui::action_button(&page.path(&format!("community/giveaways/{}/end", g.id)), "End now", Tone::Muted, true)) }
+                    @if edit {
+                        (edit_pop(page, g, true))
+                        (ui::action_button(&page.path(&format!("community/giveaways/{}/end", g.id)), "End now", Tone::Muted, true))
+                    }
                     (open_link(page, g.channel_id, g.message_id, "Open in Discord"))
                 }
             }
@@ -117,7 +120,7 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64]
 fn row_running(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64], edit: bool) -> Markup {
     html! {
         div.cm-row {
-            div.cm-tile { (ui::icon(Icon::Gift)) }
+            (tile(g, false))
             div.cm-row-main {
                 strong.clip { (g.prize) }
                 span.muted.small {
@@ -129,7 +132,10 @@ fn row_running(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people:
             span.cm-entries { (entries_text(n)) }
             div.cm-row-actions {
                 (open_link(page, g.channel_id, g.message_id, "Open in Discord"))
-                @if edit { (ui::action_button(&page.path(&format!("community/giveaways/{}/end", g.id)), "End now", Tone::Muted, true)) }
+                @if edit {
+                    (edit_pop(page, g, false))
+                    (ui::action_button(&page.path(&format!("community/giveaways/{}/end", g.id)), "End now", Tone::Muted, true))
+                }
             }
         }
     }
@@ -143,10 +149,10 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
             div.cm-list {
                 @for (g, n) in ended {
                     div.cm-row {
-                        div.cm-tile { (ui::icon(Icon::Gift)) }
+                        (tile(g, false))
                         div.cm-row-main {
                             strong.clip { (g.prize) }
-                            span.muted.small { "Ended " (text::ago(ended_at(g))) " · " (channel_name(ctx, guild, g.channel_id)) " · " (winners_text(g)) }
+                            span.muted.small { "Ended " (text::ago(g.finished_at())) " · " (channel_name(ctx, guild, g.channel_id)) " · " (winners_text(g)) }
                         }
                         div.cm-winners {
                             @if g.winner_ids.is_empty() {
@@ -159,11 +165,42 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
                         span.cm-entries { (entries_text(*n)) }
                         div.cm-row-actions {
                             (open_link(page, g.channel_id, g.message_id, "Open in Discord"))
-                            @if edit && *n > g.winner_ids.len() as i64 {
+                            @if edit && *n > (g.winner_ids.len() + g.passed_ids.len()) as i64 {
                                 (ui::action_button(&page.path(&format!("community/giveaways/{}/reroll", g.id)), "Reroll", Tone::Muted, false))
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// The prize tile: the creator's emoji, or the gift icon.
+fn tile(g: &Giveaway, big: bool) -> Markup {
+    html! {
+        div.cm-tile.big[big] aria-hidden="true" {
+            @if g.emoji.is_empty() { (ui::icon(Icon::Gift)) } @else { span.cm-emoji { (g.emoji) } }
+        }
+    }
+}
+
+/// "Edit" on a running giveaway: prize, emoji, end and winners. `left` opens the popover
+/// rightwards, for buttons near the left edge.
+fn edit_pop(page: &Page, g: &Giveaway, left: bool) -> Markup {
+    let left_secs = ((g.ends_at - now_ms()) / 1000).max(0);
+    html! {
+        details.pop.cm-edit.left[left] {
+            summary.btn.small { "Edit" }
+            div.pop-body {
+                form.settings method="post" action=(page.path(&format!("community/giveaways/{}/edit", g.id))) {
+                    (ui::card(html! {
+                        (ui::field_text("prize", "Prize", None, &g.prize, "Discord Nitro, 3 months"))
+                        (ui::field_text("emoji", "Emoji", None, &g.emoji, "🎁"))
+                        (ui::field_text("ends", "Ends in", Some("From now, like 2h or 1d."), "", &text::duration(left_secs)))
+                        (ui::field_number("winners", "Winners", None, g.winners, 1, gw::MAX_WINNERS, None))
+                    }))
+                    div.cm-pop-foot { button.btn.primary type="submit" { "Save changes" } }
                 }
             }
         }
@@ -176,6 +213,7 @@ fn start_form(ctx: &Ctx, page: &Page, guild: u64) -> Markup {
         form.settings method="post" action=(page.path("community/giveaways")) {
             (ui::card(html! {
                 (ui::field_text("prize", "Prize", None, "", "Discord Nitro, 3 months"))
+                (ui::field_text("emoji", "Emoji", Some("Shown on the prize tile and the post. Empty uses the gift icon."), "", "🎁"))
                 (ui::field_text("duration", "Runs for", Some("Like 30m, 2h or 1d 12h. A bare number is minutes."), "", "1d"))
                 (ui::field_number("winners", "Winners", None, 1, 1, gw::MAX_WINNERS, None))
                 (channel_select(ctx, guild, "channel", "Channel", None))
@@ -184,11 +222,6 @@ fn start_form(ctx: &Ctx, page: &Page, guild: u64) -> Markup {
             div.cm-pop-foot { button.btn.primary type="submit" { "Start giveaway" } }
         }
     }
-}
-
-/// When a giveaway finished: its end, or its scheduled end for rows from before it was kept.
-fn ended_at(g: &Giveaway) -> i64 {
-    if g.ended_at > 0 { g.ended_at } else { g.ends_at }
 }
 
 /// How far from the start to the end, 0 to 100.
@@ -215,11 +248,12 @@ pub async fn create(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
     if prize.is_empty() {
         return Err(WebError::Bad("Say what's being given away.".into()));
     }
+    let emoji = gw::parse_emoji(&form.string("emoji")).map_err(|e| WebError::Bad(e.into()))?;
     let secs = gw::parse_span(&form.string("duration")).map_err(|e| WebError::Bad(e.into()))?;
     let winners = form.int_in("winners", 1, gw::MAX_WINNERS, 1);
     let channel = channel_in(&ctx, guild, form.id("channel"))?;
     let role = form.id("role").filter(|r| ctx.roles(guild).iter().any(|(id, _, _)| id == r));
-    let id = gw::create(&ctx, gw::New { guild, channel, prize: &prize, winners, ends_at: now_ms() + secs * 1000, role, by: page.user.id })
+    let id = gw::create(&ctx, gw::New { guild, channel, prize: &prize, emoji: &emoji, winners, ends_at: now_ms() + secs * 1000, role, by: page.user.id })
         .await
         .map_err(|e| {
             bot_core::tracing::warn!(guild, error = %e, "couldn't start a giveaway from the dashboard");
@@ -242,6 +276,29 @@ pub async fn end(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u6
     match gw::end(&ctx, id).await? {
         EndOutcome::Ended(_) => ctx.audit(&page.user, Some(guild), KEY, format!("Ended giveaway #{id}")),
         EndOutcome::AlreadyEnded | EndOutcome::Missing => {}
+    }
+    Ok(saved(&page.path("community/giveaways")))
+}
+
+pub async fn edit(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    owned(&ctx, guild, id).await?;
+    let prize = form.string("prize");
+    if prize.is_empty() {
+        return Err(WebError::Bad("Say what's being given away.".into()));
+    }
+    let emoji = gw::parse_emoji(&form.string("emoji")).map_err(|e| WebError::Bad(e.into()))?;
+    let ends = form.string("ends");
+    let ends_at = if ends.is_empty() {
+        ctx.db.with(|c| gw::get(c, id))?.map(|g| g.ends_at).ok_or(WebError::NotFound)?
+    } else {
+        now_ms() + gw::parse_span(&ends).map_err(|e| WebError::Bad(e.into()))? * 1000
+    };
+    let winners = form.int_in("winners", 1, gw::MAX_WINNERS, 1);
+    match gw::edit(&ctx, id, gw::Changes { prize: &prize, emoji: &emoji, ends_at, winners }).await? {
+        EditOutcome::Edited => ctx.audit(&page.user, Some(guild), KEY, format!("Edited giveaway #{id}: {}", text::clip(&prize, 60))),
+        EditOutcome::AlreadyEnded => return Err(WebError::Bad("That giveaway has already ended, so it can't be changed.".into())),
+        EditOutcome::Missing => return Err(WebError::NotFound),
     }
     Ok(saved(&page.path("community/giveaways")))
 }

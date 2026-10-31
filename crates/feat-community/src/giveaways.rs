@@ -24,6 +24,8 @@ use crate::{CORAL, KEY, NEUTRAL, button, id_i64, row};
 const MIN_SECS: i64 = 60;
 const MAX_SECS: i64 = 90 * 86_400;
 pub const MAX_WINNERS: i64 = 25;
+/// Enough for flags, skin tones and joined emoji like 👩‍💻.
+const MAX_EMOJI_CHARS: usize = 10;
 
 #[derive(Debug, Clone)]
 pub struct Giveaway {
@@ -41,12 +43,32 @@ pub struct Giveaway {
     pub created_at: i64,
     /// When it was ended. 0 for rows ended before this was kept, and for running ones.
     pub ended_at: i64,
+    /// Earlier winners that a reroll replaced. They aren't picked again.
+    pub passed_ids: Vec<u64>,
+    /// The creator's pick for the prize tile and the post's title. Empty for the gift icon.
+    pub emoji: String,
 }
 
-const COLS: &str = "id, guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, ended, winner_ids, created_at, ended_at";
+impl Giveaway {
+    /// When it finished: the time it was ended, or its scheduled end for rows from before that
+    /// was kept.
+    pub fn finished_at(&self) -> i64 {
+        if self.ended_at > 0 { self.ended_at } else { self.ends_at }
+    }
+}
+
+const COLS: &str =
+    "id, guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, ended, winner_ids, created_at, ended_at, passed_ids, emoji";
+
+fn ids(s: &str) -> Vec<u64> {
+    s.split(',').filter_map(|s| s.parse().ok()).collect()
+}
+
+fn join_ids(ids: &[u64]) -> String {
+    ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",")
+}
 
 fn from_row(r: &Row) -> bot_core::rusqlite::Result<Giveaway> {
-    let winners: String = r.get(10)?;
     Ok(Giveaway {
         id: r.get(0)?,
         guild_id: r.get::<_, i64>(1)? as u64,
@@ -58,9 +80,11 @@ fn from_row(r: &Row) -> bot_core::rusqlite::Result<Giveaway> {
         required_role: r.get::<_, Option<i64>>(7)?.map(|m| m as u64),
         created_by: r.get::<_, i64>(8)? as u64,
         ended: r.get::<_, i64>(9)? != 0,
-        winner_ids: winners.split(',').filter_map(|s| s.parse().ok()).collect(),
+        winner_ids: ids(&r.get::<_, String>(10)?),
         created_at: r.get(11)?,
         ended_at: r.get(12)?,
+        passed_ids: ids(&r.get::<_, String>(13)?),
+        emoji: r.get(14)?,
     })
 }
 
@@ -113,7 +137,7 @@ pub fn list(c: &Connection, guild: u64, ended: bool, limit: i64) -> bot_core::ru
         "SELECT {COLS}, (SELECT COUNT(*) FROM giveaway_entries e WHERE e.giveaway_id = giveaways.id)
          FROM giveaways WHERE guild_id = ?1 AND ended = ?2 ORDER BY {order} LIMIT ?3"
     ))?;
-    s.query_map(params![id_i64(guild), ended as i64, limit], |r| Ok((from_row(r)?, r.get(13)?)))?.collect()
+    s.query_map(params![id_i64(guild), ended as i64, limit], |r| Ok((from_row(r)?, r.get(15)?)))?.collect()
 }
 
 /// Add the member to the giveaway, or take them out if they're already in. True when they're in
@@ -125,6 +149,19 @@ pub fn toggle_entry(c: &Connection, id: i64, user: u64) -> bot_core::rusqlite::R
     }
     c.execute("INSERT INTO giveaway_entries (giveaway_id, user_id, entered_at) VALUES (?1, ?2, ?3)", params![id, id_i64(user), now_ms()])?;
     Ok(true)
+}
+
+/// Join or leave a giveaway that is still running, and read it back. None once it has ended or
+/// its time is up. The check and the change run under one hold of the connection, the same lock
+/// `end` claims under, so an entry can't land after the winners were drawn.
+pub fn enter_if_running(c: &Connection, id: i64, user: u64, now: i64) -> bot_core::rusqlite::Result<Option<(Giveaway, bool, i64)>> {
+    match get(c, id)? {
+        Some(g) if !g.ended && g.ends_at > now => {
+            let entered = toggle_entry(c, id, user)?;
+            Ok(Some((g, entered, entry_count(c, id)?)))
+        }
+        _ => Ok(None),
+    }
 }
 
 /// Entries made since `since`.
@@ -153,9 +190,22 @@ pub fn parse_span(input: &str) -> Result<i64, &'static str> {
     Ok(secs)
 }
 
+/// Check an emoji for the prize. Empty is fine and means the gift icon. Custom Discord emoji
+/// aren't taken: the dashboard can't draw them.
+pub fn parse_emoji(input: &str) -> Result<String, &'static str> {
+    let e = input.trim();
+    if e.is_empty() {
+        return Ok(String::new());
+    }
+    if e.chars().count() > MAX_EMOJI_CHARS || e.chars().any(|c| c.is_ascii() || c.is_whitespace()) {
+        return Err("Use one emoji, like 🎁, or leave it empty.");
+    }
+    Ok(e.to_owned())
+}
+
 pub fn embed(g: &Giveaway, entries: i64) -> Embed {
-    let ends = g.ends_at / 1000;
-    let mut b = EmbedBuilder::new().title(text::clip(&g.prize, 250)).footer(EmbedFooterBuilder::new(format!("Giveaway #{}", g.id)));
+    let title = if g.emoji.is_empty() { g.prize.clone() } else { format!("{} {}", g.emoji, g.prize) };
+    let mut b = EmbedBuilder::new().title(text::clip(&title, 250)).footer(EmbedFooterBuilder::new(format!("Giveaway #{}", g.id)));
     if g.ended {
         let winners = if g.winner_ids.is_empty() {
             "Nobody entered".to_owned()
@@ -164,7 +214,7 @@ pub fn embed(g: &Giveaway, entries: i64) -> Embed {
         };
         b = b
             .color(NEUTRAL)
-            .description(format!("Ended <t:{ends}:R>"))
+            .description(format!("Ended <t:{}:R>", g.finished_at() / 1000))
             .field(EmbedFieldBuilder::new(if g.winner_ids.len() == 1 { "Winner" } else { "Winners" }, winners))
             .field(EmbedFieldBuilder::new("Entries", text::num(entries)).inline());
     } else {
@@ -175,7 +225,7 @@ pub fn embed(g: &Giveaway, entries: i64) -> Embed {
         b = b
             .color(CORAL)
             .description(desc)
-            .field(EmbedFieldBuilder::new("Ends", format!("<t:{ends}:R>")).inline())
+            .field(EmbedFieldBuilder::new("Ends", format!("<t:{}:R>", g.ends_at / 1000)).inline())
             .field(EmbedFieldBuilder::new("Winners", g.winners.to_string()).inline())
             .field(EmbedFieldBuilder::new("Entries", text::num(entries)).inline());
     }
@@ -197,7 +247,8 @@ pub fn command() -> Command {
                 .option(StringBuilder::new("duration", "How long it runs, like 30m, 2h or 1d 12h").required(true))
                 .option(IntegerBuilder::new("winners", "How many winners").required(true).min_value(1).max_value(MAX_WINNERS))
                 .option(ChannelBuilder::new("channel", "Where to post it, default this channel").channel_types([ChannelType::GuildText, ChannelType::GuildAnnouncement]))
-                .option(RoleBuilder::new("required_role", "Only members with this role can enter")),
+                .option(RoleBuilder::new("required_role", "Only members with this role can enter"))
+                .option(StringBuilder::new("emoji", "An emoji for the prize, like 🎁").max_length(MAX_EMOJI_CHARS as u16)),
         )
         .option(
             SubCommandBuilder::new("end", "End a giveaway now and pick winners")
@@ -229,13 +280,17 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
             if prize.is_empty() {
                 return say("Say what's being given away.".into()).await;
             }
+            let emoji = match parse_emoji(opts.str("emoji").unwrap_or_default()) {
+                Ok(e) => e,
+                Err(e) => return say(e.into()).await,
+            };
             let Some(channel) = opts.channel("channel").map(|c| c.get()).or(call.channel_id()) else { return Ok(()) };
             if ctx.channel_in(guild, Some(channel)).is_none() {
                 return say("That channel isn't in this server.".into()).await;
             }
             let role = opts.role("required_role").map(|r| r.get());
             ctx.defer(&call.interaction, true).await?;
-            let msg = match create(ctx, New { guild, channel, prize, winners, ends_at: now_ms() + secs * 1000, role, by: call.user_id() }).await {
+            let msg = match create(ctx, New { guild, channel, prize, emoji: &emoji, winners, ends_at: now_ms() + secs * 1000, role, by: call.user_id() }).await {
                 Ok(id) => format!("Giveaway #{id} is running in <#{channel}>."),
                 Err(e) => {
                     tracing::warn!(guild, error = %e, "couldn't start a giveaway");
@@ -275,7 +330,7 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
         "list" => {
             let (running, ended) = ctx.db.with(|c| Ok((list(c, guild, false, 10)?, list(c, guild, true, 5)?)))?;
             let line = |(g, n): &(Giveaway, i64)| {
-                let state = if g.ended { format!("ended <t:{}:R>", g.ends_at / 1000) } else { format!("ends <t:{}:R>", g.ends_at / 1000) };
+                let state = if g.ended { format!("ended <t:{}:R>", g.finished_at() / 1000) } else { format!("ends <t:{}:R>", g.ends_at / 1000) };
                 format!("`#{}` {}, {state}, {} entries", g.id, text::clip(&g.prize, 60), text::num(*n))
             };
             let mut lines: Vec<String> = Vec::new();
@@ -319,9 +374,16 @@ pub async fn on_enter(ctx: &Ctx, call: &ComponentCall, id: i64) -> Result<()> {
             return ctx.reply(&call.interaction, Reply::text(format!("You need <@&{role}> to enter this one.")).ephemeral()).await;
         }
     }
-    let user = call.user_id();
-    let (entered, count) = ctx.db.with(|c| Ok((toggle_entry(c, id, user)?, entry_count(c, id)?)))?;
+    let Some((g, entered, count)) = ctx.db.with(|c| enter_if_running(c, id, call.user_id(), now_ms()))? else {
+        return reply("This giveaway has ended.").await;
+    };
     ctx.update(&call.interaction, Reply::embed(embed(&g, count)).components(components(id))).await?;
+    // If it ended while that update was on its way, the running post may have landed after the
+    // ended one. Put the ended one back.
+    if let Some(now) = ctx.db.with(|c| get(c, id))?.filter(|g| g.ended) {
+        let n = ctx.db.with(|c| entry_count(c, id))?;
+        refresh(ctx, &now, n).await;
+    }
     let note = if entered { "You're in." } else { "You left the giveaway." };
     ctx.followup(&call.interaction, Reply::text(note).ephemeral()).await
 }
@@ -333,6 +395,8 @@ pub struct New<'a> {
     pub guild: u64,
     pub channel: u64,
     pub prize: &'a str,
+    /// Checked with `parse_emoji`.
+    pub emoji: &'a str,
     pub winners: i64,
     pub ends_at: i64,
     pub role: Option<u64>,
@@ -341,13 +405,13 @@ pub struct New<'a> {
 
 /// Post a giveaway and store it. Returns its number.
 pub async fn create(ctx: &Ctx, new: New<'_>) -> Result<i64> {
-    let New { guild, channel, prize, winners, ends_at, role, by } = new;
+    let New { guild, channel, prize, emoji, winners, ends_at, role, by } = new;
     let prize = text::clip(prize.trim(), 200);
     let id = ctx.db.with(|c| {
         c.execute(
-            "INSERT INTO giveaways (guild_id, channel_id, prize, winners, ends_at, required_role, created_by, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![id_i64(guild), id_i64(channel), prize, winners, ends_at, role.map(id_i64), id_i64(by), now_ms()],
+            "INSERT INTO giveaways (guild_id, channel_id, prize, emoji, winners, ends_at, required_role, created_by, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![id_i64(guild), id_i64(channel), prize, emoji, winners, ends_at, role.map(id_i64), id_i64(by), now_ms()],
         )?;
         Ok(c.last_insert_rowid())
     })?;
@@ -355,16 +419,61 @@ pub async fn create(ctx: &Ctx, new: New<'_>) -> Result<i64> {
     let embeds = [embed(&g, 0)];
     let sent = ctx.http.create_message(Id::new(channel)).embeds(&embeds).components(&components(id)).await;
     match sent {
-        Ok(r) => {
-            let message = r.model().await?;
-            ctx.db.with(|c| c.execute("UPDATE giveaways SET message_id = ?2 WHERE id = ?1", params![id, id_i64(message.id.get())]))?;
-            Ok(id)
-        }
+        // Posted. If Discord's reply can't be read the giveaway still runs (Enter carries its
+        // number), it just can't edit its post; saying it failed would invite a duplicate.
+        Ok(r) => match r.model().await {
+            Ok(message) => {
+                ctx.db.with(|c| c.execute("UPDATE giveaways SET message_id = ?2 WHERE id = ?1", params![id, id_i64(message.id.get())]))?;
+                Ok(id)
+            }
+            Err(e) => {
+                tracing::warn!(giveaway = id, error = %e, "posted a giveaway but couldn't read the message back");
+                Ok(id)
+            }
+        },
         Err(e) => {
             ctx.db.with(|c| c.execute("DELETE FROM giveaways WHERE id = ?1", [id]))?;
             Err(e.into())
         }
     }
+}
+
+/// What an editor can change on a running giveaway. Checked by the caller.
+pub struct Changes<'a> {
+    pub prize: &'a str,
+    pub emoji: &'a str,
+    pub ends_at: i64,
+    pub winners: i64,
+}
+
+pub enum EditOutcome {
+    Missing,
+    AlreadyEnded,
+    Edited,
+}
+
+/// Change a running giveaway and rewrite its message. One that has ended is left alone: the
+/// update only applies while `ended` is 0, so it can't race the end in `tick`.
+pub async fn edit(ctx: &Ctx, id: i64, ch: Changes<'_>) -> Result<EditOutcome> {
+    let prize = text::clip(ch.prize.trim(), 200);
+    let changed = ctx.db.with(|c| {
+        c.execute(
+            "UPDATE giveaways SET prize = ?2, emoji = ?3, ends_at = ?4, winners = ?5 WHERE id = ?1 AND ended = 0",
+            params![id, prize, ch.emoji, ch.ends_at, ch.winners.clamp(1, MAX_WINNERS)],
+        )
+    })?;
+    let Some((g, n)) = ctx.db.with(|c| Ok(match get(c, id)? { Some(g) => Some((g, entry_count(c, id)?)), None => None }))? else {
+        return Ok(EditOutcome::Missing);
+    };
+    if changed == 0 {
+        return Ok(EditOutcome::AlreadyEnded);
+    }
+    // If it ended right after the edit, end() read the edited row and draws its own post; a
+    // running post from here could land after it.
+    if !g.ended {
+        refresh(ctx, &g, n).await;
+    }
+    Ok(EditOutcome::Edited)
 }
 
 pub enum EndOutcome {
@@ -382,42 +491,53 @@ pub enum RerollOutcome {
 
 /// End a giveaway: pick winners, edit its message and announce them.
 pub async fn end(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
-    let Some(g) = ctx.db.with(|c| get(c, id))? else { return Ok(EndOutcome::Missing) };
-    // Only one caller wins the race to end it.
+    // Only one caller wins the race to end it. The row is read after the claim, so an edit saved
+    // just before is the prize and winner count that get announced.
     let claimed = ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 1, ended_at = ?2 WHERE id = ?1 AND ended = 0", params![id, now_ms()]))?;
     if claimed == 0 {
-        return Ok(EndOutcome::AlreadyEnded);
+        return Ok(if ctx.db.with(|c| get(c, id))?.is_some() { EndOutcome::AlreadyEnded } else { EndOutcome::Missing });
     }
-    let all = ctx.db.with(|c| entries(c, id))?;
+    let (g, all) = match ctx.db.with(|c| Ok((get(c, id)?, entries(c, id)?))) {
+        Ok((Some(g), all)) => (g, all),
+        Ok((None, _)) => return Ok(EndOutcome::Missing),
+        Err(e) => {
+            // Let it go back to running so the next tick tries again, rather than ending with
+            // no winners and no announcement.
+            ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 0, ended_at = 0 WHERE id = ?1", [id]))?;
+            return Err(e);
+        }
+    };
     let winners = pick_winners(&all, g.winners.max(1) as usize, &[], &mut bot_core::rand::rng());
     store_winners(ctx, id, &winners)?;
-    let g = Giveaway { ended: true, winner_ids: winners.clone(), ..g };
+    let g = Giveaway { winner_ids: winners.clone(), ..g };
     refresh(ctx, &g, all.len() as i64).await;
     announce(ctx, &g, &winners, false).await;
     Ok(EndOutcome::Ended(winners))
 }
 
-/// Pick new winners from everyone who entered, leaving out the previous ones.
+/// Pick new winners from everyone who entered, leaving out everyone picked before.
 pub async fn reroll(ctx: &Ctx, id: i64) -> Result<RerollOutcome> {
     let Some(g) = ctx.db.with(|c| get(c, id))? else { return Ok(RerollOutcome::Missing) };
     if !g.ended {
         return Ok(RerollOutcome::StillRunning);
     }
     let all = ctx.db.with(|c| entries(c, id))?;
-    let winners = pick_winners(&all, g.winners.max(1) as usize, &g.winner_ids, &mut bot_core::rand::rng());
+    let picked_before: Vec<u64> = g.passed_ids.iter().chain(&g.winner_ids).copied().collect();
+    let winners = pick_winners(&all, g.winners.max(1) as usize, &picked_before, &mut bot_core::rand::rng());
     if winners.is_empty() {
         return Ok(RerollOutcome::NoOneElse);
     }
-    store_winners(ctx, id, &winners)?;
-    let g = Giveaway { winner_ids: winners.clone(), ..g };
+    ctx.db.with(|c| {
+        c.execute("UPDATE giveaways SET winner_ids = ?2, passed_ids = ?3 WHERE id = ?1", params![id, join_ids(&winners), join_ids(&picked_before)])
+    })?;
+    let g = Giveaway { winner_ids: winners.clone(), passed_ids: picked_before, ..g };
     refresh(ctx, &g, all.len() as i64).await;
     announce(ctx, &g, &winners, true).await;
     Ok(RerollOutcome::Rolled(winners))
 }
 
 fn store_winners(ctx: &Ctx, id: i64, winners: &[u64]) -> Result<()> {
-    let joined = winners.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
-    ctx.db.with(|c| c.execute("UPDATE giveaways SET winner_ids = ?2 WHERE id = ?1", params![id, joined]))?;
+    ctx.db.with(|c| c.execute("UPDATE giveaways SET winner_ids = ?2 WHERE id = ?1", params![id, join_ids(winners)]))?;
     Ok(())
 }
 
@@ -452,13 +572,16 @@ async fn announce(ctx: &Ctx, g: &Giveaway, winners: &[u64], reroll: bool) {
 /// End every giveaway whose time is up.
 pub async fn tick(ctx: &Ctx) {
     for guild in ctx.enabled_guilds(KEY) {
-        let due: Vec<i64> = ctx
-            .db
-            .with(|c| {
-                let mut s = c.prepare_cached("SELECT id FROM giveaways WHERE guild_id = ?1 AND ended = 0 AND ends_at <= ?2")?;
-                s.query_map(params![id_i64(guild), now_ms()], |r| r.get(0))?.collect()
-            })
-            .unwrap_or_default();
+        let due: Vec<i64> = match ctx.db.with(|c| {
+            let mut s = c.prepare_cached("SELECT id FROM giveaways WHERE guild_id = ?1 AND ended = 0 AND ends_at <= ?2")?;
+            s.query_map(params![id_i64(guild), now_ms()], |r| r.get(0))?.collect()
+        }) {
+            Ok(due) => due,
+            Err(e) => {
+                tracing::warn!(guild, error = %e, "couldn't read giveaways that are due");
+                continue;
+            }
+        };
         for id in due {
             if let Err(e) = end(ctx, id).await {
                 tracing::warn!(guild, giveaway = id, error = %e, "couldn't end a giveaway");
@@ -472,24 +595,24 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     let who = |i: usize| MEMBERS[i % MEMBERS.len()].0;
     let hour = 3_600_000i64;
     let now = now_ms();
-    // (prize, winners, ends_in_ms, role, entrants, winners picked)
-    type Row = (&'static str, i64, i64, Option<u64>, usize, &'static [usize]);
+    // (prize, emoji, winners, ends_in_ms, role, entrants, winners picked)
+    type Row = (&'static str, &'static str, i64, i64, Option<u64>, usize, &'static [usize]);
     let rows: [Row; 5] = [
-        ("Discord Nitro, 3 months", 1, 2 * 24 * hour + 5 * hour, None, 8, &[]),
-        ("Signed poster from the next stream", 2, 9 * hour, Some(guild + 300), 5, &[]),
-        ("Steam key: Hades II", 1, 40 * 60_000, None, 3, &[]),
-        ("Idleon account boost", 1, -5 * hour, None, 9, &[2]),
-        ("Merch pack", 3, -10 * 24 * hour, Some(guild + 100), 7, &[0, 4, 5]),
+        ("Discord Nitro, 3 months", "💎", 1, 2 * 24 * hour + 5 * hour, None, 8, &[]),
+        ("Signed poster from the next stream", "🖼️", 2, 9 * hour, Some(guild + 300), 5, &[]),
+        ("Steam key: Hades II", "🎮", 1, 40 * 60_000, None, 3, &[]),
+        ("Idleon account boost", "🚀", 1, -5 * hour, None, 9, &[2]),
+        ("Merch pack", "👕", 3, -10 * 24 * hour, Some(guild + 100), 7, &[0, 4, 5]),
     ];
-    for (prize, winners, ends_in, role, entrants, picked) in rows {
+    for (prize, emoji, winners, ends_in, role, entrants, picked) in rows {
         let ended = ends_in < 0;
         let ids: Vec<String> = picked.iter().map(|i| who(*i).to_string()).collect();
         let message = 1_300_000_000_000_000_000u64 + now as u64 % 1000;
         ctx.db.with(|c| {
             c.execute(
-                "INSERT INTO giveaways (guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, created_at, ended, winner_ids, ended_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![id_i64(guild), id_i64(guild + 30), id_i64(message), prize, winners, now + ends_in, role.map(id_i64), id_i64(who(0)), now - 5 * 24 * hour, ended as i64, ids.join(","), if ended { now + ends_in } else { 0 }],
+                "INSERT INTO giveaways (guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, created_at, ended, winner_ids, ended_at, emoji)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![id_i64(guild), id_i64(guild + 30), id_i64(message), prize, winners, now + ends_in, role.map(id_i64), id_i64(who(0)), now - 5 * 24 * hour, ended as i64, ids.join(","), if ended { now + ends_in } else { 0 }, emoji],
             )?;
             let id = c.last_insert_rowid();
             for n in 0..entrants {
@@ -549,6 +672,18 @@ mod tests {
     }
 
     #[test]
+    fn emoji_is_one_emoji_or_nothing() {
+        assert_eq!(parse_emoji("  ").unwrap(), "");
+        assert_eq!(parse_emoji(" 🎁 ").unwrap(), "🎁");
+        assert_eq!(parse_emoji("👩‍💻").unwrap(), "👩‍💻");
+        assert_eq!(parse_emoji("🇨🇦").unwrap(), "🇨🇦");
+        assert!(parse_emoji("gift").is_err());
+        assert!(parse_emoji("<:pog:123>").is_err());
+        assert!(parse_emoji("🎁 🎁").is_err());
+        assert!(parse_emoji(&"🎁".repeat(11)).is_err());
+    }
+
+    #[test]
     fn entering_twice_leaves() {
         let db = bot_core::Db::memory().unwrap();
         db.migrate(KEY, crate::MIGRATIONS).unwrap();
@@ -558,6 +693,54 @@ mod tests {
             assert_eq!(entry_count(c, 1)?, 2);
             assert!(!toggle_entry(c, 1, 42)?);
             assert_eq!(entries(c, 1)?, vec![43]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    fn ctx() -> Ctx {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Community)]).unwrap();
+        ctx
+    }
+
+    #[test]
+    fn editing_changes_running_giveaways_only() {
+        let rt = bot_core::tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _in = rt.enter();
+        let ctx = ctx();
+        ctx.db
+            .with(|c| {
+                c.execute("INSERT INTO giveaways (id, guild_id, channel_id, prize, ends_at) VALUES (1, 1, 2, 'old', 10), (2, 1, 2, 'done', 10)", [])?;
+                c.execute("UPDATE giveaways SET ended = 1 WHERE id = 2", [])
+            })
+            .unwrap();
+        let ch = |prize| Changes { prize, emoji: "🎮", ends_at: 99, winners: 40 };
+        rt.block_on(async {
+            assert!(matches!(edit(&ctx, 1, ch("  New prize ")).await.unwrap(), EditOutcome::Edited));
+            assert!(matches!(edit(&ctx, 2, ch("x")).await.unwrap(), EditOutcome::AlreadyEnded));
+            assert!(matches!(edit(&ctx, 3, ch("x")).await.unwrap(), EditOutcome::Missing));
+        });
+        let g = ctx.db.with(|c| get(c, 1)).unwrap().unwrap();
+        assert_eq!((g.prize.as_str(), g.emoji.as_str(), g.ends_at, g.winners), ("New prize", "🎮", 99, MAX_WINNERS));
+        assert_eq!(ctx.db.with(|c| get(c, 2)).unwrap().unwrap().prize, "done");
+    }
+
+    #[test]
+    fn entries_stop_when_it_ends() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        db.with(|c| {
+            c.execute("INSERT INTO giveaways (id, guild_id, channel_id, prize, ends_at) VALUES (1, 1, 2, 'x', 100)", [])?;
+            let (g, entered, n) = enter_if_running(c, 1, 7, 50)?.unwrap();
+            assert!(entered && n == 1 && g.prize == "x");
+            // Time is up but the tick hasn't ended it yet.
+            assert!(enter_if_running(c, 1, 8, 100)?.is_none());
+            // Ended: nobody joins or leaves.
+            c.execute("UPDATE giveaways SET ended = 1 WHERE id = 1", [])?;
+            assert!(enter_if_running(c, 1, 7, 50)?.is_none());
+            assert_eq!(entries(c, 1)?, vec![7]);
+            assert!(enter_if_running(c, 2, 7, 50)?.is_none());
             Ok(())
         })
         .unwrap();

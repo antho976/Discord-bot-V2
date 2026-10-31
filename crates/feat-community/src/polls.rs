@@ -1,5 +1,9 @@
-//! Polls: Discord's own polls, posted by the bot. Discord counts the votes; we remember the poll
-//! and, once it's over, its final counts for the dashboard.
+//! Polls: Discord's own polls, posted by the bot. Discord counts the votes; we remember the poll,
+//! the votes as they come in for live counts, and once it's over, its final counts.
+
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
+use std::time::Duration;
 
 use bot_core::anyhow::{Result, anyhow};
 use bot_core::discord::{CommandCall, Reply};
@@ -21,6 +25,12 @@ pub const MAX_ANSWERS: usize = 10;
 pub const MAX_ANSWER_LEN: usize = 55;
 pub const MAX_QUESTION_LEN: usize = 300;
 pub const MAX_HOURS: i64 = 768;
+/// Discord's page size for poll voters, and how many pages of one answer are read at most.
+const VOTER_PAGE: u8 = 100;
+const MAX_VOTER_PAGES: usize = 50;
+/// Opening the polls page reads an open poll's voters again once this much time has passed.
+pub const RESYNC_MS: i64 = 5 * 60_000;
+const DAY_MS: i64 = 86_400_000;
 
 #[derive(Debug, Clone)]
 pub struct Poll {
@@ -152,6 +162,166 @@ pub fn live(c: &Connection, poll: &Poll) -> bot_core::rusqlite::Result<Live> {
     Ok(Live { answers, voters: voters.len() as i64 })
 }
 
+// ---- catching up on votes ----
+//
+// Live counts come from vote events, so votes cast or taken back while the bot was offline are
+// missing. Discord lists each answer's voters, so open polls are read once after a restart (on the
+// first tick, once the gateway is up), once a day after that, and when their page is opened.
+
+/// When each poll's voters were last read from Discord, since the bot started.
+static SYNCED: Mutex<Option<HashMap<i64, i64>>> = Mutex::new(None);
+
+/// Members whose votes changed live while a poll's voters were being read, by poll message. Only
+/// polls being read have an entry, so a vote outside a catch-up costs one lookup.
+static READING: Mutex<Option<HashMap<u64, HashSet<u64>>>> = Mutex::new(None);
+
+fn reading() -> std::sync::MutexGuard<'static, Option<HashMap<u64, HashSet<u64>>>> {
+    READING.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Called for every live vote event, before it's stored, so a catch-up that reconciles after the
+/// store also sees the member here.
+pub fn note_live_vote(message: u64, user: u64) {
+    if let Some(users) = reading().as_mut().and_then(|m| m.get_mut(&message)) {
+        users.insert(user);
+    }
+}
+
+fn start_reading(message: u64) {
+    reading().get_or_insert_with(HashMap::new).entry(message).or_default();
+}
+
+/// Stop noting live votes on a poll and return the members whose votes changed meanwhile.
+fn finish_reading(message: u64) -> HashSet<u64> {
+    reading().as_mut().and_then(|m| m.remove(&message)).unwrap_or_default()
+}
+
+/// Claim a read of a poll's voters: false when one started less than `gap` ms ago.
+fn claim_sync(id: i64, gap: i64) -> bool {
+    let now = now_ms();
+    let mut lock = SYNCED.lock().unwrap_or_else(|e| e.into_inner());
+    let map = lock.get_or_insert_with(HashMap::new);
+    if map.get(&id).is_some_and(|at| now - at < gap) {
+        return false;
+    }
+    map.retain(|_, at| now - *at < DAY_MS);
+    map.insert(id, now);
+    true
+}
+
+/// Read the voters of the polls that are due and bring the stored votes in line, one poll at a
+/// time in the background. Discord's rate limits are kept by the HTTP client, which waits when
+/// a bucket runs out. Returns the task so a page can wait for it briefly.
+pub fn catch_up(ctx: &Ctx, polls: &[Poll], gap: i64) -> Option<bot_core::tokio::task::JoinHandle<()>> {
+    if ctx.cfg.preview {
+        return None;
+    }
+    let due: Vec<Poll> = polls.iter().filter(|p| !p.is_over() && claim_sync(p.id, gap)).cloned().collect();
+    if due.is_empty() {
+        return None;
+    }
+    let ctx = ctx.clone();
+    Some(bot_core::tokio::spawn(async move {
+        for p in due {
+            start_reading(p.message_id);
+            let fetched_at = now_ms();
+            match fetch_voters(&ctx, &p).await {
+                // The live-vote set is taken under the database lock: any event stored before this
+                // point has already noted its member, and any later one applies on top.
+                Ok((voters, complete)) => match ctx.db.with(|c| reconcile(c, &p, &voters, complete, fetched_at, &finish_reading(p.message_id))) {
+                    Ok((0, 0)) => {}
+                    Ok((added, removed)) => tracing::info!(poll = p.id, added, removed, "caught up on poll votes"),
+                    Err(e) => tracing::warn!(poll = p.id, error = %e, "couldn't store caught-up poll votes"),
+                },
+                Err(e) => {
+                    finish_reading(p.message_id);
+                    tracing::warn!(poll = p.id, error = %e, "couldn't read poll voters");
+                }
+            }
+        }
+    }))
+}
+
+/// Wait up to `ms` for a catch-up, so the page shows its result when Discord answers quickly.
+/// A slow one carries on in the background.
+pub async fn wait_briefly(task: Option<bot_core::tokio::task::JoinHandle<()>>, ms: u64) {
+    if let Some(t) = task {
+        let _ = bot_core::tokio::time::timeout(Duration::from_millis(ms), t).await;
+    }
+}
+
+/// Everyone Discord lists as voting for each answer, in answer order, and whether every page
+/// was read.
+async fn fetch_voters(ctx: &Ctx, p: &Poll) -> Result<(Vec<Vec<u64>>, bool)> {
+    let mut out = Vec::with_capacity(p.answers.len());
+    let mut complete = true;
+    for i in 0..p.answers.len().min(MAX_ANSWERS) {
+        let mut users = Vec::new();
+        let mut after = None;
+        let mut pages = 0;
+        loop {
+            let mut req = ctx.http.get_answer_voters(Id::new(p.channel_id), Id::new(p.message_id), i as u8 + 1).limit(VOTER_PAGE);
+            if let Some(a) = after {
+                req = req.after(a);
+            }
+            let page = req.await?.model().await?.users;
+            pages += 1;
+            let full = page.len() >= VOTER_PAGE as usize;
+            after = page.last().map(|u| u.id);
+            users.extend(page.iter().map(|u| u.id.get()));
+            if !full {
+                break;
+            }
+            if pages >= MAX_VOTER_PAGES {
+                complete = false;
+                break;
+            }
+        }
+        out.push(users);
+    }
+    Ok((out, complete))
+}
+
+/// Make the stored votes match Discord's list of voters per answer. Votes the bot missed are
+/// added, dated at the poll's start because the real time isn't known. Stored votes Discord no
+/// longer lists are removed, but only when the list is complete and the vote came in before
+/// the list was read. Members in `live` voted or took a vote back while the list was being read,
+/// so the list may be out of date for them: their stored votes are left as the live events made
+/// them. Returns `(added, removed)`.
+pub fn reconcile(
+    c: &Connection,
+    poll: &Poll,
+    voters: &[Vec<u64>],
+    complete: bool,
+    fetched_at: i64,
+    live: &HashSet<u64>,
+) -> bot_core::rusqlite::Result<(usize, usize)> {
+    let mut st = c.prepare_cached("SELECT user_id, answer, at FROM poll_votes WHERE poll_id = ?1")?;
+    let stored: Vec<(u64, i64, i64)> =
+        st.query_map([poll.id], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
+    let listed: HashSet<(u64, i64)> =
+        voters.iter().enumerate().flat_map(|(i, users)| users.iter().map(move |u| (*u, i as i64))).collect();
+    let mut added = 0;
+    for (user, answer) in listed.iter().filter(|(u, _)| !live.contains(u)) {
+        added += c.execute(
+            "INSERT OR IGNORE INTO poll_votes (poll_id, user_id, answer, at) VALUES (?1, ?2, ?3, ?4)",
+            params![poll.id, id_i64(*user), answer, poll.created_at],
+        )?;
+    }
+    let mut removed = 0;
+    if complete {
+        for (user, answer, at) in stored {
+            if at < fetched_at && (answer as usize) < voters.len() && !listed.contains(&(user, answer)) && !live.contains(&user) {
+                removed += c.execute(
+                    "DELETE FROM poll_votes WHERE poll_id = ?1 AND user_id = ?2 AND answer = ?3",
+                    params![poll.id, id_i64(user), answer],
+                )?;
+            }
+        }
+    }
+    Ok((added, removed))
+}
+
 pub fn command() -> Command {
     CommandBuilder::new("poll", "Post a poll", CommandType::ChatInput)
         .default_member_permissions(Permissions::MANAGE_MESSAGES)
@@ -244,18 +414,27 @@ pub async fn end_now(ctx: &Ctx, id: i64) -> Result<bool> {
     Ok(true)
 }
 
-/// Fetch the final counts of polls that have just closed.
+/// Catch up on open polls that are due, and fetch the final counts of polls that have just
+/// closed.
 pub async fn tick(ctx: &Ctx) {
     for guild in ctx.enabled_guilds(KEY) {
-        let waiting: Vec<Poll> = ctx
-            .db
-            .with(|c| {
-                let mut s = c.prepare_cached(&format!(
-                    "SELECT {COLS} FROM polls WHERE guild_id = ?1 AND results IS NULL AND ends_at <= ?2 AND ends_at > ?3 LIMIT 5"
-                ))?;
-                s.query_map(params![id_i64(guild), now_ms(), now_ms() - 7 * 86_400_000], from_row)?.collect()
-            })
-            .unwrap_or_default();
+        let read = ctx.db.with(|c| {
+            let mut open = c.prepare_cached(&format!("SELECT {COLS} FROM polls WHERE guild_id = ?1 AND ends_at > ?2"))?;
+            let open: Vec<Poll> = open.query_map(params![id_i64(guild), now_ms()], from_row)?.collect::<Result<_, _>>()?;
+            let mut waiting = c.prepare_cached(&format!(
+                "SELECT {COLS} FROM polls WHERE guild_id = ?1 AND results IS NULL AND ends_at <= ?2 AND ends_at > ?3 LIMIT 5"
+            ))?;
+            let waiting: Vec<Poll> = waiting.query_map(params![id_i64(guild), now_ms(), now_ms() - 7 * DAY_MS], from_row)?.collect::<Result<_, _>>()?;
+            Ok((open, waiting))
+        });
+        let (open, waiting) = match read {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(guild, error = %e, "couldn't read polls for the tick");
+                continue;
+            }
+        };
+        catch_up(ctx, &open, DAY_MS);
         for p in waiting {
             match fetch_counts(ctx, &p).await {
                 Ok(Some(counts)) => store_results(ctx, p.id, &counts),
@@ -302,12 +481,30 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     let hour = 3_600_000i64;
     let now = now_ms();
     type Row = (&'static str, &'static [&'static str], bool, i64, Option<&'static [i64]>);
-    let rows: [Row; 5] = [
+    let rows: [Row; 6] = [
         ("What should the next stream be?", &["Hades II", "Idleon grind", "Viewer games", "Just chatting"], false, 31 * hour, None),
         ("Movie night on Friday: which one?", &["Dune Part Two", "Spirited Away", "Paddington 2"], false, 6 * hour, None),
         ("Which channels do you actually read?", &["general", "announcements", "stream-alerts", "pets"], true, -20 * hour, Some(&[41, 63, 22, 18])),
         ("New emoji set: keep or revert?", &["Keep", "Revert"], false, -4 * 24 * hour, Some(&[88, 31])),
         ("Pick a colour for the Regulars role", &["Green", "Teal", "Amber"], false, -9 * 24 * hour, Some(&[14, 20, 9])),
+        (
+            "Which world do you leave your characters in overnight, and why that one?",
+            &[
+                "Blunder Hills",
+                "Yum-Yum Desert, for the sandy pot drops",
+                "Frostbite Tundra",
+                "Hyperion Nebula, it's the only one that pays off for me",
+                "Smolderin' Plateau",
+                "Spirited Valley",
+                "Shimmerfin Deep",
+                "Wherever the daily quests point",
+                "I don't idle overnight",
+                "Something else, I'll say in chat",
+            ],
+            false,
+            -2 * 24 * hour,
+            Some(&[3, 12, 5, 21, 9, 14, 6, 2, 1, 4]),
+        ),
     ];
     for (i, (question, answers, multi, ends_in, results)) in rows.into_iter().enumerate() {
         ctx.db.with(|c| {
@@ -363,6 +560,104 @@ mod tests {
         assert!(parse_answers(&(0..11).map(|i| i.to_string()).collect::<Vec<_>>().join("|")).is_err());
         assert!(parse_answers(&(0..10).map(|i| i.to_string()).collect::<Vec<_>>().join("|")).is_ok());
         assert!(parse_answers(&format!("{} | b", "x".repeat(55))).is_ok());
+    }
+
+    fn poll(id: i64, answers: usize) -> Poll {
+        Poll {
+            id,
+            guild_id: 1,
+            channel_id: 1,
+            message_id: 100 + id as u64,
+            question: "q".into(),
+            answers: (0..answers).map(|i| i.to_string()).collect(),
+            multi: true,
+            ends_at: i64::MAX,
+            results: None,
+            created_by: 0,
+            created_at: 5,
+        }
+    }
+
+    #[test]
+    fn catching_up_adds_missed_and_drops_withdrawn_votes() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        let p = poll(1, 2);
+        db.with(|c| {
+            c.execute("INSERT INTO polls (id, guild_id, channel_id, message_id, question, answers, ends_at) VALUES (1, 1, 1, 101, 'q', '[]', 0)", [])?;
+            // Seen live: 10 on answer 0, 11 on answer 1 (since taken back), 12 just now.
+            c.execute("INSERT INTO poll_votes (poll_id, user_id, answer, at) VALUES (1, 10, 0, 50), (1, 11, 1, 60), (1, 12, 1, 999)", [])?;
+            // Discord lists 10 and 13 on answer 0, nobody on answer 1.
+            assert_eq!(reconcile(c, &p, &[vec![10, 13], vec![]], true, 500, &HashSet::new())?, (1, 1));
+            let mut st = c.prepare("SELECT user_id, answer, at FROM poll_votes ORDER BY user_id")?;
+            let rows: Vec<(i64, i64, i64)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
+            // 12 voted after the list was read, so it stays; 13 is dated at the poll's start.
+            assert_eq!(rows, vec![(10, 0, 50), (12, 1, 999), (13, 0, 5)]);
+            // A partial list only adds.
+            assert_eq!(reconcile(c, &p, &[vec![], vec![14]], false, 2000, &HashSet::new())?, (1, 0));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_vote_switched_during_the_read_counts_once() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        let p = poll(2, 2);
+        start_reading(p.message_id);
+        db.with(|c| {
+            c.execute("INSERT INTO polls (id, guild_id, channel_id, message_id, question, answers, ends_at) VALUES (2, 1, 1, 102, 'q', '[]', 0)", [])?;
+            c.execute("INSERT INTO poll_votes (poll_id, user_id, answer, at) VALUES (2, 20, 0, 50), (2, 21, 0, 50)", [])?;
+            // Discord's list is read with member 20 on the first answer; then 20 switches live.
+            note_live_vote(102, 20);
+            vote(c, 102, 20, 1, false)?;
+            note_live_vote(102, 20);
+            vote(c, 102, 20, 2, true)?;
+            let live = finish_reading(p.message_id);
+            assert_eq!(reconcile(c, &p, &[vec![20, 21], vec![]], true, 500, &live)?, (0, 0));
+            let mut st = c.prepare("SELECT user_id, answer FROM poll_votes WHERE poll_id = 2 ORDER BY user_id")?;
+            let rows: Vec<(i64, i64)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+            assert_eq!(rows, vec![(20, 1), (21, 0)]);
+            Ok(())
+        })
+        .unwrap();
+        // Outside a read, live votes aren't remembered.
+        note_live_vote(102, 22);
+        assert!(finish_reading(p.message_id).is_empty());
+    }
+
+    #[test]
+    fn live_counts_follow_votes() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        let p = poll(1, 3);
+        db.with(|c| {
+            c.execute("INSERT INTO polls (id, guild_id, channel_id, message_id, question, answers, ends_at) VALUES (1, 1, 1, 101, 'q', '[]', 0)", [])?;
+            // Discord counts answers from 1. A multi-answer voter counts once per answer.
+            vote(c, 101, 7, 1, true)?;
+            vote(c, 101, 7, 2, true)?;
+            vote(c, 101, 8, 1, true)?;
+            vote(c, 101, 8, 1, true)?;
+            // Votes on polls the bot didn't post are ignored.
+            assert_eq!(vote(c, 999, 7, 1, true)?, 0);
+            let l = live(c, &p)?;
+            assert_eq!(l.voters, 2);
+            assert_eq!(l.answers.iter().map(|a| (a.1, a.2)).collect::<Vec<_>>(), vec![(2, 67), (1, 33), (0, 0)]);
+            // Taking a vote back removes only that answer.
+            vote(c, 101, 7, 1, false)?;
+            let l = live(c, &p)?;
+            assert_eq!((l.voters, l.answers[0].1, l.answers[1].1), (2, 1, 1));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn a_poll_is_read_again_only_after_the_gap() {
+        assert!(claim_sync(-7, RESYNC_MS));
+        assert!(!claim_sync(-7, RESYNC_MS));
+        assert!(claim_sync(-7, 0));
     }
 
     #[test]

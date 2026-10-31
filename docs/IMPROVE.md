@@ -130,13 +130,44 @@ Found and fixed along the way:
 
 ### E: teal-marten
 `crates/feat-community` (giveaways, polls, suggestions), `crates/feat-pets`.
-- [ ] Polls: live counts miss votes cast while the bot was offline. On start, and when a poll
+- [x] Polls: live counts miss votes cast while the bot was offline. On start, and when a poll
       page is opened, catch up from Discord's poll voters endpoint for open polls (rate-limit
       aware).
-- [ ] Giveaways: let the creator pick an emoji for the prize tile.
-- [ ] Suggestions: vote timestamps so "Most votes given" can be per month.
-- [ ] Pets: polish the Approvals, Giveaways, Catalog and Bans tabs to the Collection tab's
+- [x] Giveaways: let the creator pick an emoji for the prize tile.
+- [x] Suggestions: vote timestamps so "Most votes given" can be per month.
+- [x] Pets: polish the Approvals, Giveaways, Catalog and Bans tabs to the Collection tab's
       standard. Restyle the public pet page in the same look.
+- [x] Found: an early-ended giveaway's post said "Ended in 2 days" (the scheduled end).
+- [x] Found: a second reroll could pick the winners the first reroll replaced.
+- [x] Found: the poll avatars and the suggestions top voters shared a class, so phones hid
+      the top voters.
+- [x] Found: the pets Approvals tab counted quantities (5) where the rail and overview count
+      requests (4).
+- [x] Found: pets Bans "Given" and public stats "givers" read the top-ten list, so they
+      undercounted.
+- [x] Found: dashes for an unknown confirmation rate on pets pages; overview polls without
+      their live votes; editors had no "Open in Discord" on suggestions.
+- [x] Giveaways: let editors change a running giveaway's prize, end time and number of
+      winners, and update the Discord message to match.
+- [x] Suggestions: let staff edit their reply after deciding (it updates the Discord message).
+- [x] Polls: polish the Ended tab to the hero card's standard; check ten answers and long
+      answers at phone width.
+- [x] Pets: check the public page and the Collection tab with 100+ pets and a member with many
+      copies, for speed and layout. Keep queries indexed.
+- [x] Code review pass over both crates: unwraps on Discord data, silent errors, the race when
+      a giveaway ends while someone enters, missing tests.
+- [x] Found: ended polls were listed by when they were posted, not when they ended.
+- [x] Found: re-saving a suggestion's status re-DMed the author and reset the decision date;
+      Discord had no way to edit a reply.
+- [x] Found: an entry could land after a giveaway's winners were drawn, and its message
+      update could revive the Enter button; a failed entry read left a giveaway ended with no
+      winners.
+- [x] Found: "Couldn't post" was shown for giveaways and suggestions that did post; tick read
+      errors were swallowed; a double click on /pet add submitted twice.
+- [x] Review (keen-hare): poll catch-up could count a vote switched during the read twice; a
+      long winning answer broke the polls rail; an edit just before a giveaway ended wasn't the
+      one announced, and its refresh could overwrite the ended post; pets copy for viewers and
+      the public counts.
 
 ### Lead: sharp-hare
 - Review every pull request (correctness, scope, look) and leave comments; check CI.

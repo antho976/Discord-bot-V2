@@ -81,6 +81,15 @@ const MIGRATIONS: &[Migration] = &[Migration {
             poll_id INTEGER NOT NULL, user_id INTEGER NOT NULL, answer INTEGER NOT NULL, at INTEGER NOT NULL,
             PRIMARY KEY (poll_id, user_id, answer));
     ",
+}, Migration {
+    name: "004_giveaway_passed",
+    sql: "ALTER TABLE giveaways ADD COLUMN passed_ids TEXT NOT NULL DEFAULT '';",
+}, Migration {
+    name: "005_suggestion_vote_times",
+    sql: "ALTER TABLE suggestion_votes ADD COLUMN at INTEGER NOT NULL DEFAULT 0;",
+}, Migration {
+    name: "006_giveaway_emoji",
+    sql: "ALTER TABLE giveaways ADD COLUMN emoji TEXT NOT NULL DEFAULT '';",
 }];
 
 #[feature_async]
@@ -108,9 +117,11 @@ impl Feature for Community {
     async fn on_event(&self, ctx: &Ctx, event: &Event) -> Result<()> {
         match event {
             Event::MessagePollVoteAdd(v) => {
+                polls::note_live_vote(v.message_id.get(), v.user_id.get());
                 ctx.db.with(|c| polls::vote(c, v.message_id.get(), v.user_id.get(), v.answer_id, true))?;
             }
             Event::MessagePollVoteRemove(v) => {
+                polls::note_live_vote(v.message_id.get(), v.user_id.get());
                 ctx.db.with(|c| polls::vote(c, v.message_id.get(), v.user_id.get(), v.answer_id, false))?;
             }
             _ => {}

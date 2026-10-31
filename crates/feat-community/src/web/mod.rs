@@ -20,6 +20,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/community/giveaways", get(giveaways::page).post(giveaways::create))
         .route("/g/{guild}/community/giveaways/{id}/end", post(giveaways::end))
         .route("/g/{guild}/community/giveaways/{id}/reroll", post(giveaways::reroll))
+        .route("/g/{guild}/community/giveaways/{id}/edit", post(giveaways::edit))
         .route("/g/{guild}/community/polls", get(polls::page).post(polls::create))
         .route("/g/{guild}/community/polls/{id}/end", post(polls::end))
         .route("/g/{guild}/community/suggestions", get(suggestions::page).post(suggestions::save_settings))
@@ -122,11 +123,17 @@ const STYLE: &str = r#"
 .cm-link { display: inline-flex; align-items: center; height: 28px; padding: 0 9px; border-radius: var(--r-key); font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
 .cm-link:hover { color: var(--ink); background: var(--hover); }
 .cm-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.cm-main { min-width: 0; }
+.cm-main, .cm-main + .rail { min-width: 0; }
+.cm-recent { max-width: 100%; }
 .cm-tile { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: var(--r-key); background: var(--control); color: var(--ink-2); }
 .cm-tile .icon { width: 20px; height: 20px; }
+.cm-emoji { font-size: 22px; line-height: 1; }
+.cm-tile.big .cm-emoji { font-size: 60px; }
 .cm-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; width: fit-content; padding: 0 10px; border-radius: 12px; font-size: 12px; white-space: nowrap; }
 .cm-chip .icon { width: 14px; height: 14px; }
+.cm-chip { max-width: 100%; min-width: 0; }
+.cm-chip > .cm-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cm-chip > .pct { flex: none; }
 .cm-chip.warn { color: var(--waiting); background: rgba(227, 169, 72, 0.14); }
 .cm-chip.data { color: var(--data); background: var(--data-wash); }
 .cm-list { display: flex; flex-direction: column; }
@@ -153,6 +160,9 @@ const STYLE: &str = r#"
 .cm-poll-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-3); }
 .cm-poll-head strong { font-weight: 500; color: var(--ink-2); }
 .cm-poll-head .status { margin-left: auto; }
+.cm-ended { display: flex; flex-direction: column; gap: 12px; }
+.cm-poll.ended { gap: 12px; padding: 18px 22px; }
+.cm-poll.ended .cm-question { font-size: 16px; }
 .cm-question { font-size: 20px; font-weight: 600; letter-spacing: -0.015em; text-wrap: balance; }
 .cm-answers { display: flex; flex-direction: column; gap: 6px; }
 .cm-answer { display: flex; align-items: center; min-height: 40px; padding: 0 14px; border-radius: 10px; background: var(--well); border: 1px solid var(--edge-1); font-size: 13.5px; color: var(--ink-2); }
@@ -171,7 +181,6 @@ const STYLE: &str = r#"
 .cm-live .cm-bar { flex: 1; }
 .cm-voters { width: 66px; flex: none; display: flex; }
 .cm-voters .avatar { width: 22px; height: 22px; }
-.cm-results { width: 360px; flex: none; }
 .cm-recent { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: 13px; }
 .cm-recent > strong { font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cm-recent .muted { font-size: 12px; }
@@ -179,7 +188,7 @@ const STYLE: &str = r#"
 .cm-month > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cm-month b { font-size: 24px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
 .cm-month span { font-size: 12px; color: var(--ink-3); }
-.cm-voters { display: flex; justify-content: space-between; gap: 6px; }
+.cm-top { display: flex; justify-content: space-between; gap: 6px; }
 .cm-voter { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; font-size: 12.5px; text-align: center; }
 .cm-voter .avatar { width: 44px; height: 44px; }
 .cm-voter strong { font-weight: 500; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -202,8 +211,12 @@ const STYLE: &str = r#"
 .cm-reply strong { font-weight: 500; color: var(--ink); }
 .cm-sg-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .cm-review .pop-body { width: 280px; }
+.cm-edit .pop-body { width: min(500px, calc(100vw - 32px)); padding: 16px; }
+.cm-edit.left .pop-body { left: 0; right: auto; }
+.cm-edit .pop-body .card { padding: 0 14px; }
 .cm-review .stack { gap: 8px; }
 .cm-sg-side .badge { height: 22px; }
+.cm-sg-side .cm-actions { flex-wrap: nowrap; gap: 2px; }
 
 @media (max-width: 560px) {
   .cm-pop > summary .cm-label { display: none; }
@@ -213,20 +226,27 @@ const STYLE: &str = r#"
 @media (max-width: 820px) {
   .cm-hero { flex-direction: column; align-items: flex-start; padding: 16px; gap: 16px; }
   .cm-tile.big { width: 96px; height: 96px; }
+  .cm-tile.big .cm-emoji { font-size: 46px; }
   .cm-row { flex-wrap: wrap; gap: 10px 14px; }
   .cm-row-main { flex-basis: calc(100% - 60px); }
   .cm-entries { min-width: 0; text-align: left; }
-  .cm-row-actions { padding-left: 58px; }
+  .cm-row > .avatars { display: none; }
+  .cm-row > .avatars + .cm-entries, .cm-row-main + .cm-entries, .cm-winners { margin-left: 58px; }
+  .cm-row-actions { margin-left: auto; }
   .cm-winners { max-width: none; }
   .cm-poll { padding: 16px; }
   .cm-poll-head .status { margin-left: 0; }
-  .cm-results { min-width: 0; width: 100%; }
   .cm-bars { width: 100%; }
   .cm-bar-row .votes { width: 60px; }
+  .cm-bar { height: auto; min-height: 36px; padding: 8px 12px; }
+  .cm-bar > span:not(.pct) { white-space: normal; overflow-wrap: anywhere; }
+  .cm-poll.ended { padding: 16px; }
   .cm-voters { display: none; }
   .cm-sg { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; }
   .cm-vote { width: 44px; }
   .cm-sg-side { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; }
   .cm-pop .pop-body { width: calc(100vw - 32px); }
+  .cm-edit[open] { flex-basis: 100%; order: 10; }
+  .cm-edit .pop-body { position: static; width: 100%; margin-top: 8px; }
 }
 "#;

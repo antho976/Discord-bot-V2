@@ -230,6 +230,12 @@ impl Feature for Pets {
                 };
                 let qty: i64 = qty.parse::<i64>().unwrap_or(1).clamp(1, 25);
                 let user = call.user_id();
+                // A double click sends the same dialog twice; submit it once.
+                if let Some(m) = call.interaction.message.as_ref()
+                    && !first_press(m.id.get())
+                {
+                    return Ok(());
+                }
                 store::submit(ctx, guild, &pet.id, user, qty)?;
                 ctx.notify(
                     Some(guild),
@@ -287,6 +293,23 @@ impl Feature for Pets {
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         preview_rows(ctx, guild)
     }
+}
+
+/// The `/pet add` dialogs submitted lately, so a second press of the same Submit is ignored.
+static SUBMITTED: std::sync::Mutex<std::collections::VecDeque<u64>> = std::sync::Mutex::new(std::collections::VecDeque::new());
+const SUBMITTED_KEEP: usize = 256;
+
+/// True the first time a dialog's message is seen.
+fn first_press(message: u64) -> bool {
+    let mut seen = SUBMITTED.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.contains(&message) {
+        return false;
+    }
+    if seen.len() >= SUBMITTED_KEEP {
+        seen.pop_front();
+    }
+    seen.push_back(message);
+    true
 }
 
 fn qty_label(n: i64) -> String {
@@ -539,4 +562,19 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
     }
     store::add_ban(ctx, guild, m[9], "Took a pet back after the giveaway.", "Antho")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_dialog_submits_once() {
+        assert!(super::first_press(1));
+        assert!(!super::first_press(1));
+        for m in 2..300 {
+            assert!(super::first_press(m));
+        }
+        // Old dialogs fall out; the list stays small.
+        assert!(super::first_press(1));
+        assert!(super::SUBMITTED.lock().unwrap().len() <= super::SUBMITTED_KEEP);
+    }
 }

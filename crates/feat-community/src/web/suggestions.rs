@@ -42,7 +42,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let since = month_start(&page.user, now_ms());
     let (mut rows, waiting, month, voters) = ctx.db.with(|c| {
-        Ok((sg::list(c, guild, 100)?, sg::open_count(c, guild)?, sg::month_stats(c, guild, since)?, sg::top_voters(c, guild, 3)?))
+        Ok((sg::list(c, guild, 100)?, sg::open_count(c, guild)?, sg::month_stats(c, guild, since)?, sg::top_voters(c, guild, since, 3)?))
     })?;
     // The board reads top-first: net votes, then newest.
     rows.sort_by_key(|(r, t)| (std::cmp::Reverse(t.up - t.down), std::cmp::Reverse(r.id)));
@@ -93,11 +93,11 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                         }
                     }
                     div.rail-block {
-                        h2 { "Most votes given" }
+                        h2 { "Most votes this month" }
                         @if voters.is_empty() {
-                            (ui::empty(Icon::Bulb, "No votes yet", "Members vote with the buttons on each suggestion."))
+                            (ui::empty(Icon::Bulb, "No votes this month", "Members vote with the buttons on each suggestion."))
                         } @else {
-                            div.cm-voters {
+                            div.cm-top {
                                 @for (u, n) in &voters {
                                     div.cm-voter {
                                         img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="44" height="44" loading="lazy";
@@ -106,7 +106,6 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                                     }
                                 }
                             }
-                            p.muted.small { "All time. Votes aren't dated, so they can't be counted by month." }
                         }
                     }
                 }
@@ -146,8 +145,10 @@ fn row(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, t: &Tally, edit: bool
             }
             div.cm-sg-side {
                 (ui::badge(state_label(r.status), tone(r.status)))
-                @if edit { (review_pop(page, r)) }
-                @if !edit { (open_link(page, r.channel_id, r.message_id, "Open in Discord")) }
+                div.cm-actions {
+                    (open_link(page, r.channel_id, r.message_id, "Open in Discord"))
+                    @if edit { (review_pop(page, r)) }
+                }
             }
         }
     }
@@ -162,8 +163,9 @@ fn review_pop(page: &Page, r: &Suggestion) -> Markup {
             div.pop-body {
                 form.stack method="post" action=(page.path(&format!("community/suggestions/{}/status", r.id))) {
                     (ui::select("status", &options, r.status.as_str()))
-                    input.input type="text" name="reason" value=(r.reason) placeholder="Reason, sent to the author" maxlength="800";
-                    button.btn.small.primary type="submit" style="align-self:flex-start" { "Save status" }
+                    textarea.input name="reason" rows="3" placeholder="Reply, shown on the post" maxlength="800" aria-label="Reply" { (r.reason) }
+                    @if r.status != Status::Open { p.muted.small { "Keeping the status edits the reply. The author hears only about a new status." } }
+                    button.btn.small.primary type="submit" style="align-self:flex-start" { "Save" }
                 }
             }
         }
@@ -210,12 +212,17 @@ pub async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path
 
 pub async fn set_status(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
-    match ctx.db.with(|c| sg::get(c, id))? {
-        Some(s) if s.guild_id == guild => {}
+    let before = match ctx.db.with(|c| sg::get(c, id))? {
+        Some(s) if s.guild_id == guild => s,
         _ => return Err(WebError::NotFound),
-    }
+    };
     let status = Status::parse(&form.string("status")).ok_or_else(|| WebError::Bad("Pick a status.".into()))?;
     sg::set_status(&ctx, id, status, &form.string("reason"), page.user.id).await?;
-    ctx.audit(&page.user, Some(guild), KEY, format!("Marked suggestion #{id} {}", status.label().to_lowercase()));
+    let what = if before.status == status && status != Status::Open {
+        format!("Edited the reply on suggestion #{id}")
+    } else {
+        format!("Marked suggestion #{id} {}", status.label().to_lowercase())
+    };
+    ctx.audit(&page.user, Some(guild), KEY, what);
     Ok(saved(&page.path("community/suggestions")))
 }
