@@ -468,7 +468,11 @@ pub async fn edit(ctx: &Ctx, id: i64, ch: Changes<'_>) -> Result<EditOutcome> {
     if changed == 0 {
         return Ok(EditOutcome::AlreadyEnded);
     }
-    refresh(ctx, &g, n).await;
+    // If it ended right after the edit, end() read the edited row and draws its own post; a
+    // running post from here could land after it.
+    if !g.ended {
+        refresh(ctx, &g, n).await;
+    }
     Ok(EditOutcome::Edited)
 }
 
@@ -487,15 +491,15 @@ pub enum RerollOutcome {
 
 /// End a giveaway: pick winners, edit its message and announce them.
 pub async fn end(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
-    let Some(g) = ctx.db.with(|c| get(c, id))? else { return Ok(EndOutcome::Missing) };
-    // Only one caller wins the race to end it.
-    let now = now_ms();
-    let claimed = ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 1, ended_at = ?2 WHERE id = ?1 AND ended = 0", params![id, now]))?;
+    // Only one caller wins the race to end it. The row is read after the claim, so an edit saved
+    // just before is the prize and winner count that get announced.
+    let claimed = ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 1, ended_at = ?2 WHERE id = ?1 AND ended = 0", params![id, now_ms()]))?;
     if claimed == 0 {
-        return Ok(EndOutcome::AlreadyEnded);
+        return Ok(if ctx.db.with(|c| get(c, id))?.is_some() { EndOutcome::AlreadyEnded } else { EndOutcome::Missing });
     }
-    let all = match ctx.db.with(|c| entries(c, id)) {
-        Ok(all) => all,
+    let (g, all) = match ctx.db.with(|c| Ok((get(c, id)?, entries(c, id)?))) {
+        Ok((Some(g), all)) => (g, all),
+        Ok((None, _)) => return Ok(EndOutcome::Missing),
         Err(e) => {
             // Let it go back to running so the next tick tries again, rather than ending with
             // no winners and no announcement.
@@ -505,7 +509,7 @@ pub async fn end(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
     };
     let winners = pick_winners(&all, g.winners.max(1) as usize, &[], &mut bot_core::rand::rng());
     store_winners(ctx, id, &winners)?;
-    let g = Giveaway { ended: true, ended_at: now, winner_ids: winners.clone(), ..g };
+    let g = Giveaway { winner_ids: winners.clone(), ..g };
     refresh(ctx, &g, all.len() as i64).await;
     announce(ctx, &g, &winners, false).await;
     Ok(EndOutcome::Ended(winners))
