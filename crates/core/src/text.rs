@@ -19,6 +19,38 @@ pub fn clip(s: &str, max: usize) -> String {
     out
 }
 
+/// Make text from outside (a clip title, a name someone chose) show as typed in a Discord
+/// message: markdown characters get a backslash, so "[Free nitro](https://x)" can't become a
+/// masked link, and a line can't start a list, a heading or a quote.
+pub fn escape_markdown(s: &str) -> String {
+    const SPECIAL: &[char] = &['\\', '[', ']', '(', ')', '*', '_', '~', '`', '|', '>', '#'];
+    let mut out = String::with_capacity(s.len() + 8);
+    for line in s.split_inclusive('\n') {
+        let body = line.trim_start_matches([' ', '\t']);
+        out.push_str(&line[..line.len() - body.len()]);
+        let mut rest = body;
+        let digits = body.len() - body.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+        if body.starts_with(['-', '+']) && body[1..].starts_with([' ', '\t']) {
+            // "- item" or "+ item"
+            out.push('\\');
+            out.push_str(&body[..1]);
+            rest = &body[1..];
+        } else if digits > 0 && body[digits..].starts_with(". ") {
+            // "1. item"
+            out.push_str(&body[..digits]);
+            out.push_str("\\.");
+            rest = &body[digits + 1..];
+        }
+        for c in rest.chars() {
+            if SPECIAL.contains(&c) {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// "3 min ago", "2 h ago", "5 days ago" for a past time in epoch milliseconds.
 pub fn ago(ms: i64) -> String {
     let secs = ((crate::now_ms() - ms) / 1000).max(0);
@@ -130,6 +162,25 @@ mod tests {
         assert_eq!(made_ago(now + day), "today");
         // 2020-01-01T00:00:00Z as a Discord id.
         assert_eq!(crate::discord::snowflake_ms((1_577_836_800_000 - 1_420_070_400_000) << 22), 1_577_836_800_000);
+    }
+
+    #[test]
+    fn markdown_is_shown_as_typed() {
+        assert_eq!(escape_markdown("Gold stake"), "Gold stake");
+        assert_eq!(escape_markdown("[Free nitro](https://evil.example)"), r"\[Free nitro\]\(https://evil.example\)");
+        assert_eq!(escape_markdown("**big** _it_ ~~no~~ `code` ||spoiler||"), r"\*\*big\*\* \_it\_ \~\~no\~\~ \`code\` \|\|spoiler\|\|");
+        assert_eq!(escape_markdown(r"a\b"), r"a\\b");
+        assert_eq!(escape_markdown("# Big"), r"\# Big");
+        assert_eq!(escape_markdown("-# small"), r"-\# small");
+        assert_eq!(escape_markdown("> quoted"), r"\> quoted");
+        // List markers only at the start of a line, and only when they start a list.
+        assert_eq!(escape_markdown("- item"), r"\- item");
+        assert_eq!(escape_markdown("  + item"), r"  \+ item");
+        assert_eq!(escape_markdown("1. first\n2. second"), "1\\. first\n2\\. second");
+        assert_eq!(escape_markdown("a - b + c"), "a - b + c");
+        assert_eq!(escape_markdown("-5 hp, 2.5x"), "-5 hp, 2.5x");
+        assert_eq!(escape_markdown("x_y\n- z"), "x\\_y\n\\- z");
+        assert_eq!(escape_markdown(""), "");
     }
 
     #[test]

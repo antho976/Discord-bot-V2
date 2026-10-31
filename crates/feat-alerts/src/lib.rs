@@ -301,9 +301,14 @@ pub(crate) fn state_del(ctx: &Ctx, key: &str) {
     }
 }
 
+/// When `due(key, ..)` last fired, if ever.
+pub(crate) fn last_due(ctx: &Ctx, key: &str) -> Option<i64> {
+    state_get(ctx, &format!("at:{key}")).and_then(|v| v.parse().ok())
+}
+
 /// True (and the clock reset) when `every_ms` has passed since this key last fired.
 pub(crate) fn due(ctx: &Ctx, key: &str, every_ms: i64) -> bool {
-    let last: i64 = state_get(ctx, &format!("at:{key}")).and_then(|v| v.parse().ok()).unwrap_or(0);
+    let last = last_due(ctx, key).unwrap_or(0);
     let now = now_ms();
     if now - last < every_ms {
         return false;

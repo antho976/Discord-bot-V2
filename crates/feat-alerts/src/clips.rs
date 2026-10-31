@@ -1,6 +1,8 @@
 //! New Twitch clips of the followed channels, posted to a chosen channel. Helix `/clips` is read
 //! every 15 minutes per broadcaster, only for servers that turned clips on; each clip is stored
-//! once by its id, so a clip is never posted twice.
+//! once by its id, so a clip is never posted twice. When a broadcaster hasn't been checked for a
+//! while (clips were off, or the channel left the Twitch tab), watching starts over from now, so
+//! turning clips back on doesn't post the clips made in between.
 
 use std::sync::Arc;
 
@@ -10,7 +12,7 @@ use bot_core::{Ctx, jiff, now_ms, text, tracing};
 use serde::Deserialize;
 
 use crate::twitch::{self, List};
-use crate::{Settings, due, state_get, state_set};
+use crate::{Settings, due, last_due, state_get, state_set};
 
 const EVERY_MS: i64 = 15 * 60_000;
 /// Twitch can take a while to list a new clip, so each check looks back an hour past the last
@@ -18,6 +20,15 @@ const EVERY_MS: i64 = 15 * 60_000;
 const OVERLAP_MS: i64 = 60 * 60_000;
 /// Twitch caps a clip search at a week from its start.
 const MAX_SPAN_MS: i64 = 6 * 86_400_000;
+/// A broadcaster not checked for this long wasn't being watched, so watching starts over.
+const STALE_MS: i64 = 2 * EVERY_MS;
+/// At most this many clips go out per check (the newest), so a catch-up can't flood a channel.
+const MAX_POSTS: usize = 5;
+/// Helix returns clips by views, 100 a page; this many pages are read per check.
+const MAX_PAGES: usize = 3;
+/// Stored clips are dropped this long after they were first seen. Far past the six-day search,
+/// so a dropped clip can't come back and post again, and long enough for the 30-day count.
+const KEEP_MS: i64 = 31 * 86_400_000;
 
 #[derive(Debug, Clone, Deserialize)]
 struct HClip {
@@ -54,10 +65,44 @@ pub fn window_start(since: i64, last_ok: Option<i64>, now: i64) -> i64 {
     last_ok.map_or(since, |l| l - OVERLAP_MS).max(since).max(now - MAX_SPAN_MS)
 }
 
-/// What a clip post says. Discord turns the link into a player.
+/// What a check of one broadcaster does.
+#[derive(Debug, PartialEq)]
+pub enum Plan {
+    /// Mark now as where watching starts, and post nothing.
+    Start,
+    /// Search for clips made from `from`, and post the new ones made since watching started.
+    Search { since: i64, from: i64 },
+}
+
+/// `since` is when watching started, `last_run` the previous check of this broadcaster (whether
+/// or not Twitch answered) and `last_ok` the last time Twitch answered. A broadcaster nobody
+/// checked lately starts over, so clips made while nobody watched are never posted.
+pub fn plan(since: Option<i64>, last_run: Option<i64>, last_ok: Option<i64>, now: i64) -> Plan {
+    match (since, last_run) {
+        (Some(since), Some(run)) if now - run <= STALE_MS => Plan::Search { since, from: window_start(since, last_ok, now) },
+        _ => Plan::Start,
+    }
+}
+
+/// The clips to post from what a check found (oldest first): the newest few, oldest first.
+fn to_post(fresh: &[Clip]) -> &[Clip] {
+    &fresh[fresh.len().saturating_sub(MAX_POSTS)..]
+}
+
+/// The first line of a clip post, as Discord shows it.
+pub fn headline(c: &Clip) -> String {
+    line(c, |s| s.to_owned())
+}
+
+/// What a clip post says. The title and creator are set by viewers, so their markdown is
+/// escaped. Discord turns the link into a player.
 pub fn post_text(c: &Clip) -> String {
-    let title = if c.title.trim().is_empty() { "Untitled clip" } else { c.title.trim() };
-    if c.creator.is_empty() { format!("New clip: {title}\n{}", c.url) } else { format!("New clip by {}: {title}\n{}", c.creator, c.url) }
+    format!("{}\n{}", line(c, text::escape_markdown), c.url)
+}
+
+fn line(c: &Clip, show: impl Fn(&str) -> String) -> String {
+    let title = if c.title.trim().is_empty() { "Untitled clip".to_owned() } else { show(c.title.trim()) };
+    if c.creator.is_empty() { format!("New clip: {title}") } else { format!("New clip by {}: {title}", show(&c.creator)) }
 }
 
 /// Servers posting clips, with their settings.
@@ -78,24 +123,24 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
     }
     let all = twitch::broadcasters(ctx);
     for b in all.iter().filter(|b| posting.iter().any(|(_, s)| s.twitch_logins.contains(&b.login))) {
-        if !due(ctx, &format!("clips:{}", b.user_id), EVERY_MS - 30_000) {
+        let key = format!("clips:{}", b.user_id);
+        let last_run = last_due(ctx, &key);
+        if !due(ctx, &key, EVERY_MS - 30_000) {
             continue;
         }
         let now = now_ms();
-        // The first check only marks when watching started.
-        let Some(since) = state_get(ctx, &format!("clips_since:{}", b.user_id)).and_then(|v| v.parse::<i64>().ok()) else {
-            state_set(ctx, &format!("clips_since:{}", b.user_id), &now.to_string());
-            continue;
-        };
+        let since_key = format!("clips_since:{}", b.user_id);
+        let since = state_get(ctx, &since_key).and_then(|v| v.parse::<i64>().ok());
         let last_ok = state_get(ctx, &format!("clips_ok:{}", b.user_id)).and_then(|v| v.parse().ok());
-        let q = [
-            ("broadcaster_id", b.user_id.clone()),
-            ("started_at", rfc3339(window_start(since, last_ok, now))),
-            ("ended_at", rfc3339(now + 60_000)),
-            ("first", "100".into()),
-        ];
-        let found = match twitch::get::<List<HClip>>(ctx, "clips", &q).await {
-            Ok(l) => l.map(|l| l.data).unwrap_or_default(),
+        let (since, from) = match plan(since, last_run, last_ok, now) {
+            Plan::Start => {
+                state_set(ctx, &since_key, &now.to_string());
+                continue;
+            }
+            Plan::Search { since, from } => (since, from),
+        };
+        let found = match fetch(ctx, &b.user_id, from, now).await {
+            Ok(found) => found,
             Err(e) => {
                 tracing::warn!(login = %b.login, error = %e, "couldn't read Twitch clips");
                 continue;
@@ -109,7 +154,11 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
                 continue;
             }
         };
-        for c in &fresh {
+        let posts = to_post(&fresh);
+        if posts.len() < fresh.len() {
+            tracing::info!(login = %b.login, found = fresh.len(), "posting only the newest Twitch clips");
+        }
+        for c in posts {
             let text = post_text(c);
             for (guild, s) in posting.iter().filter(|(_, s)| s.twitch_logins.contains(&b.login)) {
                 let Some(channel) = s.clips_channel else { continue };
@@ -121,8 +170,30 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
     }
 }
 
+/// Clips made from `from` until now, up to `MAX_PAGES` pages of them.
+async fn fetch(ctx: &Ctx, bid: &str, from: i64, now: i64) -> Result<Vec<HClip>> {
+    let mut found = Vec::new();
+    let mut after: Option<String> = None;
+    for _ in 0..MAX_PAGES {
+        let mut q = vec![
+            ("broadcaster_id", bid.to_owned()),
+            ("started_at", rfc3339(from)),
+            ("ended_at", rfc3339(now + 60_000)),
+            ("first", "100".into()),
+        ];
+        q.extend(after.take().map(|a| ("after", a)));
+        let Some(page) = twitch::get::<List<HClip>>(ctx, "clips", &q).await? else { break };
+        after = page.cursor();
+        found.extend(page.data);
+        if after.is_none() {
+            break;
+        }
+    }
+    Ok(found)
+}
+
 /// Insert clips not seen before and return the ones made since watching started, oldest first.
-/// Keeps the newest 50 per broadcaster.
+/// Drops clips first seen more than `KEEP_MS` ago.
 fn store(ctx: &Ctx, bid: &str, found: &[HClip], since: i64) -> Result<Vec<Clip>> {
     let now = now_ms();
     let mut conn = ctx.db.lock();
@@ -150,11 +221,7 @@ fn store(ctx: &Ctx, bid: &str, found: &[HClip], since: i64) -> Result<Vec<Clip>>
             fresh.push(c);
         }
     }
-    tx.execute(
-        "DELETE FROM alerts_clips WHERE broadcaster_id = ?1 AND id NOT IN
-         (SELECT id FROM alerts_clips WHERE broadcaster_id = ?1 ORDER BY created_at DESC LIMIT 50)",
-        [bid],
-    )?;
+    tx.execute("DELETE FROM alerts_clips WHERE broadcaster_id = ?1 AND seen_at < ?2", params![bid, now - KEEP_MS])?;
     tx.commit()?;
     fresh.sort_by_key(|c| c.created_at);
     Ok(fresh)
@@ -178,6 +245,16 @@ pub fn recent(ctx: &Ctx, ids: &[String], limit: i64) -> Vec<Clip> {
             .collect()
         })
         .unwrap_or_default()
+}
+
+/// How many stored clips of these broadcasters were made since `since`.
+pub fn count_since(ctx: &Ctx, ids: &[String], since: i64) -> i64 {
+    if ids.is_empty() {
+        return 0;
+    }
+    let marks = vec!["?"; ids.len()].join(", ");
+    let sql = format!("SELECT COUNT(*) FROM alerts_clips WHERE broadcaster_id IN ({marks}) AND created_at >= {since}");
+    ctx.db.with(|c| c.query_row(&sql, bot_core::rusqlite::params_from_iter(ids.iter()), |r| r.get(0))).unwrap_or(0)
 }
 
 /// When clips of a broadcaster were last read from Twitch.
@@ -205,11 +282,57 @@ mod tests {
     }
 
     #[test]
+    fn a_broadcaster_nobody_watched_lately_starts_over() {
+        let min = 60_000;
+        let now = 100_000 * min;
+        let since = now - 300 * min;
+        // Never checked, or never started: mark the start.
+        assert_eq!(plan(None, None, None, now), Plan::Start);
+        assert_eq!(plan(None, Some(now - 15 * min), None, now), Plan::Start);
+        assert_eq!(plan(Some(since), None, Some(now - 15 * min), now), Plan::Start);
+        // Checked on the last round: search from an hour before the last good read.
+        assert_eq!(plan(Some(since), Some(now - 15 * min), Some(now - 15 * min), now), Plan::Search { since, from: now - 75 * min });
+        // Twitch failing for a while doesn't start over: the check still ran, so the search
+        // reaches back to the last good read.
+        assert_eq!(plan(Some(since), Some(now - 15 * min), Some(now - 120 * min), now), Plan::Search { since, from: now - 180 * min });
+        // Clips were off for a day (or the channel left the Twitch tab): start over, so nothing
+        // from the gap is posted.
+        assert_eq!(plan(Some(now - 10 * 1440 * min), Some(now - 1440 * min), Some(now - 1440 * min), now), Plan::Start);
+        assert_eq!(plan(Some(since), Some(now - 31 * min), Some(now - 31 * min), now), Plan::Start);
+    }
+
+    #[test]
+    fn a_check_posts_only_the_newest_five() {
+        let clip = |n: i64| Clip { id: n.to_string(), title: String::new(), creator: String::new(), url: String::new(), thumbnail: String::new(), views: 0, created_at: n };
+        let fresh: Vec<Clip> = (1..=8).map(clip).collect();
+        let ids: Vec<i64> = to_post(&fresh).iter().map(|c| c.created_at).collect();
+        assert_eq!(ids, vec![4, 5, 6, 7, 8]);
+        assert_eq!(to_post(&fresh[..2]).len(), 2);
+        assert!(to_post(&[]).is_empty());
+    }
+
+    #[test]
     fn posts_read_plainly() {
         let c = Clip { id: "a".into(), title: " Gold stake ".into(), creator: "kiwi".into(), url: "https://clips.twitch.tv/a".into(), thumbnail: String::new(), views: 0, created_at: 0 };
         assert_eq!(post_text(&c), "New clip by kiwi: Gold stake\nhttps://clips.twitch.tv/a");
         let c = Clip { title: String::new(), creator: String::new(), ..c };
         assert_eq!(post_text(&c), "New clip: Untitled clip\nhttps://clips.twitch.tv/a");
+    }
+
+    #[test]
+    fn viewer_set_text_cant_hide_a_link() {
+        let c = Clip {
+            id: "a".into(),
+            title: "[Free nitro](https://evil.example)".into(),
+            creator: "kiwi_bird".into(),
+            url: "https://clips.twitch.tv/a".into(),
+            thumbnail: String::new(),
+            views: 0,
+            created_at: 0,
+        };
+        assert_eq!(post_text(&c), "New clip by kiwi\\_bird: \\[Free nitro\\]\\(https://evil.example\\)\nhttps://clips.twitch.tv/a");
+        // The dashboard shows it as Discord will: as typed.
+        assert_eq!(headline(&c), "New clip by kiwi_bird: [Free nitro](https://evil.example)");
     }
 
     #[test]

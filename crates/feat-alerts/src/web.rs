@@ -868,8 +868,7 @@ async fn schedule_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 
 /// A clip post as Discord shows it: the line with the link, then the card Discord draws for it.
 fn clip_post(ctx: &Ctx, page: &Page, b: &Broadcaster, c: &clips::Clip) -> Markup {
-    let line = clips::post_text(c);
-    let (text, _) = line.split_once('\n').unwrap_or((line.as_str(), ""));
+    let text = clips::headline(c);
     bot_message(ctx, page, html! {
         div.sa-line { (text) br; a href=(c.url) target="_blank" rel="noopener" { (c.url) } }
         div.sa-embed style="--embed:#9146ff" {
@@ -895,7 +894,7 @@ async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
     let ids: Vec<String> = bs.iter().map(|b| b.user_id.clone()).collect();
     let list = clips::recent(&ctx, &ids, 12);
     let now = now_ms();
-    let month = list.iter().filter(|c| now - c.created_at < 30 * 86_400_000).count();
+    let month = clips::count_since(&ctx, &ids, now - 30 * 86_400_000);
     let checked = ids.iter().filter_map(|id| clips::last_check(&ctx, id)).max();
     let b = sample_broadcaster(&bs, &s);
     let sample = list.first().cloned().unwrap_or_else(|| clips::Clip {

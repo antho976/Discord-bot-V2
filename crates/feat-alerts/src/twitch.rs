@@ -115,6 +115,13 @@ pub(crate) struct List<T> {
     pagination: Option<Pagination>,
 }
 
+impl<T> List<T> {
+    /// Where the next page starts, when there is one.
+    pub(crate) fn cursor(&self) -> Option<String> {
+        self.pagination.as_ref().and_then(|p| p.cursor.clone()).filter(|c| !c.is_empty())
+    }
+}
+
 #[derive(Deserialize, Default)]
 struct Pagination {
     cursor: Option<String>,
