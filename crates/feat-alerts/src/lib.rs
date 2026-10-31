@@ -194,6 +194,10 @@ impl Feature for Alerts {
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         preview_rows(ctx, guild)
     }
+
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> bot_core::Overview {
+        web::overview(ctx, page)
+    }
 }
 
 /// Servers with the feature on, with their settings. Read from the database rather than the

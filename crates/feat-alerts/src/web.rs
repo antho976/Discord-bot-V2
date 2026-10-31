@@ -589,3 +589,84 @@ mod tests {
         assert_eq!(join_and(&["60".into(), "30".into(), "10".into()]), "60, 30 and 10");
     }
 }
+
+/// The overview's Stream block: live now or the last stream, and the next one on the schedule.
+pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
+    let mut o = bot_core::Overview::default();
+    let Ok(s) = ctx.settings::<Settings>(page.guild_id, KEY) else { return o };
+    let bs = twitch::for_settings(ctx, &s);
+    if bs.is_empty() {
+        return o;
+    }
+    let ids: Vec<String> = bs.iter().map(|b| b.user_id.clone()).collect();
+    let marks = vec!["?"; ids.len()].join(", ");
+    let sql = format!(
+        "SELECT game, title, thumbnail, ended_at, duration_secs, peak FROM alerts_streams
+         WHERE broadcaster_id IN ({marks}) ORDER BY started_at DESC LIMIT 1"
+    );
+    let last: Option<(String, String, String, Option<i64>, i64, i64)> = ctx
+        .db
+        .with(|c| {
+            c.query_row(&sql, bot_core::rusqlite::params_from_iter(ids.iter()), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+                .optional()
+        })
+        .ok()
+        .flatten();
+    let now = now_ms();
+    let next = schedule::segments(ctx, &ids, now, now + 14 * 86_400_000).into_iter().find(|g| !g.canceled);
+    let live = last.as_ref().is_some_and(|l| l.3.is_none());
+    let tz = page.user.tz.clone();
+    let day_time = |ms: i64| {
+        let Some(z) = zoned(ms, &tz) else { return String::new() };
+        let today = Timestamp::now().to_zoned(tz.clone()).date();
+        let day = match (z.date() - today).get_days() {
+            0 => "Today".to_owned(),
+            1 => "Tomorrow".to_owned(),
+            2..=6 => z.strftime("%A").to_string(),
+            _ => z.strftime("%a, %b %-d").to_string(),
+        };
+        format!("{day}, {}", z.strftime("%-I:%M %p"))
+    };
+    let mut minutes = s.reminder_minutes.clone();
+    minutes.sort_unstable_by(|a, b| b.cmp(a));
+    let block = html! {
+        h2 {
+            "Stream"
+            span.status { span.dot.live[live] {} (if live { "Live" } else { "Offline" }) }
+        }
+        @if let Some((game, title, thumb, _, secs, peak)) = &last {
+            a.stream-card href=(page.path("alerts/streams")) {
+                @if thumb.is_empty() {
+                    span.stream-ph { (ui::icon(Icon::Live)) }
+                } @else {
+                    img src=(thumb.replace("{width}", "640").replace("{height}", "360")) alt="" loading="lazy";
+                }
+                div.stream-cap {
+                    span { (if live { "Live now" } else { "Last stream" }) }
+                    strong {
+                        (if game.is_empty() { title.as_str() } else { game.as_str() })
+                        @if !live && *secs > 0 { " · " (text::duration(*secs)) }
+                        @if *peak > 0 { " · peak " (text::num(*peak)) }
+                    }
+                }
+            }
+        }
+        @if let Some(g) = &next {
+            div.next-stream {
+                span.muted.small { "Next stream" }
+                strong { (day_time(g.starts_at)) }
+                @if !g.title.is_empty() { span { (g.title) } }
+                @if s.reminders && !minutes.is_empty() {
+                    @if let Some(ch) = channel_name(ctx, page.guild_id, s.reminder_channel) {
+                        @let times: Vec<String> = minutes.iter().filter_map(|m| zoned(g.starts_at - m * 60_000, &tz)).map(|z| z.strftime("%-I:%M %p").to_string()).collect();
+                        span.muted.small { "Reminders at " (join_and(&times)) " in " (ch) }
+                    }
+                }
+            }
+        } @else {
+            p.muted.small { "Nothing on the schedule for the next two weeks." }
+        }
+    };
+    o.panel.push((10, block));
+    o
+}

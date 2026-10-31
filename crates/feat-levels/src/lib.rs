@@ -111,6 +111,18 @@ const MIGRATIONS: &[Migration] = &[Migration {
             guild_id INTEGER NOT NULL, level INTEGER NOT NULL, role_id INTEGER NOT NULL,
             PRIMARY KEY (guild_id, level));
     ",
+}, Migration {
+    name: "002_levels_week",
+    sql: "
+        CREATE TABLE level_week (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, xp INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, user_id));
+        CREATE TABLE level_week_state (guild_id INTEGER PRIMARY KEY, week TEXT NOT NULL);
+        CREATE TABLE level_ups (
+            id INTEGER PRIMARY KEY, guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            level INTEGER NOT NULL, role_id INTEGER, at INTEGER NOT NULL);
+        CREATE INDEX level_ups_by_time ON level_ups(guild_id, at);
+    ",
 }];
 
 #[feature_async]
@@ -216,6 +228,9 @@ impl Feature for Levels {
     }
 
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
+        for guild in ctx.enabled_guilds(KEY) {
+            roll_week(ctx, guild)?;
+        }
         // One minute of voice XP for everyone talking in a channel.
         for guild in ctx.enabled_guilds(KEY) {
             let s = ctx.settings::<Settings>(guild, KEY)?;
@@ -311,6 +326,10 @@ impl Feature for Levels {
 
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         preview_rows(ctx, guild)
+    }
+
+    fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> bot_core::Overview {
+        web::overview(ctx, page)
     }
 
     async fn on_component(&self, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
@@ -442,12 +461,50 @@ async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, chann
             ],
         )
     })?;
+    if level > before.1 {
+        let role = rewards(ctx, guild).unwrap_or_default().into_iter().find(|(l, _)| *l == level).map(|(_, r)| r as i64);
+        ctx.db.with(|c| {
+            c.execute(
+                "INSERT INTO level_ups (guild_id, user_id, level, role_id, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![guild as i64, user as i64, level as i64, role, bot_core::now_ms()],
+            )
+        })?;
+    }
     if level != before.1 {
         sync_rewards(ctx, guild, user, level).await;
         if level > before.1 && s.announce && level >= s.announce_min_level {
             announce(ctx, &s, guild, user, level, channel).await;
         }
     }
+    Ok(())
+}
+
+/// This ISO week, like "2026-W44", in UTC.
+fn week_key() -> String {
+    let d = bot_core::jiff::Timestamp::now().to_zoned(bot_core::jiff::tz::TimeZone::UTC).date();
+    let w = d.iso_week_date();
+    format!("{}-W{:02}", w.year(), w.week())
+}
+
+/// At the start of each week, remember everyone's XP so "this week" can be worked out, and drop
+/// level-ups older than a month.
+fn roll_week(ctx: &Ctx, guild: u64) -> Result<()> {
+    let week = week_key();
+    let mut conn = ctx.db.lock();
+    let stored: Option<String> =
+        conn.query_row("SELECT week FROM level_week_state WHERE guild_id = ?1", [guild as i64], |r| r.get(0)).optional()?;
+    if stored.as_deref() == Some(week.as_str()) {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    tx.execute("DELETE FROM level_week WHERE guild_id = ?1", [guild as i64])?;
+    tx.execute("INSERT INTO level_week (guild_id, user_id, xp) SELECT guild_id, user_id, xp FROM levels WHERE guild_id = ?1", [guild as i64])?;
+    tx.execute(
+        "INSERT INTO level_week_state (guild_id, week) VALUES (?1, ?2) ON CONFLICT (guild_id) DO UPDATE SET week = excluded.week",
+        params![guild as i64, week],
+    )?;
+    tx.execute("DELETE FROM level_ups WHERE guild_id = ?1 AND at < ?2", params![guild as i64, bot_core::now_ms() - 30 * 86_400_000])?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -522,6 +579,25 @@ pub(crate) fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
             c.execute(
                 "INSERT OR REPLACE INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
                 params![guild as i64, *user as i64, xp, s.progress(xp).level as i64, xp / 21, xp / 40],
+            )
+        })?;
+    }
+    // XP at the start of the week and a few level-ups, for the overview.
+    let now = bot_core::now_ms();
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT OR REPLACE INTO level_week (guild_id, user_id, xp)
+             SELECT guild_id, user_id, xp - (abs(random()) % 4000) - 400 FROM levels WHERE guild_id = ?1",
+            [guild as i64],
+        )?;
+        c.execute("INSERT OR REPLACE INTO level_week_state (guild_id, week) VALUES (?1, ?2)", params![guild as i64, week_key()])
+    })?;
+    let regulars = ctx.roles(guild).into_iter().find(|r| r.1 == "Regulars").map(|r| r.0 as i64);
+    for (i, level, role, back) in [(0usize, 25, regulars, 720_000i64), (3, 12, None, 9_000_000), (5, 8, None, 30_000_000)] {
+        ctx.db.with(|c| {
+            c.execute(
+                "INSERT INTO level_ups (guild_id, user_id, level, role_id, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![guild as i64, bot_core::preview::MEMBERS[i].0 as i64, level, role, now - back],
             )
         })?;
     }

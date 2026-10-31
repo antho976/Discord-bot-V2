@@ -363,3 +363,56 @@ async fn tokio_blocking(ctx: Ctx, body: Bytes, guild: u64, mode: import::Mode, a
     // SQLite work on a large file shouldn't hold up the async workers.
     bot_core::tokio::task::spawn_blocking(move || import::import_bytes(&ctx, &body, Some(guild), mode, admin)).await?
 }
+
+/// The overview's "Most XP this week" block and recent level-ups.
+pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
+    let guild = page.guild_id;
+    let week: Vec<(u64, i64)> = ctx
+        .db
+        .with(|c| {
+            let mut s = c.prepare(
+                "SELECT l.user_id, l.xp - COALESCE(w.xp, 0) AS gain FROM levels l
+                 LEFT JOIN level_week w ON w.guild_id = l.guild_id AND w.user_id = l.user_id
+                 WHERE l.guild_id = ?1 AND gain > 0 ORDER BY gain DESC LIMIT 4",
+            )?;
+            let rows = s.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect::<bot_core::rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .unwrap_or_default();
+    let ups: Vec<(u64, i64, Option<i64>, i64)> = ctx
+        .db
+        .with(|c| {
+            let mut s = c.prepare("SELECT user_id, level, role_id, at FROM level_ups WHERE guild_id = ?1 AND at > ?2 ORDER BY at DESC LIMIT 5")?;
+            let rows = s
+                .query_map(params![guild as i64, bot_core::now_ms() - 2 * 86_400_000], |r| {
+                    Ok((r.get::<_, i64>(0)? as u64, r.get(1)?, r.get(2)?, r.get(3)?))
+                })?
+                .collect::<bot_core::rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .unwrap_or_default();
+    let roles = ctx.roles(guild);
+    let mut o = bot_core::Overview::default();
+    if !week.is_empty() {
+        o.panel.push((20, html! {
+            h2 { "Most XP this week" }
+            @for (user, gain) in &week {
+                a.mini href=(page.path("levels/members")) {
+                    img.avatar src=(ctx.member_avatar(guild, *user)) alt="" width="24" height="24" loading="lazy";
+                    div.grow { span { (ctx.display_name(guild, *user)) } }
+                    span.mono { "+" (text::num(*gain)) }
+                }
+            }
+        }));
+    }
+    for (user, level, role, at) in ups {
+        let role = role.and_then(|r| roles.iter().find(|x| x.0 as i64 == r)).map(|r| format!(" and got @{}", r.1)).unwrap_or_default();
+        o.feed.push(bot_core::Happening {
+            at,
+            avatar: ctx.member_avatar(guild, user),
+            who: ctx.display_name(guild, user),
+            text: format!("reached level {level}{role}"),
+        });
+    }
+    o
+}
