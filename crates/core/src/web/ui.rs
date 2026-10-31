@@ -279,15 +279,16 @@ pub fn public_layout(title: &str, subtitle: Option<&str>, body: Markup) -> Marku
 
 fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
     let seen = notifications_seen(ctx, page.user.id, page.guild_id);
+    let global_seen = notifications_seen_anywhere(ctx, page.user.id);
     let rows: Vec<(String, bool)> = ctx
         .db
         .with(|c| {
             let mut s = c.prepare(
                 "SELECT n.feature, n.guild_id IS NULL FROM notifications n
-                 WHERE n.at > ?2 AND (n.guild_id IS NULL OR n.guild_id = ?1) LIMIT 500",
+                 WHERE (n.guild_id = ?1 AND n.at > ?2) OR (n.guild_id IS NULL AND n.at > ?3) LIMIT 500",
             )?;
             let rows = s
-                .query_map(rusqlite::params![page.guild_id as i64, seen], |r| Ok((r.get(0)?, r.get(1)?)))?
+                .query_map(rusqlite::params![page.guild_id as i64, seen, global_seen], |r| Ok((r.get(0)?, r.get(1)?)))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok(rows)
         })
@@ -296,6 +297,21 @@ fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
     rows.iter()
         .filter(|(feature, global)| if *global { page.user.admin } else { levels.get(feature) >= Level::View })
         .count() as i64
+}
+
+/// When this person last opened any server's notifications. Notices with no server (app
+/// connections, Twitch) show on every server's bell, so reading them once clears them all.
+pub(super) fn notifications_seen_anywhere(ctx: &Ctx, user: u64) -> i64 {
+    ctx.db
+        .with(|c| {
+            c.query_row(
+                "SELECT MAX(COALESCE((SELECT MAX(seen_at) FROM dash_notif_seen WHERE user_id = ?1), 0),
+                            COALESCE((SELECT notif_seen FROM dash_users WHERE id = ?1), 0))",
+                [user as i64],
+                |r| r.get(0),
+            )
+        })
+        .unwrap_or(0)
 }
 
 /// When this person last opened the server's notifications, in epoch milliseconds.

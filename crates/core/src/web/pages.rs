@@ -418,8 +418,10 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     }
     let page = super::Page { user: user.clone(), guild_id: guild, key: "notifications", level: Level::View };
     let seen = ui::notifications_seen(&ctx, user.id, guild);
+    let global_seen = ui::notifications_seen_anywhere(&ctx, user.id);
     let notes = recent_notifications(&ctx, &user, guild, 100);
-    let fresh = notes.iter().filter(|n| n.at > seen).count();
+    let is_new = |n: &Note| n.at > if n.global { global_seen } else { seen };
+    let fresh = notes.iter().filter(|n| is_new(n)).count();
     let body = html! {
         @if notes.is_empty() {
             (ui::empty(Icon::Bell, "No notifications", "Features post here when something needs you: a caught scam, a new ticket, a pet request."))
@@ -430,7 +432,7 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 @for (i, n) in notes.iter().enumerate() {
                     @let label = day_label(&user, n.at);
                     @if i == 0 || day_label(&user, notes[i - 1].at) != label { h2.day { (label) } }
-                    (notification_row(&ctx, &user, n, n.at > seen))
+                    (notification_row(&ctx, &user, n, is_new(n)))
                 }
             }
         }

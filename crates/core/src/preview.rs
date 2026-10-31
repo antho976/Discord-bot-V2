@@ -143,7 +143,7 @@ pub fn seed(ctx: &Ctx) -> Result<()> {
         (h / 6, Some(g), "guard", "Caught kaiden.trades: link imitates steamcommunity.com", Some("guard")),
         (h / 2, Some(g), "tickets", "New ticket 0004 from bramble: Report: spam in #general", Some("tickets")),
         (2 * h, Some(g), "pets", "Pavel submitted 2× Cryosnake for approval", Some("pets/approvals")),
-        (5 * h, None, "connect", "Avex on Galaxy Tab asks to connect (code 4821). No approver could be DMed, so answer it here.", Some("connect")),
+        (h / 3, None, "connect", "Avex on Galaxy Tab asks to connect (code 4821). No approver could be DMed, so answer it here.", Some("connect")),
         (27 * h, Some(g), "levels", "Imported XP from the old bot: 261 members, 26 reward roles", Some("levels/members")),
         (30 * h, None, "alerts", "Twitch stopped sending stream.online events (revoked). The bot subscribes again within a day.", None),
         (75 * h, Some(g), "pets", "juniper.fern submitted Glimmerkit for approval", Some("pets/approvals")),
