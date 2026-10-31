@@ -112,7 +112,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
 
 ## How it should look and read
 
-The owner's house style applies. In short:
+The owner's house style applies; `docs/DESIGN.md` has the full reference and `docs/ui/` the screenshots. In short:
 
 - **Look:** near-black and calm. One answer per page, above the fold: lead with the
   `readings` that matter, then the controls. No boxes around passive content; cards only group
