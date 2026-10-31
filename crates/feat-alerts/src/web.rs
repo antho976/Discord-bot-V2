@@ -701,7 +701,7 @@ async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     }
     if let Err(e) = twitch::test_alert(&ctx, &s).await {
         tracing::warn!(guild, error = %e, "test alert failed");
-        return Err(WebError::Bad("Discord refused the post. Check that the bot can send messages and embeds in that channel.".into()));
+        return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
     }
     ctx.audit(&page.user, Some(guild), KEY, "Sent a test live alert");
     Ok(bot_core::axum::response::Redirect::to(&page.path("alerts?sent=1")).into_response())

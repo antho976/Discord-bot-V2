@@ -1006,7 +1006,8 @@ async fn edit_posts(ctx: &Ctx, stream_id: i64) -> Result<()> {
     Ok(())
 }
 
-/// The dashboard's "Send a test alert": a sample live post, with nobody pinged.
+/// The dashboard's "Send a test alert": a sample live post, with nobody pinged. It reads nothing
+/// from Twitch (the broadcaster comes from storage), so a failure is Discord refusing the post.
 pub async fn test_alert(ctx: &Ctx, s: &Settings) -> Result<()> {
     let channel = s.live_channel.ok_or_else(|| anyhow!("no channel"))?;
     let b = for_settings(ctx, s).into_iter().next().unwrap_or_else(|| {
