@@ -107,15 +107,19 @@ impl Default for Trigger {
 }
 
 impl Trigger {
-    /// Whether an already lowercased message matches.
+    /// Whether an already lowercased message matches. Contains and Starts with match whole
+    /// words: "gm" answers "gm all" but not "gmail".
     pub fn matches(&self, lower: &str) -> bool {
         if self.pattern.is_empty() {
             return false;
         }
         match self.mode {
-            Mode::Contains => lower.contains(&self.pattern),
+            Mode::Contains => contains_words(lower, &self.pattern),
             Mode::Exact => lower.trim() == self.pattern,
-            Mode::StartsWith => lower.trim_start().starts_with(&self.pattern),
+            Mode::StartsWith => {
+                let lower = lower.trim_start();
+                lower.starts_with(&self.pattern) && after_ok(&self.pattern, &lower[self.pattern.len()..])
+            }
         }
     }
 
@@ -123,6 +127,30 @@ impl Trigger {
     pub fn allowed_in(&self, channel: u64, thread_parent: Option<u64>) -> bool {
         self.channels.is_empty() || self.channels.contains(&channel) || thread_parent.is_some_and(|p| self.channels.contains(&p))
     }
+}
+
+/// Whether `phrase` is in `text` with no letter or digit running into it on either side.
+fn contains_words(text: &str, phrase: &str) -> bool {
+    let mut from = 0;
+    while let Some(at) = text[from..].find(phrase).map(|i| from + i) {
+        if before_ok(phrase, &text[..at]) && after_ok(phrase, &text[at + phrase.len()..]) {
+            return true;
+        }
+        // Step one character on, so overlapping matches are tried too.
+        from = at + text[at..].chars().next().map_or(1, char::len_utf8);
+    }
+    false
+}
+
+/// A letter or digit can't run into the start of a phrase that starts with one. A phrase
+/// that starts with punctuation, like ":)", needs no gap.
+fn before_ok(phrase: &str, before: &str) -> bool {
+    !phrase.starts_with(char::is_alphanumeric) || !before.ends_with(char::is_alphanumeric)
+}
+
+/// The same for the end of the phrase.
+fn after_ok(phrase: &str, after: &str) -> bool {
+    !phrase.ends_with(char::is_alphanumeric) || !after.starts_with(char::is_alphanumeric)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -261,10 +289,20 @@ const MIGRATIONS: &[Migration] = &[Migration {
     ",
 }];
 
+/// How long a `!name` command stays quiet in a channel after it answers.
+const BANG_COOLDOWN_SECS: i64 = 5;
+
+/// What a cooldown holds back: a trigger across the server, or a `!name` command in one channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Quiet {
+    Trigger { guild: u64, id: u32 },
+    Bang { guild: u64, id: u32, channel: u64 },
+}
+
 #[derive(Default)]
 pub struct Commands {
-    /// When each trigger last answered, per server.
-    cooldowns: Mutex<HashMap<(u64, u32), Instant>>,
+    /// When each cooldown ends.
+    cooldowns: Mutex<HashMap<Quiet, Instant>>,
     /// Uses since the last flush.
     uses: Mutex<Pending>,
 }
@@ -360,6 +398,10 @@ impl Commands {
             && content.starts_with('!')
             && let Some(c) = bang_name(content).and_then(|n| s.command(&n))
         {
+            let quiet = Quiet::Bang { guild, id: c.id, channel: m.channel_id.get() };
+            if !cooled_down(&mut self.cooldowns.lock().unwrap(), quiet, BANG_COOLDOWN_SECS, Instant::now()) {
+                return Ok(());
+            }
             self.send(ctx, guild, m, &c.reply, c.embed.as_ref()).await;
             self.used(guild, Kind::Command, c.id);
             return Ok(());
@@ -371,7 +413,7 @@ impl Commands {
         let channel = m.channel_id.get();
         let parent = ctx.cache.channel(m.channel_id).filter(|c| c.kind.is_thread()).and_then(|c| c.parent_id.map(|p| p.get()));
         let Some(t) = s.first_trigger(&lower, Some((channel, parent))) else { return Ok(()) };
-        if !cooled_down(&mut self.cooldowns.lock().unwrap(), (guild, t.id), t.cooldown_secs, Instant::now()) {
+        if !cooled_down(&mut self.cooldowns.lock().unwrap(), Quiet::Trigger { guild, id: t.id }, t.cooldown_secs, Instant::now()) {
             return Ok(());
         }
         self.send(ctx, guild, m, &t.reply, None).await;
@@ -422,17 +464,16 @@ impl Commands {
     }
 }
 
-/// True when the trigger hasn't answered in the last `secs`; marks it. Old entries go once the
-/// map grows, so it stays small.
-fn cooled_down(last: &mut HashMap<(u64, u32), Instant>, key: (u64, u32), secs: i64, now: Instant) -> bool {
-    let window = Duration::from_secs(secs.max(0) as u64);
-    if last.len() > 500 {
-        last.retain(|_, t| now.duration_since(*t) < Duration::from_secs(3600));
+/// True when `key` isn't in a cooldown; starts one of `secs`. The map holds when each cooldown
+/// ends, and finished ones go once it grows, so it stays small without forgetting a long one.
+fn cooled_down<K: std::hash::Hash + Eq>(until: &mut HashMap<K, Instant>, key: K, secs: i64, now: Instant) -> bool {
+    if until.len() > 500 {
+        until.retain(|_, end| *end > now);
     }
-    match last.get(&key) {
-        Some(t) if now.duration_since(*t) < window => false,
+    match until.get(&key) {
+        Some(end) if now < *end => false,
         _ => {
-            last.insert(key, now);
+            until.insert(key, now + Duration::from_secs(secs.max(0) as u64));
             true
         }
     }
@@ -471,6 +512,32 @@ mod tests {
         assert!(trigger(Mode::StartsWith, "how do i").matches(" how do i get pets"));
         assert!(!trigger(Mode::StartsWith, "how do i").matches("so how do i"));
         assert!(!trigger(Mode::Contains, "").matches("anything"));
+    }
+
+    #[test]
+    fn contains_and_starts_with_match_whole_words() {
+        let gm = trigger(Mode::Contains, "gm");
+        assert!(gm.matches("gm"));
+        assert!(gm.matches("gm all"));
+        assert!(gm.matches("ok, gm!"));
+        assert!(gm.matches("my gmail, then gm"));
+        assert!(!gm.matches("check your gmail"));
+        assert!(!gm.matches("ogm"));
+        assert!(!gm.matches("gm2"));
+        assert!(!trigger(Mode::Contains, "hi").matches("this"));
+        // Letters outside ASCII are letters too.
+        assert!(!gm.matches("ägm"));
+        assert!(!trigger(Mode::Contains, "café").matches("cafés"));
+        assert!(trigger(Mode::Contains, "café").matches("le café."));
+        // A match that only fits on a second, overlapping try still counts.
+        assert!(trigger(Mode::Contains, "a a").matches("ba a a"));
+        // A phrase ending in punctuation needs no gap there.
+        assert!(trigger(Mode::Contains, ":)").matches("thanks:)"));
+        assert!(trigger(Mode::StartsWith, "hi").matches("hi there"));
+        assert!(trigger(Mode::StartsWith, "hi").matches("hi"));
+        assert!(trigger(Mode::StartsWith, "hi").matches("hi, all"));
+        assert!(!trigger(Mode::StartsWith, "hi").matches("hiya"));
+        assert!(!trigger(Mode::Exact, "gm").matches("gmail"));
     }
 
     #[test]
@@ -545,6 +612,35 @@ mod tests {
         assert!(cooled_down(&mut last, (1, 1), 30, t + Duration::from_secs(30)));
         assert!(cooled_down(&mut last, (1, 3), 0, t));
         assert!(cooled_down(&mut last, (1, 3), 0, t));
+    }
+
+    #[test]
+    fn a_long_cooldown_outlives_the_cleanup() {
+        let mut until = HashMap::new();
+        let t = Instant::now();
+        let day = 86_400;
+        assert!(cooled_down(&mut until, 0u32, day, t));
+        for k in 1..=600 {
+            assert!(cooled_down(&mut until, k, 30, t));
+        }
+        // Two hours on the map is past 500 and cleans up: the short ones go, the day stays.
+        let later = t + Duration::from_secs(7200);
+        assert!(!cooled_down(&mut until, 0, day, later));
+        assert!(until.len() < 10);
+        assert!(cooled_down(&mut until, 0, day, t + Duration::from_secs(day as u64)));
+    }
+
+    #[test]
+    fn bang_commands_cool_down_per_channel() {
+        let mut until = HashMap::new();
+        let t = Instant::now();
+        let rules = |channel| Quiet::Bang { guild: 1, id: 2, channel };
+        assert!(cooled_down(&mut until, rules(10), BANG_COOLDOWN_SECS, t));
+        assert!(!cooled_down(&mut until, rules(10), BANG_COOLDOWN_SECS, t + Duration::from_secs(4)));
+        assert!(cooled_down(&mut until, rules(11), BANG_COOLDOWN_SECS, t + Duration::from_secs(4)));
+        // A trigger with the same id has its own cooldown.
+        assert!(cooled_down(&mut until, Quiet::Trigger { guild: 1, id: 2 }, 30, t));
+        assert!(cooled_down(&mut until, rules(10), BANG_COOLDOWN_SECS, t + Duration::from_secs(5)));
     }
 
     #[test]

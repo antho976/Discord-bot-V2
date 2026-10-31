@@ -123,7 +123,7 @@ async fn commands_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     h2 { "Text commands" }
                     form.stack method="post" action=(page.path("commands/options")) {
                         fieldset.cc-fs disabled[!page.can_edit()] {
-                            (ui::switch_row("text_commands", "Answer !name in chat", Some("Members can type !links as well as /links, like on the old bot."), s.text_commands))
+                            (ui::switch_row("text_commands", "Answer !name in chat", Some("Members can type !links as well as /links, like on the old bot. Each answers once every 5 seconds in a channel."), s.text_commands))
                         }
                         @if page.can_edit() { div { button.btn.small type="submit" { "Save" } } }
                     }
@@ -480,7 +480,7 @@ async fn trigger_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 @if let Some(t) = &existing { input type="hidden" name="id" value=(t.id); }
                 (ui::section("When a message", None, ui::card(html! {
                     (ui::field_select("mode", "Match", None, &modes, t.mode.key()))
-                    (ui::field_text("pattern", "Phrase", Some("Capital letters don't matter."), &t.pattern, "when is stream"))
+                    (ui::field_text("pattern", "Phrase", Some("Capital letters don't matter. Contains and Starts with look for whole words: “gm” answers “gm all” but not “gmail”."), &t.pattern, "when is stream"))
                 })))
                 (ui::section("Reply", Some("{user}, {mention}, {server}, {channel} and {members} are filled in. Only {mention} pings."), ui::card(html! {
                     (ui::field_textarea("reply", "Message", None, &t.reply, "Streams are Tuesday and Friday at 8 pm. Schedule in #announcements."))
