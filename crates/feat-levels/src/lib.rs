@@ -52,6 +52,10 @@ pub struct Settings {
     /// Post the week's top three when the week ends.
     pub weekly_post: bool,
     pub weekly_channel: Option<u64>,
+    /// The level members can prestige from with `/prestige`; 0 turns prestige off.
+    pub prestige_level: u32,
+    /// Extra XP per prestige, in percent, on XP members earn.
+    pub prestige_bonus: i64,
 }
 
 impl Default for Settings {
@@ -76,6 +80,8 @@ impl Default for Settings {
             no_xp_roles: Vec::new(),
             weekly_post: false,
             weekly_channel: None,
+            prestige_level: 0,
+            prestige_bonus: 5,
         }
     }
 }
@@ -86,6 +92,28 @@ impl Settings {
     pub fn progress(&self, xp: i64) -> curve::Progress {
         curve::progress(xp, self.curve_base, self.curve_factor, &self.custom_curve)
     }
+
+    pub fn prestige_on(&self) -> bool {
+        self.prestige_level > 0
+    }
+
+    /// The extra XP, in percent, a member with `prestige` gets on what they earn.
+    pub fn prestige_pct(&self, prestige: i64) -> i64 {
+        if self.prestige_on() { prestige.max(0).saturating_mul(self.prestige_bonus.max(0)) } else { 0 }
+    }
+
+    /// How the leaderboard sorts: prestige first when it's on.
+    fn order(&self) -> &'static str {
+        if self.prestige_on() { "prestige DESC, xp DESC, user_id" } else { "xp DESC, user_id" }
+    }
+}
+
+/// `amount` with a bonus in percent, rounded to the nearest XP.
+fn boosted(amount: i64, pct: i64) -> i64 {
+    if pct <= 0 || amount <= 0 {
+        return amount;
+    }
+    amount.saturating_mul(100 + pct).saturating_add(50) / 100
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +123,7 @@ pub struct Member {
     pub level: u32,
     pub messages: i64,
     pub voice_minutes: i64,
+    pub prestige: i64,
 }
 
 #[derive(Default)]
@@ -161,6 +190,7 @@ impl Feature for Levels {
             CommandBuilder::new("leaderboard", "The server's top members by XP", CommandType::ChatInput)
                 .option(StringBuilder::new("board", "All time, or this week's XP").choices([("All time", "all"), ("This week", "week")]))
                 .build(),
+            CommandBuilder::new("prestige", "Start over at level 0 for a prestige rank and more XP", CommandType::ChatInput).build(),
             CommandBuilder::new("xp", "Change a member's XP", CommandType::ChatInput)
                 .default_member_permissions(Permissions::MANAGE_GUILD)
                 .option(
@@ -281,16 +311,22 @@ impl Feature for Levels {
         match call.data.name.as_str() {
             "rank" => {
                 let user = call.opts().user("member").map(|u| u.get()).unwrap_or(call.user_id());
-                let m = member(ctx, guild, user)?.unwrap_or(Member { user_id: user, xp: 0, level: 0, messages: 0, voice_minutes: 0 });
+                let m = member(ctx, guild, user)?.unwrap_or(Member { user_id: user, xp: 0, level: 0, messages: 0, voice_minutes: 0, prestige: 0 });
                 let p = s.progress(m.xp);
                 let place = rank_of(ctx, guild, user)?;
                 let name = ctx.display_name(guild, user);
-                let embed = EmbedBuilder::new()
+                let mut embed = EmbedBuilder::new()
                     .title(format!("{name}, level {}", p.level))
                     .color(0xf0806a)
                     .description(format!("`{}`  {} / {} XP", curve::bar(p.into, p.needed, 18), text::num(p.into), text::num(p.needed)))
                     .field(EmbedFieldBuilder::new("Rank", place.map(|r| format!("#{r}")).unwrap_or_else(|| "Unranked".into())).inline())
-                    .field(EmbedFieldBuilder::new("Total XP", text::num(m.xp)).inline())
+                    .field(EmbedFieldBuilder::new("Total XP", text::num(m.xp)).inline());
+                if s.prestige_on() {
+                    let bonus = s.prestige_pct(m.prestige);
+                    let value = if bonus > 0 { format!("{}, +{bonus}% XP", m.prestige) } else { m.prestige.to_string() };
+                    embed = embed.field(EmbedFieldBuilder::new("Prestige", value).inline());
+                }
+                let embed = embed
                     .field(EmbedFieldBuilder::new("Messages", text::num(m.messages)).inline())
                     .field(EmbedFieldBuilder::new("Voice", text::duration(m.voice_minutes * 60)).inline())
                     .build();
@@ -300,6 +336,16 @@ impl Feature for Levels {
                 let board = if call.opts().str("board") == Some("week") { Board::Week } else { Board::All };
                 let (embed, rows) = leaderboard(ctx, guild, board, 0)?;
                 ctx.reply(&call.interaction, Reply::embed(embed).components(rows)).await?;
+            }
+            "prestige" => {
+                let reply = match prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()) {
+                    Ok(text) => {
+                        let id = format!("{KEY}:prestige:{}", call.user_id());
+                        Reply::text(text).components(vec![button_row(&[(&id, "Prestige", ButtonStyle::Danger)])])
+                    }
+                    Err(why) => Reply::text(why),
+                };
+                ctx.reply(&call.interaction, reply.ephemeral()).await?;
             }
             "xp" => {
                 // Discord hides /xp from members without Manage Server, but server admins can
@@ -357,8 +403,39 @@ impl Feature for Levels {
             let (embed, rows) = leaderboard(ctx, guild, board, page.max(0))?;
             ctx.update(&call.interaction, Reply::embed(embed).components(rows)).await?;
         }
+        if let ["prestige", user] = call.args().as_slice() {
+            // The offer is only shown to the member it's for, but check anyway.
+            if user.parse::<u64>().ok() != Some(call.user_id()) {
+                return Ok(());
+            }
+            let s = ctx.settings::<Settings>(guild, KEY)?;
+            let text = match prestige(ctx, guild, call.user_id(), s.prestige_level)? {
+                Some(n) => {
+                    sync_rewards(ctx, guild, call.user_id(), 0).await;
+                    format!("You're prestige {n} now, back at level 0. You earn {}% more XP from here.", s.prestige_pct(n))
+                }
+                None => prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()).err().unwrap_or_else(|| "Nothing changed. Try /prestige again.".into()),
+            };
+            ctx.update(&call.interaction, Reply::text(text)).await?;
+        }
         Ok(())
     }
+}
+
+/// What prestiging would do for this member, or why they can't yet.
+fn prestige_offer(s: &Settings, m: Option<&Member>) -> std::result::Result<String, String> {
+    if !s.prestige_on() {
+        return Err("Prestige is off on this server.".into());
+    }
+    let (level, now) = m.map(|m| (m.level, m.prestige)).unwrap_or((0, 0));
+    if level < s.prestige_level {
+        return Err(format!("You can prestige from level {}. You're level {level}.", s.prestige_level));
+    }
+    let bonus = if s.prestige_bonus > 0 { format!(", and you earn {}% more XP", s.prestige_pct(now + 1)) } else { String::new() };
+    Ok(format!(
+        "Prestige {} puts your XP and level back to 0 and takes away your level reward roles until you earn them again. Your prestige shows on /rank and the leaderboard{bonus}. This can't be undone.",
+        now + 1
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -372,27 +449,29 @@ enum Earned {
 pub fn member(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<Member>> {
     ctx.db.with(|c| {
         c.query_row(
-            "SELECT user_id, xp, level, messages, voice_minutes FROM levels WHERE guild_id = ?1 AND user_id = ?2",
+            &format!("SELECT {COLS} FROM levels WHERE guild_id = ?1 AND user_id = ?2"),
             params![guild as i64, user as i64],
-            |r| {
-                Ok(Member {
-                    user_id: r.get::<_, i64>(0)? as u64,
-                    xp: r.get(1)?,
-                    level: r.get::<_, i64>(2)? as u32,
-                    messages: r.get(3)?,
-                    voice_minutes: r.get(4)?,
-                })
-            },
+            member_row,
         )
         .optional()
     })
 }
 
+/// The columns `member_row` reads.
+const COLS: &str = "user_id, xp, level, messages, voice_minutes, prestige";
+
+/// Who is on the leaderboard: anyone with XP, and anyone who prestiged and is back at 0.
+const ON_BOARD: &str = "(xp > 0 OR prestige > 0)";
+
 fn rank_of(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<i64>> {
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let ahead = if s.prestige_on() { "o.prestige > l.prestige OR (o.prestige = l.prestige AND o.xp > l.xp)" } else { "o.xp > l.xp" };
     ctx.db.with(|c| {
         c.query_row(
-            "SELECT (SELECT COUNT(*) FROM levels o WHERE o.guild_id = l.guild_id AND o.xp > l.xp) + 1
-             FROM levels l WHERE l.guild_id = ?1 AND l.user_id = ?2 AND l.xp > 0",
+            &format!(
+                "SELECT (SELECT COUNT(*) FROM levels o WHERE o.guild_id = l.guild_id AND ({ahead})) + 1
+                 FROM levels l WHERE l.guild_id = ?1 AND l.user_id = ?2 AND (l.xp > 0 OR l.prestige > 0)"
+            ),
             params![guild as i64, user as i64],
             |r| r.get(0),
         )
@@ -407,15 +486,14 @@ fn member_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<Mem
         level: r.get::<_, i64>(2)? as u32,
         messages: r.get(3)?,
         voice_minutes: r.get(4)?,
+        prestige: r.get(5)?,
     })
 }
 
 pub fn top(ctx: &Ctx, guild: u64, offset: i64, limit: i64) -> Result<Vec<Member>> {
+    let s = ctx.settings::<Settings>(guild, KEY)?;
     ctx.db.with(|c| {
-        let mut stmt = c.prepare_cached(
-            "SELECT user_id, xp, level, messages, voice_minutes FROM levels WHERE guild_id = ?1 AND xp > 0
-             ORDER BY xp DESC LIMIT ?2 OFFSET ?3",
-        )?;
+        let mut stmt = c.prepare_cached(&format!("SELECT {COLS} FROM levels WHERE guild_id = ?1 AND {ON_BOARD} ORDER BY {} LIMIT ?2 OFFSET ?3", s.order()))?;
         stmt.query_map(params![guild as i64, limit, offset], member_row)?.collect()
     })
 }
@@ -423,10 +501,9 @@ pub fn top(ctx: &Ctx, guild: u64, offset: i64, limit: i64) -> Result<Vec<Member>
 /// The members among `ids` with XP, best first, each with their place on the leaderboard: up to
 /// `limit` of them, and how many matched in all.
 pub fn find(ctx: &Ctx, guild: u64, ids: &std::collections::HashSet<u64>, limit: usize) -> Result<(Vec<(i64, Member)>, i64)> {
+    let s = ctx.settings::<Settings>(guild, KEY)?;
     ctx.db.with(|c| {
-        let mut stmt = c.prepare_cached(
-            "SELECT user_id, xp, level, messages, voice_minutes FROM levels WHERE guild_id = ?1 AND xp > 0 ORDER BY xp DESC",
-        )?;
+        let mut stmt = c.prepare_cached(&format!("SELECT {COLS} FROM levels WHERE guild_id = ?1 AND {ON_BOARD} ORDER BY {}", s.order()))?;
         let (mut out, mut matched) = (Vec::new(), 0);
         for (i, m) in stmt.query_map([guild as i64], member_row)?.enumerate() {
             let m = m?;
@@ -442,7 +519,7 @@ pub fn find(ctx: &Ctx, guild: u64, ids: &std::collections::HashSet<u64>, limit: 
 }
 
 pub fn count(ctx: &Ctx, guild: u64) -> Result<i64> {
-    ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND xp > 0", [guild as i64], |r| r.get(0)))
+    ctx.db.with(|c| c.query_row(&format!("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND {ON_BOARD}"), [guild as i64], |r| r.get(0)))
 }
 
 /// Which leaderboard: total XP, or XP gained since Monday.
@@ -454,7 +531,7 @@ pub enum Board {
 
 /// XP gained this week: XP now less XP when the week started. Members who first earned XP this
 /// week have no starting row and count from zero.
-const WEEK_GAIN: &str = "SELECT l.user_id, l.xp, l.level, l.messages, l.voice_minutes, l.xp - COALESCE(w.xp, 0) AS gain FROM levels l
+const WEEK_GAIN: &str = "SELECT l.user_id, l.xp, l.level, l.messages, l.voice_minutes, l.prestige, l.xp - COALESCE(w.xp, 0) AS gain FROM levels l
      LEFT JOIN level_week w ON w.guild_id = l.guild_id AND w.user_id = l.user_id
      WHERE l.guild_id = ?1 AND gain > 0";
 
@@ -462,7 +539,7 @@ const WEEK_GAIN: &str = "SELECT l.user_id, l.xp, l.level, l.messages, l.voice_mi
 pub fn week_top(ctx: &Ctx, guild: u64, offset: i64, limit: i64) -> Result<Vec<(Member, i64)>> {
     ctx.db.with(|c| {
         let mut stmt = c.prepare_cached(&format!("{WEEK_GAIN} ORDER BY gain DESC, l.user_id LIMIT ?2 OFFSET ?3"))?;
-        stmt.query_map(params![guild as i64, limit, offset], |r| Ok((member_row(r)?, r.get(5)?)))?.collect()
+        stmt.query_map(params![guild as i64, limit, offset], |r| Ok((member_row(r)?, r.get(6)?)))?.collect()
     })
 }
 
@@ -486,6 +563,7 @@ pub fn last_week(ctx: &Ctx, guild: u64) -> Result<Option<Winners>> {
 
 fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64) -> Result<(bot_core::twilight_model::channel::message::Embed, Vec<bot_core::twilight_model::channel::message::component::Component>)> {
     let per = 10;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
     let total = match board {
         Board::All => count(ctx, guild)?,
         Board::Week => week_totals(ctx, guild)?.0,
@@ -503,7 +581,8 @@ fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64) -> Result<(bot_co
             Some(g) => format!("+{} XP", text::num(*g)),
             None => format!("{} XP", text::num(m.xp)),
         };
-        lines.push(format!("`{place:>2}`  {}  ·  level {}  ·  {figure}", ctx.display_name(guild, m.user_id), m.level));
+        let prestige = if s.prestige_on() && m.prestige > 0 { format!("prestige {}  ·  ", m.prestige) } else { String::new() };
+        lines.push(format!("`{place:>2}`  {}  ·  {prestige}level {}  ·  {figure}", ctx.display_name(guild, m.user_id), m.level));
     }
     let (title, nobody, prefix) = match board {
         Board::All => (format!("{} leaderboard", ctx.guild_name(guild)), "Nobody has XP yet.", "lb"),
@@ -546,12 +625,15 @@ async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, chann
     // Read and write under one lock: a message, a reaction and the voice tick for the same member
     // can land together, and each must add to what the other wrote.
     let (before, level) = ctx.db.with(|c| {
-        let before: (i64, u32) = c
-            .query_row("SELECT xp, level FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| {
-                Ok((r.get(0)?, r.get::<_, i64>(1)? as u32))
+        let (xp, level, prestige): (i64, u32, i64) = c
+            .query_row("SELECT xp, level, prestige FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| {
+                Ok((r.get(0)?, r.get::<_, i64>(1)? as u32, r.get(2)?))
             })
             .optional()?
-            .unwrap_or((0, 0));
+            .unwrap_or((0, 0, 0));
+        let before = (xp, level);
+        // Prestige boosts what members earn, not what staff give or take.
+        let amount = if how == Earned::Manual { amount } else { boosted(amount, s.prestige_pct(prestige)) };
         let xp = before.0.saturating_add(amount).clamp(0, curve::MAX_XP);
         let level = s.progress(xp).level;
         c.execute(
@@ -621,7 +703,7 @@ fn roll_week_to(ctx: &Ctx, guild: u64, week: &str) -> Result<Vec<(u64, i64)>> {
     if let Some(ended) = &stored {
         {
             let mut st = tx.prepare(&format!("{WEEK_GAIN} ORDER BY gain DESC, l.user_id LIMIT 3"))?;
-            for row in st.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(5)?)))? {
+            for row in st.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(6)?)))? {
                 winners.push(row?);
             }
         }
@@ -679,6 +761,45 @@ pub async fn set_xp(ctx: &Ctx, guild: u64, user: u64, xp: i64) -> Result<()> {
         )
     })?;
     sync_rewards(ctx, guild, user, level).await;
+    Ok(())
+}
+
+/// Start a member over at level 0 with one more prestige, if they're still at `from_level` or
+/// higher, and return their new prestige. Their XP at the start of the week drops by the XP they
+/// give up, so what they gained this week stays the same.
+fn prestige(ctx: &Ctx, guild: u64, user: u64, from_level: u32) -> Result<Option<i64>> {
+    if from_level == 0 {
+        return Ok(None);
+    }
+    let mut conn = ctx.db.lock();
+    let tx = conn.transaction()?;
+    let row: Option<(i64, i64, i64)> = tx
+        .query_row("SELECT xp, level, prestige FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .optional()?;
+    let Some((xp, _, prestige)) = row.filter(|r| r.1 >= from_level as i64) else { return Ok(None) };
+    tx.execute(
+        "UPDATE levels SET xp = 0, level = 0, prestige = prestige + 1, updated_at = ?3 WHERE guild_id = ?1 AND user_id = ?2",
+        params![guild as i64, user as i64, bot_core::now_ms()],
+    )?;
+    tx.execute(
+        "INSERT INTO level_week (guild_id, user_id, xp) VALUES (?1, ?2, -?3) ON CONFLICT (guild_id, user_id) DO UPDATE SET xp = xp - ?3",
+        params![guild as i64, user as i64, xp],
+    )?;
+    tx.commit()?;
+    Ok(Some(prestige + 1))
+}
+
+/// Set a member's prestige outright, from the dashboard.
+pub fn set_prestige(ctx: &Ctx, guild: u64, user: u64, prestige: i64) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO levels (guild_id, user_id, prestige, updated_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (guild_id, user_id) DO UPDATE SET prestige = excluded.prestige, updated_at = excluded.updated_at",
+            params![guild as i64, user as i64, prestige.max(0), bot_core::now_ms()],
+        )
+    })?;
     Ok(())
 }
 
@@ -793,13 +914,15 @@ fn notify_failure(ctx: &Ctx, guild: u64, text: String, link: String) {
 
 
 pub(crate) fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
-    let s = Settings::default();
+    let s = Settings { prestige_level: 30, ..Default::default() };
+    ctx.save_settings(guild, KEY, &s)?;
     for (i, (user, _)) in bot_core::preview::MEMBERS.iter().enumerate() {
         let xp = 48_000 / (i as i64 + 1) + (i as i64 * 731) % 900;
+        let prestige = match i { 1 => 2, 3 => 1, _ => 0 };
         ctx.db.with(|c| {
             c.execute(
-                "INSERT OR REPLACE INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
-                params![guild as i64, *user as i64, xp, s.progress(xp).level as i64, xp / 21, xp / 40],
+                "INSERT OR REPLACE INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, prestige, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
+                params![guild as i64, *user as i64, xp, s.progress(xp).level as i64, xp / 21, xp / 40, prestige],
             )
         })?;
     }
@@ -913,5 +1036,74 @@ mod tests {
         // A quiet week names nobody, and clears the last top three.
         assert!(roll_week_to(&ctx, 1, "2026-W46").unwrap().is_empty());
         assert_eq!(crate::last_week(&ctx, 1).unwrap(), None);
+    }
+
+    #[test]
+    fn bonuses_round_and_only_add() {
+        assert_eq!(boosted(20, 0), 20);
+        assert_eq!(boosted(15, 5), 16);
+        assert_eq!(boosted(20, 50), 30);
+        // Taking XP away is never boosted.
+        assert_eq!(boosted(-20, 50), -20);
+        assert_eq!(boosted(i64::MAX, 50), i64::MAX / 100);
+        let mut s = Settings::default();
+        assert_eq!(s.prestige_pct(3), 0, "prestige is off by default");
+        s.prestige_level = 30;
+        assert_eq!(s.prestige_pct(3), 15);
+    }
+
+    #[test]
+    fn prestige_offer_says_why_not() {
+        let mut s = Settings::default();
+        let m = |level, prestige| Member { user_id: 1, xp: 0, level, messages: 0, voice_minutes: 0, prestige };
+        assert_eq!(prestige_offer(&s, Some(&m(40, 0))).unwrap_err(), "Prestige is off on this server.");
+        s.prestige_level = 30;
+        assert_eq!(prestige_offer(&s, Some(&m(12, 0))).unwrap_err(), "You can prestige from level 30. You're level 12.");
+        assert_eq!(prestige_offer(&s, None).unwrap_err(), "You can prestige from level 30. You're level 0.");
+        let offer = prestige_offer(&s, Some(&m(30, 1))).unwrap();
+        assert!(offer.starts_with("Prestige 2 puts"), "{offer}");
+        assert!(offer.contains("10% more XP"), "{offer}");
+    }
+
+    fn set_level(ctx: &Ctx, user: u64, xp: i64, level: i64, prestige: i64) {
+        ctx.db
+            .with(|c| {
+                c.execute(
+                    "INSERT OR REPLACE INTO levels (guild_id, user_id, xp, level, prestige) VALUES (1, ?1, ?2, ?3, ?4)",
+                    params![user as i64, xp, level, prestige],
+                )
+            })
+            .unwrap();
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn prestige_starts_over_and_keeps_the_week() {
+        let ctx = ctx();
+        set_level(&ctx, 10, 4_000, 18, 0);
+        roll_week_to(&ctx, 1, "2026-W44").unwrap();
+        set_level(&ctx, 10, 5_000, 20, 0);
+        // 11 first earned XP this week, so has no start-of-week row.
+        set_level(&ctx, 11, 3_000, 15, 0);
+        set_level(&ctx, 12, 900, 6, 0);
+        // Off, or below the level: nothing happens.
+        assert_eq!(prestige(&ctx, 1, 10, 0).unwrap(), None);
+        assert_eq!(prestige(&ctx, 1, 12, 10).unwrap(), None);
+        assert_eq!(prestige(&ctx, 1, 10, 10).unwrap(), Some(1));
+        assert_eq!(prestige(&ctx, 1, 11, 10).unwrap(), Some(1));
+        // A second press finds them at level 0.
+        assert_eq!(prestige(&ctx, 1, 10, 10).unwrap(), None);
+        let m = member(&ctx, 1, 10).unwrap().unwrap();
+        assert_eq!((m.xp, m.level, m.prestige), (0, 0, 1));
+        // This week's gains are what they were before.
+        let week: Vec<(u64, i64)> = crate::week_top(&ctx, 1, 0, 10).unwrap().into_iter().map(|(m, g)| (m.user_id, g)).collect();
+        assert_eq!(week, vec![(11, 3_000), (10, 1_000), (12, 900)]);
+        // With prestige on, prestige ranks first; off, XP alone. Both stay on the board at 0 XP.
+        let ids = |ctx: &Ctx| top(ctx, 1, 0, 10).unwrap().into_iter().map(|m| m.user_id).collect::<Vec<_>>();
+        assert_eq!(ids(&ctx), vec![12, 10, 11]);
+        assert_eq!(rank_of(&ctx, 1, 12).unwrap(), Some(1));
+        ctx.save_settings(1, KEY, &Settings { prestige_level: 10, ..Default::default() }).unwrap();
+        assert_eq!(ids(&ctx), vec![10, 11, 12]);
+        assert_eq!(rank_of(&ctx, 1, 12).unwrap(), Some(3));
+        assert_eq!(count(&ctx, 1).unwrap(), 3);
     }
 }

@@ -79,6 +79,10 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_toggle("weekly_post", "Post the top three", Some("When the week ends, with how much XP each gained. Names show without a ping."), s.weekly_post))
                 (ui::field_channel(&ctx, guild, "weekly_channel", "Channel", None, s.weekly_channel))
             })))
+            (ui::section("Prestige", None, ui::card(html! {
+                (ui::field_number("prestige_level", "Prestige from level", Some("Members at this level or higher can use /prestige to start over at level 0 and rank above everyone with less prestige. 0 turns it off."), s.prestige_level as i64, 0, 500, None))
+                (ui::field_number("prestige_bonus", "Bonus per prestige", Some("Extra XP from messages, voice and reactions, for each prestige."), s.prestige_bonus, 0, 100, Some("%")))
+            })))
             (ui::section("No XP in", None, ui::card(html! {
                 (ui::field_channels(&ctx, guild, "no_xp_channels", "Channels", None, &s.no_xp_channels))
                 (ui::field_roles(&ctx, guild, "no_xp_roles", "Roles", Some("Members with any of these roles earn nothing."), &s.no_xp_roles))
@@ -98,6 +102,7 @@ const CSS: &str = "
 .lv-acts .pop-body .stack { gap: 10px; }
 .lv-board { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .lv-name { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.lv-prestige { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 @media (max-width: 560px) {
   .lv-table th:nth-child(3), .lv-table td:nth-child(3) { display: none; }
   .lv-acts { flex-direction: column; align-items: flex-end; }
@@ -132,6 +137,8 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         no_xp_roles: form.roles(&ctx, guild, "no_xp_roles"),
         weekly_post: form.bool("weekly_post"),
         weekly_channel: form.channel(&ctx, guild, "weekly_channel"),
+        prestige_level: form.int_in("prestige_level", 0, 500, 0) as u32,
+        prestige_bonus: form.int_in("prestige_bonus", 0, 100, 5),
     };
     let curve_changed = s.curve_base != old.curve_base || s.curve_factor != old.curve_factor || s.custom_curve != old.custom_curve;
     ctx.save_settings(guild, KEY, &s)?;
@@ -344,6 +351,14 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         Some(g) => format!("+{} XP this week", text::num(g)),
         None => format!("Level {} · {} XP", s.progress(m.xp).level, text::num(m.xp)),
     };
+    // Prestige and streak, for the caption under a name.
+    let extras = |m: &crate::Member| -> String {
+        let mut parts = Vec::new();
+        if s.prestige_on() && m.prestige > 0 {
+            parts.push(format!("Prestige {}", m.prestige));
+        }
+        parts.join(" · ")
+    };
     let earning = {
         let mut parts = vec![format!("{} to {} per message, once every {}.", s.xp_min, s.xp_max, text::duration(s.cooldown_secs))];
         if s.voice_xp > 0 {
@@ -351,6 +366,13 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         }
         if s.reaction_xp > 0 {
             parts.push(format!("{} for a reaction.", s.reaction_xp));
+        }
+        if s.prestige_on() {
+            parts.push(if s.prestige_bonus > 0 {
+                format!("From level {} members can prestige: they start over at level 0 and earn {}% more for each prestige.", s.prestige_level, s.prestige_bonus)
+            } else {
+                format!("From level {} members can prestige and start over at level 0.", s.prestige_level)
+            });
         }
         parts.join(" ")
     };
@@ -372,6 +394,8 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                         div class={ "step p" (place) } {
                             img.avatar src=(ctx.member_avatar(guild, m.user_id)) alt="" loading="lazy";
                             strong { (name(m.user_id)) }
+                            @let more = extras(m);
+                            @if !more.is_empty() { span.muted.small { (more) } }
                             span.muted.small { (line(m, *gain)) }
                             div.block { (place) }
                         }
@@ -404,7 +428,8 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     div.rank {
                         span.mono.muted.pos { (place) }
                         img.avatar src=(avatar(m.user_id)) alt="" width="28" height="28" loading="lazy";
-                        div.who { strong { (name(m.user_id)) } span.muted.small { "Level " (p.level) } }
+                        @let more = extras(m);
+                        div.who { strong { (name(m.user_id)) } span.muted.small { "Level " (p.level) @if !more.is_empty() { " · " (more) } } }
                         @if let Some(g) = gain {
                             @let pct = (g * 100 / leader).clamp(0, 100);
                             div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% of first place" } }
@@ -417,9 +442,14 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                 details.pop.set-xp {
                                     summary.btn.small.outline { "Set XP" }
                                     div.pop-body {
-                                        form.inline-form method="post" action=(page.path(&format!("levels/members/{}", m.user_id))) {
-                                            input.input.num type="number" name="xp" value=(m.xp) min="0";
-                                            button.btn.primary type="submit" { "Set" }
+                                        form.stack method="post" action=(page.path(&format!("levels/members/{}", m.user_id))) {
+                                            div.inline-form {
+                                                input.input.num type="number" name="xp" value=(m.xp) min="0" aria-label="XP";
+                                                button.btn.primary type="submit" { "Set" }
+                                            }
+                                            @if s.prestige_on() {
+                                                label.lv-prestige { span.muted.small { "Prestige" } input.input.num type="number" name="prestige" value=(m.prestige) min="0" max="1000"; }
+                                            }
                                         }
                                         p.muted.small { "Their level and reward roles follow the new XP." }
                                     }
@@ -592,8 +622,17 @@ async fn set_member_xp(State(ctx): State<Ctx>, user: User, Path((guild, member))
         .i64("xp")
         .filter(|x| (0..=curve::MAX_XP).contains(x))
         .ok_or_else(|| WebError::Bad(format!("XP must be from 0 to {}.", text::num(curve::MAX_XP))))?;
+    let had = crate::member(&ctx, guild, member)?.map(|m| m.prestige).unwrap_or(0);
     crate::set_xp(&ctx, guild, member, xp).await?;
-    ctx.audit(&page.user, Some(guild), KEY, format!("Set {}'s XP to {}", ctx.display_name(guild, member), text::num(xp)));
+    let who = ctx.display_name(guild, member);
+    let prestige = form.i64("prestige").map(|p| p.clamp(0, 1000)).filter(|p| *p != had);
+    match prestige.filter(|_| ctx.settings::<Settings>(guild, KEY).is_ok_and(|s| s.prestige_on())) {
+        Some(p) => {
+            crate::set_prestige(&ctx, guild, member, p)?;
+            ctx.audit(&page.user, Some(guild), KEY, format!("Set {who}'s XP to {} and prestige to {p}", text::num(xp)));
+        }
+        None => ctx.audit(&page.user, Some(guild), KEY, format!("Set {who}'s XP to {}", text::num(xp))),
+    }
     Ok(saved(&page.path("levels")))
 }
 
