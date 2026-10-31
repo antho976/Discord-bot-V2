@@ -378,23 +378,23 @@ pub async fn end_now(ctx: &Ctx, id: i64) -> Result<bool> {
 /// closed.
 pub async fn tick(ctx: &Ctx) {
     for guild in ctx.enabled_guilds(KEY) {
-        let open: Vec<Poll> = ctx
-            .db
-            .with(|c| {
-                let mut s = c.prepare_cached(&format!("SELECT {COLS} FROM polls WHERE guild_id = ?1 AND ends_at > ?2"))?;
-                s.query_map(params![id_i64(guild), now_ms()], from_row)?.collect()
-            })
-            .unwrap_or_default();
+        let read = ctx.db.with(|c| {
+            let mut open = c.prepare_cached(&format!("SELECT {COLS} FROM polls WHERE guild_id = ?1 AND ends_at > ?2"))?;
+            let open: Vec<Poll> = open.query_map(params![id_i64(guild), now_ms()], from_row)?.collect::<Result<_, _>>()?;
+            let mut waiting = c.prepare_cached(&format!(
+                "SELECT {COLS} FROM polls WHERE guild_id = ?1 AND results IS NULL AND ends_at <= ?2 AND ends_at > ?3 LIMIT 5"
+            ))?;
+            let waiting: Vec<Poll> = waiting.query_map(params![id_i64(guild), now_ms(), now_ms() - 7 * DAY_MS], from_row)?.collect::<Result<_, _>>()?;
+            Ok((open, waiting))
+        });
+        let (open, waiting) = match read {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(guild, error = %e, "couldn't read polls for the tick");
+                continue;
+            }
+        };
         catch_up(ctx, &open, DAY_MS);
-        let waiting: Vec<Poll> = ctx
-            .db
-            .with(|c| {
-                let mut s = c.prepare_cached(&format!(
-                    "SELECT {COLS} FROM polls WHERE guild_id = ?1 AND results IS NULL AND ends_at <= ?2 AND ends_at > ?3 LIMIT 5"
-                ))?;
-                s.query_map(params![id_i64(guild), now_ms(), now_ms() - 7 * 86_400_000], from_row)?.collect()
-            })
-            .unwrap_or_default();
         for p in waiting {
             match fetch_counts(ctx, &p).await {
                 Ok(Some(counts)) => store_results(ctx, p.id, &counts),

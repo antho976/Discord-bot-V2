@@ -252,7 +252,15 @@ async fn post(ctx: &Ctx, settings: &Settings, guild: u64, channel: u64, author: 
     let embeds = [embed(ctx, &s)];
     let sent = ctx.http.create_message(Id::new(channel)).embeds(&embeds).components(&components(&s, Tally::default())).await;
     let message = match sent {
-        Ok(r) => r.model().await?,
+        Ok(r) => match r.model().await {
+            Ok(m) => m,
+            // Posted, but Discord's reply couldn't be read: the buttons still work (they carry the
+            // number), so don't tell the member it failed and invite a second post.
+            Err(e) => {
+                tracing::warn!(suggestion = id, error = %e, "posted a suggestion but couldn't read the message back");
+                return Ok((id, format!("<#{channel}>")));
+            }
+        },
         Err(e) => {
             ctx.db.with(|c| c.execute("DELETE FROM suggestions WHERE id = ?1", [id]))?;
             return Err(e.into());

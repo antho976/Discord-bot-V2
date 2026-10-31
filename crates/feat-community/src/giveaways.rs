@@ -419,11 +419,18 @@ pub async fn create(ctx: &Ctx, new: New<'_>) -> Result<i64> {
     let embeds = [embed(&g, 0)];
     let sent = ctx.http.create_message(Id::new(channel)).embeds(&embeds).components(&components(id)).await;
     match sent {
-        Ok(r) => {
-            let message = r.model().await?;
-            ctx.db.with(|c| c.execute("UPDATE giveaways SET message_id = ?2 WHERE id = ?1", params![id, id_i64(message.id.get())]))?;
-            Ok(id)
-        }
+        // Posted. If Discord's reply can't be read the giveaway still runs (Enter carries its
+        // number), it just can't edit its post; saying it failed would invite a duplicate.
+        Ok(r) => match r.model().await {
+            Ok(message) => {
+                ctx.db.with(|c| c.execute("UPDATE giveaways SET message_id = ?2 WHERE id = ?1", params![id, id_i64(message.id.get())]))?;
+                Ok(id)
+            }
+            Err(e) => {
+                tracing::warn!(giveaway = id, error = %e, "posted a giveaway but couldn't read the message back");
+                Ok(id)
+            }
+        },
         Err(e) => {
             ctx.db.with(|c| c.execute("DELETE FROM giveaways WHERE id = ?1", [id]))?;
             Err(e.into())
@@ -561,13 +568,16 @@ async fn announce(ctx: &Ctx, g: &Giveaway, winners: &[u64], reroll: bool) {
 /// End every giveaway whose time is up.
 pub async fn tick(ctx: &Ctx) {
     for guild in ctx.enabled_guilds(KEY) {
-        let due: Vec<i64> = ctx
-            .db
-            .with(|c| {
-                let mut s = c.prepare_cached("SELECT id FROM giveaways WHERE guild_id = ?1 AND ended = 0 AND ends_at <= ?2")?;
-                s.query_map(params![id_i64(guild), now_ms()], |r| r.get(0))?.collect()
-            })
-            .unwrap_or_default();
+        let due: Vec<i64> = match ctx.db.with(|c| {
+            let mut s = c.prepare_cached("SELECT id FROM giveaways WHERE guild_id = ?1 AND ended = 0 AND ends_at <= ?2")?;
+            s.query_map(params![id_i64(guild), now_ms()], |r| r.get(0))?.collect()
+        }) {
+            Ok(due) => due,
+            Err(e) => {
+                tracing::warn!(guild, error = %e, "couldn't read giveaways that are due");
+                continue;
+            }
+        };
         for id in due {
             if let Err(e) = end(ctx, id).await {
                 tracing::warn!(guild, giveaway = id, error = %e, "couldn't end a giveaway");
