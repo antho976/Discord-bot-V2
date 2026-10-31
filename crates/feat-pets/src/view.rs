@@ -335,7 +335,7 @@ mod tests {
         let now = bot_core::now_ms();
         assert_eq!(super::until(now + 10 * 60_000 + 500), "in 10 min");
         assert_eq!(super::until(now + 3 * 3_600_000 + 500), "in 3 h");
-        assert_eq!(super::until(now + 5 * 86_400_000), "in 5 days");
+        assert_eq!(super::until(now + 5 * 86_400_000 + 500), "in 5 days");
         assert_eq!(super::until(now - 1000), "any moment");
     }
 }

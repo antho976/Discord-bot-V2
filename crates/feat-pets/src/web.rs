@@ -173,15 +173,23 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
                     }))
                 }
                 @if groups.is_empty() {
-                    (ui::empty(Icon::Paw, "No companions yet", "The catalog fills from the server's list. Add pets in the Catalog tab."))
+                    (ui::empty(Icon::Paw, "No companions yet", if page.can_edit() {
+                        "The catalog fills from the server's list. Add pets in the Catalog tab."
+                    } else {
+                        "The catalog fills from the server's list."
+                    }))
                 }
             }
 
             aside.rail {
                 div.rail-block {
-                    h2 { "Waiting for you" @if !pending.is_empty() { span.count-pill { (pending.len()) } } }
+                    h2 { (if page.can_edit() { "Waiting for you" } else { "Waiting for review" }) @if !pending.is_empty() { span.count-pill { (pending.len()) } } }
                     @if pending.is_empty() {
-                        p.muted.small { "Submissions from /pet add land here. Approve or reject them from here or the Approvals tab." }
+                        @if page.can_edit() {
+                            p.muted.small { "Submissions from /pet add land here. Approve or reject them from here or the Approvals tab." }
+                        } @else {
+                            p.muted.small { "Submissions from /pet add wait here until staff review them." }
+                        }
                     }
                     @for p in pending.iter().take(3) {
                         @let pet = find(&p.pet_id);
@@ -270,7 +278,11 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
         div.with-rail {
             div.stack.pets-main {
                 @if pending.is_empty() {
-                    (ui::empty(Icon::Paw, "Nothing to review", "Submissions from /pet add wait here until you approve or reject them."))
+                    (ui::empty(Icon::Paw, "Nothing to review", if edit {
+                        "Submissions from /pet add wait here until you approve or reject them."
+                    } else {
+                        "Submissions from /pet add wait here until staff review them."
+                    }))
                 } @else {
                     form method="post" action=(approve) {
                         // Enter in the reason box must not approve anything.
@@ -435,7 +447,11 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
                     @let have = pets.iter().filter(|p| counts.contains_key(&p.id)).count();
                     (ui::section(cat, Some(&format!("{} pets, {} collected", pets.len(), have)), html! {
                         @if pets.is_empty() {
-                            (ui::empty(Icon::Paw, "No pets here", "Add one with the button above and pick this category, or remove the category."))
+                            @if edit {
+                                (ui::empty(Icon::Paw, "No pets here", "Add one with the button above and pick this category, or remove the category."))
+                            } @else {
+                                (ui::empty(Icon::Paw, "No pets here", "Pets staff add to this category show here."))
+                            }
                         } @else {
                             div.table-wrap { table.table.pets-cat-table {
                                 thead { tr { th { "Pet" } th.pets-rar-col { "Rarity" } th.num { "Owned" } } }
@@ -666,7 +682,11 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
             div.stack.pets-main {
                 (ui::section("Waiting", Some("Confirm once the pet has changed hands. Confirming takes one copy out of the collection."), html! {
                     @if active.is_empty() {
-                        (ui::empty(Icon::Gift, "No giveaways waiting", "Record one with the button above and it waits here until it's confirmed or expires."))
+                        @if page.can_edit() {
+                            (ui::empty(Icon::Gift, "No giveaways waiting", "Record one with the button above and it waits here until it's confirmed or expires."))
+                        } @else {
+                            (ui::empty(Icon::Gift, "No giveaways waiting", "Giveaways staff record wait here until they're confirmed or expire."))
+                        }
                     } @else {
                         div { @for g in &active { (giveaway_item(&ctx, &page, g, comments.get(&g.id).map(Vec::as_slice).unwrap_or(&[]))) } }
                     }
@@ -886,7 +906,11 @@ async fn bans(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
             div.stack.pets-main {
                 (ui::section("Banned givers", Some("They can't be recorded as the giver of a pet giveaway. They can still win."), html! {
                     @if list.is_empty() {
-                        (ui::empty(Icon::Shield, "Nobody is banned", "Ban a member with the button above and they can't be recorded as a giver."))
+                        @if edit {
+                            (ui::empty(Icon::Shield, "Nobody is banned", "Ban a member with the button above and they can't be recorded as a giver."))
+                        } @else {
+                            (ui::empty(Icon::Shield, "Nobody is banned", "Members staff ban from giving pets show here."))
+                        }
                     } @else {
                         div.pets-list {
                             @for b in &list {

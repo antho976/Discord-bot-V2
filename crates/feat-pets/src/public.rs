@@ -77,9 +77,13 @@ async fn collection(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path
         (nav(guild, "Collection"))
         (view::collection_hero(&groups, &counts, week))
         p.small.muted {
-            (text::num(total)) " " (if total == 1 { "pet" } else { "pets" }) " in the collection"
-            @if legendary > 0 { ", " (text::num(legendary)) " legendary" }
-            ". "
+            @if total > 0 {
+                @let kinds = counts.len() as i64;
+                "The server has " (text::num(total)) " " (if total == 1 { "copy" } else { "copies" }) " of "
+                (text::num(kinds)) " " (if kinds == 1 { "pet" } else { "pets" })
+                @if legendary > 0 { ", " (text::num(legendary)) " of them legendary" }
+                ". "
+            }
             @if only_owned {
                 "Showing the pets the server has. " a href={ "/p/" (guild) "/pets" } style=(link) { "Show every companion" }
             } @else {
