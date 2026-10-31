@@ -510,7 +510,10 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 
 async fn set_member_xp(State(ctx): State<Ctx>, user: User, Path((guild, member)): Path<(u64, u64)>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
-    let xp = form.i64("xp").filter(|x| *x >= 0).ok_or_else(|| WebError::Bad("XP must be 0 or more.".into()))?;
+    let xp = form
+        .i64("xp")
+        .filter(|x| (0..=curve::MAX_XP).contains(x))
+        .ok_or_else(|| WebError::Bad(format!("XP must be from 0 to {}.", text::num(curve::MAX_XP))))?;
     crate::set_xp(&ctx, guild, member, xp).await?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Set {}'s XP to {}", ctx.display_name(guild, member), text::num(xp)));
     Ok(saved(&page.path("levels")))

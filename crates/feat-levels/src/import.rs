@@ -155,6 +155,16 @@ pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode, any_role
                         .query_map([guild.to_string()], |r| Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)?)))?
                         .collect::<Result<_, _>>()?;
                 }
+                // The old bot didn't check these; hold them to what the settings page allows.
+                s.xp_min = s.xp_min.clamp(0, 1000);
+                s.xp_max = s.xp_max.clamp(s.xp_min, 1000);
+                s.cooldown_secs = s.cooldown_secs.clamp(0, 3600);
+                s.voice_xp = s.voice_xp.clamp(0, 1000);
+                s.reaction_xp = s.reaction_xp.clamp(0, 1000);
+                s.curve_base = s.curve_base.clamp(1, 100_000);
+                if !(1.0..=5.0).contains(&s.curve_factor) {
+                    s.curve_factor = Settings::default().curve_factor;
+                }
                 let current = ctx.settings::<Settings>(*guild, KEY)?;
                 s.no_xp_channels = current.no_xp_channels.clone();
                 s.no_xp_roles = current.no_xp_roles.clone();
@@ -258,7 +268,8 @@ fn write_rows(ctx: &Ctx, rows: &[Row], targets: &[u64], mode: Mode, report: &mut
             let xp = match (mode, existing) {
                 (Mode::KeepHigher, Some(cur)) => cur.max(r.xp),
                 _ => r.xp,
-            };
+            }
+            .clamp(0, crate::curve::MAX_XP);
             let level = s.progress(xp).level;
             tx.execute(
                 "INSERT INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, prestige, updated_at)

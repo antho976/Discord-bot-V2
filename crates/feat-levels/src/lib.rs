@@ -306,8 +306,13 @@ impl Feature for Levels {
                     }
                     "set-level" => {
                         let level = opts.int("level").unwrap_or(0).max(0) as u32;
-                        set_xp(ctx, guild, user, curve::xp_to_reach(level, s.curve_base, s.curve_factor, &s.custom_curve)).await?;
-                        format!("{name} is now level {level}.")
+                        let xp = curve::xp_to_reach(level, s.curve_base, s.curve_factor, &s.custom_curve);
+                        if xp > curve::MAX_XP {
+                            format!("Level {level} takes more XP than a member can hold with this curve. Pick a lower level.")
+                        } else {
+                            set_xp(ctx, guild, user, xp).await?;
+                            format!("{name} is now level {level}.")
+                        }
                     }
                     _ => return Ok(()),
                 };
@@ -475,7 +480,7 @@ async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, chann
             })
             .optional()?
             .unwrap_or((0, 0));
-        let xp = (before.0 + amount).max(0);
+        let xp = before.0.saturating_add(amount).clamp(0, curve::MAX_XP);
         let level = s.progress(xp).level;
         c.execute(
             "INSERT INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, updated_at)
@@ -543,6 +548,7 @@ fn roll_week(ctx: &Ctx, guild: u64) -> Result<()> {
 
 /// Set a member's XP outright and fix their level and roles.
 pub async fn set_xp(ctx: &Ctx, guild: u64, user: u64, xp: i64) -> Result<()> {
+    let xp = xp.clamp(0, curve::MAX_XP);
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let level = s.progress(xp).level;
     ctx.db.with(|c| {
