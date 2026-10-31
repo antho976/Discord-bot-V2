@@ -44,21 +44,40 @@ fn open(ctx: &Ctx, user: &User, guild: u64, need: Level) -> WebResult<Page> {
     Ok(page)
 }
 
+/// The five tabs, with the number of submissions waiting on Approvals.
 fn tabs(page: &Page, active: &str, waiting: i64) -> Markup {
-    let approvals = if waiting > 0 { format!("Approvals ({waiting})") } else { "Approvals".to_owned() };
     let items = [
-        ("Collection", page.path("pets")),
-        (approvals.as_str(), page.path("pets/approvals")),
-        ("Giveaways", page.path("pets/giveaways")),
-        ("Catalog", page.path("pets/catalog")),
-        ("Bans", page.path("pets/bans")),
+        ("Collection", page.path("pets"), 0),
+        ("Approvals", page.path("pets/approvals"), waiting),
+        ("Giveaways", page.path("pets/giveaways"), 0),
+        ("Catalog", page.path("pets/catalog"), 0),
+        ("Bans", page.path("pets/bans"), 0),
     ];
-    let active = if active == "Approvals" { approvals.as_str() } else { active };
-    html! { (view::style()) (ui::tabs(&items, active)) }
+    html! {
+        (view::style())
+        nav.tabs.pets-tabs {
+            @for (label, href, n) in &items {
+                a.tab.on[*label == active] href=(href) aria-current=[(*label == active).then_some("page")] {
+                    (label)
+                    @if *n > 0 { span.pets-tab-count { (text::num(*n)) } }
+                }
+            }
+        }
+    }
 }
 
-fn shell(ctx: &Ctx, page: &Page, body: Markup) -> WebResult {
-    Ok(ui::layout(ctx, page, "Pets", None, body).into_response())
+fn shell(ctx: &Ctx, page: &Page, actions: Option<Markup>, body: Markup) -> WebResult {
+    Ok(ui::layout(ctx, page, "Pets", actions, body).into_response())
+}
+
+/// A header button that opens a form in a popover, for editors only.
+fn header_pop(label: &str, body: Markup) -> Markup {
+    html! {
+        details.pop.pets-pop {
+            summary.btn.primary aria-label=(label) { (ui::icon(Icon::Plus)) span.pets-pop-label { (label) } }
+            div.pop-body { (body) }
+        }
+    }
 }
 
 /// A member from a name as shown in the server, a username, a mention or an ID.
@@ -163,7 +182,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
     let catalog = store::catalog(&ctx, guild)?;
     let counts = store::owned_counts(&ctx, guild)?;
     let pending = store::pending(&ctx, guild)?;
-    let waiting: i64 = pending.iter().map(|p| p.quantity).sum();
+    let waiting = pending.len() as i64;
     let active = store::active_giveaways(&ctx, guild)?;
     let past = store::past_giveaways(&ctx, guild, 3)?;
     let gstats = store::stats(&store::all_giveaways(&ctx, guild)?);
@@ -318,74 +337,85 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     let catalog = store::catalog(&ctx, guild)?;
     let find = |id: &str| catalog.iter().find(|p| p.id == id).cloned().unwrap_or_else(|| missing_pet(id));
     let pending = store::pending(&ctx, guild)?;
-    let waiting: i64 = pending.iter().map(|p| p.quantity).sum();
-    let done = store::reviewed(&ctx, guild, 20)?;
+    let done = store::reviewed(&ctx, guild, 8)?;
     let edit = page.can_edit();
     let approve = page.path("pets/approvals/approve");
     let reject = page.path("pets/approvals/reject");
     let body = html! {
-        (tabs(&page, "Approvals", waiting))
-        (ui::section("Waiting for approval", Some("Approved pets join the collection, credited to the member who submitted them."), html! {
-            @if pending.is_empty() {
-                (ui::empty(Icon::Paw, "Nothing to review", "Submissions from /pet add land here."))
-            } @else {
-                form method="post" action=(approve) {
-                    // Enter in the reason box must not approve anything.
-                    button type="submit" disabled hidden {}
-                    div.table-wrap { table.table {
-                        thead { tr {
-                            @if edit { th style="width:28px" { input #sel-all type="checkbox" aria-label="Select all"; } }
-                            th { "Pet" } th.num { "Qty" } th { "Submitted by" } th { "When" }
-                            @if edit { th {} }
-                        } }
-                        tbody { @for p in &pending {
-                            @let pet = find(&p.pet_id);
-                            tr {
-                                @if edit { td { input type="checkbox" name="sel" value=(p.id) aria-label={ "Select " (pet.name) }; } }
-                                td { (view::pet_cell(&pet, Some(store::rarity_label(&pet.rarity)))) }
-                                td.num { (p.quantity) }
-                                td { (view::person(&ctx, guild, p.user_id)) }
-                                td.muted { (text::ago(p.requested_at)) }
-                                @if edit {
-                                    td.actions {
-                                        button.btn.small type="submit" formaction=(approve) name="only" value=(p.id) { "Approve" }
-                                        button.btn.small type="submit" formaction=(reject) name="only" value=(p.id) { "Reject" }
+        (tabs(&page, "Approvals", pending.len() as i64))
+        div.with-rail {
+            div.stack.pets-main {
+                @if pending.is_empty() {
+                    (ui::empty(Icon::Paw, "Nothing to review", "Submissions from /pet add wait here until you approve or reject them."))
+                } @else {
+                    form method="post" action=(approve) {
+                        // Enter in the reason box must not approve anything.
+                        button type="submit" disabled hidden {}
+                        div.pets-list-head {
+                            @if edit { label.pets-check { input #sel-all type="checkbox"; "Select all" } }
+                            span.muted.small { "Approved pets join the collection, credited to whoever submitted them." }
+                        }
+                        div.pets-list {
+                            @for p in &pending {
+                                @let pet = find(&p.pet_id);
+                                div.pets-row {
+                                    @if edit { input type="checkbox" name="sel" value=(p.id) aria-label={ "Select " (pet.name) " from " (ctx.display_name(guild, p.user_id)) }; }
+                                    (view::pet_tile(&pet, false))
+                                    div.pets-row-main {
+                                        span { strong { (pet.name) } @if p.quantity > 1 { span.mono { " ×" (p.quantity) } } " " (view::rarity(&pet.rarity)) }
+                                        span.pets-by {
+                                            img.avatar src=(ctx.member_avatar(guild, p.user_id)) alt="" width="18" height="18" loading="lazy";
+                                            (ctx.display_name(guild, p.user_id)) " · " (text::ago(p.requested_at))
+                                        }
+                                    }
+                                    @if edit {
+                                        div.pets-row-acts {
+                                            button.btn.small type="submit" formaction=(approve) name="only" value=(p.id) { "Approve" }
+                                            button.btn.small type="submit" formaction=(reject) name="only" value=(p.id) { "Reject" }
+                                        }
                                     }
                                 }
                             }
-                        } }
-                    } }
-                    @if edit {
-                        div.bulk {
-                            input.input type="text" name="reason" maxlength="300" placeholder="Reason for rejecting, sent to them (optional)" autocomplete="off";
-                            button.btn.small type="submit" formaction=(approve) { "Approve selected" }
-                            button.btn.small type="submit" formaction=(reject) { "Reject selected" }
-                            button.btn.small type="submit" formaction=(approve) name="all" value="1" { "Approve all" }
+                        }
+                        @if edit {
+                            div.bulk {
+                                input.input type="text" name="reason" maxlength="300" placeholder="Reason for rejecting, sent to them (optional)" autocomplete="off" aria-label="Reason for rejecting";
+                                button.btn.small type="submit" formaction=(approve) { "Approve selected" }
+                                button.btn.small type="submit" formaction=(reject) { "Reject selected" }
+                                button.btn.small type="submit" formaction=(approve) name="all" value="1" { "Approve all" }
+                            }
+                        }
+                    }
+                    script { (PreEscaped(r#"document.getElementById("sel-all")?.addEventListener("change",e=>document.querySelectorAll('input[name="sel"]').forEach(c=>c.checked=e.target.checked));"#)) }
+                }
+            }
+            aside.rail {
+                div.rail-block {
+                    h2 { "Recently reviewed" }
+                    @if done.is_empty() {
+                        p.muted.small { "Approved and rejected submissions show here." }
+                    }
+                    @for p in &done {
+                        @let pet = find(&p.pet_id);
+                        @let approved = p.status == "approved";
+                        div.mini {
+                            img.avatar src=(ctx.member_avatar(guild, p.user_id)) alt="" width="32" height="32" loading="lazy";
+                            div.grow {
+                                span { strong { (ctx.display_name(guild, p.user_id)) } " · " (pet.icon()) " " (pet.name) @if p.quantity > 1 { " ×" (p.quantity) } }
+                                span.muted.small {
+                                    span class=(if approved { "pets-ok" } else { "pets-bad" }) { (if approved { "Approved" } else { "Rejected" }) }
+                                    @if let Some(by) = p.reviewed_by.as_deref().filter(|b| !b.is_empty()) { " by " (by) }
+                                    @if let Some(at) = p.reviewed_at { " · " (text::ago(at)) }
+                                }
+                                @if !p.reason.is_empty() { span.muted.small title=(p.reason) { (p.reason) } }
+                            }
                         }
                     }
                 }
-                script { (PreEscaped(r#"document.getElementById("sel-all")?.addEventListener("change",e=>document.querySelectorAll('input[name="sel"]').forEach(c=>c.checked=e.target.checked));"#)) }
             }
-        }))
-        @if !done.is_empty() {
-            (ui::section("Recently reviewed", None, html! {
-                div.table-wrap { table.table {
-                    thead { tr { th { "Pet" } th { "Member" } th { "Result" } th { "By" } th { "When" } } }
-                    tbody { @for p in &done {
-                        @let pet = find(&p.pet_id);
-                        tr {
-                            td { (view::pet_cell(&pet, (!p.reason.is_empty()).then_some(p.reason.as_str()))) }
-                            td { (view::person(&ctx, guild, p.user_id)) }
-                            td { @if p.status == "approved" { (ui::badge(&format!("Approved{}", if p.quantity > 1 { format!(" ×{}", p.quantity) } else { String::new() }), Tone::Ok)) } @else { (ui::badge("Rejected", Tone::Bad)) } }
-                            td.muted { (p.reviewed_by.as_deref().unwrap_or("")) }
-                            td.muted { (p.reviewed_at.map(text::ago).unwrap_or_default()) }
-                        }
-                    } }
-                } }
-            }))
         }
     };
-    shell(&ctx, &page, body)
+    shell(&ctx, &page, None, body)
 }
 
 fn missing_pet(id: &str) -> Pet {
@@ -462,7 +492,7 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
     let catalog = store::catalog(&ctx, guild)?;
     let cats = store::categories(&ctx, guild)?;
     let counts = store::owned_counts(&ctx, guild)?;
-    let waiting = store::pending_units(&ctx, guild)?;
+    let waiting = store::pending_count(&ctx, guild)?;
     let editing = q.edit.as_deref().and_then(|id| catalog.iter().find(|p| p.id == id));
     let edit = page.can_edit();
     let body = html! {
@@ -539,7 +569,7 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
             }))
         }
     };
-    shell(&ctx, &page, body)
+    shell(&ctx, &page, None, body)
 }
 
 fn pet_form(page: &Page, cats: &[String], p: Option<&Pet>) -> Markup {
@@ -659,7 +689,7 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     let past = store::past_giveaways(&ctx, guild, 50)?;
     let comments = store::comments(&ctx, guild)?;
     let stats = store::stats(&store::all_giveaways(&ctx, guild)?);
-    let waiting = store::pending_units(&ctx, guild)?;
+    let waiting = store::pending_count(&ctx, guild)?;
     let mut options: Vec<(String, String)> = vec![(String::new(), "Pick a pet".into())];
     let mut sorted: Vec<&Pet> = catalog.iter().collect();
     sorted.sort_by_key(|p| (!counts.contains_key(&p.id), p.name.to_lowercase()));
@@ -734,7 +764,7 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
             }
         }))
     };
-    shell(&ctx, &page, body)
+    shell(&ctx, &page, None, body)
 }
 
 fn giveaway_item(ctx: &Ctx, page: &Page, g: &Giveaway, comments: &[store::Comment]) -> Markup {
@@ -870,38 +900,82 @@ async fn delete_comment(State(ctx): State<Ctx>, user: User, Path((guild, id, com
 async fn bans(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = open(&ctx, &user, guild, Level::View)?;
     let list = store::bans(&ctx, guild)?;
-    let waiting = store::pending_units(&ctx, guild)?;
-    let given: HashMap<u64, i64> = store::stats(&store::all_giveaways(&ctx, guild)?).top_givers.into_iter().collect();
+    let waiting = store::pending_count(&ctx, guild)?;
+    let all = store::all_giveaways(&ctx, guild)?;
+    // Confirmed giveaways per giver, for everyone: the stats' top list is cut at ten.
+    let mut given: HashMap<u64, i64> = HashMap::new();
+    for g in all.iter().filter(|g| g.status == Status::Confirmed) {
+        *given.entry(g.giver_id).or_default() += 1;
+    }
+    let top = store::stats(&all).top_givers;
+    let edit = page.can_edit();
+    let actions = edit.then(|| {
+        header_pop("Ban a giver", html! {
+            form.pform method="post" action=(page.path("pets/bans")) {
+                (members_datalist(&ctx, guild))
+                (ui::card(html! {
+                    (ui::field_custom("Member", Some("Name as shown in the server, or their ID."), html! {
+                        input.input type="text" name="member" list="pets-members" required placeholder="Name or ID" autocomplete="off";
+                    }))
+                    (ui::field_text("reason", "Reason", None, "", "Took a pet back after the giveaway"))
+                }))
+                div.acts { button.btn.primary type="submit" { "Ban giver" } }
+            }
+        })
+    });
     let body = html! {
         (tabs(&page, "Bans", waiting))
-        (ui::section("Banned givers", Some("Members on this list can't be recorded as the giver of a pet giveaway. They can still win."), html! {
-            @if page.can_edit() {
-                form.inline-form method="post" action=(page.path("pets/bans")) {
-                    (members_datalist(&ctx, guild))
-                    input.input type="text" name="member" list="pets-members" required placeholder="Name or ID" autocomplete="off" style="max-width:220px";
-                    input.input type="text" name="reason" maxlength="200" placeholder="Reason" autocomplete="off";
-                    button.btn type="submit" { "Ban giver" }
+        div.with-rail {
+            div.stack.pets-main {
+                (ui::section("Banned givers", Some("They can't be recorded as the giver of a pet giveaway. They can still win."), html! {
+                    @if list.is_empty() {
+                        (ui::empty(Icon::Shield, "Nobody is banned", "Ban a member with the button above and they can't be recorded as a giver."))
+                    } @else {
+                        div.pets-list {
+                            @for b in &list {
+                                @let n = given.get(&b.user_id).copied().unwrap_or(0);
+                                div.pets-row {
+                                    img.avatar src=(ctx.member_avatar(guild, b.user_id)) alt="" width="34" height="34" loading="lazy";
+                                    div.pets-row-main {
+                                        strong { (ctx.display_name(guild, b.user_id)) }
+                                        @if b.reason.is_empty() { span.muted.small { "No reason given" } } @else { span.pets-reason { (b.reason) } }
+                                    }
+                                    div.pets-row-side {
+                                        span { "Banned " (text::ago(b.banned_at)) " by " (b.banned_by) }
+                                        span { (text::num(n)) " " (if n == 1 { "pet given" } else { "pets given" }) }
+                                    }
+                                    @if edit {
+                                        div.pets-row-acts { (ui::action_button(&page.path(&format!("pets/bans/{}/delete", b.user_id)), "Unban", Tone::Muted, false)) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }))
+            }
+            aside.rail {
+                div.rail-block {
+                    h2 { "Top givers" }
+                    @if top.is_empty() {
+                        p.muted.small { "Givers show here once a pet giveaway is confirmed." }
+                    }
+                    @for (u, n) in top.iter().take(6) {
+                        div.mini {
+                            img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="32" height="32" loading="lazy";
+                            div.grow {
+                                span { (ctx.display_name(guild, *u)) }
+                                span.muted.small {
+                                    (text::num(*n)) " confirmed"
+                                    @if list.iter().any(|b| b.user_id == *u) { " · " span.pets-bad { "banned" } }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            @if list.is_empty() {
-                (ui::empty(Icon::Shield, "Nobody is banned", "Ban a member here and they can't be recorded as a giver."))
-            } @else {
-                div.table-wrap { table.table {
-                    thead { tr { th { "Member" } th { "Reason" } th.num { "Given" } th { "Banned" } @if page.can_edit() { th {} } } }
-                    tbody { @for b in &list {
-                        tr {
-                            td { (view::person(&ctx, guild, b.user_id)) }
-                            td { @if b.reason.is_empty() { span.muted { "No reason given" } } @else { (b.reason) } }
-                            td.num { (given.get(&b.user_id).copied().unwrap_or(0)) }
-                            td.muted { (text::ago(b.banned_at)) " by " (b.banned_by) }
-                            @if page.can_edit() { td.actions { (ui::action_button(&page.path(&format!("pets/bans/{}/delete", b.user_id)), "Unban", Tone::Muted, false)) } }
-                        }
-                    } }
-                } }
-            }
-        }))
+        }
     };
-    shell(&ctx, &page, body)
+    shell(&ctx, &page, actions, body)
 }
 
 async fn add_ban(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {

@@ -2,7 +2,6 @@
 //! list and the few styles the core stylesheet doesn't have.
 
 use bot_core::maud::{Markup, PreEscaped, html};
-use bot_core::twilight_model::id::Id;
 use bot_core::{Ctx, now_ms, text};
 
 use crate::store::{self, Pet, Status};
@@ -66,7 +65,38 @@ pub const STYLE: &str = r#"
 .cat-list .chip { cursor: default; gap: 8px; }
 .cat-list .chip form button { background: none; border: 0; color: var(--ink-3); cursor: pointer; padding: 0; font: inherit; }
 .cat-list .chip form button:hover, .cat-list .chip form button.armed { color: var(--held); }
+.pets-tab-count { margin-left: 6px; font: 12px var(--mono); color: var(--ink-3); }
+.pets-pop > summary .pets-pop-label { white-space: nowrap; }
+.pets-pop .pop-body { width: min(520px, calc(100vw - 32px)); padding: 16px; }
+.pets-pop .pop-body .card { padding: 0 14px; }
+.pets-main { min-width: 0; }
+.pets-list { display: flex; flex-direction: column; }
+.pets-list-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-bottom: 10px; }
+.pets-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.pets-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--edge-1); min-width: 0; font-size: 13px; }
+.pets-row:last-child { border-bottom: 1px solid var(--edge-1); }
+.pets-row > input[type=checkbox] { flex: none; }
+.pets-row-main { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.pets-row-main strong { font-weight: 500; }
+.pets-row-main .rar { margin-left: 4px; }
+.pets-by { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-3); min-width: 0; }
+.pets-by .avatar { width: 18px; height: 18px; }
+.pets-reason { font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
+.pets-row-side { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: none; font-size: 12px; color: var(--ink-3); text-align: right; }
+.pets-row-acts { display: flex; align-items: center; gap: 6px; flex: none; }
+.pets-ok { color: var(--live); }
+.pets-bad { color: var(--held); }
+@media (max-width: 820px) {
+  .pets-row { flex-wrap: wrap; row-gap: 8px; }
+  .pets-row-main { flex-basis: calc(100% - 96px); }
+  .pets-by { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pets-row-side { flex: 1; flex-direction: column; align-items: flex-start; padding-left: 46px; text-align: left; }
+  .pets-row-acts { margin-left: auto; }
+}
 @media (max-width: 560px) {
+  .pets-tabs { gap: 14px; }
+  .pets-pop > summary .pets-pop-label { display: none; }
+  .pets-pop > summary { padding: 0 10px; }
   .gv { flex-wrap: wrap; }
   .gv .gv-side { flex-basis: 100%; flex-direction: row; justify-content: space-between; align-items: center; padding-left: 46px; text-align: left; }
   .gv-note, .gv-more { margin-left: 0; }
@@ -158,13 +188,8 @@ pub fn expiry(at: Option<i64>) -> (String, bool) {
     }
 }
 
-pub fn avatar(ctx: &Ctx, user: u64) -> String {
-    let hash = ctx.cache.user(Id::new(user)).and_then(|u| u.avatar.map(|a| a.to_string()));
-    bot_core::discord::avatar_url(user, hash.as_deref())
-}
-
 pub fn person(ctx: &Ctx, guild: u64, user: u64) -> Markup {
-    ui::person(&ctx.display_name(guild, user), &avatar(ctx, user), None)
+    ui::person(&ctx.display_name(guild, user), &ctx.member_avatar(guild, user), None)
 }
 
 #[cfg(test)]

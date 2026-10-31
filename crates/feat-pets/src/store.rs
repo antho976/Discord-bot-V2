@@ -416,11 +416,9 @@ pub fn pending_for(ctx: &Ctx, guild: u64, user: u64) -> Result<Vec<Pending>> {
     Ok(pending(ctx, guild)?.into_iter().filter(|p| p.user_id == user).collect())
 }
 
-/// Units waiting for review (a submission of 3 counts 3).
-pub fn pending_units(ctx: &Ctx, guild: u64) -> Result<i64> {
-    ctx.db.with(|c| {
-        c.query_row("SELECT COALESCE(SUM(quantity), 0) FROM pets_pending WHERE guild_id = ?1 AND status = 'pending'", [guild as i64], |r| r.get(0))
-    })
+/// Submissions waiting for review. A submission of 3 counts once: it's one decision.
+pub fn pending_count(ctx: &Ctx, guild: u64) -> Result<i64> {
+    ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM pets_pending WHERE guild_id = ?1 AND status = 'pending'", [guild as i64], |r| r.get(0)))
 }
 
 pub fn reviewed(ctx: &Ctx, guild: u64, limit: i64) -> Result<Vec<Pending>> {
@@ -841,7 +839,7 @@ mod flow {
 
         let a = submit(&ctx, g, "king-doot", 7, 3).unwrap();
         let b = submit(&ctx, g, "slime", 8, 1).unwrap();
-        assert_eq!(pending_units(&ctx, g).unwrap(), 4);
+        assert_eq!(pending_count(&ctx, g).unwrap(), 2);
         let done = review(&ctx, g, &[a, a], true, "Antho", "").unwrap();
         assert_eq!(done.len(), 1, "a submission is reviewed once");
         review(&ctx, g, &[b], false, "Antho", "dupe").unwrap();
