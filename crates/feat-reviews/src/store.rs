@@ -262,13 +262,15 @@ pub fn twitch_settled(ctx: &Ctx, guild: u64, redemption: &str) -> Result<()> {
 }
 
 /// The open request this one repeats, if any. Two similar names from two different known
-/// members are two requests (two people titling their posts "Account review").
+/// members, or two different Twitch viewers, are two requests (two people titling their posts
+/// "Account review", or two viewers typing "main").
 pub fn duplicate_of<'a>(open: &'a [Review], r: &Request) -> Option<&'a Review> {
     open.iter().find(|o| {
         let same_member = o.user_id.is_some() && o.user_id == r.user_id;
         let same_viewer = matches!((&o.twitch_user, &r.twitch_user), (Some(a), Some(b)) if a.eq_ignore_ascii_case(b));
         let other_member = matches!((o.user_id, r.user_id), (Some(a), Some(b)) if a != b);
-        same_member || same_viewer || (!other_member && similarity(&o.name, &r.name) >= SAME_NAME)
+        let other_viewer = matches!((&o.twitch_user, &r.twitch_user), (Some(a), Some(b)) if !a.eq_ignore_ascii_case(b));
+        same_member || same_viewer || (!other_member && !other_viewer && similarity(&o.name, &r.name) >= SAME_NAME)
     })
 }
 
@@ -310,16 +312,33 @@ pub fn mark_pinged(ctx: &Ctx, guild: u64, id: i64) -> Result<()> {
     Ok(())
 }
 
-/// Close a request as `done` or `removed`, or open it again with `open`.
-pub fn set_status(ctx: &Ctx, guild: u64, id: i64, status: &str, by: &str) -> Result<()> {
-    ctx.db.with(|c| {
-        if status == "open" {
-            c.execute("UPDATE reviews SET status = 'open', closed_at = NULL, closed_by = NULL WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id])
-        } else {
-            c.execute("UPDATE reviews SET status = ?3, closed_at = ?4, closed_by = ?5 WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id, status, now_ms(), by])
+/// Move a request to `status` if it may go there from where it is, and say whether it moved,
+/// so a second click or a stale page does nothing. `done` and `removed` come from `open`.
+/// `open` comes from `done`, or from `removed` when it had no channel points (those were
+/// refunded). Back in the queue, a fulfil Twitch hasn't taken yet is dropped.
+pub fn claim(ctx: &Ctx, guild: u64, id: i64, status: &str, by: &str) -> Result<bool> {
+    let mut conn = ctx.db.lock();
+    let tx = conn.transaction()?;
+    let moved = match status {
+        "done" | "removed" => tx.execute(
+            "UPDATE reviews SET status = ?3, closed_at = ?4, closed_by = ?5 WHERE guild_id = ?1 AND id = ?2 AND status = 'open'",
+            params![guild as i64, id, status, now_ms(), by],
+        )?,
+        "open" => {
+            let n = tx.execute(
+                "UPDATE reviews SET status = 'open', closed_at = NULL, closed_by = NULL
+                 WHERE guild_id = ?1 AND id = ?2 AND (status = 'done' OR (status = 'removed' AND redemption_id IS NULL))",
+                params![guild as i64, id],
+            )?;
+            if n > 0 {
+                tx.execute("UPDATE reviews_sources SET twitch = NULL, twitch_pending = 0 WHERE guild_id = ?1 AND review_id = ?2 AND twitch_pending = 1", params![guild as i64, id])?;
+            }
+            n
         }
-    })?;
-    Ok(())
+        _ => 0,
+    };
+    tx.commit()?;
+    Ok(moved > 0)
 }
 
 /// What a viewer typed when redeeming: who the review is for, and anything after it.
@@ -394,6 +413,10 @@ mod tests {
         // A similar name from someone else is their own request.
         assert_eq!(duplicate_of(&open, &req("AnthoMainn", Some(11), None)), None);
         assert_eq!(duplicate_of(&open, &req("Noor", Some(12), None)), None);
+        // The same for two viewers on Twitch.
+        assert_eq!(duplicate_of(&open, &req("Pavel", None, Some("noor_tv"))), None);
+        // A post and a redemption with the same name are one request.
+        assert_eq!(duplicate_of(&open, &req("Pavel", Some(13), None)).map(|r| r.id), Some(2));
     }
 
     #[test]
@@ -421,7 +444,7 @@ mod tests {
         let r = get(&ctx, 1, id).unwrap().unwrap();
         assert_eq!((r.redeemed_at, r.redemption_id.as_deref(), r.reward_id.as_deref(), r.thread_id), (Some(5), Some("rd1"), Some("rw"), Some(500)));
         // Removed stays as a marker: neither the thread nor the redemption comes back.
-        set_status(&ctx, 1, id, "removed", "Antho").unwrap();
+        assert!(claim(&ctx, 1, id, "removed", "Antho").unwrap());
         assert_eq!(add(&ctx, 1, &thread).unwrap(), Added::Known);
         assert_eq!(add(&ctx, 1, &points).unwrap(), Added::Known);
         assert!(open(&ctx, 1).unwrap().is_empty());
@@ -435,7 +458,7 @@ mod tests {
         let post = |thread: u64| Request { name: "AnthoMain".into(), user_id: Some(10), thread_id: Some(thread), requested_at: 1, source: "thread", ..Request::default() };
         let Added::New(id) = add(&ctx, 1, &post(500)).unwrap() else { panic!("first post is new") };
         assert_eq!(add(&ctx, 1, &post(501)).unwrap(), Added::Merged(id));
-        set_status(&ctx, 1, id, "done", "Antho").unwrap();
+        assert!(claim(&ctx, 1, id, "done", "Antho").unwrap());
         assert_eq!(add(&ctx, 1, &post(501)).unwrap(), Added::Known);
         assert!(open(&ctx, 1).unwrap().is_empty());
         // A second redemption from the same viewer merges, is known on the next sync, and is
@@ -454,6 +477,27 @@ mod tests {
         twitch_settled(&ctx, 1, "rd2").unwrap();
         assert!(set_twitch(&ctx, 1, id, "FULFILLED").unwrap().is_empty());
         assert!(pending_twitch(&ctx, 1).unwrap().is_empty());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn each_action_claims_its_request_once() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        let post = Request { name: "Teo".into(), user_id: Some(10), thread_id: Some(500), requested_at: 1, source: "thread", ..Request::default() };
+        let Added::New(id) = add(&ctx, 1, &post).unwrap() else { panic!("new") };
+        assert!(claim(&ctx, 1, id, "done", "Antho").unwrap());
+        // A double click completes once, and a done request can't be removed.
+        assert!(!claim(&ctx, 1, id, "done", "Antho").unwrap());
+        assert!(!claim(&ctx, 1, id, "removed", "Antho").unwrap());
+        assert!(claim(&ctx, 1, id, "open", "Antho").unwrap());
+        assert!(!claim(&ctx, 1, id, "open", "Antho").unwrap());
+        // A removed post can come back; a removed redemption was refunded and can't.
+        assert!(claim(&ctx, 1, id, "removed", "Antho").unwrap());
+        assert!(claim(&ctx, 1, id, "open", "Antho").unwrap());
+        let points = Request { name: "Moonfrost".into(), twitch_user: Some("pavel_tv".into()), reward_id: Some("rw".into()), redemption_id: Some("rd1".into()), redeemed_at: Some(5), requested_at: 5, source: "twitch", ..Request::default() };
+        let Added::New(paid) = add(&ctx, 1, &points).unwrap() else { panic!("new") };
+        assert!(claim(&ctx, 1, paid, "removed", "Antho").unwrap());
+        assert!(!claim(&ctx, 1, paid, "open", "Antho").unwrap());
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]

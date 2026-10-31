@@ -285,7 +285,7 @@ async fn done_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
         style { (PreEscaped(CSS)) }
         (tabs(&page, open.len(), "Done"))
         div.stack.rv-main {
-            p.muted.small { "The last 50 completed or removed. Removed requests stay here so their post or redemption isn't added again." }
+            p.muted.small { "The last 50 completed or removed. Removed requests stay here so their post or redemption isn't added again. A removed one with channel points was refunded, so it can't go back to the queue." }
             @if closed.is_empty() {
                 (ui::empty(Icon::Review, "Nothing finished yet", "Requests you complete or remove from the queue are listed here."))
             } @else {
@@ -313,7 +313,8 @@ async fn done_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
                                 }
                                 @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
                             }
-                            @if page.can_edit() {
+                            // A removed redemption was refunded, so it doesn't go back.
+                            @if page.can_edit() && (r.status == "done" || r.redemption_id.is_none()) {
                                 div.rv-acts { (ui::action_button(&page.path(&format!("reviews/{}/reopen", r.id)), "Back to queue", Tone::Muted, false)) }
                             }
                         }
@@ -366,15 +367,18 @@ async fn ping(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, 
 async fn complete(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let r = find(&ctx, guild, id).await?;
+    // Claim it first, so a second click doesn't post the closing message twice.
+    if !store::claim(&ctx, guild, id, "done", &page.user.name)? {
+        return Ok(Redirect::to(&page.path("reviews")).into_response());
+    }
     let message = form.text("message");
     if let Some(thread) = r.thread_id
         && !message.trim().is_empty()
+        && let Err(e) = post_in(&ctx, thread, &fill(message.trim(), &r), r.user_id).await
     {
-        post_in(&ctx, thread, &fill(message.trim(), &r), r.user_id)
-            .await
-            .map_err(|e| WebError::Bad(format!("The closing message didn't post: {e} Clear the message to complete without it.")))?;
+        store::claim(&ctx, guild, id, "open", &page.user.name)?;
+        return Err(WebError::Bad(format!("The closing message didn't post: {e} Clear the message to complete without it.")));
     }
-    store::set_status(&ctx, guild, id, "done", &page.user.name)?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Completed {}'s account review", r.name));
     let redemptions = store::set_twitch(&ctx, guild, id, "FULFILLED")?;
     twitch::settle(&ctx, guild, &redemptions).await;
@@ -384,7 +388,9 @@ async fn complete(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u
 async fn remove(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let r = find(&ctx, guild, id).await?;
-    store::set_status(&ctx, guild, id, "removed", &page.user.name)?;
+    if !store::claim(&ctx, guild, id, "removed", &page.user.name)? {
+        return Ok(Redirect::to(&page.path("reviews")).into_response());
+    }
     ctx.audit(&page.user, Some(guild), KEY, format!("Removed {} from the review queue", r.name));
     // Cancelling gives the viewer their points back and takes it off Twitch's queue.
     let redemptions = store::set_twitch(&ctx, guild, id, "CANCELED")?;
@@ -395,7 +401,9 @@ async fn remove(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64
 async fn reopen(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let r = find(&ctx, guild, id).await?;
-    store::set_status(&ctx, guild, id, "open", &page.user.name)?;
+    if !store::claim(&ctx, guild, id, "open", &page.user.name)? {
+        return Ok(Redirect::to(&page.path("reviews/done")).into_response());
+    }
     ctx.audit(&page.user, Some(guild), KEY, format!("Put {} back in the review queue", r.name));
     Ok(saved(&page.path("reviews/done")))
 }
