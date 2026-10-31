@@ -145,8 +145,10 @@ fn row(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, t: &Tally, edit: bool
             }
             div.cm-sg-side {
                 (ui::badge(state_label(r.status), tone(r.status)))
-                @if edit { (review_pop(page, r)) }
-                @if !edit { (open_link(page, r.channel_id, r.message_id, "Open in Discord")) }
+                div.cm-actions {
+                    (open_link(page, r.channel_id, r.message_id, "Open in Discord"))
+                    @if edit { (review_pop(page, r)) }
+                }
             }
         }
     }

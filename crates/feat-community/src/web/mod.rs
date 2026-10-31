@@ -206,6 +206,7 @@ const STYLE: &str = r#"
 .cm-review .pop-body { width: 280px; }
 .cm-review .stack { gap: 8px; }
 .cm-sg-side .badge { height: 22px; }
+.cm-sg-side .cm-actions { flex-wrap: nowrap; gap: 2px; }
 
 @media (max-width: 560px) {
   .cm-pop > summary .cm-label { display: none; }
