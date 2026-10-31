@@ -243,6 +243,25 @@ pub fn top_inviters(ctx: &Ctx, guild: u64, since: i64, limit: i64) -> Result<Vec
     })
 }
 
+/// Joins since `since`, newest first. Each comes with whether the member had joined before, so
+/// a rejoin can read as "came back".
+pub fn joins_since(ctx: &Ctx, guild: u64, since: i64, limit: i64) -> Result<Vec<(Join, bool)>> {
+    ctx.db.with(|c| {
+        let mut s = c.prepare_cached(
+            "SELECT j.user_id, j.inviter_id, j.code, j.joined_at,
+                    EXISTS (SELECT 1 FROM welcome_joins p WHERE p.guild_id = j.guild_id AND p.user_id = j.user_id AND p.joined_at < j.joined_at)
+             FROM welcome_joins j WHERE j.guild_id = ?1 AND j.joined_at >= ?2
+             ORDER BY j.joined_at DESC, j.id DESC LIMIT ?3",
+        )?;
+        s
+            .query_map(params![guild as i64, since, limit], |r| {
+                let join = Join { user: r.get::<_, i64>(0)? as u64, inviter: r.get::<_, Option<i64>>(1)?.map(|i| i as u64), code: r.get(2)?, at: r.get(3)? };
+                Ok((join, r.get::<_, bool>(4)?))
+            })?
+            .collect()
+    })
+}
+
 /// `(joins since `since`, of those with a known invite)`.
 pub fn join_counts(ctx: &Ctx, guild: u64, since: i64) -> Result<(i64, i64)> {
     ctx.db.with(|c| {

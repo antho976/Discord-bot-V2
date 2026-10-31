@@ -27,6 +27,8 @@ pub struct Ticket {
     pub number: i64,
     pub opener_id: u64,
     pub subject: String,
+    /// What the member wrote when opening it.
+    pub details: String,
     pub status: String,
     pub thread_id: u64,
     pub opened_at: i64,
@@ -41,7 +43,7 @@ impl Ticket {
     }
 }
 
-const COLUMNS: &str = "number, opener_id, subject, status, thread_id, opened_at, closed_at, closed_by, close_reason";
+const COLUMNS: &str = "number, opener_id, subject, status, thread_id, opened_at, closed_at, closed_by, close_reason, details";
 
 fn from_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<Ticket> {
     Ok(Ticket {
@@ -54,6 +56,7 @@ fn from_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<Ticke
         closed_at: r.get(6)?,
         closed_by: r.get::<_, Option<i64>>(7)?.map(|u| u as u64),
         reason: r.get(8)?,
+        details: r.get(9)?,
     })
 }
 
@@ -129,19 +132,32 @@ pub fn mark_closed(conn: &Connection, guild: u64, number: i64, by: Option<u64>, 
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Filter {
-    All,
     Open,
     Closed,
 }
 
 pub fn list(conn: &Connection, guild: u64, filter: Filter, limit: i64) -> bot_core::rusqlite::Result<Vec<Ticket>> {
     let clause = match filter {
-        Filter::All => "",
         Filter::Open => "AND status = 'open'",
         Filter::Closed => "AND status != 'open'",
     };
     let mut stmt = conn.prepare(&format!("SELECT {COLUMNS} FROM tickets WHERE guild_id = ?1 {clause} ORDER BY number DESC LIMIT ?2"))?;
     stmt.query_map(params![guild as i64, limit], from_row)?.collect()
+}
+
+/// Tickets that have closed, the most recent close first.
+pub fn recently_closed(conn: &Connection, guild: u64, limit: i64) -> bot_core::rusqlite::Result<Vec<Ticket>> {
+    let mut stmt = conn.prepare(&format!("SELECT {COLUMNS} FROM tickets WHERE guild_id = ?1 AND status != 'open' ORDER BY closed_at DESC LIMIT ?2"))?;
+    stmt.query_map(params![guild as i64, limit], from_row)?.collect()
+}
+
+/// Who closed the most tickets since `since`: `(member, closed)`, busiest first.
+pub fn closers(conn: &Connection, guild: u64, since: i64, limit: i64) -> bot_core::rusqlite::Result<Vec<(u64, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT closed_by, COUNT(*) FROM tickets WHERE guild_id = ?1 AND closed_by IS NOT NULL AND closed_at >= ?2
+         GROUP BY closed_by ORDER BY 2 DESC, 1 LIMIT ?3",
+    )?;
+    stmt.query_map(params![guild as i64, since, limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
 }
 
 /// Open tickets opened before `before`, oldest first: the ones nobody has come back to.
@@ -511,6 +527,18 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
     let now = now_ms();
     let (m, h) = (60_000, 3_600_000);
     // (opened ago, status, closed after, closed by member index, reason, subject)
+    // What each ticket's opener wrote, in the same order as the rows.
+    let details = [
+        "I got the Idleon role this morning but #pets still doesn't show up.",
+        "I hit level 20 and the Regulars role didn't come through.",
+        "Someone keeps posting the same link in #general and #trading, screenshots attached.",
+        "My colour role went grey after the server renamed the role.",
+        "I was banned for two days last month. I'd like to talk about coming back.",
+        "Where do I find the link button for Twitch?",
+        "I won the Frog pet last Friday and haven't been sent it yet.",
+        "Which pets count toward the collection?",
+        "The bot didn't post alerts during the stream last night.",
+    ];
     let rows: &[(i64, &str, i64, usize, &str, &str)] = &[
         (20 * m, OPEN, 0, 0, "", "Can't see the pets channel"),
         (3 * h, OPEN, 0, 0, "", "Role didn't update after my level-up"),
@@ -532,12 +560,13 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
         ctx.db.with(|c| {
             c.execute(
                 "INSERT OR REPLACE INTO tickets (guild_id, number, opener_id, subject, details, status, thread_id, opened_at, closed_at, closed_by, close_reason)
-                 VALUES (?1, ?2, ?3, ?4, '', ?5, ?6, ?7, ?8, ?9, ?10)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     guild as i64,
                     number,
                     opener as i64,
                     subject,
+                    details[i.min(details.len() - 1)],
                     status,
                     (guild + 5000 + number as u64) as i64,
                     opened,

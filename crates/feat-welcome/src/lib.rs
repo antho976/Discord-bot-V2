@@ -344,12 +344,20 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     let now = bot_core::now_ms();
     let day = 86_400_000;
     let codes = [("hX9d2Q", 0usize), ("Lm3vTz", 1), ("q8WnRb", 0), ("vanity", 99)];
-    let hours = [1, 4, 31, 52, 70, 120, 200, 300, 410, 520, 700, 900, 1500, 2100, 2600, 3300];
+    // Minutes ago, newest first: the first eight fall in the last few hours, so they count as joined today.
+    let minutes = [12, 40, 66, 110, 180, 240, 300, 420, 31 * 60, 52 * 60, 70 * 60, 120 * 60, 200 * 60, 300 * 60, 410 * 60, 520 * 60];
+    // Eight distinct members joined today. Teo joined before, so today's join from him reads as a return.
+    let people = [0usize, 1, 2, 3, 4, 5, 6, 7, 3, 8, 9, 8, 9, 8, 9, 8];
+    // The first eight joins happened today: if the server's day has only just started, they're
+    // spread over its first hours instead of falling before midnight.
+    let start_of_day = now - now.rem_euclid(day);
     ctx.db.with(|c| {
-        for (i, h) in hours.iter().enumerate() {
-            let user = MEMBERS[(i + 3) % MEMBERS.len()].0;
+        for (i, m) in minutes.iter().enumerate() {
+            let user = MEMBERS[people[i]].0;
             let (code, who) = codes[i % codes.len()];
-            let inviter = MEMBERS.get(who).map(|m| m.0);
+            // Nobody invites themselves.
+            let inviter = MEMBERS.get(who).map(|m| m.0).filter(|u| *u != user);
+            let at = if i < 8 { (now - m * 60_000).max(start_of_day + (i as i64 + 1) * 60_000) } else { now - m * 60_000 };
             // The second join came in through a vanity link, so the feed shows both forms.
             let known = inviter.is_some() && i % 7 != 5 && i != 1;
             c.execute(
@@ -359,7 +367,7 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
                     user as i64,
                     if known { inviter.map(|u| u as i64) } else { None },
                     if known { Some(code) } else { None },
-                    now - h * 3_600_000
+                    at
                 ],
             )?;
         }

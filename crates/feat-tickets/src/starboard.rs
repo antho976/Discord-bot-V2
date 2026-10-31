@@ -136,17 +136,33 @@ pub fn top(conn: &Connection, guild: u64, limit: i64) -> bot_core::rusqlite::Res
     stmt.query_map(params![guild as i64, limit], from_row)?.collect()
 }
 
+/// The newest posts first.
+pub fn recent(conn: &Connection, guild: u64, limit: i64) -> bot_core::rusqlite::Result<Vec<Post>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {COLUMNS} FROM starboard_posts WHERE guild_id = ?1 AND removed = 0 ORDER BY created_at DESC LIMIT ?2"
+    ))?;
+    stmt.query_map(params![guild as i64, limit], from_row)?.collect()
+}
+
+/// Members with the most posts on the starboard: `(author, posts)`.
+pub fn top_authors(conn: &Connection, guild: u64, limit: i64) -> bot_core::rusqlite::Result<Vec<(u64, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT author_id, COUNT(*) FROM starboard_posts WHERE guild_id = ?1 AND removed = 0
+         GROUP BY author_id ORDER BY 2 DESC, 1 LIMIT ?2",
+    )?;
+    stmt.query_map(params![guild as i64, limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
+}
+
 pub struct Stats {
     pub posts: i64,
     pub this_week: i64,
-    pub most_stars: i64,
 }
 
 pub fn stats(conn: &Connection, guild: u64, now: i64) -> bot_core::rusqlite::Result<Stats> {
     conn.query_row(
-        "SELECT COUNT(*), COALESCE(SUM(created_at > ?2), 0), COALESCE(MAX(stars), 0) FROM starboard_posts WHERE guild_id = ?1 AND removed = 0",
+        "SELECT COUNT(*), COALESCE(SUM(created_at > ?2), 0) FROM starboard_posts WHERE guild_id = ?1 AND removed = 0",
         params![guild as i64, now - 7 * 86_400_000],
-        |r| Ok(Stats { posts: r.get(0)?, this_week: r.get(1)?, most_stars: r.get(2)? }),
+        |r| Ok(Stats { posts: r.get(0)?, this_week: r.get(1)? }),
     )
 }
 
@@ -425,7 +441,7 @@ mod tests {
         assert!(get(&c, 1, 11).unwrap().unwrap().removed);
         assert_eq!(top(&c, 1, 10).unwrap().len(), 2);
         let s = stats(&c, 1, 1000).unwrap();
-        assert_eq!((s.posts, s.most_stars), (2, 6));
+        assert_eq!(s.posts, 2);
 
         forget(&c, 1, 12).unwrap();
         assert!(get(&c, 1, 12).unwrap().is_none());

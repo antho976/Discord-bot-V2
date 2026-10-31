@@ -285,6 +285,17 @@ pub fn owned_counts(ctx: &Ctx, guild: u64) -> Result<HashMap<String, i64>> {
     })
 }
 
+/// Companions whose first copy joined the collection since `since`.
+pub fn first_added_since(ctx: &Ctx, guild: u64, since: i64) -> Result<i64> {
+    ctx.db.with(|c| {
+        c.query_row(
+            "SELECT COUNT(*) FROM (SELECT pet_id FROM pets_owned WHERE guild_id = ?1 GROUP BY pet_id HAVING MIN(added_at) >= ?2)",
+            [guild as i64, since],
+            |r| r.get(0),
+        )
+    })
+}
+
 pub fn owned_total(ctx: &Ctx, guild: u64) -> Result<i64> {
     ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM pets_owned WHERE guild_id = ?1", [guild as i64], |r| r.get(0)))
 }
