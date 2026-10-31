@@ -176,7 +176,7 @@ impl Feature for Guard {
             name: "Scam protection",
             description: "Catches scam messages and anyone posting in the honeypot channel.",
             group: Group::Safety,
-            nav: vec![NavItem { label: "Scam protection", path: KEY, icon: Icon::Shield }],
+            nav: vec![NavItem { label: "Scam protection", path: KEY, icon: Icon::Shield, about: "Catches scam messages and anyone posting in the honeypot channel." }],
         }
     }
 

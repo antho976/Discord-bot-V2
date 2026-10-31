@@ -117,7 +117,7 @@ impl Feature for Welcome {
             name: "Welcome",
             description: "Welcome and goodbye messages with a card, auto-roles, roles back on rejoin, invite tracking.",
             group: Group::Members,
-            nav: vec![NavItem { label: "Welcome", path: KEY, icon: Icon::Wave }],
+            nav: vec![NavItem { label: "Welcome", path: KEY, icon: Icon::Wave, about: "Greets new members and gives roles back when someone returns." }],
         }
     }
 

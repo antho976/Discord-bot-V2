@@ -61,7 +61,7 @@ impl Feature for Pets {
             name: "Pets",
             description: "Idleon companion collection, pet giveaways and public pet pages.",
             group: Group::Pets,
-            nav: vec![NavItem { label: "Pets", path: KEY, icon: Icon::Paw }],
+            nav: vec![NavItem { label: "Pets", path: KEY, icon: Icon::Paw, about: "The server's Idleon companion collection." }],
         }
     }
 

@@ -125,7 +125,7 @@ impl Feature for Alerts {
             name: "Stream alerts",
             description: "Twitch live alerts, stream schedule reminders and YouTube uploads.",
             group: Group::Streams,
-            nav: vec![NavItem { label: "Stream alerts", path: KEY, icon: Icon::Live }],
+            nav: vec![NavItem { label: "Stream alerts", path: KEY, icon: Icon::Live, about: "Twitch and YouTube posts, and the stream schedule." }],
         }
     }
 

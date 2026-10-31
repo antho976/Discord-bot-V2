@@ -109,8 +109,8 @@ impl Feature for Tickets {
             description: "Support tickets as private threads, and a starboard for popular messages.",
             group: Group::Community,
             nav: vec![
-                NavItem { label: "Tickets", path: "tickets", icon: Icon::Ticket },
-                NavItem { label: "Starboard", path: "tickets/starboard", icon: Icon::Star },
+                NavItem { label: "Tickets", path: "tickets", icon: Icon::Ticket, about: "Private threads with staff, opened from the panel." },
+                NavItem { label: "Starboard", path: "tickets/starboard", icon: Icon::Star, about: "Popular messages, reposted with their stars." },
             ],
         }
     }

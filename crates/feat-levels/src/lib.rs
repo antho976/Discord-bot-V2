@@ -133,7 +133,7 @@ impl Feature for Levels {
             name: "XP and levels",
             description: "XP from messages, voice and reactions, level-up messages and role rewards.",
             group: Group::Members,
-            nav: vec![NavItem { label: "Levels", path: "levels", icon: Icon::Trophy }],
+            nav: vec![NavItem { label: "Levels", path: "levels", icon: Icon::Trophy, about: "XP from messages, voice and reactions, and the roles it earns." }],
         }
     }
 

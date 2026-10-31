@@ -83,6 +83,8 @@ pub struct NavItem {
     pub label: &'static str,
     pub path: &'static str,
     pub icon: Icon,
+    /// One line on what the page does, shown under its title.
+    pub about: &'static str,
 }
 
 #[derive(Debug, Clone)]

@@ -61,7 +61,7 @@ impl Feature for Embeds {
             name: "Embed builder",
             description: "Write embeds on the dashboard and send or edit them in a channel.",
             group: Group::Tools,
-            nav: vec![NavItem { label: "Embed builder", path: KEY, icon: Icon::Brush }],
+            nav: vec![NavItem { label: "Embed builder", path: KEY, icon: Icon::Brush, about: "Write a post here, see it as Discord will, and send it or update one you sent." }],
         }
     }
 

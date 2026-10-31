@@ -56,7 +56,7 @@ impl Feature for Connect {
             name: "App approvals",
             description: "Lets Relay, Tally, Avex and your PCs connect after an approver allows them in Discord.",
             group: Group::Tools,
-            nav: vec![NavItem { label: "App approvals", path: KEY, icon: Icon::Plug }],
+            nav: vec![NavItem { label: "App approvals", path: KEY, icon: Icon::Plug, about: "Relay, Tally, Avex and your PCs ask here before they connect." }],
         }
     }
 

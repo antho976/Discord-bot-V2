@@ -164,8 +164,9 @@ fn identity(ctx: &Ctx, page: &Page, title: &str) -> (Icon, Option<&'static str>)
         key => match ctx.feature(key) {
             Some(f) => {
                 let meta = f.meta();
-                let ic = meta.nav.iter().find(|n| n.label == title).or(meta.nav.first()).map(|n| n.icon).unwrap_or(Icon::Toggle);
-                (ic, Some(meta.description))
+                let nav = meta.nav.iter().find(|n| n.label == title).or(meta.nav.first());
+                let ic = nav.map(|n| n.icon).unwrap_or(Icon::Toggle);
+                (ic, Some(nav.map(|n| n.about).filter(|a| !a.is_empty()).unwrap_or(meta.description)))
             }
             None => (Icon::Home, None),
         },

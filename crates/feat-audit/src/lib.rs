@@ -239,7 +239,7 @@ impl Feature for Audit {
             name: "Audit log",
             description: "Logs edits, deletes, joins, leaves, role and nickname changes, bans and timeouts to a channel.",
             group: Group::Safety,
-            nav: vec![NavItem { label: "Audit log", path: KEY, icon: Icon::Log }],
+            nav: vec![NavItem { label: "Audit log", path: KEY, icon: Icon::Log, about: "Edits, deletes, joins, roles and bans, also posted to a channel." }],
         }
     }
 
