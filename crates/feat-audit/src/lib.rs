@@ -988,6 +988,24 @@ mod tests {
         assert_eq!(find(store::Search { text: "zz".into(), kinds: vec![Kind::Nickname], ..Default::default() }), ["pavel", "émile"]);
     }
 
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn search_looks_up_moderators_by_index() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![Arc::new(Audit::default())]).unwrap();
+        let f = store::Filter { group: store::Group::All, search: Some(store::Search { text: "nothing".into(), ..Default::default() }) };
+        let (clause, args) = store::where_clause(1, &f);
+        let plan: Vec<String> = ctx
+            .db
+            .with(|c| {
+                let mut st = c.prepare(&format!("EXPLAIN QUERY PLAN SELECT COUNT(*) FROM audit_events e WHERE {clause}"))?;
+                st.query_map(bot_core::rusqlite::params_from_iter(args.iter().map(|a| a.as_ref())), |r| r.get::<_, String>(3))?.collect()
+            })
+            .unwrap();
+        // The moderator lookup is a range on the time index, never a scan of every action.
+        assert!(plan.iter().any(|p| p.contains("audit_mod_actions") && p.contains("audit_mod_actions_by_time") && p.contains("at>")), "{plan:#?}");
+        assert!(!plan.iter().any(|p| p.starts_with("SCAN a") || p.contains("SCAN audit_mod_actions")), "{plan:#?}");
+    }
+
     fn embed_without_ctx(title: &str) -> Embed {
         EmbedBuilder::new().title(title).build()
     }

@@ -112,8 +112,12 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
 - Known limit: Discord merges repeated message deletions by one moderator into one audit entry,
   so an author deleting their own message in the same channel within a minute is also shown as
   deleted by that moderator.
-- Waiting on core PR #3: point guard, audit and connect at `text::made_ago`,
-  `discord::snowflake_ms` and `ui::status` once it is on main.
+- Waiting on core PR #3, for the morning once it is on main:
+  - [ ] Point guard, audit and connect at `text::made_ago`, `discord::snowflake_ms` and
+        `ui::status`.
+  - [ ] With #3, `display_name` gives "Unknown member" for someone not cached. Audit and guard
+        store that name in rows that outlive the cache (`audit_events.user_name`,
+        `guard_catches.user_name`, `acted_by_name`): use the name the event carries instead.
 
 ### E: teal-marten
 `crates/feat-community` (giveaways, polls, suggestions), `crates/feat-pets`.

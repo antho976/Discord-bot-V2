@@ -274,14 +274,15 @@ const SEARCH_SQL: &str = "
         OR EXISTS (SELECT 1 FROM json_each(e.summary, '$.removed') j WHERE j.type = 'object' AND instr(lower(json_extract(j.value, '$.name')), ?Q) > 0)))
     -- Plain summaries, including edits, nicknames and role changes stored as text by older versions.
     OR ((e.kind NOT IN ('message_edit', 'nickname', 'roles') OR NOT json_valid(e.summary)) AND instr(lower(e.summary), ?Q) > 0)
+    -- A range on `at`, not abs(), so the lookup is an index range rather than a scan per event.
     OR EXISTS (SELECT 1 FROM audit_mod_actions a
-               WHERE a.guild_id = e.guild_id AND a.target_id = e.user_id AND abs(a.at - e.at) < 60000
+               WHERE a.guild_id = e.guild_id AND a.target_id = e.user_id AND a.at BETWEEN e.at - 59999 AND e.at + 59999
                  AND a.action = CASE e.kind WHEN 'ban' THEN 'ban' WHEN 'unban' THEN 'unban' WHEN 'timeout' THEN 'timeout'
                      WHEN 'timeout_end' THEN 'untimeout' WHEN 'message_delete' THEN 'delete' WHEN 'roles' THEN 'roles'
                      WHEN 'leave' THEN 'kick' END
                  AND (a.moderator_id IN ({moderators}) OR a.moderator_id = ?N OR instr(lower(COALESCE(a.reason, '')), ?Q) > 0))";
 
-fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
+pub(crate) fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
     let mut sql = "e.guild_id = ?1".to_owned();
     let mut args: Vec<Box<dyn ToSql>> = vec![Box::new(guild as i64)];
     let kinds = f.group.kinds();
