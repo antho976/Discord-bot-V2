@@ -21,6 +21,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/levels/settings", get(settings_page).post(save_settings))
         .route("/g/{guild}/levels/rewards", get(rewards_page).post(add_reward))
         .route("/g/{guild}/levels/rewards/{level}/delete", post(delete_reward))
+        .route("/g/{guild}/levels/rewards/{level}/edit", post(edit_reward))
         .route("/g/{guild}/levels/members", get(|Path(guild): Path<u64>| async move { Redirect::to(&format!("/g/{guild}/levels")) }))
         .route("/g/{guild}/levels/members/{user}", post(set_member_xp))
         .route("/g/{guild}/levels/import", get(import_page).post(import_upload).layer(DefaultBodyLimit::max(64 * 1024 * 1024)))
@@ -85,7 +86,18 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
 }
 
 /// Each place keeps its spot on the podium even when fewer than three members have XP.
-const CSS: &str = ".podium .step.p1 { grid-column: 2; grid-row: 1; } .podium .step.p2 { grid-column: 1; grid-row: 1; } .podium .step.p3 { grid-column: 3; grid-row: 1; }";
+const CSS: &str = "
+.podium .step.p1 { grid-column: 2; grid-row: 1; } .podium .step.p2 { grid-column: 1; grid-row: 1; } .podium .step.p3 { grid-column: 3; grid-row: 1; }
+.lv-role { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lv-acts { display: flex; gap: 6px; justify-content: flex-end; }
+.lv-acts .pop-body { width: 240px; right: 0; left: auto; }
+.lv-acts .pop-body .stack { gap: 10px; }
+.lv-name { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+@media (max-width: 560px) {
+  .lv-table th:nth-child(3), .lv-table td:nth-child(3) { display: none; }
+  .lv-acts { flex-direction: column; align-items: flex-end; }
+}
+";
 
 fn role_name(ctx: &Ctx, guild: u64, role: u64) -> String {
     ctx.roles(guild).into_iter().find(|(id, _, _)| *id == role).map(|(_, n, _)| format!("@{n}")).unwrap_or_else(|| "Deleted role".into())
@@ -137,6 +149,60 @@ fn recompute_levels(ctx: &Ctx, guild: u64, s: &Settings) -> bot_core::anyhow::Re
     }
     tx.commit()?;
     Ok(())
+}
+
+/// Why the bot can't give a reward role, or None when it can.
+fn cant_give(ctx: &Ctx, guild: u64, role: u64) -> Option<&'static str> {
+    let Some(r) = ctx.cache.role(Id::new(role)) else { return Some("Deleted role") };
+    if r.managed {
+        return Some("Managed by an integration");
+    }
+    let me = ctx.bot_id().and_then(|bot| ctx.cache.member(Id::new(guild), Id::new(bot)))?;
+    let top = me.roles().iter().filter_map(|id| ctx.cache.role(*id).map(|r| r.position)).max().unwrap_or(0);
+    (r.position >= top).then_some("Above the bot's role")
+}
+
+/// A role's colour for its dot; roles without one get the caption grey.
+fn role_color(color: u32) -> String {
+    if color == 0 { "var(--ink-3)".to_owned() } else { format!("#{color:06x}") }
+}
+
+fn role_options(ctx: &Ctx, guild: u64) -> Vec<(String, String)> {
+    ctx.roles(guild).into_iter().map(|(id, n, _)| (id.to_string(), format!("@{n}"))).collect()
+}
+
+/// Change a reward's level or role where it stands.
+async fn edit_reward(State(ctx): State<Ctx>, user: User, Path((guild, level)): Path<(u64, i64)>, form: FormData) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let new_level = form.i64("level").filter(|l| (1..=500).contains(l)).ok_or_else(|| WebError::Bad("Pick a level from 1 to 500.".into()))?;
+    // Each row's select has its own name, so the page has no duplicate ids.
+    let role = form.role(&ctx, guild, &format!("role-{level}")).ok_or_else(|| WebError::Bad("Pick a role.".into()))?;
+    let old_role = crate::rewards(&ctx, guild)?.into_iter().find(|(l, _)| *l as i64 == level).map(|(_, r)| r).ok_or(WebError::NotFound)?;
+    if role != old_role && !page.user.admin && !ctx.safe_role(guild, role) {
+        return Err(WebError::Bad("That role has moderation or admin permissions, or sits above the bot's role. Only a dashboard admin can make it a reward.".into()));
+    }
+    let moved = {
+        let mut conn = ctx.db.lock();
+        let tx = conn.transaction().map_err(|e| WebError::Internal(e.into()))?;
+        let taken = new_level != level
+            && tx
+                .query_row("SELECT 1 FROM level_rewards WHERE guild_id = ?1 AND level = ?2", params![guild as i64, new_level], |_| Ok(()))
+                .is_ok();
+        if !taken {
+            tx.execute(
+                "UPDATE level_rewards SET level = ?3, role_id = ?4 WHERE guild_id = ?1 AND level = ?2",
+                params![guild as i64, level, new_level, role as i64],
+            )
+            .and_then(|_| tx.commit())
+            .map_err(|e| WebError::Internal(e.into()))?;
+        }
+        !taken
+    };
+    if !moved {
+        return Err(WebError::Bad(format!("Level {new_level} already has a reward. Change or remove that one first.")));
+    }
+    ctx.audit(&page.user, Some(guild), KEY, format!("Changed the level {level} reward to {} at level {new_level}", role_name(&ctx, guild, role)));
+    Ok(saved(&page.path("levels/rewards")))
 }
 
 async fn add_reward(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
@@ -374,30 +440,66 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let rewards = crate::rewards(&ctx, guild)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
+    let roles = ctx.roles(guild);
+    let options = role_options(&ctx, guild);
     let body = html! {
+        style { (PreEscaped(CSS)) }
         (tabs(&page, "Rewards"))
         (ui::section("Reward roles", Some(if s.stack_rewards { "Given when a member reaches the level. Members keep earlier rewards." } else { "Given when a member reaches the level. Members keep only the reward for their highest level." }), html! {
             @if rewards.is_empty() {
                 (ui::empty(Icon::Trophy, "No reward roles", "Add a role below and members get it at that level."))
             } @else {
-                div.table-wrap { table.table {
+                div.table-wrap { table.table.lv-table {
                     thead { tr { th { "Level" } th { "Role" } th.num { "Members" } th {} } }
                     tbody { @for (level, role) in &rewards {
+                        @let known = roles.iter().find(|r| r.0 == *role);
+                        @let problem = cant_give(&ctx, guild, *role);
                         tr {
                             td.num style="text-align:left" { (level) }
-                            td { (role_name(&ctx, guild, *role)) }
+                            td {
+                                span.lv-role {
+                                    span.lv-name {
+                                        span.dot style={ "background:" (known.map(|r| role_color(r.2)).unwrap_or_else(|| "var(--ink-3)".into())) } {}
+                                        (role_name(&ctx, guild, *role))
+                                    }
+                                    @match (known, problem) {
+                                        (None, _) => { (ui::badge("Can't give", Tone::Warn)) },
+                                        (Some(_), Some(why)) => { (ui::badge("Can't give", Tone::Warn)) span.muted.small { (why) } },
+                                        _ => {},
+                                    }
+                                }
+                            }
                             td.num {
                                 (text::num(ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND level >= ?2", params![guild as i64, *level as i64], |r| r.get::<_, i64>(0))).unwrap_or(0)))
                             }
-                            td.actions { @if page.can_edit() { (ui::action_button(&page.path(&format!("levels/rewards/{level}/delete")), "Remove", Tone::Bad, true)) } }
+                            td.actions {
+                                @if page.can_edit() {
+                                    div.lv-acts {
+                                        details.pop {
+                                            summary.btn.small { "Change" }
+                                            div.pop-body {
+                                                form.stack method="post" action=(page.path(&format!("levels/rewards/{level}/edit"))) {
+                                                    input.input.num type="number" name="level" min="1" max="500" value=(level) aria-label="Level" required;
+                                                    (ui::select(&format!("role-{level}"), &options, &role.to_string()))
+                                                    button.btn.primary type="submit" { "Save" }
+                                                }
+                                            }
+                                        }
+                                        (ui::action_button(&page.path(&format!("levels/rewards/{level}/delete")), "Remove", Tone::Bad, true))
+                                    }
+                                }
+                            }
                         }
                     } }
                 } }
+                @if rewards.iter().any(|(_, r)| cant_give(&ctx, guild, *r).is_some()) {
+                    p.muted.small { "Members reaching a level marked Can't give get nothing. Pick another role, or move the bot's role above it in Discord." }
+                }
             }
             @if page.can_edit() {
                 form.inline-form method="post" action=(page.path("levels/rewards")) {
                     input.input.num type="number" name="level" min="1" max="500" placeholder="Level" required style="max-width:110px";
-                    (ui::select("role", &std::iter::once((String::new(), "Pick a role".to_owned())).chain(ctx.roles(guild).into_iter().map(|(id, n, _)| (id.to_string(), format!("@{n}")))).collect::<Vec<_>>(), ""))
+                    (ui::select("role", &std::iter::once((String::new(), "Pick a role".to_owned())).chain(options.iter().cloned()).collect::<Vec<_>>(), ""))
                     button.btn type="submit" { "Add reward" }
                 }
             }
