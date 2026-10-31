@@ -201,6 +201,7 @@ async fn edit_reward(State(ctx): State<Ctx>, user: User, Path((guild, level)): P
     if !moved {
         return Err(WebError::Bad(format!("Level {new_level} already has a reward. Change or remove that one first.")));
     }
+    crate::resync_rewards(&ctx, guild, level.min(new_level) as u32, (role != old_role).then_some(old_role));
     ctx.audit(&page.user, Some(guild), KEY, format!("Changed the level {level} reward to {} at level {new_level}", role_name(&ctx, guild, role)));
     Ok(saved(&page.path("levels/rewards")))
 }
@@ -212,6 +213,8 @@ async fn add_reward(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
     if !page.user.admin && !ctx.safe_role(guild, role) {
         return Err(WebError::Bad("That role has moderation or admin permissions, or sits above the bot's role. Only a dashboard admin can make it a reward.".into()));
     }
+    // Adding at a level that has a reward replaces its role.
+    let replaced = crate::rewards(&ctx, guild)?.into_iter().find(|(l, r)| *l as i64 == level && *r != role).map(|(_, r)| r);
     ctx.db.with(|c| {
         c.execute(
             "INSERT INTO level_rewards (guild_id, level, role_id) VALUES (?1, ?2, ?3)
@@ -219,6 +222,7 @@ async fn add_reward(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
             params![guild as i64, level, role as i64],
         )
     })?;
+    crate::resync_rewards(&ctx, guild, level as u32, replaced);
     ctx.audit(&page.user, Some(guild), KEY, format!("Set the level {level} reward to {}", role_name(&ctx, guild, role)));
     Ok(saved(&page.path("levels/rewards")))
 }
@@ -445,7 +449,11 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Rewards"))
-        (ui::section("Reward roles", Some(if s.stack_rewards { "Given when a member reaches the level. Members keep earlier rewards." } else { "Given when a member reaches the level. Members keep only the reward for their highest level." }), html! {
+        (ui::section("Reward roles", Some(if s.stack_rewards {
+            "Given when a member reaches the level, and to members already past it. Members keep earlier rewards. Removing a reward leaves the role on whoever has it."
+        } else {
+            "Given when a member reaches the level, and to members already past it. Members keep only the reward for their highest level. Removing a reward leaves the role on whoever has it."
+        }), html! {
             @if rewards.is_empty() {
                 (ui::empty(Icon::Trophy, "No reward roles", "Add a role below and members get it at that level."))
             } @else {

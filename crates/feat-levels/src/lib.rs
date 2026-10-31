@@ -570,6 +570,38 @@ pub fn rewards(ctx: &Ctx, guild: u64) -> Result<Vec<(u32, u64)>> {
     })
 }
 
+/// After a reward is added or changed, bring members at or above `from_level` in line now
+/// instead of at their next level change: they get the new role, lose one they no longer
+/// qualify for, and lose `dropped` (the role the reward gave before) unless another reward still
+/// gives it. Only members the cache holds are touched, since only their roles are known; the rest
+/// catch up when their level next changes. Runs in the background, paced by Discord's limits.
+pub fn resync_rewards(ctx: &Ctx, guild: u64, from_level: u32, dropped: Option<u64>) {
+    let ctx = ctx.clone();
+    bot_core::tokio::spawn(async move {
+        let members: Vec<(u64, u32)> = ctx
+            .db
+            .with(|c| {
+                let mut s = c.prepare("SELECT user_id, level FROM levels WHERE guild_id = ?1 AND level >= ?2")?;
+                s.query_map(params![guild as i64, from_level as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u32)))?.collect()
+            })
+            .unwrap_or_default();
+        let still_given = rewards(&ctx, guild).unwrap_or_default();
+        let dropped = dropped.filter(|r| !still_given.iter().any(|(_, x)| x == r));
+        for (user, level) in members {
+            let Some(has) = ctx.cache.member(Id::new(guild), Id::new(user)).map(|m| m.roles().iter().map(|r| r.get()).collect::<Vec<_>>()) else {
+                continue;
+            };
+            if let Some(role) = dropped
+                && has.contains(&role)
+                && let Err(e) = ctx.http.remove_guild_member_role(Id::new(guild), Id::new(user), Id::new(role)).await
+            {
+                bot_core::tracing::warn!(guild, user, role, error = %e, "couldn't take back a changed reward role");
+            }
+            sync_rewards(&ctx, guild, user, level).await;
+        }
+    });
+}
+
 async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
     let Ok(list) = rewards(ctx, guild) else { return };
     if list.is_empty() {
