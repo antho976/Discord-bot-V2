@@ -76,7 +76,7 @@ pub const STYLE: &str = r#"
 .pets-count .muted { font-size: 13px; }
 .pets-count .small { color: var(--live); }
 .pets-cats { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.pets-cat { display: grid; grid-template-columns: minmax(96px, 150px) minmax(0, 1fr) 40px; align-items: center; gap: 16px; font-size: 13px; }
+.pets-cat { display: grid; grid-template-columns: minmax(96px, 150px) minmax(0, 1fr) minmax(40px, auto); align-items: center; gap: 16px; font-size: 13px; }
 .pets-cat .clip { min-width: 0; }
 .pets-cat .meter { height: 5px; }
 .pets-cat .mono { text-align: right; color: var(--ink-2); }
