@@ -61,9 +61,9 @@ cargo run -p bot -- preview   # the dashboard with sample servers, no Discord ne
 - **Bot, Privileged Gateway Intents:** turn on Server Members and Message Content.
 - **OAuth2, Redirects:** add `<PUBLIC_URL>/auth/callback`.
 - **Bot permissions:** Manage Roles, Manage Messages, Moderate Members, Ban Members, Manage
-  Server (invite tracking), Create Private Threads, Manage Threads, Send Messages, Embed Links,
-  Attach Files, Read Message History, Add Reactions, Manage Nicknames (AFK prefix). Keep the bot's
-  role above the roles it hands out.
+  Server (invite tracking), View Audit Log (who banned, kicked or timed out someone), Create
+  Private Threads, Manage Threads, Send Messages, Embed Links, Attach Files, Read Message History,
+  Add Reactions, Manage Nicknames (AFK prefix). Keep the bot's role above the roles it hands out.
 
 ## Switching over from antho-s-bot on Render
 

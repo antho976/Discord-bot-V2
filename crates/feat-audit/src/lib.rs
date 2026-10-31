@@ -28,7 +28,7 @@ const CORAL: u32 = 0xf0806a;
 /// Accounts younger than this get flagged when they join.
 const NEW_ACCOUNT_MS: i64 = 7 * 86_400_000;
 /// Log entries older than this are dropped from the dashboard table.
-const KEEP_DAYS: i64 = 14;
+pub(crate) const KEEP_DAYS: i64 = 14;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -210,6 +210,14 @@ const MIGRATIONS: &[Migration] = &[Migration {
             summary TEXT NOT NULL DEFAULT '');
         CREATE INDEX audit_events_by_time ON audit_events(guild_id, at DESC);
     ",
+}, Migration {
+    name: "002_audit_moderators",
+    sql: "
+        CREATE TABLE audit_mod_actions (
+            id INTEGER PRIMARY KEY, guild_id INTEGER NOT NULL, at INTEGER NOT NULL,
+            moderator_id INTEGER NOT NULL, action TEXT NOT NULL, target_id INTEGER);
+        CREATE INDEX audit_mod_actions_by_time ON audit_mod_actions(guild_id, at DESC);
+    ",
 }];
 
 #[derive(Default)]
@@ -252,6 +260,11 @@ impl Feature for Audit {
     }
 
     async fn on_event(&self, ctx: &Ctx, event: &Event) -> Result<()> {
+        // Who did it comes from Discord's own audit log, a moment after the event itself.
+        if let Event::GuildAuditLogEntryCreate(e) = event {
+            store::record_moderator(ctx, &e.0)?;
+            return Ok(());
+        }
         let Some(guild) = event_guild(event) else { return Ok(()) };
         let s = ctx.settings::<Settings>(guild, KEY)?;
         if s.channel.is_none() && s.message_channel.is_none() && s.member_channel.is_none() {

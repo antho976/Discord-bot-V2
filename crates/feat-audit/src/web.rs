@@ -41,6 +41,16 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     // "Today" starts at midnight in the viewer's own timezone.
     let since = page.user.local(now_ms()).start_of_day()?.timestamp().as_millisecond();
     let today = store::today(&ctx, guild, since)?;
+    let mods = store::mod_actions(&ctx, guild, now_ms() - crate::KEEP_DAYS * 86_400_000)?;
+    let week_ago = now_ms() - 7 * 86_400_000;
+    let mut week: Vec<(u64, i64)> = Vec::new();
+    for a in mods.iter().filter(|a| a.at >= week_ago) {
+        match week.iter_mut().find(|w| w.0 == a.moderator) {
+            Some(w) => w.1 += 1,
+            None => week.push((a.moderator, 1)),
+        }
+    }
+    week.sort_by_key(|w| -w.1);
     let has_channel = s.channel.is_some() || s.message_channel.is_some() || s.member_channel.is_some();
     let search_value = search.as_deref().unwrap_or_default();
 
@@ -70,7 +80,7 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         (ui::empty(Icon::Log, "No log channel yet", "Pick one in Settings and events start appearing here and in Discord."))
                     }
                 } @else {
-                    (timeline(&ctx, &page, guild, &rows))
+                    (timeline(&ctx, &page, guild, &rows, &mods))
                     @if total > rows.len() as i64 {
                         p.muted.small { "Showing the latest " (rows.len()) " of " (text::num(total)) ". Filter to narrow it down." }
                     }
@@ -78,6 +88,21 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
             }
             aside.rail {
                 (today_block(&today))
+                div.rail-block {
+                    h2 { "Moderator actions this week" }
+                    @if week.is_empty() {
+                        p.muted.small { "Bans, kicks, timeouts, deletions and role changes by moderators show up here. The bot needs the View Audit Log permission to see who did them." }
+                    } @else {
+                        div.au-mods {
+                            @for (m, n) in week.iter().take(6) {
+                                div.au-mod {
+                                    img.avatar src=(ctx.member_avatar(guild, *m)) alt="" width="36" height="36" loading="lazy";
+                                    span.muted.small { (ctx.display_name(guild, *m)) " · " (n) }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     };
@@ -110,7 +135,7 @@ fn stat(label: &str, n: i64, pct: i64, tone: &str) -> Markup {
 }
 
 /// Entries grouped by day, in the viewer's own timezone.
-fn timeline(ctx: &Ctx, page: &Page, guild: u64, rows: &[Row]) -> Markup {
+fn timeline(ctx: &Ctx, page: &Page, guild: u64, rows: &[Row], mods: &[store::ModAction]) -> Markup {
     let today = page.user.local(now_ms()).date();
     let day_label = |at: i64| {
         let d = page.user.local(at).date();
@@ -128,13 +153,13 @@ fn timeline(ctx: &Ctx, page: &Page, guild: u64, rows: &[Row]) -> Markup {
                 @if i == 0 || day_label(rows[i - 1].at) != label {
                     h2.day { (label) }
                 }
-                (entry(ctx, page, guild, r))
+                (entry(ctx, page, guild, r, mods))
             }
         }
     }
 }
 
-fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row) -> Markup {
+fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row, mods: &[store::ModAction]) -> Markup {
     let time = page.user.local(r.at).strftime("%H:%M").to_string();
     let name = r.user_id.map(|u| member_name(ctx, guild, u, &r.user_name));
     let chan = r.channel_id.map(|c| channel_label(ctx, c)).unwrap_or_default();
@@ -147,7 +172,8 @@ fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row) -> Markup {
                 span.au-icon { (ui::icon(Icon::Log)) }
             }
             div.au-body {
-                (headline(r.kind, name.as_deref(), &chan))
+                @let by = store::moderator_for(mods, r.kind, r.user_id, r.at).filter(|m| Some(*m) != r.user_id).map(|m| ctx.display_name(guild, m));
+                (headline(r.kind, name.as_deref(), &chan, by.as_deref()))
                 (detail(r))
             }
         }
@@ -155,7 +181,24 @@ fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row) -> Markup {
 }
 
 /// The bold name, then what happened.
-fn headline(kind: Kind, name: Option<&str>, chan: &str) -> Markup {
+fn headline(kind: Kind, name: Option<&str>, chan: &str, by: Option<&str>) -> Markup {
+    if let Some(by) = by {
+        let rest = match kind {
+            Kind::MessageDelete => format!("had a message in {chan} deleted by"),
+            Kind::Leave => "was kicked by".into(),
+            Kind::Ban => "was banned by".into(),
+            Kind::Unban => "was unbanned by".into(),
+            Kind::Timeout => "was timed out by".into(),
+            Kind::TimeoutEnd => "had their timeout removed by".into(),
+            _ => "had their roles changed by".into(),
+        };
+        return html! {
+            div.au-line {
+                @if let Some(n) = name { strong { (n) } " " }
+                (rest) " " strong { (by) }
+            }
+        };
+    }
     let rest = match (kind, name.is_some()) {
         (Kind::MessageDelete, true) => format!("deleted a message in {chan}"),
         (Kind::MessageDelete, false) => format!("A message was deleted in {chan}"),
@@ -279,6 +322,8 @@ const STYLE: &str = r#"
 .au-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .au-filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
 .au-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.au-mods { display: flex; flex-wrap: wrap; gap: 14px; }
+.au-mod { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 .au-chip { height: 26px; padding: 0 12px; border: 0; border-radius: 13px; background: var(--control); color: var(--ink-2); font: 12px var(--sans); cursor: pointer; white-space: nowrap; }
 .au-chip:hover { background: var(--hover); color: var(--ink); }
 .au-chip.on { background: var(--ink); color: var(--ground); }

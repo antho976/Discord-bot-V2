@@ -3,6 +3,7 @@
 use bot_core::Ctx;
 use bot_core::anyhow::Result;
 use bot_core::rusqlite::{ToSql, params, params_from_iter};
+use bot_core::twilight_model::guild::audit_log::{AuditLogChange, AuditLogEntry, AuditLogEventType};
 
 use crate::{Kind, RoleChange, RoleRef, Settings, diff_json};
 
@@ -81,8 +82,85 @@ pub fn record(ctx: &Ctx, guild: u64, kind: Kind, user: Option<u64>, user_name: &
 }
 
 pub fn prune(ctx: &Ctx, before: i64) -> Result<()> {
-    ctx.db.with(|c| c.execute("DELETE FROM audit_events WHERE at < ?1", [before]))?;
+    ctx.db.with(|c| {
+        c.execute("DELETE FROM audit_events WHERE at < ?1", [before])?;
+        c.execute("DELETE FROM audit_mod_actions WHERE at < ?1", [before])
+    })?;
     Ok(())
+}
+
+/// A moderator's action, from Discord's audit log: `ban`, `unban`, `kick`, `timeout`,
+/// `untimeout`, `delete` or `roles`.
+#[derive(Debug, Clone)]
+pub struct ModAction {
+    pub at: i64,
+    pub moderator: u64,
+    pub action: String,
+    pub target: Option<u64>,
+}
+
+/// Remember who did what, for the actions moderators take by hand. The bot's own actions
+/// (scam protection's timeouts and bans) are left out.
+pub fn record_moderator(ctx: &Ctx, e: &AuditLogEntry) -> Result<()> {
+    let (Some(guild), Some(moderator)) = (e.guild_id, e.user_id) else { return Ok(()) };
+    if ctx.bot_id() == Some(moderator.get()) {
+        return Ok(());
+    }
+    let action = match e.action_type {
+        AuditLogEventType::MemberBanAdd => "ban",
+        AuditLogEventType::MemberBanRemove => "unban",
+        AuditLogEventType::MemberKick => "kick",
+        AuditLogEventType::MessageDelete => "delete",
+        AuditLogEventType::MemberRoleUpdate => "roles",
+        AuditLogEventType::MemberUpdate => {
+            match e.changes.iter().find_map(|c| match c {
+                AuditLogChange::CommunicationDisabledUntil { new, .. } => Some(new.is_some()),
+                _ => None,
+            }) {
+                Some(true) => "timeout",
+                Some(false) => "untimeout",
+                None => return Ok(()),
+            }
+        }
+        _ => return Ok(()),
+    };
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![guild.get() as i64, bot_core::now_ms(), moderator.get() as i64, action, e.target_id.map(|t| t.get() as i64)],
+        )
+    })?;
+    Ok(())
+}
+
+/// Moderator actions since `since`, newest first.
+pub fn mod_actions(ctx: &Ctx, guild: u64, since: i64) -> Result<Vec<ModAction>> {
+    ctx.db.with(|c| {
+        let mut st = c.prepare_cached(
+            "SELECT at, moderator_id, action, target_id FROM audit_mod_actions WHERE guild_id = ?1 AND at >= ?2 ORDER BY at DESC LIMIT 2000",
+        )?;
+        st.query_map(params![guild as i64, since], |r| {
+            Ok(ModAction { at: r.get(0)?, moderator: r.get::<_, i64>(1)? as u64, action: r.get(2)?, target: r.get::<_, Option<i64>>(3)?.map(|t| t as u64) })
+        })?
+        .collect()
+    })
+}
+
+/// The moderator behind a logged event: the same kind of action on the same member within a
+/// minute of it.
+pub fn moderator_for(actions: &[ModAction], kind: Kind, target: Option<u64>, at: i64) -> Option<u64> {
+    let want = match kind {
+        Kind::Ban => "ban",
+        Kind::Unban => "unban",
+        Kind::Timeout => "timeout",
+        Kind::TimeoutEnd => "untimeout",
+        Kind::MessageDelete => "delete",
+        Kind::Roles => "roles",
+        Kind::Leave => "kick",
+        _ => return None,
+    };
+    let target = target?;
+    actions.iter().find(|a| a.action == want && a.target == Some(target) && (a.at - at).abs() < 60_000).map(|a| a.moderator)
 }
 
 fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
@@ -207,6 +285,17 @@ pub fn seed_preview(ctx: &Ctx, guild: u64) -> Result<()> {
         tx.execute(
             "INSERT INTO audit_events (guild_id, at, kind, user_id, user_name, channel_id, summary) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![guild as i64, now - ago * min, kind.key(), user, name, channel.map(|c| c as i64), summary],
+        )?;
+    }
+    // Who did the moderation, as Discord's audit log would report it: (minutes ago, moderator, action, member).
+    let mods: [(i64, usize, &str, usize); 9] = [
+        (95, 1, "timeout", 6), (96, 1, "delete", 6), (420, 1, "roles", 0), (600, 0, "ban", 7), (1500, 1, "untimeout", 6),
+        (1700, 0, "unban", 7), (2100, 1, "delete", 2), (5900, 3, "roles", 5), (7000, 0, "delete", 3),
+    ];
+    for (ago, moderator, action, target) in mods {
+        tx.execute(
+            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![guild as i64, now - ago * min, m(moderator).0 as i64, action, m(target).0 as i64],
         )?;
     }
     tx.commit()?;
