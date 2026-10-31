@@ -77,7 +77,7 @@ pub fn seed(ctx: &Ctx) -> Result<()> {
     for back in 0..30i64 {
         let day = today.checked_sub(jiff::Span::new().days(back))?.to_string();
         let wave = ((back as f64) * 0.7).sin().abs();
-        for (key, base, spread) in [("messages", 380.0, 420.0), ("joins", 3.0, 9.0), ("leaves", 1.0, 4.0)] {
+        for (key, base, spread) in [("messages", 380.0, 420.0), ("joins", 3.0, 9.0), ("leaves", 1.0, 4.0), ("active", 90.0, 70.0), ("voice_minutes", 240.0, 420.0)] {
             let v = (base + spread * wave + ((back * 37) % 11) as f64 * spread / 20.0) as i64;
             tx.execute(
                 "INSERT OR REPLACE INTO daily_stats (guild_id, day, key, value) VALUES (?1, ?2, ?3, ?4)",

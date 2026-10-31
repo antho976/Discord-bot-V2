@@ -265,6 +265,7 @@ async fn dispatch(ctx: Ctx, event: Event) {
         Event::MessageCreate(m) if !m.author.bot => {
             if let Some(g) = guild {
                 ctx.count(g, "messages", 1);
+                ctx.mark_active(g, m.author.id.get());
             }
         }
         Event::MemberAdd(m) => ctx.count(m.guild_id.get(), "joins", 1),
@@ -854,6 +855,28 @@ impl Ctx {
         let g = self.cache.guild(Id::new(guild_id))?;
         let icon = g.icon()?;
         Some(format!("https://cdn.discordapp.com/icons/{guild_id}/{icon}.png?size=64"))
+    }
+
+    /// The server's banner, wide enough for the overview's header.
+    pub fn guild_banner_url(&self, guild_id: u64) -> Option<String> {
+        let g = self.cache.guild(Id::new(guild_id))?;
+        let banner = g.banner()?;
+        Some(format!("https://cdn.discordapp.com/banners/{guild_id}/{banner}.png?size=1024"))
+    }
+
+    /// The server icon at a size for the overview's header.
+    pub fn guild_icon_large(&self, guild_id: u64) -> Option<String> {
+        self.guild_icon_url(guild_id).map(|u| u.replace("size=64", "size=256"))
+    }
+
+    /// A member's avatar: their server avatar, else their account avatar, else Discord's default.
+    pub fn member_avatar(&self, guild_id: u64, user_id: u64) -> String {
+        let (g, u) = (Id::<GuildMarker>::new(guild_id), Id::<UserMarker>::new(user_id));
+        if let Some(m) = self.cache.member(g, u)
+            && let Some(a) = m.avatar() {
+                return format!("https://cdn.discordapp.com/guilds/{guild_id}/users/{user_id}/avatars/{a}.png?size=128");
+            }
+        avatar_url(user_id, self.cache.user(u).and_then(|x| x.avatar.map(|a| a.to_string())).as_deref())
     }
 
     /// The server's member count, kept current as members join and leave.

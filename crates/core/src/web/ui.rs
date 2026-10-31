@@ -570,6 +570,63 @@ pub fn bar_chart(series: &[(String, i64)], color: &str, unit: &str) -> Markup {
     }
 }
 
+/// A smooth area chart for a daily series, `(label, value)`, oldest first, in the data colour.
+/// Hovering a day shows its value. Labels the first, middle and last day under it.
+pub fn area_chart(series: &[(String, i64)], unit: &str) -> Markup {
+    let n = series.len();
+    let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
+    let (w, h) = (1000.0, 130.0);
+    let step = if n > 1 { w / (n - 1) as f64 } else { w };
+    let pts: Vec<(f64, f64)> = series.iter().enumerate().map(|(i, (_, v))| (i as f64 * step, h - 2.0 - (*v as f64 / max) * (h - 14.0))).collect();
+    // Catmull-Rom through the points, as cubic Béziers.
+    let mut line = String::new();
+    for (i, p) in pts.iter().enumerate() {
+        if i == 0 {
+            line.push_str(&format!("M{:.1} {:.1}", p.0, p.1));
+            continue;
+        }
+        let p0 = if i >= 2 { pts[i - 2] } else { pts[i - 1] };
+        let p1 = pts[i - 1];
+        let p3 = pts.get(i + 1).copied().unwrap_or(*p);
+        let c1 = (p1.0 + (p.0 - p0.0) / 6.0, p1.1 + (p.1 - p0.1) / 6.0);
+        let c2 = (p.0 - (p3.0 - p1.0) / 6.0, p.1 - (p3.1 - p1.1) / 6.0);
+        line.push_str(&format!(" C{:.1} {:.1} {:.1} {:.1} {:.1} {:.1}", c1.0, c1.1.min(h), c2.0, c2.1.min(h), p.0, p.1));
+    }
+    let area = format!("{line} L{w} {h} L0 {h} Z");
+    let total: i64 = series.iter().map(|(_, v)| v).sum();
+    html! {
+        figure.area {
+            svg viewBox={ "0 0 " (w) " " (h) } preserveAspectRatio="none" role="img" aria-label={ (crate::text::num(total)) " " (unit) " in " (n) " days" } {
+                defs {
+                    linearGradient id="area-fill" x1="0" y1="0" x2="0" y2="1" {
+                        stop offset="0" stop-color="var(--data)" stop-opacity="0.32" {}
+                        stop offset="1" stop-color="var(--data)" stop-opacity="0.04" {}
+                    }
+                }
+                path d=(area) fill="url(#area-fill)" {}
+                path d=(line) fill="none" stroke="var(--data)" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" {}
+                @for (i, (label, v)) in series.iter().enumerate() {
+                    rect.hit x=((i as f64 * step - step / 2.0).max(0.0)) y="0" width=(step) height=(h) {
+                        title { (label) ": " (crate::text::num(*v)) " " (unit) }
+                    }
+                }
+            }
+            @if n > 1 {
+                div.axis { span { (series[0].0) } span { (series[n / 2].0) } span { "Today" } }
+            }
+        }
+    }
+}
+
+/// Up to `max` overlapping avatars.
+pub fn avatars(urls: &[String], max: usize) -> Markup {
+    html! {
+        span.avatars {
+            @for u in urls.iter().take(max) { img.avatar src=(u) alt="" width="26" height="26" loading="lazy"; }
+        }
+    }
+}
+
 /// A member line: avatar, name and a muted detail.
 pub fn person(name: &str, avatar_url: &str, detail: Option<&str>) -> Markup {
     html! {

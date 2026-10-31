@@ -9,7 +9,7 @@ pub mod scheduler;
 pub mod text;
 pub mod web;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
@@ -97,6 +97,43 @@ pub struct FeatureMeta {
     pub nav: Vec<NavItem>,
 }
 
+/// What a feature adds to a server's overview page. Every part is optional.
+#[derive(Default)]
+pub struct Overview {
+    /// Things waiting on someone, under "Needs you".
+    pub needs: Vec<Need>,
+    /// Recent happenings for "Around the server". Newest first.
+    pub feed: Vec<Happening>,
+    /// Blocks for the right column as `(order, markup)`; a lower order sits higher. Each block
+    /// brings its own `h2`.
+    pub panel: Vec<(u8, maud::Markup)>,
+}
+
+/// One thing waiting on someone: "2 pet requests waiting", with a button to deal with it.
+pub struct Need {
+    /// When it started waiting, for the order (oldest first).
+    pub since: i64,
+    /// Avatar URLs of the people involved; the icon shows when empty.
+    pub people: Vec<String>,
+    pub icon: Icon,
+    pub title: String,
+    pub detail: String,
+    pub href: String,
+    /// The button: "Review", "Open thread".
+    pub action: &'static str,
+    /// Draws the icon in the alert colour (a caught scam).
+    pub alert: bool,
+}
+
+/// One line of "Around the server": a member did something.
+pub struct Happening {
+    pub at: i64,
+    pub avatar: String,
+    /// Shown in bold before `text`.
+    pub who: String,
+    pub text: String,
+}
+
 /// One piece of the bot. Every hook has a no-op default, so a feature implements only what it
 /// uses. Hooks only run for servers where the feature is switched on.
 #[async_trait]
@@ -157,6 +194,12 @@ pub trait Feature: Send + Sync + 'static {
         Ok(())
     }
 
+    /// What this feature shows on the server overview. Only called for people who can view the
+    /// feature; `page` is that person's page for this feature in this server.
+    fn overview(&self, _ctx: &Ctx, _page: &web::Page) -> Overview {
+        Overview::default()
+    }
+
     /// `bot preview` only: fill the feature's tables with believable sample rows for `guild`, so
     /// its pages can be looked at without Discord. Member ids from [`preview::MEMBERS`].
     fn seed_preview(&self, _ctx: &Ctx, _guild: u64) -> Result<()> {
@@ -177,6 +220,8 @@ pub struct CtxInner {
     toggles: RwLock<HashMap<(u64, String), bool>>,
     settings_cache: RwLock<HashMap<(u64, String), Arc<dyn std::any::Any + Send + Sync>>>,
     counters: Mutex<HashMap<(u64, &'static str), i64>>,
+    /// Who sent a message today, per server, for the "active today" count: `(day, sets)`.
+    active: Mutex<(String, HashMap<u64, HashSet<u64>>)>,
     pub(crate) snapshots: Mutex<discord::Snapshots>,
     /// Live member counts: set from GuildCreate, then moved by joins and leaves (the cache's own
     /// count never changes after connect).
@@ -233,6 +278,7 @@ impl Ctx {
             toggles: RwLock::new(toggles),
             settings_cache: RwLock::new(HashMap::new()),
             counters: Mutex::new(HashMap::new()),
+            active: Mutex::new((today(), HashMap::new())),
             snapshots: Mutex::new(discord::Snapshots::default()),
             member_counts: Mutex::new(HashMap::new()),
         })))
@@ -383,12 +429,28 @@ impl Ctx {
         Ok(())
     }
 
+    /// Count `user` as active in `guild` today.
+    pub(crate) fn mark_active(&self, guild_id: u64, user_id: u64) {
+        self.active.lock().unwrap().1.entry(guild_id).or_default().insert(user_id);
+    }
+
     pub(crate) fn flush_counters(&self) -> Result<()> {
         let drained: Vec<_> = self.counters.lock().unwrap().drain().collect();
-        if drained.is_empty() {
+        let day = today();
+        // Active members: written under the day they were counted, then reset at midnight UTC.
+        // MAX keeps the day's count after a restart empties the sets.
+        let active: Vec<(String, u64, i64)> = {
+            let mut a = self.active.lock().unwrap();
+            let list = a.1.iter().map(|(g, set)| (a.0.clone(), *g, set.len() as i64)).collect();
+            if a.0 != day {
+                a.0 = day.clone();
+                a.1.clear();
+            }
+            list
+        };
+        if drained.is_empty() && active.is_empty() {
             return Ok(());
         }
-        let day = today();
         let mut conn = self.db.lock();
         let tx = conn.transaction()?;
         for ((guild, key), n) in drained {
@@ -396,6 +458,13 @@ impl Ctx {
                 "INSERT INTO daily_stats (guild_id, day, key, value) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT (guild_id, key, day) DO UPDATE SET value = value + excluded.value",
                 params![guild as i64, day, key, n],
+            )?;
+        }
+        for (d, guild, n) in active {
+            tx.execute(
+                "INSERT INTO daily_stats (guild_id, day, key, value) VALUES (?1, ?2, 'active', ?3)
+                 ON CONFLICT (guild_id, key, day) DO UPDATE SET value = MAX(value, excluded.value)",
+                params![guild as i64, d, n],
             )?;
         }
         tx.commit()?;
