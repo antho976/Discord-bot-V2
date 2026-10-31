@@ -82,12 +82,13 @@ fn thread_url(guild: u64, thread: u64) -> String {
     format!("https://discord.com/channels/{guild}/{thread}")
 }
 
-/// The face on a row: the member's avatar, or the name's first letter for a Twitch viewer.
-fn face(ctx: &Ctx, guild: u64, r: &Review) -> Markup {
+/// The face on a row: the member's avatar, or the name's first letter on Twitch's purple for a
+/// Twitch viewer.
+fn face(ctx: &Ctx, guild: u64, r: &Review, class: &str) -> Markup {
     html! {
         @match r.user_id {
-            Some(u) => img.avatar.rv-face src=(ctx.member_avatar(guild, u)) alt="" width="36" height="36" loading="lazy";,
-            None => span.rv-face.rv-letter { (r.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default()) },
+            Some(u) => img class={ "avatar rv-face " (class) } src=(ctx.member_avatar(guild, u)) alt="" width="40" height="40" loading="lazy";,
+            None => span class={ "rv-face rv-letter " (class) } { (r.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default()) },
         }
     }
 }
@@ -135,30 +136,32 @@ async fn queue_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
     let actions = page.can_edit().then(|| {
         html! {
             @if can_sync {
-                form.inline method="post" action=(page.path("reviews/sync")) { button.btn type="submit" { "Sync Twitch" } }
+                form.inline method="post" action=(page.path("reviews/sync")) { button.btn type="submit" { (ui::icon(Icon::Live)) "Sync Twitch" } }
             }
             @if s.channel.is_some() {
-                form.inline method="post" action=(page.path("reviews/scan")) { button.btn.primary type="submit" title="Adds open posts, and archived ones from the last 30 days, that aren't in the queue" { "Scan posts" } }
+                form.inline method="post" action=(page.path("reviews/scan")) { button.btn.primary type="submit" title="Adds open posts, and archived ones from the last 30 days, that aren't in the queue" { (ui::icon(Icon::Search)) "Scan posts" } }
             }
         }
     });
+    let recent = store::closed(&ctx, guild)?;
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&ctx, &page, &s, "Queue")?)
         div.with-rail {
-            div.stack.rv-main {
-                (ui::readings(&[
-                    ("waiting", open.len().to_string()),
-                    ("with channel points", redeemed.to_string()),
-                    ("longest wait", longest),
-                    ("done this week", text::num(done_week)),
-                ]))
-                @if let Some(note) = result_note(&q) { p.rv-note { (note) } }
+            div.rv-main {
+                div.readings.rv-readings {
+                    div.reading.rv-lead { b data-count { (open.len()) } span { "Waiting in the queue" } }
+                    div.reading.rv-points { b data-count { (redeemed) } span { "With channel points" } }
+                    div.reading { b data-count { (longest) } span { "Longest wait" } }
+                    div.reading { b data-count { (text::num(done_week)) } span { "Done this week" } }
+                }
+                @if let Some(note) = result_note(&q) { p.rv-note { span.rv-note-ic { (ui::icon(Icon::Check)) } (note) } }
                 @if !open.is_empty() {
-                    form.inline-form.rv-search method="get" action=(page.path("reviews")) role="search" {
+                    form.rv-search method="get" action=(page.path("reviews")) role="search" {
+                        (ui::icon(Icon::Search))
                         input.input type="search" name="q" value=(search.unwrap_or_default()) placeholder="Search names, members and notes" aria-label="Search the queue";
                         button.btn type="submit" { "Search" }
-                        @if search.is_some() { a.btn href=(page.path("reviews")) { "Clear" } }
+                        @if search.is_some() { a.btn.ghost href=(page.path("reviews")) { "Clear" } }
                     }
                 }
                 @if open.is_empty() {
@@ -166,13 +169,16 @@ async fn queue_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
                 } @else if shown.is_empty() {
                     (ui::empty(Icon::Search, "Nothing matches", "Try part of the account name, the member or a word from the notes."))
                 } @else {
-                    div.rv-list {
-                        @for (i, r) in shown.iter().enumerate() { (queue_row(&ctx, &page, &s, r, i + 1, search.is_none())) }
+                    ol.rv-queue.numbered[search.is_none()] {
+                        @for (i, r) in shown.iter().enumerate() {
+                            (queue_row(&ctx, &page, &s, r, i + 1, search.is_none(), now))
+                        }
                     }
                 }
             }
             aside.rail {
                 (sources_block(&ctx, &page, &s, conn.as_ref()))
+                (recent_block(&ctx, &page, &recent))
             }
         }
     };
@@ -201,52 +207,60 @@ fn result_note(q: &QueueQuery) -> Option<String> {
     Some(note)
 }
 
-fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, numbered: bool) -> Markup {
+/// One request in the queue. The first, when the queue isn't filtered, is drawn larger: it's
+/// the one you take next.
+fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, numbered: bool, now: i64) -> Markup {
     let guild = page.guild_id;
     let base = format!("reviews/{}", r.id);
+    let next = numbered && place == 1;
+    let since = r.eligible_at.unwrap_or(r.requested_at);
     html! {
-        div.rv-row {
-            span.rv-place.mono { @if numbered { (place) } }
-            (face(ctx, guild, r))
+        li.rv-row.next[next] style={ "--i:" (place.min(10)) } {
+            @if numbered { span.rv-place { (place) } }
+            (face(ctx, guild, r, if next { "big" } else { "" }))
             div.rv-body {
                 div.rv-title {
                     strong { (r.name) }
-                    @if r.redeemed_at.is_some() { (ui::badge("Channel points", Tone::Muted)) }
+                    @if next { span.rv-next { "Up next" } }
+                    @if r.redeemed_at.is_some() { span.rv-cp { span.rv-cp-dot {} "Channel points" } }
+                    @if let Some(p) = r.pinged_at { span.badge.warn title=(page.user.local(p).strftime("%b %-d, %H:%M").to_string()) { "Pinged " (text::ago(p)) } }
                 }
-                p.muted.small {
-                    @if let Some(w) = who(ctx, guild, r) { (w) " · " }
+                p.rv-meta {
+                    @if let Some(w) = who(ctx, guild, r) { span { (w) } }
                     span title=(page.user.local(r.requested_at).strftime("%b %-d, %H:%M").to_string()) { "asked " (text::ago(r.requested_at)) }
-                    @if let Some(p) = r.pinged_at { " · pinged " (text::ago(p)) }
-                    @if let Some(t) = r.thread_id { " · " a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { "Open post" } }
+                    @if let Some(t) = r.thread_id { a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { (ui::icon(Icon::External)) "Open post" } }
                 }
                 @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
             }
-            @if page.can_edit() {
-                div.rv-acts {
-                    @if r.thread_id.is_some() {
-                        (ui::action_button(&page.path(&format!("{base}/ping")), "Ping", Tone::Muted, false))
-                    }
-                    (ui::pop("rv-pop", "Complete", None, "small", html! {
-                        form.stack method="post" action=(page.path(&format!("{base}/complete"))) {
-                            @if r.thread_id.is_some() {
-                                label.small for={ "done-" (r.id) } { "Closing message in the post" }
-                                textarea.input id={ "done-" (r.id) } name="message" rows="3" { (s.done_message) }
-                                p.help { "Clear it to complete without posting." }
-                            } @else {
-                                p.help { "This request has no post, so nothing is posted." }
+            div.rv-side {
+                span.rv-wait title="How long they've waited in the queue" { b { (wait_words(now - since)) } span { "waiting" } }
+                @if page.can_edit() {
+                    div.rv-acts {
+                        @if r.thread_id.is_some() {
+                            (ui::action_button(&page.path(&format!("{base}/ping")), "Ping", Tone::Muted, false))
+                        }
+                        (ui::pop("rv-pop", "Complete", None, if next { "small primary" } else { "small" }, html! {
+                            form.stack method="post" action=(page.path(&format!("{base}/complete"))) {
+                                @if r.thread_id.is_some() {
+                                    label.small for={ "done-" (r.id) } { "Closing message in the post" }
+                                    textarea.input id={ "done-" (r.id) } name="message" rows="3" { (s.done_message) }
+                                    p.help { "Clear it to complete without posting." }
+                                } @else {
+                                    p.help { "This request has no post, so nothing is posted." }
+                                }
+                                @if r.redemption_id.is_some() { p.help { "Marks the channel points redemption fulfilled on Twitch." } }
+                                div { button.btn.small.primary type="submit" { "Complete" } }
                             }
-                            @if r.redemption_id.is_some() { p.help { "Marks the channel points redemption fulfilled on Twitch." } }
-                            div { button.btn.small.primary type="submit" { "Complete" } }
-                        }
-                    }))
-                    (ui::pop("rv-pop", "More", None, "small", html! {
-                        form.stack method="post" action=(page.path(&format!("{base}/notes"))) {
-                            label.small for={ "notes-" (r.id) } { "Notes for " (r.name) }
-                            textarea.input id={ "notes-" (r.id) } name="notes" rows="4" placeholder="Profile link, what to look at" { (r.notes) }
-                            div { button.btn.small.primary type="submit" { "Save notes" } }
-                        }
-                        div.rv-pop-foot { (remove_button(page, r, store::refundable(ctx, page.guild_id, r.id))) }
-                    }))
+                        }))
+                        (ui::pop("rv-pop", "More", None, "small ghost", html! {
+                            form.stack method="post" action=(page.path(&format!("{base}/notes"))) {
+                                label.small for={ "notes-" (r.id) } { "Notes for " (r.name) }
+                                textarea.input id={ "notes-" (r.id) } name="notes" rows="4" placeholder="Profile link, what to look at" { (r.notes) }
+                                div { button.btn.small.primary type="submit" { "Save notes" } }
+                            }
+                            div.rv-pop-foot { (remove_button(page, r, store::refundable(ctx, page.guild_id, r.id))) }
+                        }))
+                    }
                 }
             }
         }
@@ -268,11 +282,12 @@ fn remove_button(page: &Page, r: &Review, refundable: bool) -> Markup {
 fn sources_block(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>) -> Markup {
     let guild = page.guild_id;
     let channel = s.channel.map(|c| ctx.text_channels(guild).into_iter().find(|(id, _)| *id == c).map(|(_, n)| format!("#{n}")).unwrap_or_else(|| "a deleted channel".into()));
+    let twitch_on = conn.is_some_and(|c| c.connected() && c.can_manage()) && s.reward_id.is_some();
     html! {
         div.rail-block {
             h2 { "Requests come from" }
             div.mini {
-                (ui::icon(Icon::Hash))
+                span.rv-src.on[channel.is_some()] { (ui::icon(Icon::Hash)) }
                 div.grow {
                     @match &channel {
                         Some(c) => { span { (c) } span.muted { "Each new post joins the queue" } }
@@ -281,7 +296,7 @@ fn sources_block(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>) -> M
                 }
             }
             div.mini {
-                (ui::icon(Icon::Live))
+                span.rv-src.twitch.on[twitch_on] { (ui::icon(Icon::Live)) }
                 div.grow {
                     @match conn {
                         Some(c) if c.connected() && c.can_manage() && s.reward_id.is_some() => {
@@ -299,6 +314,35 @@ fn sources_block(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>) -> M
     }
 }
 
+/// The last few reviews done, with who did them.
+fn recent_block(ctx: &Ctx, page: &Page, closed: &[Review]) -> Markup {
+    let done: Vec<&Review> = closed.iter().filter(|r| r.status == "done").take(4).collect();
+    html! {
+        div.rail-block {
+            h2 {
+                "Recently done"
+                @if !done.is_empty() { a.small.muted href=(page.path("reviews/done")) { "All done" } }
+            }
+            @if done.is_empty() {
+                p.muted.small { "Reviews you complete show up here." }
+            }
+            @for r in &done {
+                div.mini {
+                    (face(ctx, page.guild_id, r, "small"))
+                    div.grow {
+                        span { (r.name) }
+                        span.muted {
+                            @if let Some(by) = &r.closed_by { "by " (by) }
+                            @if let Some(at) = r.closed_at { " · waited " (wait_words(at - r.requested_at)) }
+                        }
+                    }
+                    @if let Some(at) = r.closed_at { span.mono.small title=(page.user.local(at).strftime("%b %-d, %H:%M").to_string()) { (text::ago(at)) } }
+                }
+            }
+        }
+    }
+}
+
 async fn waitlist_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
@@ -308,17 +352,20 @@ async fn waitlist_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&ctx, &page, &s, "Waitlist")?)
-        div.stack.rv-main {
-            @if s.wait_days > 0 {
-                p.muted.small { "Someone who asks again within " (days(s.wait_days)) " of their last review waits here, and joins the back of the queue on their own when the time is up." }
-            } @else {
-                p.muted.small { "The waitlist is off, so new requests go straight to the queue. The ones still here join it at their time." }
+        div.rv-main {
+            div.rv-intro {
+                span.rv-intro-ic { (ui::icon(Icon::Clock)) }
+                @if s.wait_days > 0 {
+                    p { "Someone who asks again within " strong { (days(s.wait_days)) } " of their last review waits here, and joins the back of the queue on their own when the time is up." }
+                } @else {
+                    p { "The waitlist is off, so new requests go straight to the queue. The ones still here join it at their time." }
+                }
             }
             @if waiting.is_empty() {
                 (ui::empty(Icon::Review, "No one is on the waitlist", &format!("Someone who asks again within {} of their last review shows up here.", days(s.wait_days.max(1)))))
             } @else {
-                div.rv-list {
-                    @for r in &waiting { (waitlist_row(&ctx, &page, r, now)) }
+                div.rv-wl {
+                    @for (i, r) in waiting.iter().enumerate() { (waitlist_card(&ctx, &page, r, now, i)) }
                 }
             }
         }
@@ -326,32 +373,46 @@ async fn waitlist_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     Ok(ui::layout(&ctx, &page, "Account reviews", None, body).into_response())
 }
 
-fn waitlist_row(ctx: &Ctx, page: &Page, r: &Review, now: i64) -> Markup {
+/// Someone on the waitlist, with how far through their wait they are.
+fn waitlist_card(ctx: &Ctx, page: &Page, r: &Review, now: i64, i: usize) -> Markup {
     let guild = page.guild_id;
     let last = ctx.db.with(|c| store::last_done(c, guild, r.user_id, r.twitch_user.as_deref())).ok().flatten();
     let stamp = |ms: i64| page.user.local(ms).strftime("%b %-d, %H:%M").to_string();
+    // How much of the wait has passed, from their last review to when they join.
+    let through = match (last, r.eligible_at) {
+        (Some(l), Some(e)) if e > l => Some(((now - l) * 100 / (e - l)).clamp(3, 100)),
+        _ => None,
+    };
     html! {
-        div.rv-row {
-            span.rv-place {}
-            (face(ctx, guild, r))
-            div.rv-body {
-                div.rv-title {
-                    strong { (r.name) }
-                    @if r.redeemed_at.is_some() { (ui::badge("Channel points", Tone::Muted)) }
+        article.rv-card style={ "--i:" (i.min(8)) } {
+            div.rv-card-head {
+                (face(ctx, guild, r, "big"))
+                div.grow {
+                    div.rv-title {
+                        strong { (r.name) }
+                        @if r.redeemed_at.is_some() { span.rv-cp { span.rv-cp-dot {} "Channel points" } }
+                    }
+                    p.rv-meta {
+                        @if let Some(w) = who(ctx, guild, r) { span { (w) } }
+                        span title=(stamp(r.requested_at)) { "asked " (text::ago(r.requested_at)) }
+                        @if let Some(t) = r.thread_id { a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { (ui::icon(Icon::External)) "Open post" } }
+                    }
                 }
-                p.muted.small {
-                    @if let Some(w) = who(ctx, guild, r) { (w) " · " }
-                    @if let Some(l) = last { span title=(stamp(l)) { "last review " (text::ago(l)) } " · " }
-                    span title=(stamp(r.requested_at)) { "asked " (text::ago(r.requested_at)) }
-                    @if let Some(t) = r.thread_id { " · " a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { "Open post" } }
-                }
-                @if let Some(at) = r.eligible_at { p.small.rv-joins title=(stamp(at)) { "Joins the queue " (joins_words(page, at, now)) } }
-                @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
             }
+            @if let Some(at) = r.eligible_at {
+                div.rv-countdown {
+                    div.rv-cd-text {
+                        span { "Joins the queue " strong title=(stamp(at)) { (joins_words(page, at, now)) } }
+                        @if let Some(l) = last { span.muted.small title=(stamp(l)) { "Last review " (text::ago(l)) } }
+                    }
+                    @if let Some(p) = through { span.meter { span style={ "width:" (p) "%" } {} } }
+                }
+            }
+            @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
             @if page.can_edit() {
                 div.rv-acts {
                     (ui::action_button(&page.path(&format!("reviews/{}/promote", r.id)), "Move to queue now", Tone::Muted, false))
-                    (ui::pop("rv-pop", "More", None, "small", html! {
+                    (ui::pop("rv-pop", "More", None, "small ghost", html! {
                         @let refundable = store::refundable(ctx, page.guild_id, r.id);
                         p.help { "Removing takes them off the waitlist" @if refundable { " and refunds their channel points" } "." }
                         div { (remove_button(page, r, refundable)) }
@@ -366,34 +427,51 @@ async fn done_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let closed = store::closed(&ctx, guild)?;
+    let done_week = store::done_since(&ctx, guild, now_ms() - 7 * DAY_MS)?;
+    // The middle wait of the reviews done in this list.
+    let mut waits: Vec<i64> = closed.iter().filter(|r| r.status == "done").filter_map(|r| r.closed_at.map(|at| at - r.requested_at)).collect();
+    waits.sort_unstable();
+    let typical = waits.get(waits.len() / 2).map(|w| wait_words(*w)).unwrap_or_else(|| "None".into());
+    let removed_n = closed.iter().filter(|r| r.status == "removed").count();
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&ctx, &page, &s, "Done")?)
-        div.stack.rv-main {
-            p.muted.small { "The last 50 completed or removed. Removed requests stay here so their post or redemption isn't added again. A removed one with channel points was refunded, so it can't go back to the queue." }
+        div.rv-main.rv-narrow {
+            div.readings.rv-readings.three {
+                div.reading.rv-lead { b data-count { (text::num(done_week)) } span { "Done this week" } }
+                div.reading { b data-count { (typical) } span { "Typical wait before a review" } }
+                div.reading { b data-count { (removed_n) } span { "Removed, of the last 50" } }
+            }
+            div.rv-intro {
+                span.rv-intro-ic { (ui::icon(Icon::Check)) }
+                p { "The last 50 completed or removed. Removed requests stay here so their post or redemption isn't added again. A removed one with channel points was refunded, so it can't go back to the queue." }
+            }
             @if closed.is_empty() {
                 (ui::empty(Icon::Review, "Nothing finished yet", "Requests you complete or remove from the queue are listed here."))
             } @else {
-                div.rv-list {
-                    @for r in &closed {
-                        div.rv-row.rv-closed {
-                            span.rv-place {}
-                            (face(&ctx, guild, r))
+                div.rv-done {
+                    @for (i, r) in closed.iter().enumerate() {
+                        @let removed = r.status == "removed";
+                        div.rv-drow.removed[removed] style={ "--i:" (i.min(10)) } {
+                            span.rv-dface {
+                                (face(&ctx, guild, r, ""))
+                                span.rv-dmark { (ui::icon(if removed { Icon::Close } else { Icon::Check })) }
+                            }
                             div.rv-body {
                                 div.rv-title {
                                     strong { (r.name) }
-                                    @if r.status == "removed" { (ui::badge("Removed", Tone::Muted)) } @else { (ui::badge("Done", Tone::Ok)) }
-                                    @if r.redeemed_at.is_some() { (ui::badge("Channel points", Tone::Muted)) }
+                                    @if removed { (ui::badge("Removed", Tone::Muted)) } @else { (ui::badge("Done", Tone::Ok)) }
+                                    @if r.redeemed_at.is_some() { span.rv-cp { span.rv-cp-dot {} "Channel points" } }
                                 }
-                                p.muted.small {
-                                    @if let Some(w) = who(&ctx, guild, r) { (w) " · " }
+                                p.rv-meta {
+                                    @if let Some(w) = who(&ctx, guild, r) { span { (w) } }
                                     @if let Some(at) = r.closed_at {
                                         span title=(page.user.local(at).strftime("%b %-d, %H:%M").to_string()) {
-                                            (if r.status == "removed" { "removed" } else { "done" })
+                                            (if removed { "removed" } else { "done" })
                                             @if let Some(by) = &r.closed_by { " by " (by) }
                                             " " (text::ago(at))
                                         }
-                                        " · waited " (wait_words(at - r.requested_at))
+                                        span { "waited " (wait_words(at - r.requested_at)) }
                                     }
                                 }
                                 @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
@@ -558,6 +636,8 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&ctx, &page, &s, "Settings")?)
+        div.with-rail {
+        div.rv-main.rv-settings {
         (ui::settings_form(&page, &page.path("reviews/settings"), html! {
             (ui::section("Requests", None, ui::card(html! {
                 (ui::field_channel(&ctx, guild, "channel", "Review channel", Some("Each new post in this forum joins the queue, named after its title. A text channel works too: each new thread joins. Scan posts on the Queue tab picks up open posts and archived ones from the last 30 days."), s.channel))
@@ -569,8 +649,54 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
             })))
         }))
         (ui::section("Twitch channel points", Some("Redemptions of a channel points reward join the queue ahead of everyone else. Completing one marks it fulfilled on Twitch; removing one cancels it and refunds the points."), twitch_block(&ctx, &page, &s, conn.as_ref(), rewards, q.twitch.as_deref())))
+        }
+            aside.rail { (flow(&ctx, &page, &s, conn.as_ref())) }
+        }
     };
     Ok(ui::layout(&ctx, &page, "Account reviews", None, body).into_response())
+}
+
+/// How a request moves from asking to done, as the saved settings have it.
+fn flow(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>) -> Markup {
+    let channel = s.channel.map(|c| ctx.text_channels(page.guild_id).into_iter().find(|(id, _)| *id == c).map(|(_, n)| format!("#{n}")).unwrap_or_else(|| "a deleted channel".into()));
+    let twitch = conn.is_some_and(|c| c.connected() && c.can_manage()) && s.reward_id.is_some();
+    let days = |n: i64| format!("{n} {}", if n == 1 { "day" } else { "days" });
+    html! {
+        div.rail-block {
+            h2 { "How a request moves" }
+            ol.rv-flow {
+                li style="--s:0" {
+                    span.rv-flow-ic { (ui::icon(Icon::Hash)) }
+                    div {
+                        strong { "Asks" }
+                        span {
+                            @match &channel { Some(c) => { "A new post in " (c) }, None => { "No review channel yet" } }
+                            @if twitch { ", or redeeming " (s.reward_title) " on Twitch" }
+                        }
+                    }
+                }
+                li.muted[s.wait_days == 0] style="--s:1" {
+                    span.rv-flow-ic { (ui::icon(Icon::Clock)) }
+                    div {
+                        strong { "Waits, if they asked lately" }
+                        span { @if s.wait_days > 0 { "On the waitlist until " (days(s.wait_days)) " after their last review" } @else { "Waitlist off: everyone goes straight to the queue" } }
+                    }
+                }
+                li style="--s:2" {
+                    span.rv-flow-ic { (ui::icon(Icon::Review)) }
+                    div { strong { "Queues" } span { "Channel points first, then whoever has waited longest" } }
+                }
+                li style="--s:3" {
+                    span.rv-flow-ic { (ui::icon(Icon::Bell)) }
+                    div { strong { "Pinged" } span { "Your ping message in their post, when you press Ping" } }
+                }
+                li style="--s:4" {
+                    span.rv-flow-ic { (ui::icon(Icon::Check)) }
+                    div { strong { "Done" } span { "The closing message is posted" @if twitch { " and the redemption fulfilled" } } }
+                }
+            }
+        }
+    }
 }
 
 fn twitch_block(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>, rewards: Option<Result<Vec<twitch::Reward>, String>>, notice: Option<&str>) -> Markup {
@@ -587,7 +713,7 @@ fn twitch_block(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>, rewar
             } @else {
                 @match conn {
                     Some(c) if c.connected() && c.can_manage() => {
-                        div.rv-tw-head {
+                        div.rv-tw-head { span.rv-src.twitch.on { (ui::icon(Icon::Live)) }
                             (ui::status(Dot::Live, &format!("Connected as {}", c.login)))
                             @if page.can_edit() { (ui::action_button(&page.path("reviews/twitch/disconnect"), "Disconnect", Tone::Bad, true)) }
                         }
@@ -595,12 +721,12 @@ fn twitch_block(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>, rewar
                         (reward_picker(page, s, rewards))
                     }
                     Some(c) if c.connected() => {
-                        div.rv-tw-head { (ui::status(Dot::Waiting, &format!("Connected as {}, without channel points", c.login))) }
+                        div.rv-tw-head { span.rv-src.twitch.on { (ui::icon(Icon::Live)) } (ui::status(Dot::Waiting, &format!("Connected as {}, without channel points", c.login))) }
                         p.small { "Twitch didn't give the bot permission to manage channel points redemptions. Connect again and allow it." }
                         div { (connect) }
                     }
                     _ => {
-                        div.rv-tw-head { (ui::status(Dot::Off, "Not connected")) }
+                        div.rv-tw-head { span.rv-src.twitch.on { (ui::icon(Icon::Live)) } (ui::status(Dot::Off, "Not connected")) }
                         p.small { "Sign in as the broadcaster so the bot can read and fulfil redemptions. Twitch only shows the bot redemptions of rewards it created, so you pick or create the reward here after connecting. Stream alerts reads the follower total with the same sign-in." }
                         p.muted.small { "The Twitch app needs " code { (redirect) } " in its OAuth redirect URLs." }
                         div { (connect) }
@@ -819,42 +945,140 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
     Ok(())
 }
 
-const CSS: &str = "
-.rv-main { gap: 16px; }
-.rv-note { font-size: 13px; color: var(--ink-2); }
+const CSS: &str = r#"
+.rv-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.rv-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.rv-readings .reading { min-width: 0; }
+.rv-readings .rv-lead { background: radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--hue) 16%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent), 0 16px 34px -22px var(--hue); }
+.rv-readings .rv-lead::before { width: 100%; opacity: 1; }
+/* Twitch's own purple for anything channel points. */
+.rv-readings .rv-points::before { background: linear-gradient(90deg, #9146ff, transparent); }
+.rv-note { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; font-size: 13px; color: var(--ink); background: color-mix(in oklab, var(--live) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--live) 26%, transparent); animation: rise 0.5s var(--ease) both; }
+.rv-note-ic { display: grid; place-items: center; width: 22px; height: 22px; flex: none; border-radius: 50%; background: var(--live); color: #062014; }
+.rv-note-ic .icon { width: 13px; height: 13px; stroke-width: 2.2; }
 .rv-warn { font-size: 12.5px; color: var(--waiting); }
-.rv-search .input { max-width: 420px; }
-.rv-list { display: flex; flex-direction: column; }
-.rv-row { display: grid; grid-template-columns: 18px 36px minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 14px 0; border-top: 1px solid var(--edge-1); }
-.rv-row:last-child { border-bottom: 1px solid var(--edge-1); }
-.rv-place { font-size: 12px; color: var(--ink-3); padding-top: 9px; text-align: right; }
-.rv-face { width: 36px; height: 36px; }
-.rv-letter { display: grid; place-items: center; border-radius: 50%; background: var(--control); color: var(--ink-2); font-weight: 600; }
-.rv-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.rv-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
-.rv-title strong { font-weight: 500; overflow-wrap: anywhere; }
-.rv-link { color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 2px; }
-.rv-notes { font-size: 12.5px; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; border-left: 2px solid var(--edge-2); padding-left: 9px; margin-top: 3px; }
-.rv-acts { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
-.rv-acts .pop-body { width: 280px; right: 0; left: auto; }
-.rv-joins { color: var(--ink-2); }
+.rv-search { position: relative; display: flex; gap: 8px; align-items: center; }
+.rv-search > .icon { position: absolute; left: 12px; top: 10px; width: 15px; height: 15px; color: var(--ink-3); pointer-events: none; }
+.rv-search .input { flex: 1; max-width: 420px; padding-left: 36px; }
+
+/* The queue: numbered places on a line, the first one drawn larger. */
+.rv-queue { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; position: relative; }
+.rv-queue.numbered::before { content: ""; position: absolute; left: 31px; top: 40px; bottom: 30px; width: 2px; border-radius: 1px; background: linear-gradient(180deg, color-mix(in oklab, var(--hue) 60%, transparent), var(--edge-1) 40%, transparent); transform-origin: top; animation: grow 1.2s var(--ease) both 0.3s; }
+.rv-row { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 14px 16px; border-radius: 14px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rv-in 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 150ms); transition: transform 0.35s var(--ease), box-shadow 0.25s, background 0.25s; }
+.rv-queue.numbered .rv-row { grid-template-columns: 30px 40px minmax(0, 1fr) auto; }
+.rv-row:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
+@keyframes rv-in { from { opacity: 0; transform: translateX(-14px); filter: blur(3px); } }
+.rv-place { position: relative; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; margin-top: 5px; border-radius: 10px; font: 600 12.5px var(--mono); color: var(--ink-2); background: var(--raised); box-shadow: inset 0 0 0 1px var(--edge-2), 0 0 0 4px var(--page); }
+.rv-row.next { padding: 18px 18px 18px 16px; align-items: center; background: radial-gradient(90% 140% at 0% 0%, color-mix(in oklab, var(--hue) 14%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 34%, transparent), 0 22px 46px -28px var(--hue); }
+.rv-queue.numbered .rv-row.next { grid-template-columns: 30px 60px minmax(0, 1fr) auto; }
+.rv-row.next .rv-place { margin-top: 0; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue)); box-shadow: 0 0 0 4px var(--page), 0 8px 18px -6px var(--hue); animation: pop-in 0.6s var(--spring) both 0.35s; }
+.rv-next { height: 20px; padding: 0 8px; border-radius: 10px; font: 600 11px/20px var(--sans); color: var(--hue); background: color-mix(in oklab, var(--hue) 16%, transparent); }
+.rv-face { width: 40px; height: 40px; }
+.rv-face.big { width: 60px; height: 60px; box-shadow: 0 0 0 3px var(--page), 0 0 0 5px color-mix(in oklab, var(--hue) 70%, transparent), 0 14px 30px -10px var(--hue); }
+.rv-face.small { width: 30px; height: 30px; font-size: 12px; }
+.rv-letter { display: grid; place-items: center; border-radius: 50%; color: #fff; font-weight: 650; font-size: 16px; background: linear-gradient(145deg, #a970ff, #6c2bd9); }
+.rv-letter.big { font-size: 24px; }
+.rv-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rv-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rv-title strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.rv-row.next .rv-title strong { font-size: 17px; letter-spacing: -0.015em; }
+.rv-cp { display: inline-flex; align-items: center; gap: 6px; height: 21px; padding: 0 9px; border-radius: 11px; font-size: 11px; font-weight: 600; color: #c9a8ff; background: rgba(145, 70, 255, 0.18); }
+.rv-cp-dot { width: 7px; height: 7px; border-radius: 50%; background: #9146ff; box-shadow: 0 0 8px #9146ff; }
+.rv-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; font-size: 12.5px; color: var(--ink-3); }
+.rv-meta > :not(:last-child)::after { content: "·"; margin: 0 7px; color: var(--ink-3); }
+.rv-link { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); transition: color 0.18s; }
+.rv-link .icon { width: 12px; height: 12px; }
+.rv-link:hover { color: var(--ink); }
+.rv-notes { margin-top: 4px; padding: 8px 11px; border-radius: 10px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); font-size: 12.5px; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; max-width: 62ch; }
+.rv-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.rv-wait { display: flex; align-items: baseline; gap: 5px; font-size: 11.5px; color: var(--ink-3); }
+.rv-wait b { font-size: 13.5px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.rv-row.next .rv-wait b { font-size: 15px; color: var(--ink); }
+.rv-acts { position: relative; display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.rv-acts .pop-body { width: 290px; right: 0; left: auto; }
 .rv-pop-foot { border-top: 1px solid var(--edge-1); padding-top: 10px; }
-.rv-closed .rv-title strong { color: var(--ink-2); }
+
+/* The rail. */
+.rv-src { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 10px; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); }
+.rv-src .icon { width: 15px; height: 15px; }
+.rv-src.on { color: #0b0b10; background: var(--hue); box-shadow: 0 6px 16px -6px var(--hue); }
+.rv-src.twitch { color: #b38bff; background: rgba(145, 70, 255, 0.16); }
+.rv-src.twitch.on { color: #fff; background: #9146ff; box-shadow: 0 6px 16px -6px #9146ff; }
+.rail-block h2 a { font-weight: 400; }
+
+/* Waitlist and done. */
+.rv-intro { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--ink-2); max-width: 80ch; }
+.rv-intro strong { color: var(--ink); font-weight: 600; }
+.rv-intro-ic { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 11px; color: var(--hue); background: color-mix(in oklab, var(--hue) 15%, transparent); }
+.rv-intro-ic .icon { width: 17px; height: 17px; }
+.rv-wl { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.rv-card { display: flex; flex-direction: column; gap: 14px; padding: 18px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 80ms + 150ms); }
+.rv-card-head { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.rv-card-head .grow { display: flex; flex-direction: column; gap: 4px; }
+.rv-card .rv-face.big { width: 52px; height: 52px; }
+.rv-countdown { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.rv-cd-text { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
+.rv-cd-text strong { color: var(--hue); font-weight: 600; }
+.rv-countdown .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--hue), black 25%), var(--hue)); box-shadow: 0 0 10px color-mix(in oklab, var(--hue) 55%, transparent); animation-delay: calc(var(--i, 0) * 80ms + 450ms); }
+.rv-card .rv-acts { justify-content: flex-start; }
+.rv-card .rv-acts .pop-body { left: 0; right: auto; }
+.rv-narrow { max-width: 940px; }
+.rv-readings.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.rv-done { display: flex; flex-direction: column; }
+.rv-drow { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 10px; border-radius: 12px; animation: rise 0.45s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms + 150ms); transition: background 0.18s; }
+.rv-drow + .rv-drow { border-top: 1px solid var(--edge-1); }
+.rv-drow:hover { background: var(--well); }
+.rv-dface { position: relative; width: 40px; height: 40px; }
+.rv-dmark { position: absolute; right: -4px; bottom: -3px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--live); color: #062014; box-shadow: 0 0 0 2.5px var(--page); }
+.rv-dmark .icon { width: 10px; height: 10px; stroke-width: 2.6; }
+.rv-drow.removed .rv-dmark { background: var(--ink-3); color: var(--ground); }
+.rv-drow.removed .rv-face { filter: saturate(0.4); opacity: 0.75; }
+.rv-drow.removed .rv-title strong { color: var(--ink-2); }
+
+/* Settings: how a request moves. */
+.rv-settings { gap: 30px; }
+.rv-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
+.rv-flow::before { content: ""; position: absolute; left: 17px; top: 20px; bottom: 20px; width: 2px; border-radius: 1px; background: linear-gradient(180deg, var(--hue), color-mix(in oklab, var(--hue) 15%, transparent)); transform-origin: top; animation: grow 1.1s var(--ease) both 0.3s; }
+.rv-flow li { position: relative; display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; animation: rise 0.5s var(--ease) both; animation-delay: calc(var(--s, 0) * 110ms + 250ms); }
+.rv-flow-ic { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 12px; color: #0b0b10; background: var(--hue); box-shadow: 0 0 0 4px var(--raised), 0 8px 18px -8px var(--hue); }
+.rv-flow-ic .icon { width: 17px; height: 17px; }
+.rv-flow li div { display: flex; flex-direction: column; gap: 1px; padding-top: 1px; min-width: 0; }
+.rv-flow strong { font-size: 13.5px; font-weight: 600; }
+.rv-flow span { font-size: 12.5px; color: var(--ink-3); }
+.rv-flow li.muted .rv-flow-ic { color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, var(--raised)); }
+.rv-flow li.muted strong { color: var(--ink-2); }
+
+/* Settings: Twitch. */
 .rv-twitch { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
-.rv-tw-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.rv-tw-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.rv-tw-head > form, .rv-tw-head > .inline { margin-left: auto; }
 .rv-twitch code { font-size: 11.5px; overflow-wrap: anywhere; }
 .rv-reward { display: flex; flex-direction: column; gap: 6px; }
 .rv-reward .select-wrap { flex: 1; min-width: 200px; max-width: 360px; }
 .rv-reward .select-wrap .input { width: 100%; max-width: none; }
 .rv-twitch .pop-body { width: 260px; }
-@media (max-width: 560px) {
-  .rv-row { grid-template-columns: 36px minmax(0, 1fr); }
-  .rv-place { display: none; }
-  .rv-acts { grid-column: 2; justify-content: flex-start; flex-wrap: wrap; position: relative; }
-  .rv-acts .pop { position: static; }
-  .rv-acts .pop-body { left: 0; right: auto; }
+
+@media (max-width: 1180px) {
+  .rv-readings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-";
+@media (max-width: 640px) {
+  .rv-row, .rv-queue.numbered .rv-row, .rv-queue.numbered .rv-row.next { grid-template-columns: 40px minmax(0, 1fr); padding: 12px; }
+  .rv-place { display: none; }
+  .rv-queue.numbered::before { display: none; }
+  .rv-row.next .rv-face.big { width: 40px; height: 40px; }
+  .rv-side { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; }
+  .rv-acts { flex-wrap: wrap; }
+  .rv-acts .pop { position: static; }
+  .rv-side { position: relative; }
+  .rv-acts .pop-body { left: 0; right: 0; width: auto; }
+  .rv-search .input { min-width: 0; }
+  .rv-wl { grid-template-columns: 1fr; }
+  .rv-readings.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rv-readings.three > :last-child { grid-column: 1 / -1; }
+  .rv-drow { grid-template-columns: 40px minmax(0, 1fr); align-items: start; }
+  .rv-drow .rv-acts { grid-column: 2; justify-content: flex-start; }
+}
+"#;
 
 #[cfg(test)]
 mod tests {
