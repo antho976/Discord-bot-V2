@@ -439,6 +439,7 @@ fn hours_block(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Markup {
 
 const CSS: &str = r#"
 .sa-main { min-width: 0; }
+.sa-linked a { color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
 .sa-sechead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .sa-sechead h2 { font-size: 14px; }
 .sa-post { display: flex; align-items: flex-start; gap: 14px; min-width: 0; color: #dbdee1; font: 15px/1.4 var(--sans); }
@@ -1194,23 +1195,44 @@ fn followers_reading(days: &[(String, i64)]) -> Option<(&'static str, String)> {
     }
 }
 
-/// The rail's "Followers": the latest total, or why there isn't one.
-fn followers_block(ctx: &Ctx, mode: Mode, days: &[(String, i64)]) -> Markup {
+/// Why there's no follower total to show yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NoFollowers {
+    /// Twitch isn't set up on the bot.
+    TwitchOff,
+    /// Twitch refused the app token and no broadcaster of this server signed in.
+    Connect,
+    /// The daily read hasn't stored one yet.
+    Soon,
+}
+
+fn no_followers(mode: Mode, app_refused: bool, signed_in: bool) -> NoFollowers {
+    match mode {
+        Mode::Off => NoFollowers::TwitchOff,
+        _ if app_refused && !signed_in => NoFollowers::Connect,
+        _ => NoFollowers::Soon,
+    }
+}
+
+/// The rail's "Followers": the latest total, or why there isn't one. `reviews_link` is the
+/// Account reviews settings page, for people who can open it.
+fn followers_block(days: &[(String, i64)], why: NoFollowers, reviews_link: Option<&str>) -> Markup {
     html! {
         div.rail-block {
             h2 { "Followers" }
             @if let Some((day, total)) = days.last() {
                 span.big-num { (text::num(*total)) }
                 p.muted.small { "Read once a day. Last read " (day.parse::<Date>().map(|d| d.strftime("%b %-d").to_string()).unwrap_or_default()) "." }
-            } @else if mode == Mode::Off {
-                p.muted.small { "Followers are read once a day once Twitch is connected." }
-            } @else if crate::state_get(ctx, "followers_unsupported").is_some() {
-                p.muted.small {
-                    "Not tracked. Twitch only shares follower counts with a login from the channel's owner or a moderator, "
-                    "with the " code { "moderator:read:followers" } " permission. The bot signs in to Twitch as an app, so Twitch refused."
-                }
             } @else {
-                p.muted.small { "The first count shows up within a day." }
+                @match why {
+                    NoFollowers::TwitchOff => p.muted.small { "Followers are read once a day once Twitch is connected." },
+                    NoFollowers::Connect => p.muted.small.sa-linked {
+                        "Connect Twitch on "
+                        @if let Some(href) = reviews_link { a href=(href) { "Account reviews > Settings" } } @else { "Account reviews > Settings" }
+                        " to see followers."
+                    },
+                    NoFollowers::Soon => p.muted.small { "The first count shows up within a day." },
+                }
             }
         }
     }
@@ -1234,11 +1256,13 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
     let month_secs: i64 = month.iter().map(|r| stream_secs(r, now)).sum();
     let since_day = Timestamp::from_millisecond(now - 30 * 86_400_000).map(|t| t.to_zoned(TimeZone::UTC).date().to_string()).unwrap_or_default();
     let followers = follower_days(&ctx, guild, &since_day);
+    let no_followers = no_followers(mode, crate::state_get(&ctx, "followers_unsupported").is_some(), ids.iter().any(|id| feat_reviews::twitch::signed_in_as(&ctx, id)));
     let followers_value = match followers_reading(&followers) {
         Some(r) => r,
-        None if crate::state_get(&ctx, "followers_unsupported").is_some() => ("followers in 30 days", "not tracked".into()),
+        None if no_followers == NoFollowers::Connect => ("followers in 30 days", "not tracked".into()),
         None => ("followers in 30 days", "none yet".into()),
     };
+    let reviews_link = (ctx.enabled(guild, feat_reviews::KEY) && ctx.level(&page.user, guild, feat_reviews::KEY) >= Level::View).then(|| page.path("reviews/settings"));
     let viewers = weekly_viewers(&all, &tz, now);
     let hours = weekly_hours(&all, &tz, now);
     let table = twitch::streams_since(&ctx, &ids, 0, 30)?;
@@ -1308,7 +1332,7 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                         span.muted.small { "Last 12 weeks" }
                     }
                 }
-                (followers_block(&ctx, mode, &followers))
+                (followers_block(&followers, no_followers, reviews_link.as_deref()))
             }
         }
     };
@@ -1494,6 +1518,17 @@ mod tests {
         assert_eq!(followers_reading(&[d("2026-10-01", 1200)]), Some(("followers", "1,200".into())));
         assert_eq!(followers_reading(&[d("2026-10-01", 1200), d("2026-10-15", 1210), d("2026-10-31", 1242)]), Some(("followers in 30 days", "+42".into())));
         assert_eq!(followers_reading(&[d("2026-10-01", 1200), d("2026-10-31", 1195)]), Some(("followers in 30 days", "-5".into())));
+    }
+
+    #[test]
+    fn missing_followers_say_why() {
+        assert_eq!(no_followers(Mode::Off, true, false), NoFollowers::TwitchOff);
+        // Twitch refused the app token: connecting the broadcaster is the way to a count.
+        assert_eq!(no_followers(Mode::Push, true, false), NoFollowers::Connect);
+        assert_eq!(no_followers(Mode::Poll, true, false), NoFollowers::Connect);
+        // Signed in, or not refused yet: the daily read brings one.
+        assert_eq!(no_followers(Mode::Push, true, true), NoFollowers::Soon);
+        assert_eq!(no_followers(Mode::Push, false, false), NoFollowers::Soon);
     }
 
     #[test]

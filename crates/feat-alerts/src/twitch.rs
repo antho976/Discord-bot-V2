@@ -837,35 +837,75 @@ pub async fn poll(ctx: &Ctx, mode: Mode) -> Result<()> {
     Ok(())
 }
 
-/// Store each server's follower total, if an app token may read it. Twitch documents the
-/// endpoint as needing a user token; when it refuses, the bot asks again a week later.
-async fn followers(ctx: &Ctx, guilds: &[(u64, std::sync::Arc<Settings>)]) {
-    let refused: Option<i64> = state_get(ctx, "followers_unsupported").and_then(|v| v.parse().ok());
-    if refused.is_some_and(|at| now_ms() - at < 7 * 86_400_000) {
-        return;
+/// How long after Twitch refuses the app token for follower totals the bot asks it again.
+const APP_FOLLOWERS_RETRY_MS: i64 = 7 * 86_400_000;
+
+/// A token a follower total can be read with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Via {
+    /// The broadcaster's own sign-in, from Account reviews.
+    User,
+    App,
+}
+
+/// The tokens to try for one broadcaster's follower total, in order. Any user token may read
+/// the total, so a signed-in broadcaster is read every day. The app token comes after it, and
+/// once Twitch refuses the app token it's only tried again a week later.
+fn follower_tokens(signed_in: bool, app_refused_at: Option<i64>, now: i64) -> Vec<Via> {
+    let mut out = Vec::with_capacity(2);
+    if signed_in {
+        out.push(Via::User);
     }
+    if app_refused_at.is_none_or(|at| now - at >= APP_FOLLOWERS_RETRY_MS) {
+        out.push(Via::App);
+    }
+    out
+}
+
+/// Store each server's follower total. Each broadcaster is read with their own sign-in when a
+/// server connected Twitch on Account reviews, else with the app token, which Twitch usually
+/// refuses here; then the app token waits a week before it's tried again.
+async fn followers(ctx: &Ctx, guilds: &[(u64, std::sync::Arc<Settings>)]) {
+    let mut refused: Option<i64> = state_get(ctx, "followers_unsupported").and_then(|v| v.parse().ok());
+    let client_id = ctx.cfg.twitch_client_id.clone().unwrap_or_default();
     let mut totals: HashMap<String, i64> = HashMap::new();
     for b in broadcasters(ctx) {
         if !guilds.iter().any(|(_, s)| s.twitch_logins.contains(&b.login)) {
             continue;
         }
-        let res = request(ctx, Method::GET, "channels/followers", &[("broadcaster_id", b.user_id.clone()), ("first", "1".into())], None).await;
-        match res {
-            Ok(r) if r.status() == StatusCode::UNAUTHORIZED || r.status() == StatusCode::FORBIDDEN => {
-                tracing::info!("Twitch needs a user token for follower totals; skipping them");
-                state_set(ctx, "followers_unsupported", &now_ms().to_string());
-                return;
-            }
-            Ok(r) if r.status().is_success() => {
-                if let Ok(v) = r.json::<Value>().await
-                    && let Some(total) = v["total"].as_i64()
-                {
-                    state_del(ctx, "followers_unsupported");
-                    totals.insert(b.login.clone(), total);
+        let query = [("broadcaster_id", b.user_id.clone()), ("first", "1".to_owned())];
+        let user = feat_reviews::twitch::user_token_for(ctx, &b.user_id).await;
+        for via in follower_tokens(user.is_some(), refused, now_ms()) {
+            let res = match (via, &user) {
+                (Via::User, Some(t)) => ctx.web.get(format!("{HELIX}/channels/followers")).query(&query).bearer_auth(t).header("Client-Id", &client_id).send().await.map_err(Into::into),
+                _ => request(ctx, Method::GET, "channels/followers", &query, None).await,
+            };
+            match res {
+                Ok(r) if r.status() == StatusCode::UNAUTHORIZED || r.status() == StatusCode::FORBIDDEN => {
+                    if via == Via::App {
+                        tracing::info!("Twitch needs a user token for follower totals; asking again in a week");
+                        let now = now_ms();
+                        state_set(ctx, "followers_unsupported", &now.to_string());
+                        refused = Some(now);
+                    } else {
+                        tracing::warn!(broadcaster = %b.login, status = %r.status(), "Twitch refused the broadcaster's sign-in for the follower total");
+                    }
                 }
+                Ok(r) if r.status().is_success() => {
+                    if let Ok(v) = r.json::<Value>().await
+                        && let Some(total) = v["total"].as_i64()
+                    {
+                        if via == Via::App {
+                            state_del(ctx, "followers_unsupported");
+                            refused = None;
+                        }
+                        totals.insert(b.login.clone(), total);
+                        break;
+                    }
+                }
+                Ok(r) => tracing::warn!(status = %r.status(), "couldn't read the follower total"),
+                Err(e) => tracing::warn!(error = %e, "couldn't read the follower total"),
             }
-            Ok(r) => tracing::warn!(status = %r.status(), "couldn't read the follower total"),
-            Err(e) => tracing::warn!(error = %e, "couldn't read the follower total"),
         }
     }
     for (guild, s) in guilds {
@@ -1033,6 +1073,22 @@ mod tests {
 
     fn antho() -> Broadcaster {
         Broadcaster { login: "antho".into(), user_id: "1".into(), name: "Antho".into(), avatar: String::new() }
+    }
+
+    #[test]
+    fn follower_totals_try_the_sign_in_first() {
+        let now = 100 * 86_400_000;
+        let day = 86_400_000;
+        // Never refused: the sign-in first, the app token as the fallback.
+        assert_eq!(follower_tokens(true, None, now), [Via::User, Via::App]);
+        assert_eq!(follower_tokens(false, None, now), [Via::App]);
+        // Refused yesterday: a signed-in broadcaster is still read today, with no app token.
+        assert_eq!(follower_tokens(true, Some(now - day), now), [Via::User]);
+        assert!(follower_tokens(false, Some(now - day), now).is_empty());
+        // A week after the refusal the app token is asked again.
+        assert!(follower_tokens(false, Some(now - 7 * day + 1), now).is_empty());
+        assert_eq!(follower_tokens(false, Some(now - 7 * day), now), [Via::App]);
+        assert_eq!(follower_tokens(true, Some(now - 8 * day), now), [Via::User, Via::App]);
     }
 
     #[test]

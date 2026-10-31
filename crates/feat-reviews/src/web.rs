@@ -601,7 +601,7 @@ fn twitch_block(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>, rewar
                     }
                     _ => {
                         div.rv-tw-head { (ui::status(Dot::Off, "Not connected")) }
-                        p.small { "Sign in as the broadcaster so the bot can read and fulfil redemptions. Twitch only shows the bot redemptions of rewards it created, so you pick or create the reward here after connecting." }
+                        p.small { "Sign in as the broadcaster so the bot can read and fulfil redemptions. Twitch only shows the bot redemptions of rewards it created, so you pick or create the reward here after connecting. Stream alerts reads the follower total with the same sign-in." }
                         p.muted.small { "The Twitch app needs " code { (redirect) } " in its OAuth redirect URLs." }
                         div { (connect) }
                     }

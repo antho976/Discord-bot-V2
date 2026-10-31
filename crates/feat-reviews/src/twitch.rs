@@ -207,6 +207,14 @@ async fn token(ctx: &Ctx, guild: u64, force: bool) -> Result<(String, String)> {
                 [guild as i64],
             )
         })?;
+        ctx.notify_once(
+            guild,
+            crate::KEY,
+            "twitch",
+            "Twitch signed the bot out. Connect again on Account reviews > Settings; channel points and follower counts stop until then.",
+            Some(format!("/g/{guild}/reviews/settings")),
+            std::time::Duration::from_secs(86_400),
+        );
         bail!("Twitch no longer accepts the bot's sign-in. Connect again.");
     }
     if !res.status().is_success() {
@@ -220,6 +228,43 @@ async fn token(ctx: &Ctx, guild: u64, force: bool) -> Result<(String, String)> {
         )
     })?;
     Ok((t.access_token, c.broadcaster_id))
+}
+
+/// Servers whose connection signed in as `broadcaster_id` and can still be refreshed.
+fn guilds_signed_in_as(ctx: &Ctx, broadcaster_id: &str) -> Vec<u64> {
+    ctx.db
+        .with(|c| {
+            let mut s = c.prepare_cached("SELECT guild_id FROM reviews_twitch WHERE broadcaster_id = ?1 AND refresh_token IS NOT NULL ORDER BY guild_id")?;
+            s.query_map([broadcaster_id], |r| r.get::<_, i64>(0))?.collect::<bot_core::rusqlite::Result<Vec<_>>>()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .map(|g| g as u64)
+        .collect()
+}
+
+/// Whether any server connected Twitch here as `broadcaster_id`, so [`user_token_for`] has a
+/// sign-in to use.
+pub fn signed_in_as(ctx: &Ctx, broadcaster_id: &str) -> bool {
+    !broadcaster_id.is_empty() && !guilds_signed_in_as(ctx, broadcaster_id).is_empty()
+}
+
+/// The broadcaster's own access token, from any server whose connection signed in as
+/// `broadcaster_id`, refreshed when it's about to expire. For other features that read what
+/// Twitch only shows a user token, like the follower total. A refresh Twitch refuses drops
+/// that sign-in as it does for the queue, and the settings page asks to connect again. The
+/// token is never logged.
+pub async fn user_token_for(ctx: &Ctx, broadcaster_id: &str) -> Option<String> {
+    if ctx.cfg.preview || broadcaster_id.is_empty() {
+        return None;
+    }
+    for guild in guilds_signed_in_as(ctx, broadcaster_id) {
+        match token(ctx, guild, false).await {
+            Ok((t, _)) => return Some(t),
+            Err(e) => bot_core::tracing::warn!(guild, error = %e, "couldn't use the broadcaster's Twitch sign-in"),
+        }
+    }
+    None
 }
 
 /// A Helix call as the broadcaster. `broadcaster_id` is added to the query. A 401 refreshes
