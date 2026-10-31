@@ -1155,7 +1155,7 @@ async fn send_youtube_test(State(ctx): State<Ctx>, user: User, Path(guild): Path
     };
     if let Err(e) = youtube::test_post(&ctx, guild, channel, &s, &v).await {
         tracing::warn!(guild, error = %e, "YouTube test post failed");
-        return Err(WebError::Bad("Discord refused the post. Check that the bot can send messages in that channel.".into()));
+        return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
     }
     ctx.audit(&page.user, Some(guild), KEY, "Sent a test YouTube post");
     Ok(bot_core::axum::response::Redirect::to(&page.path("alerts/youtube?sent=1")).into_response())
@@ -1164,23 +1164,23 @@ async fn send_youtube_test(State(ctx): State<Ctx>, user: User, Path(guild): Path
 // ---- Stats ----
 
 /// Average viewers across streams, weighted by how often each was read: `None` when no stream
-/// had a viewer count.
+/// had a viewer count. Uses each stream's exact sum of counts, so nothing is lost to rounding.
 fn avg_viewers<'a>(rows: impl IntoIterator<Item = &'a StreamRow>) -> Option<i64> {
-    let (sum, samples) = rows.into_iter().filter(|r| r.samples > 0).fold((0, 0), |(s, n), r| (s + r.average * r.samples, n + r.samples));
+    let (sum, samples) = rows.into_iter().filter(|r| r.samples > 0).fold((0, 0), |(s, n), r| (s + r.viewer_sum, n + r.samples));
     (samples > 0).then(|| (sum + samples / 2) / samples)
 }
 
-/// Average viewers in each of the last twelve weeks, oldest first, labelled by their Monday.
-/// A week without a viewer count is 0, like its hours.
+/// Average viewers in each of the last twelve weeks that had a viewer count, oldest first,
+/// labelled by their Monday. Weeks without one are left out rather than drawn as a drop to 0.
 fn weekly_viewers(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Vec<(String, i64)> {
     let first = first_monday(tz, now);
     (0..WEEKS)
-        .map(|w| {
+        .filter_map(|w| {
             let start = first.checked_add(Span::new().days(7 * w)).unwrap_or(first);
             let end = start.checked_add(Span::new().days(7)).unwrap_or(start);
             let (a, b) = (day_ms(start, tz), day_ms(end, tz));
-            let avg = avg_viewers(rows.iter().filter(|r| r.started_at >= a && r.started_at < b)).unwrap_or(0);
-            (start.strftime("%b %-d").to_string(), avg)
+            let avg = avg_viewers(rows.iter().filter(|r| r.started_at >= a && r.started_at < b))?;
+            Some((start.strftime("%b %-d").to_string(), avg))
         })
         .collect()
 }
@@ -1273,8 +1273,10 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                         h2 { "Average viewers" }
                         span.muted.small { "Each week, from counts read while you're live" }
                     }
-                    @if viewers.iter().all(|(_, v)| *v == 0) {
+                    @if viewers.is_empty() {
                         (ui::empty(Icon::Chart, "No viewer counts yet", "The bot reads viewers every few minutes while you're live, and the chart fills in week by week."))
+                    } @else if viewers.len() == 1 {
+                        (ui::empty(Icon::Chart, "One week of viewer counts so far", "The chart starts once a second week has them."))
                     } @else {
                         (ui::area_chart(&viewers, "average viewers"))
                     }
@@ -1491,11 +1493,14 @@ mod tests {
 
     #[test]
     fn viewers_average_by_reading() {
-        let row = |average, samples| StreamRow { average, samples, ..Default::default() };
+        let row = |viewer_sum, samples| StreamRow { viewer_sum, samples, average: viewer_sum / samples.max(1), ..Default::default() };
         // A 4-hour stream counts for more than a 1-hour one; streams without counts are skipped.
-        let rows = [row(40, 48), row(10, 12), row(999, 0)];
+        let rows = [row(40 * 48, 48), row(10 * 12, 12), row(999, 0)];
         assert_eq!(avg_viewers(rows.iter()), Some(34));
         assert_eq!(avg_viewers([row(5, 0)].iter()), None);
+        // The sums are used as they are: 3 streams of 1.5 viewers each average 2 (rounded), not 1.
+        let rows = [row(3, 2), row(3, 2), row(3, 2)];
+        assert_eq!(avg_viewers(rows.iter()), Some(2));
     }
 
     #[test]
@@ -1508,14 +1513,21 @@ mod tests {
     }
 
     #[test]
-    fn weekly_viewers_skip_nothing() {
+    fn weekly_viewers_leave_out_weeks_without_counts() {
         let tz = toronto();
         let now = local_ms("2026-11-04T12:00:00");
-        let rows = vec![StreamRow { started_at: local_ms("2026-11-02T19:00:00"), average: 30, samples: 10, ..Default::default() }];
+        let row = |at: &str, sum| StreamRow { started_at: local_ms(at), viewer_sum: sum, samples: 10, ..Default::default() };
+        let rows = vec![
+            row("2026-10-12T19:00:00", 200),
+            row("2026-11-02T19:00:00", 300),
+            // Streamed, but no count was read: not a week of zero viewers.
+            StreamRow { started_at: local_ms("2026-10-26T19:00:00"), ..Default::default() },
+        ];
         let series = weekly_viewers(&rows, &tz, now);
-        assert_eq!(series.len(), WEEKS as usize);
-        assert_eq!(series.last(), Some(&("Nov 2".to_owned(), 30)));
-        assert_eq!(series[0].1, 0);
+        assert_eq!(series, vec![("Oct 12".to_owned(), 20), ("Nov 2".to_owned(), 30)]);
+        // A stream with counts that were all zero is a real zero.
+        let series = weekly_viewers(&[row("2026-11-02T19:00:00", 0)], &tz, now);
+        assert_eq!(series, vec![("Nov 2".to_owned(), 0)]);
     }
 
     #[test]

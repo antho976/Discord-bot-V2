@@ -722,13 +722,37 @@ fn cooled_down(map: &Mutex<HashMap<(u64, u64), Instant>>, key: (u64, u64), coold
 /// XP from another feature, like a claimed upload reward: a flat amount (no prestige or streak
 /// boost), with level-ups announced and reward roles handled like any other gain. `channel` is
 /// where a level-up is announced when no level-up channel is set.
-pub async fn give_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, channel: Option<u64>) -> Result<()> {
-    grant(ctx, guild, user, amount.max(0), Earned::Manual, channel).await
+///
+/// `Ok(false)` when levels are off in that server, so nothing was paid. Once the XP is written
+/// this is `Ok(true)`: a level-up that couldn't be logged, or a role that couldn't be given, is
+/// logged here rather than returned, so the caller never undoes a payment that went through.
+pub async fn give_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, channel: Option<u64>) -> Result<bool> {
+    if !ctx.enabled(guild, KEY) {
+        return Ok(false);
+    }
+    let (s, before, level) = add_xp(ctx, guild, user, amount.max(0), Earned::Manual)?;
+    if level > before
+        && let Err(e) = log_level_up(ctx, guild, user, level)
+    {
+        bot_core::tracing::warn!(guild, user, level, error = %e, "couldn't log a level-up from given XP");
+    }
+    level_changed(ctx, &s, guild, user, before, level, channel).await;
+    Ok(true)
 }
 
 /// Add XP (or take it, when `amount` is negative) and handle a level change: announcement and
 /// reward roles.
 async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, channel: Option<u64>) -> Result<()> {
+    let (s, before, level) = add_xp(ctx, guild, user, amount, how)?;
+    if level > before {
+        log_level_up(ctx, guild, user, level)?;
+    }
+    level_changed(ctx, &s, guild, user, before, level, channel).await;
+    Ok(())
+}
+
+/// Write the XP change. Returns the settings, the level before and the level after.
+fn add_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned) -> Result<(std::sync::Arc<Settings>, u32, u32)> {
     let s = ctx.settings::<Settings>(guild, KEY)?;
     // Read and write under one lock: a message, a reaction and the voice tick for the same member
     // can land together, and each must add to what the other wrote.
@@ -774,22 +798,29 @@ async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, chann
         )?;
         Ok((before, level))
     })?;
-    if level > before.1 {
-        let role = rewards(ctx, guild).unwrap_or_default().into_iter().find(|(l, _)| *l == level).map(|(_, r)| r as i64);
-        ctx.db.with(|c| {
-            c.execute(
-                "INSERT INTO level_ups (guild_id, user_id, level, role_id, at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![guild as i64, user as i64, level as i64, role, bot_core::now_ms()],
-            )
-        })?;
-    }
-    if level != before.1 {
+    Ok((s, before.1, level))
+}
+
+/// Keep a level-up for the history, with the reward role it came with.
+fn log_level_up(ctx: &Ctx, guild: u64, user: u64, level: u32) -> Result<()> {
+    let role = rewards(ctx, guild).unwrap_or_default().into_iter().find(|(l, _)| *l == level).map(|(_, r)| r as i64);
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO level_ups (guild_id, user_id, level, role_id, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![guild as i64, user as i64, level as i64, role, bot_core::now_ms()],
+        )
+    })?;
+    Ok(())
+}
+
+/// Reward roles and the announcement after a level change. Failures are logged where they happen.
+async fn level_changed(ctx: &Ctx, s: &Settings, guild: u64, user: u64, before: u32, level: u32, channel: Option<u64>) {
+    if level != before {
         sync_rewards(ctx, guild, user, level).await;
-        if level > before.1 && s.announce && level >= s.announce_min_level {
-            announce(ctx, &s, guild, user, level, channel).await;
+        if level > before && s.announce && level >= s.announce_min_level {
+            announce(ctx, s, guild, user, level, channel).await;
         }
     }
-    Ok(())
 }
 
 /// This ISO week, like "2026-W44", in UTC.
@@ -1172,6 +1203,23 @@ mod tests {
         ctx.save_settings(1, KEY, &Settings { prestige_level: 50, ..Settings::default() }).unwrap();
         assert_eq!(names(&ctx), vec!["prestige"]);
         assert!(Levels::default().guild_commands(&ctx, 2).is_empty());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn given_xp_pays_once_written_and_never_where_levels_are_off() {
+        let ctx = ctx();
+        let xp = |ctx: &Ctx| ctx.db.with(|c| c.query_row("SELECT xp FROM levels WHERE guild_id = 1 AND user_id = 10", [], |r| r.get::<_, i64>(0)).optional()).unwrap();
+        // Levels off: nothing paid.
+        assert!(!give_xp(&ctx, 1, 10, 50, None).await.unwrap());
+        assert_eq!(xp(&ctx), None);
+        ctx.set_enabled(1, KEY, true).unwrap();
+        ctx.save_settings(1, KEY, &Settings { announce: false, ..Settings::default() }).unwrap();
+        assert!(give_xp(&ctx, 1, 10, 50, None).await.unwrap());
+        assert_eq!(xp(&ctx), Some(50));
+        // A level-up that can't be logged still counts as paid, so the caller doesn't undo it.
+        ctx.db.with(|c| c.execute_batch("DROP TABLE level_ups")).unwrap();
+        assert!(give_xp(&ctx, 1, 10, 100_000, None).await.unwrap());
+        assert_eq!(xp(&ctx), Some(100_050));
     }
 
     fn set(ctx: &Ctx, user: u64, xp: i64) {

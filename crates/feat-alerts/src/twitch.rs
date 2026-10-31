@@ -505,6 +505,8 @@ pub struct StreamRow {
     pub peak: i64,
     pub average: i64,
     pub samples: i64,
+    /// Every viewer count read, added up. `average` is this over `samples`, rounded down.
+    pub viewer_sum: i64,
     /// Last time viewers were read (or the stream was checked).
     pub last_sample: i64,
     pub vod_url: Option<String>,
@@ -542,7 +544,7 @@ pub fn sized(template: &str, w: u32, h: u32) -> String {
     template.replace("%{width}", "{width}").replace("%{height}", "{height}").replace("{width}", &w.to_string()).replace("{height}", &h.to_string())
 }
 
-const COLS: &str = "id, broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, last_sample, vod_url, thumbnail, games";
+const COLS: &str = "id, broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, last_sample, vod_url, thumbnail, games, viewer_sum";
 
 fn stream_row(r: &Row) -> bot_core::rusqlite::Result<StreamRow> {
     Ok(StreamRow {
@@ -561,6 +563,7 @@ fn stream_row(r: &Row) -> bot_core::rusqlite::Result<StreamRow> {
         vod_url: r.get(12)?,
         thumbnail: r.get(13)?,
         games: r.get(14)?,
+        viewer_sum: r.get(15)?,
     })
 }
 

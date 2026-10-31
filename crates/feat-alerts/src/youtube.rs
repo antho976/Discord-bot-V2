@@ -287,32 +287,43 @@ pub async fn claim(ctx: &Ctx, call: &ComponentCall) -> Result<()> {
         return ctx.reply(&call.interaction, say(format!("This reward closed {}.", text::ago(closed)))).await;
     }
     let user = call.user_id();
-    // The row goes in first, so a double click can't pay twice.
+    // A level-up can mean role changes and a post, so answer later. Deferring first means a
+    // failed defer leaves no claim behind that was never paid.
+    ctx.defer(&call.interaction, true).await?;
+    // The row goes in before the XP, so a double click can't pay twice.
     let added = ctx.db.with(|c| {
         c.execute(
             "INSERT OR IGNORE INTO alerts_video_claims (guild_id, video_id, user_id, xp, at) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![guild as i64, video, user as i64, s.reward_xp, now],
         )
-    })?;
+    });
+    let added = match added {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(guild, user, error = %e, "couldn't record an upload reward claim");
+            return ctx.edit_original(&call.interaction, say("The XP didn't go through. Try again in a minute.".into())).await;
+        }
+    };
     if added == 0 {
-        return ctx.reply(&call.interaction, say("You already claimed this one.".into())).await;
+        return ctx.edit_original(&call.interaction, say("You already claimed this one.".into())).await;
     }
-    // A level-up can mean role changes and a post, so answer later.
-    ctx.defer(&call.interaction, true).await?;
-    let channel = call.interaction.channel.as_ref().map(|c| c.id.get());
-    match feat_levels::give_xp(ctx, guild, user, s.reward_xp, channel).await {
-        Ok(()) => ctx.edit_original(&call.interaction, say(format!("You got {} XP.", text::num(s.reward_xp)))).await,
+    // Level-ups from a claim go to the levels announce channel when one is set, never here.
+    let answer = match feat_levels::give_xp(ctx, guild, user, s.reward_xp, None).await {
+        Ok(true) => return ctx.edit_original(&call.interaction, say(format!("You got {} XP.", text::num(s.reward_xp)))).await,
+        Ok(false) => "Upload rewards are off on this server.",
         Err(e) => {
             tracing::warn!(guild, user, error = %e, "couldn't give upload reward XP");
-            let undo = ctx.db.with(|c| {
-                c.execute("DELETE FROM alerts_video_claims WHERE guild_id = ?1 AND video_id = ?2 AND user_id = ?3", params![guild as i64, video, user as i64])
-            });
-            if let Err(e) = undo {
-                tracing::warn!(guild, user, error = %e, "couldn't undo a failed claim");
-            }
-            ctx.edit_original(&call.interaction, say("The XP didn't go through. Try again in a minute.".into())).await
+            "The XP didn't go through. Try again in a minute."
         }
+    };
+    // Nothing was paid, so the claim is taken back.
+    let undo = ctx.db.with(|c| {
+        c.execute("DELETE FROM alerts_video_claims WHERE guild_id = ?1 AND video_id = ?2 AND user_id = ?3", params![guild as i64, video, user as i64])
+    });
+    if let Err(e) = undo {
+        tracing::warn!(guild, user, error = %e, "couldn't undo a failed claim");
     }
+    ctx.edit_original(&call.interaction, say(answer.into())).await
 }
 
 /// Who claimed each of these videos, earliest first.
