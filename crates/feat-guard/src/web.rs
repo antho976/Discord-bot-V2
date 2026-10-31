@@ -2,20 +2,38 @@ use bot_core::axum::Router;
 use bot_core::axum::extract::{Path, Query, State};
 use bot_core::axum::response::IntoResponse;
 use bot_core::axum::routing::{get, post};
-use bot_core::maud::{Markup, html};
+use bot_core::maud::{Markup, PreEscaped, html};
+use bot_core::twilight_model::id::Id;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, text};
 use serde::Deserialize;
 
-use crate::score::{self, Facts, Strictness};
-use crate::{Catch, KEY, Outcome, Settings, TIMEOUTS, links};
+use crate::score::{self, Facts, Signal, Strictness};
+use crate::{Catch, KEY, Outcome, Settings, TIMEOUTS, Week, links};
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
         .route("/g/{guild}/guard", get(page).post(save))
+        .route("/g/{guild}/guard/settings", get(settings_page).post(save))
         .route("/g/{guild}/guard/catches/{id}/release", post(release))
         .route("/g/{guild}/guard/catches/{id}/ban", post(ban))
+}
+
+fn tabs(page: &Page, active: &str) -> Markup {
+    ui::tabs(&[("Catches", page.path(KEY)), ("Settings", page.path("guard/settings"))], active)
+}
+
+/// The header pill: whether the checks run, and how strict they are.
+fn status(s: &Settings) -> Markup {
+    let (dot, label) = if s.scam_detection {
+        ("dot live", format!("On · {} strictness", s.strictness.key()))
+    } else if s.honeypot_channel.is_some() {
+        ("dot waiting", "Honeypot only".to_owned())
+    } else {
+        ("dot", "Off".to_owned())
+    };
+    html! { span.status { span class=(dot) {} (label) } }
 }
 
 #[derive(Deserialize, Default)]
@@ -29,35 +47,263 @@ struct TestQuery {
 async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<TestQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let (week, released, banned) = crate::counts(&ctx, guild)?;
+    let week = crate::week(&ctx, guild)?;
     let catches = crate::recent_catches(&ctx, guild, 50)?;
     let test = q.test.as_deref().map(|t| text::clip(t, 2000)).filter(|t| !t.trim().is_empty());
 
     let body = html! {
-        (ui::readings(&[
-            ("caught this week", text::num(week)),
-            ("released as mistakes, 30 days", text::num(released)),
-            ("banned, 30 days", text::num(banned)),
-        ]))
-        @if s.log_channel.is_none() {
-            p.muted.small { "No log channel yet, so catches only show up here and behind the bell. Pick one below." }
-        }
-        (ui::section("Recent catches", Some("Release lifts the timeout and marks the catch as a mistake. Ban also deletes their messages from the last day."), html! {
-            @if catches.is_empty() {
-                (ui::empty(Icon::Shield, "Nothing caught yet", "Catches show up here when someone posts a scam or writes in the honeypot channel."))
-            } @else {
-                (bot_core::maud::PreEscaped(PHONE_CSS))
-                div.table-wrap { table.table.catches {
-                    thead { tr { th { "When" } th { "Member" } th { "Why" } th { "Outcome" } @if page.can_edit() { th {} } } }
-                    tbody { @for c in &catches { (catch_row(&ctx, &page, c)) } }
-                } }
+        (style())
+        (tabs(&page, "Catches"))
+        div.with-rail {
+            div.gd-main {
+                (readings(&ctx, guild, &week))
+                @if s.log_channel.is_none() {
+                    p.muted.small { "No log channel yet, so catches only show up here and behind the bell. Pick one on the " a href=(page.path("guard/settings")) { "Settings tab" } "." }
+                }
+                (ui::section("Recent catches", Some("Release lifts the timeout and marks the catch as a mistake. Ban also deletes their messages from the last day."), html! {
+                    @if catches.is_empty() {
+                        (ui::empty(Icon::Shield, "Nothing caught yet", "Catches show up here when someone posts a scam or writes in the honeypot channel."))
+                    } @else {
+                        div.gd-list { @for c in &catches { (catch_row(&ctx, &page, guild, c)) } }
+                    }
+                }))
             }
-        }))
-        (test_section(&page, &s, test.as_deref(), q.new.is_some(), q.repeat.is_some(), if test.is_some() { q.ads.is_some() } else { s.catch_ads }))
-        (ui::settings_form(&page, &page.path(KEY), html! {
+            aside.rail {
+                (test_rail(&page, &s, test.as_deref(), q.new.is_some(), q.repeat.is_some(), if test.is_some() { q.ads.is_some() } else { s.catch_ads }))
+            }
+        }
+    };
+    Ok(ui::layout(&ctx, &page, "Scam protection", Some(status(&s)), body).into_response())
+}
+
+/// The week's numbers, and the seven-day chart in the alert colour.
+fn readings(ctx: &Ctx, guild: u64, week: &Week) -> Markup {
+    let max = week.daily.iter().copied().max().unwrap_or(0).max(1);
+    let urls: Vec<String> = week.handled_by.iter().map(|u| ctx.member_avatar(guild, *u)).collect();
+    html! {
+        div.gd-top {
+            div.readings {
+                (reading(&text::num(week.caught), "Caught this week"))
+                (reading(&text::num(week.banned), "Banned"))
+                (reading(&text::num(week.released), "Released as mistakes"))
+                (reading(&text::num(week.removed), "Messages removed"))
+                div.reading {
+                    @if urls.is_empty() { b.gd-none { "No one yet" } } @else { (ui::avatars(&urls, 3)) }
+                    span { "Handled by" }
+                }
+            }
+            figure.gd-bars {
+                svg viewBox="0 0 67 36" role="img" aria-label="Catches in the last seven days" {
+                    @for (i, n) in week.daily.iter().enumerate() {
+                        @let h = if *n > 0 { (*n as f64 / max as f64 * 30.0).max(3.0) } else { 2.0 };
+                        rect class=(if i == 6 { "now" } else { "" }) x=(i * 10) y=(36.0 - h) width="7" height=(h) rx="1.5" {
+                            title { (day_label(i)) ": " (n) }
+                        }
+                    }
+                }
+                figcaption { "Catches, last 7 days" }
+            }
+        }
+    }
+}
+
+fn reading(value: &str, label: &str) -> Markup {
+    html! { div.reading { b.mono { (value) } span { (label) } } }
+}
+
+/// The label for one of the seven bars, counted back from the last 24 hours.
+fn day_label(i: usize) -> String {
+    if i == 6 { "Last 24 hours".to_owned() } else { format!("{} to {} days ago", 6 - i, 7 - i) }
+}
+
+fn catch_row(ctx: &Ctx, page: &Page, guild: u64, c: &Catch) -> Markup {
+    let tone = match c.outcome {
+        Outcome::TimedOut | Outcome::NotTimedOut => Tone::Warn,
+        Outcome::Released => Tone::Muted,
+        Outcome::Banned => Tone::Bad,
+    };
+    let name = member_name(ctx, guild, c.user_id, &c.user_name);
+    let (shown, cut) = shown_part(&c.content);
+    html! {
+        article.gd-catch {
+            img.avatar.gd-av src=(ctx.member_avatar(guild, c.user_id)) alt="" width="36" height="36" loading="lazy";
+            div.gd-head {
+                strong { (name) }
+                span.muted.small { "account made " (crate::account_made(c.user_id)) " · " (text::ago(c.at)) }
+            }
+            div.gd-out { (ui::badge(c.outcome.label(), tone)) }
+            div.gd-body {
+                @if !c.signals.is_empty() {
+                    div.gd-chips { @for s in &c.signals { (ui::badge(&s.text, Tone::Muted)) } }
+                }
+                div.gd-msg {
+                    @if shown.trim().is_empty() {
+                        span.muted { "No text, attachments only" }
+                    } @else {
+                        (message(shown, &c.signals))
+                        @if cut { "…" }
+                    }
+                }
+                div.gd-did { (did(ctx, c)) }
+                @if page.can_edit() && c.outcome.open() {
+                    div.gd-actions {
+                        (ui::action_button(&page.path(&format!("{KEY}/catches/{}/release", c.id)), "Release as mistake", Tone::Muted, false))
+                        (ui::action_button(&page.path(&format!("{KEY}/catches/{}/ban", c.id)), "Ban", Tone::Bad, true))
+                    }
+                }
+                (decided(ctx, guild, c))
+            }
+        }
+    }
+}
+
+/// The start of a caught message for the list, cut back to a whole word.
+fn shown_part(content: &str) -> (&str, bool) {
+    const MAX: usize = 400;
+    match content.char_indices().nth(MAX) {
+        None => (content, false),
+        Some((cut, _)) => {
+            let end = content[..cut].char_indices().rev().find(|(_, c)| c.is_whitespace()).map_or(cut, |(i, _)| i);
+            (&content[..end], true)
+        }
+    }
+}
+
+/// The caught message, with the parts the stored signals matched underlined in red. Defanged
+/// like the staff alert, so a link in it can't be clicked.
+fn message(text: &str, signals: &[Signal]) -> Markup {
+    let spans = score::highlight(text, signals);
+    let pieces = segments(text, &spans);
+    html! {
+        @for (piece, hit) in &pieces {
+            @if *hit { mark { (piece) } } @else { (piece) }
+        }
+    }
+}
+
+/// Split `text` at the highlighted ranges, defanging each piece.
+fn segments(text: &str, spans: &[(usize, usize)]) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    for &(start, end) in spans {
+        if start > at {
+            out.push((links::defang(&text[at..start]), false));
+        }
+        out.push((links::defang(&text[start..end]), true));
+        at = end;
+    }
+    if at < text.len() {
+        out.push((links::defang(&text[at..]), false));
+    }
+    out
+}
+
+/// What the bot did about the catch.
+fn did(ctx: &Ctx, c: &Catch) -> Markup {
+    html! {
+        @if c.deleted > 0 {
+            span { (ui::icon(Icon::Trash)) (format!("Removed {}", plural(c.deleted, "message"))) }
+        }
+        @if c.outcome == Outcome::NotTimedOut {
+            span { (ui::icon(Icon::Clock)) "Couldn't time them out" }
+        } @else {
+            @if let Some(until) = c.timeout_until {
+                span { (ui::icon(Icon::Clock)) "Timed out for " (timeout_for(c.at, until)) }
+            }
+        }
+        @if let Some((channel, _)) = c.alert {
+            span { (ui::icon(Icon::Bell)) "Alerted " (channel_name(ctx, channel)) }
+        }
+    }
+}
+
+/// Who released or banned the member, when it was done from the dashboard or the alert.
+fn decided(ctx: &Ctx, guild: u64, c: &Catch) -> Markup {
+    let verb = match c.outcome {
+        Outcome::Released => "released them as a mistake",
+        _ => "banned them",
+    };
+    let done_in_discord = match c.outcome {
+        Outcome::Released => "Released in Discord.",
+        _ => "Banned in Discord.",
+    };
+    html! {
+        @if c.outcome.open() {
+            p.muted.small { "Nobody has decided yet." }
+        } @else {
+            @if let (Some(id), Some(by)) = (c.acted_by, &c.acted_by_name) {
+                div.gd-decided {
+                    img.avatar src=(ctx.member_avatar(guild, id)) alt="" width="18" height="18" loading="lazy";
+                    span { strong { (by) } " " (verb) "." }
+                }
+            } @else {
+                p.muted.small { (done_in_discord) }
+            }
+        }
+    }
+}
+
+/// The score, the threshold on a bar, and each signal with its points.
+fn test_rail(page: &Page, s: &Settings, test: Option<&str>, new: bool, repeat: bool, ads: bool) -> Markup {
+    let result = test.map(|t| {
+        let facts = Facts {
+            account_age_days: Some(if new { 1.0 } else { 365.0 }),
+            new_account_days: s.new_account_days.max(2),
+            repeat_channels: if repeat { 3 } else { 1 },
+            has_attachments: false,
+            catch_ads: ads,
+        };
+        score::score(t, &facts)
+    });
+    let threshold = s.strictness.threshold();
+    html! {
+        h2 { "Test a message" }
+        p.muted.small { "See how the bot would score it. Nothing is posted or stored." }
+        form.stack id="test" method="get" action={ (page.path(KEY)) "#test" } {
+            textarea.input name="test" rows="4" placeholder="free nitro for everyone https://..." { (test.unwrap_or_default()) }
+            div.chips {
+                label.chip { input type="checkbox" name="new" value="1" checked[new]; span { "From a new account" } }
+                label.chip { input type="checkbox" name="repeat" value="1" checked[repeat]; span { "Posted in 3 channels at once" } }
+                label.chip { input type="checkbox" name="ads" value="1" checked[ads]; span { "Count ads" } }
+            }
+            div.inline-form { button.btn type="submit" { "Score it" } }
+        }
+        @if let Some(v) = &result {
+            @let scale = v.score.max(20).max(threshold);
+            div.stack style="gap:10px" {
+                div.gd-score {
+                    span { "Score " b.mono { (v.score) } " of " (threshold) " needed" }
+                    @if v.caught(s.strictness) {
+                        (ui::badge("Would catch", Tone::Bad))
+                    } @else {
+                        (ui::badge("Not caught", Tone::Muted))
+                    }
+                }
+                div.gd-gauge { span.gd-mark style={ "left:" (threshold * 100 / scale) "%" } {} }
+                p.muted.small { "The white line is where a message gets caught." }
+                @if v.signals.is_empty() {
+                    p.muted.small { "Nothing suspicious in it." }
+                } @else {
+                    div.gd-sigs {
+                        @for sig in &v.signals {
+                            div.gd-sig { b.mono { "+" (sig.weight) } span { (sig.text) } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::View)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let body = html! {
+        (tabs(&page, "Settings"))
+        (ui::settings_form(&page, &page.path("guard/settings"), html! {
             (ui::section("Detection", None, ui::card(html! {
                 (ui::field_toggle("scam_detection", "Check messages for scams", Some("Scores every message from members without Manage Messages. The honeypot works either way."), s.scam_detection))
-                (ui::field_select("strictness", "Strictness", Some("How sure the bot must be before it acts. Try messages in the test box above to see the difference."),
+                (ui::field_select("strictness", "Strictness", Some("How sure the bot must be before it acts. Try a message on the Catches tab to see the difference."),
                     &Strictness::ALL.iter().map(|x| (x.key().to_owned(), x.label().to_owned())).collect::<Vec<_>>(), s.strictness.key()))
                 (ui::field_toggle("catch_ads", "Also catch commission and art ads", Some("Off by default: ads aren't scams, and a caught member is timed out."), s.catch_ads))
                 (ui::field_number("new_account_days", "New accounts", Some("Accounts younger than this count against a suspicious message. 0 turns it off."), s.new_account_days, 0, 90, Some("days")))
@@ -77,109 +323,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
             })))
         }))
     };
-    Ok(ui::layout(&ctx, &page, "Scam protection", None, body).into_response())
-}
-
-/// On a phone each catch stacks: member and outcome, then why, then when and the buttons.
-const PHONE_CSS: &str = "<style>
-.catches td.when, .catches td.outcome { white-space: nowrap; }
-.catches td.why { min-width: 260px; }
-@media (max-width: 640px) {
-  .catches thead { display: none; }
-  .catches tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'who outcome' 'why why' 'when actions'; gap: 6px 12px; padding: 12px 0; border-top: 1px solid var(--edge-1); }
-  .catches td { border: 0; padding: 0; }
-  .catches td.who { grid-area: who; } .catches td.outcome { grid-area: outcome; text-align: right; }
-  .catches td.why { grid-area: why; min-width: 0; } .catches td.when { grid-area: when; align-self: center; }
-  .catches td.actions { grid-area: actions; }
-  .catches tr:hover td { background: none; }
-}
-</style>";
-
-fn catch_row(ctx: &Ctx, page: &Page, c: &Catch) -> Markup {
-    let tone = match c.outcome {
-        Outcome::TimedOut | Outcome::NotTimedOut => Tone::Warn,
-        Outcome::Released => Tone::Muted,
-        Outcome::Banned => Tone::Bad,
-    };
-    let hash = ctx.cache.user(bot_core::twilight_model::id::Id::new(c.user_id)).and_then(|u| u.avatar.map(|a| a.to_string()));
-    let avatar = bot_core::discord::avatar_url(c.user_id, hash.as_deref());
-    let all_signals = c.signals.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join("\n");
-    let quoted = if c.content.trim().is_empty() { "No text, attachments only".to_owned() } else { links::defang(&text::clip(&c.content, 140)) };
-    html! {
-        tr {
-            td.when.muted { (text::ago(c.at)) }
-            td.who { (ui::person(&c.user_name, &avatar, None)) }
-            td.why {
-                div title=(all_signals) {
-                    (c.reason)
-                    @if c.signals.len() > 1 { span.muted { " and " (c.signals.len() - 1) " more" } }
-                }
-                div.muted.small.mono style="overflow-wrap:anywhere" { (quoted) }
-            }
-            td.outcome {
-                (ui::badge(c.outcome.label(), tone))
-                @if let Some(by) = &c.acted_by_name { div.muted.small { "by " (by) } }
-            }
-            @if page.can_edit() {
-                td.actions {
-                    @if c.outcome.open() {
-                        (ui::action_button(&page.path(&format!("{KEY}/catches/{}/release", c.id)), "Release", Tone::Muted, false))
-                        (ui::action_button(&page.path(&format!("{KEY}/catches/{}/ban", c.id)), "Ban", Tone::Bad, true))
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn test_section(page: &Page, s: &Settings, test: Option<&str>, new: bool, repeat: bool, ads: bool) -> Markup {
-    let result = test.map(|t| {
-        let facts = Facts {
-            account_age_days: Some(if new { 1.0 } else { 365.0 }),
-            new_account_days: s.new_account_days.max(2),
-            repeat_channels: if repeat { 3 } else { 1 },
-            has_attachments: false,
-            catch_ads: ads,
-        };
-        score::score(t, &facts)
-    });
-    html! {
-        (ui::section("Test a message", Some("Paste a message to see how it scores. Nothing is posted or stored."), html! {
-            form.stack id="test" method="get" action={ (page.path(KEY)) "#test" } {
-                textarea.input name="test" rows="3" placeholder="free nitro for everyone https://..." { (test.unwrap_or_default()) }
-                div.inline-form {
-                    label.chip { input type="checkbox" name="new" value="1" checked[new]; span { "From a new account" } }
-                    label.chip { input type="checkbox" name="repeat" value="1" checked[repeat]; span { "Posted in 3 channels at once" } }
-                    label.chip { input type="checkbox" name="ads" value="1" checked[ads]; span { "Count ads" } }
-                    button.btn type="submit" { "Score it" }
-                }
-            }
-            @if let Some(v) = &result {
-                @let threshold = s.strictness.threshold();
-                div.stack style="gap:6px" {
-                    p {
-                        b.mono { "Score " (v.score) }
-                        span.muted {
-                            @if v.caught(s.strictness) { " · would be caught at " (s.strictness.key()) " strictness, which needs " (threshold) }
-                            @else { " · not caught at " (s.strictness.key()) " strictness, which needs " (threshold) }
-                        }
-                    }
-                    @if v.signals.is_empty() {
-                        p.muted.small { "Nothing suspicious in it." }
-                    } @else {
-                        div.list {
-                            @for sig in &v.signals {
-                                div.list-item style="padding:6px 0" {
-                                    span.mono.muted style="min-width:28px" { "+" (sig.weight) }
-                                    span { (sig.text) }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }))
-    }
+    Ok(ui::layout(&ctx, &page, "Scam protection", Some(status(&s)), body).into_response())
 }
 
 async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
@@ -202,7 +346,7 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     }
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed scam protection settings");
-    Ok(saved(&page.path(KEY)))
+    Ok(saved(&page.path("guard/settings")))
 }
 
 async fn release(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
@@ -223,3 +367,83 @@ async fn act(ctx: Ctx, user: User, guild: u64, id: i64, outcome: Outcome) -> Web
     ctx.audit(&page.user, Some(guild), KEY, what);
     Ok(saved(&page.path(KEY)))
 }
+
+/// Keep the stored name when the member is no longer cached.
+fn member_name(ctx: &Ctx, guild: u64, user: u64, saved: &str) -> String {
+    if saved.is_empty() || ctx.cache.user(Id::new(user)).is_some() {
+        ctx.display_name(guild, user)
+    } else {
+        saved.to_owned()
+    }
+}
+
+fn channel_name(ctx: &Ctx, channel: u64) -> String {
+    match ctx.cache.channel(Id::new(channel)).and_then(|c| c.name.clone()) {
+        Some(n) => format!("#{n}"),
+        None => "#deleted-channel".into(),
+    }
+}
+
+/// "Removed 1 message", "Removed 3 messages".
+fn plural(n: i64, word: &str) -> String {
+    if n == 1 { format!("1 {word}") } else { format!("{} {word}s", text::num(n)) }
+}
+
+/// The timeout's length as the settings name it ("1 day"), from when it started to when it ends.
+fn timeout_for(at: i64, until: i64) -> String {
+    let span = until - at;
+    TIMEOUTS
+        .iter()
+        .find(|(m, _)| (*m * 60_000 - span).abs() < 120_000)
+        .map(|(_, label)| (*label).to_owned())
+        .unwrap_or_else(|| text::duration(span / 1000))
+}
+
+/// Layout for the catch list, the chart and the test rail. Classes are prefixed `gd-`.
+fn style() -> Markup {
+    html! { style { (PreEscaped(STYLE)) } }
+}
+
+const STYLE: &str = r#"
+.gd-main { display: flex; flex-direction: column; gap: 26px; min-width: 0; }
+.gd-top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 20px 32px; }
+.gd-top .readings { gap: 20px 36px; }
+.gd-top .reading .avatars .avatar { width: 26px; height: 26px; }
+.reading .gd-none { font-size: 14px; font-weight: 500; color: var(--ink-3); padding-top: 4px; }
+.gd-bars { margin: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.gd-bars svg { width: 120px; height: 36px; display: block; overflow: visible; }
+.gd-bars rect { fill: var(--signal); opacity: 0.32; }
+.gd-bars rect.now { opacity: 1; }
+.gd-bars figcaption { font-size: 12px; color: var(--ink-3); }
+.gd-list { display: flex; flex-direction: column; }
+.gd-catch { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; grid-template-areas: "av head out" "av body body"; column-gap: 14px; row-gap: 10px; align-items: start; padding: 16px 0; border-top: 1px solid var(--edge-1); }
+.gd-catch:last-child { border-bottom: 1px solid var(--edge-1); }
+.gd-av { grid-area: av; width: 36px; height: 36px; }
+.gd-head { grid-area: head; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; padding-top: 2px; }
+.gd-head strong { font-weight: 500; font-size: 13.5px; }
+.gd-out { grid-area: out; padding-top: 1px; }
+.gd-body { grid-area: body; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.gd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gd-msg { font: 12.5px/1.6 var(--mono); color: var(--ink-2); background: var(--well); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gd-msg mark { background: none; color: var(--held); text-decoration: underline; text-decoration-color: var(--held); text-underline-offset: 3px; }
+.gd-did { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--ink-3); }
+.gd-did span { display: inline-flex; align-items: center; gap: 6px; }
+.gd-did .icon { width: 14px; height: 14px; }
+.gd-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.gd-decided { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); }
+.gd-decided .avatar { width: 18px; height: 18px; }
+.gd-score { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+.gd-score b { font-weight: 500; color: var(--ink); }
+.gd-gauge { position: relative; height: 6px; border-radius: 3px; margin: 6px 0 2px; background: linear-gradient(90deg, var(--waiting), var(--signal)); }
+.gd-mark { position: absolute; top: -5px; bottom: -5px; width: 2px; border-radius: 1px; background: var(--ink); transform: translateX(-1px); }
+.gd-sigs { display: flex; flex-direction: column; }
+.gd-sig { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 8px 0; font-size: 13px; border-top: 1px solid var(--edge-1); }
+.gd-sig:first-child { border-top: 0; }
+.gd-sig b { font-weight: 500; color: var(--signal); }
+.gd-sig span { color: var(--ink-2); }
+@media (max-width: 640px) {
+  .gd-catch { grid-template-columns: 36px minmax(0, 1fr); grid-template-areas: "av head" "av out" "body body"; }
+  .gd-out { justify-self: start; }
+  .gd-bars { align-items: flex-start; }
+}
+"#;

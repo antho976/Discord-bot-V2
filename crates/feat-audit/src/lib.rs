@@ -344,10 +344,7 @@ impl Audit {
                     .description(format!("In <#{channel}>, [jump to message]({link})"));
                 e = field(e, "Before", &before.as_ref().map(|b| clip_or(&b.content, 900, "No text")).unwrap_or_else(|| "Not available".into()), false);
                 e = field(e, "After", &clip_or(&m.content, 900, "No text"), false);
-                let summary = match &before {
-                    Some(b) => format!("{} to {}", text::clip(&one_line(&b.content), 45), text::clip(&one_line(&m.content), 45)),
-                    None => format!("Now: {}", text::clip(&one_line(&m.content), 90)),
-                };
+                let summary = diff_json(before.as_ref().map(|b| b.content.as_str()), Some(&m.content));
                 out.push(Item { guild, kind: Kind::MessageEdit, user: Some(author), channel: Some(channel), summary, embed: e.build() });
             }
             Event::MessageDeleteBulk(m) if s.route(Kind::BulkDelete).is_some() => {
@@ -372,7 +369,8 @@ impl Audit {
                     description.push_str("\nNew account, under 7 days old");
                 }
                 let e = embed(ctx, guild, "Member joined", if fresh { CORAL } else { GREY }, Some(user)).description(description);
-                let summary = if fresh { format!("New account, created {}", text::ago(created)) } else { format!("Account created {}", text::ago(created)) };
+                let made = made_ago(created);
+                let summary = if fresh { format!("New account, made {made}") } else { format!("Account made {made}") };
                 out.push(Item { guild, kind: Kind::Join, user: Some(user), channel: None, summary, embed: e.build() });
             }
             Event::MemberRemove(m) if s.route(Kind::Leave).is_some() => {
@@ -414,7 +412,7 @@ impl Audit {
                         let show = |n: &Option<String>| n.clone().unwrap_or_else(|| "None".into());
                         let e = embed(ctx, guild, "Nickname changed", GREY, Some(user));
                         let e = field(field(e, "Before", &show(&before.nick), true), "After", &show(&m.nick), true);
-                        let summary = format!("{} to {}", show(&before.nick), show(&m.nick));
+                        let summary = diff_json(before.nick.as_deref(), m.nick.as_deref());
                         out.push(Item { guild, kind: Kind::Nickname, user: Some(user), channel: None, summary, embed: e.build() });
                     }
                     if s.route(Kind::Roles).is_some() {
@@ -428,13 +426,8 @@ impl Audit {
                             if !removed.is_empty() {
                                 e = field(e, "Removed", &role_mentions(&removed, 20), false);
                             }
-                            let names = |ids: &[u64]| ids.iter().map(|r| role_name(ctx, *r)).collect::<Vec<_>>().join(", ");
-                            let summary = match (added.is_empty(), removed.is_empty()) {
-                                (false, true) => format!("Added {}", names(&added)),
-                                (true, false) => format!("Removed {}", names(&removed)),
-                                _ => format!("Added {}, removed {}", names(&added), names(&removed)),
-                            };
-                            out.push(Item { guild, kind: Kind::Roles, user: Some(user), channel: None, summary: text::clip(&summary, 140), embed: e.build() });
+                            let summary = role_change_json(ctx, &added, &removed);
+                            out.push(Item { guild, kind: Kind::Roles, user: Some(user), channel: None, summary, embed: e.build() });
                         }
                     }
                     if s.route(Kind::Timeout).is_some() {
@@ -444,12 +437,12 @@ impl Audit {
                             Some(TimeoutChange::Started(until)) => {
                                 let e = embed(ctx, guild, "Member timed out", CORAL, Some(user))
                                     .description(format!("Until <t:{}:f> (<t:{}:R>)", until / 1000, until / 1000));
-                                let summary = format!("Timed out for {}", text::duration((until - now) / 1000));
+                                let summary = format!("For {}", text::duration((until - now) / 1000));
                                 out.push(Item { guild, kind: Kind::Timeout, user: Some(user), channel: None, summary, embed: e.build() });
                             }
                             Some(TimeoutChange::Ended) => {
                                 let e = embed(ctx, guild, "Timeout removed", GREY, Some(user));
-                                out.push(Item { guild, kind: Kind::TimeoutEnd, user: Some(user), channel: None, summary: "Timeout removed".into(), embed: e.build() });
+                                out.push(Item { guild, kind: Kind::TimeoutEnd, user: Some(user), channel: None, summary: String::new(), embed: e.build() });
                             }
                             None => {}
                         }
@@ -459,7 +452,7 @@ impl Audit {
                     let since = m.premium_since.map(|t| t.as_micros() / 1000);
                     if just_boosted(since, now_ms()) && self.first_boost(guild, user) {
                         let e = embed(ctx, guild, "Server boosted", GREY, Some(user)).description("Started boosting the server");
-                        out.push(Item { guild, kind: Kind::Boost, user: Some(user), channel: None, summary: "Started boosting".into(), embed: e.build() });
+                        out.push(Item { guild, kind: Kind::Boost, user: Some(user), channel: None, summary: String::new(), embed: e.build() });
                     }
                 }
             }
@@ -470,7 +463,7 @@ impl Audit {
                     return out;
                 }
                 let e = embed(ctx, guild, "Member banned", CORAL, Some(user));
-                out.push(Item { guild, kind: Kind::Ban, user: Some(user), channel: None, summary: "Banned".into(), embed: e.build() });
+                out.push(Item { guild, kind: Kind::Ban, user: Some(user), channel: None, summary: String::new(), embed: e.build() });
             }
             Event::BanRemove(b) if s.route(Kind::Unban).is_some() => {
                 let user = b.user.id.get();
@@ -478,7 +471,7 @@ impl Audit {
                     return out;
                 }
                 let e = embed(ctx, guild, "Member unbanned", GREY, Some(user));
-                out.push(Item { guild, kind: Kind::Unban, user: Some(user), channel: None, summary: "Unbanned".into(), embed: e.build() });
+                out.push(Item { guild, kind: Kind::Unban, user: Some(user), channel: None, summary: String::new(), embed: e.build() });
             }
             Event::VoiceStateUpdate(v) if s.route(Kind::VoiceJoin).is_some() => {
                 let user = v.user_id.get();
@@ -488,8 +481,8 @@ impl Audit {
                     return out;
                 }
                 let (kind, description, channel, summary) = match (was, now) {
-                    (None, Some(to)) => (Kind::VoiceJoin, format!("Joined <#{to}>"), to, format!("Joined {}", channel_label(ctx, to))),
-                    (Some(from), None) => (Kind::VoiceLeave, format!("Left <#{from}>"), from, format!("Left {}", channel_label(ctx, from))),
+                    (None, Some(to)) => (Kind::VoiceJoin, format!("Joined <#{to}>"), to, String::new()),
+                    (Some(from), None) => (Kind::VoiceLeave, format!("Left <#{from}>"), from, String::new()),
                     (Some(from), Some(to)) => (
                         Kind::VoiceMove,
                         format!("Moved from <#{from}> to <#{to}>"),
@@ -594,6 +587,57 @@ pub fn just_boosted(premium_since_ms: Option<i64>, now: i64) -> bool {
 /// When a Discord account was created, from its id.
 pub fn snowflake_ms(id: u64) -> i64 {
     ((id >> 22) + 1_420_070_400_000) as i64
+}
+
+/// "today", "yesterday", "2 days ago", "5 months ago", "3 years ago": how long ago an account
+/// was made, given when it was made.
+pub fn made_ago(created_ms: i64) -> String {
+    let days = ((now_ms() - created_ms) / 86_400_000).max(0);
+    match days {
+        0 => "today".into(),
+        1 => "yesterday".into(),
+        2..60 => format!("{days} days ago"),
+        60..730 => format!("{} months ago", days / 30),
+        _ => format!("{} years ago", days / 365),
+    }
+}
+
+/// A stored before and after, for edits and nickname changes. `before` is None when the old
+/// text wasn't known (for a nickname: when there was none). Kept as JSON in the entry's summary.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Diff {
+    pub before: Option<String>,
+    pub after: Option<String>,
+}
+
+/// The roles a member gained and lost, kept as JSON in the entry's summary.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RoleChange {
+    pub added: Vec<RoleRef>,
+    pub removed: Vec<RoleRef>,
+}
+
+/// A role by name and colour, as it was when the change happened.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RoleRef {
+    pub name: String,
+    /// Discord's colour for the role, 0 for none.
+    pub color: u32,
+}
+
+pub fn diff_json(before: Option<&str>, after: Option<&str>) -> String {
+    let d = Diff { before: before.map(|b| text::clip(b, 300)), after: after.map(|a| text::clip(a, 300)) };
+    bot_core::serde_json::to_string(&d).unwrap_or_default()
+}
+
+pub fn role_change_json(ctx: &Ctx, added: &[u64], removed: &[u64]) -> String {
+    let refs = |ids: &[u64]| ids.iter().map(|r| RoleRef { name: role_name(ctx, *r), color: role_color(ctx, *r) }).collect();
+    let change = RoleChange { added: refs(added), removed: refs(removed) };
+    bot_core::serde_json::to_string(&change).unwrap_or_default()
+}
+
+fn role_color(ctx: &Ctx, role: u64) -> u32 {
+    ctx.cache.role(Id::new(role)).map(|r| r.colors.primary_color).unwrap_or(0)
 }
 
 /// The file name at the end of an attachment URL.

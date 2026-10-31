@@ -155,7 +155,7 @@ pub fn score(text: &str, facts: &Facts) -> Verdict {
 pub fn words(text: &str) -> Vec<String> {
     let cleaned: String = text
         .chars()
-        .filter(|c| !matches!(c, '\'' | '’' | '`' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}'))
+        .filter(|c| !dropped(*c))
         .flat_map(char::to_lowercase)
         .map(links::fold_char)
         .collect();
@@ -172,6 +172,108 @@ pub fn words(text: &str) -> Vec<String> {
             }
         })
         .collect()
+}
+
+/// Characters `words` ignores altogether: apostrophes and zero-width marks.
+fn dropped(c: char) -> bool {
+    matches!(c, '\'' | '’' | '`' | '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}')
+}
+
+/// Byte ranges of the words in `text`, one per entry of [`words`] and in the same order.
+fn word_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut current: Option<(usize, usize)> = None;
+    for (at, c) in text.char_indices() {
+        if dropped(c) {
+            continue;
+        }
+        let end = at + c.len_utf8();
+        for d in c.to_lowercase().map(links::fold_char) {
+            if d.is_alphanumeric() {
+                current = Some(current.map_or((at, end), |(start, _)| (start, end)));
+            } else if let Some(word) = current.take() {
+                out.push(word);
+            }
+        }
+    }
+    out.extend(current);
+    out
+}
+
+/// What the stored signals point at in a caught message, as byte ranges that cover whole
+/// whitespace-separated tokens, sorted and merged. Wording is the phrase that matched a tag
+/// named in a signal; links are the ones a signal names; `@everyone` and `@here` are marked
+/// where their signal fired.
+pub fn highlight(text: &str, signals: &[Signal]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let tags: Vec<&str> = TAGS.iter().filter(|t| signals.iter().any(|s| s.text == t.label)).map(|t| t.key).collect();
+    if !tags.is_empty() {
+        let spans = word_spans(text);
+        let words = words(text);
+        for rule in RULES.iter().filter(|r| tags.contains(&r.tag)) {
+            for (first, last) in rule.spans(&words) {
+                if let (Some(a), Some(b)) = (spans.get(first), spans.get(last - 1)) {
+                    out.push((a.0, b.1));
+                }
+            }
+        }
+    }
+    let named = |host: &str| signals.iter().any(|s| s.text.to_lowercase().contains(host));
+    let unknown_link_signal = signals.iter().any(|s| s.text == "Scam wording next to an unknown link");
+    let everyone_signal = signals.iter().any(|s| s.text == "@everyone or @here with a link");
+    for (at, token) in tokens(text) {
+        let end = at + token.len();
+        let found = links::find(token);
+        let hit = if found.is_empty() {
+            everyone_signal && matches!(token.trim_matches(|c: char| !c.is_alphanumeric() && c != '@').to_lowercase().as_str(), "@everyone" | "@here")
+        } else {
+            found.iter().any(|l| {
+                named(&l.host) || l.raw_host.as_deref().is_some_and(named) || (unknown_link_signal && !links::is_trusted(&l.host))
+            })
+        };
+        if hit {
+            out.push((at, end));
+        }
+    }
+    // Widen each range to whole tokens, then merge the overlaps.
+    let mut widened: Vec<(usize, usize)> = out.iter().map(|&(a, b)| (token_start(text, a), token_end(text, b))).collect();
+    widened.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (a, b) in widened {
+        match merged.last_mut() {
+            Some(last) if a <= last.1 => last.1 = last.1.max(b),
+            _ => merged.push((a, b)),
+        }
+    }
+    merged
+}
+
+/// Whitespace-separated tokens with their byte offsets.
+fn tokens(text: &str) -> Vec<(usize, &str)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (at, c) in text.char_indices() {
+        match (c.is_whitespace(), start) {
+            (true, Some(s)) => {
+                out.push((s, &text[s..at]));
+                start = None;
+            }
+            (false, None) => start = Some(at),
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        out.push((s, &text[s..]));
+    }
+    out
+}
+
+fn token_start(text: &str, at: usize) -> usize {
+    text[..at].char_indices().rev().find(|(_, c)| c.is_whitespace()).map_or(0, |(i, c)| i + c.len_utf8())
+}
+
+fn token_end(text: &str, at: usize) -> usize {
+    text[at..].find(char::is_whitespace).map_or(text.len(), |i| at + i)
 }
 
 struct Tag {
@@ -349,7 +451,21 @@ fn parse(pattern: &str) -> Vec<Slot> {
 
 impl Rule {
     fn matches(&self, words: &[String]) -> bool {
-        (0..words.len()).any(|i| match_at(&self.slots, words, i))
+        (0..words.len()).any(|i| walk(&self.slots, words, i, &mut |_| true))
+    }
+
+    /// Word ranges `[start, end)` where the rule matches.
+    fn spans(&self, words: &[String]) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for start in 0..words.len() {
+            walk(&self.slots, words, start, &mut |end| {
+                if end > start {
+                    out.push((start, end));
+                }
+                false
+            });
+        }
+        out
     }
 }
 
@@ -357,23 +473,25 @@ fn is_number(w: &str) -> bool {
     w.starts_with(|c: char| c.is_ascii_digit())
 }
 
-fn match_at(slots: &[Slot], words: &[String], i: usize) -> bool {
-    let Some((first, rest)) = slots.split_first() else { return true };
+/// Match `slots` from word `i`. `done` is called with each word index where a full match ends
+/// and returns true to stop the search early. Returns whether it stopped.
+fn walk(slots: &[Slot], words: &[String], i: usize, done: &mut dyn FnMut(usize) -> bool) -> bool {
+    let Some((first, rest)) = slots.split_first() else { return done(i) };
     match first {
-        Slot::Gap(n) => (0..=*n).any(|k| i + k <= words.len() && match_at(rest, words, i + k)),
+        Slot::Gap(n) => (0..=*n).any(|k| i + k <= words.len() && walk(rest, words, i + k, done)),
         Slot::Num(optional) => {
             let hit = words.get(i).is_some_and(|w| is_number(w));
-            (hit && match_at(rest, words, i + 1)) || (*optional && match_at(rest, words, i))
+            (hit && walk(rest, words, i + 1, done)) || (*optional && walk(rest, words, i, done))
         }
         Slot::Words(alts, optional) => {
             let hit = alts.iter().any(|alt| match alt {
-                Alt::Num => words.get(i).is_some_and(|w| is_number(w)) && match_at(rest, words, i + 1),
-                Alt::Prefix(p) => words.get(i).is_some_and(|w| w.starts_with(p.as_str())) && match_at(rest, words, i + 1),
+                Alt::Num => words.get(i).is_some_and(|w| is_number(w)) && walk(rest, words, i + 1, done),
+                Alt::Prefix(p) => words.get(i).is_some_and(|w| w.starts_with(p.as_str())) && walk(rest, words, i + 1, done),
                 Alt::Exact(seq) => {
-                    seq.iter().enumerate().all(|(k, s)| words.get(i + k) == Some(s)) && match_at(rest, words, i + seq.len())
+                    seq.iter().enumerate().all(|(k, s)| words.get(i + k) == Some(s)) && walk(rest, words, i + seq.len(), done)
                 }
             });
-            hit || (*optional && match_at(rest, words, i))
+            hit || (*optional && walk(rest, words, i, done))
         }
     }
 }
@@ -587,6 +705,41 @@ mod tests {
         assert!(!plain("check out my profile for the schedule").caught(Strictness::High));
         assert_eq!(Strictness::parse("high"), Strictness::High);
         assert_eq!(Strictness::parse("nonsense"), Strictness::Normal);
+    }
+
+    #[test]
+    fn word_spans_line_up_with_words() {
+        for text in ["Fr33 N1TR0 for $50k, I'm 2500", "İstanbul don't go", "a\u{200b}b  c.d", "free nitro!!", ""] {
+            let spans = word_spans(text);
+            assert_eq!(spans.len(), words(text).len(), "{text:?}");
+            for (a, b) in spans {
+                assert!(text.is_char_boundary(a) && text.is_char_boundary(b));
+            }
+        }
+        let text = "free nitro, claim";
+        let spans: Vec<&str> = word_spans(text).into_iter().map(|(a, b)| &text[a..b]).collect();
+        assert_eq!(spans, vec!["free", "nitro", "claim"]);
+    }
+
+    #[test]
+    fn highlight_marks_the_phrase_and_the_named_link() {
+        let text = "I'm leaving CS2, giving away my whole inventory. first come first serve https://steamcommunlty.com/tradeoffer";
+        let v = score(text, &Facts { new_account_days: 7, account_age_days: Some(2.0), ..Default::default() });
+        let marked: Vec<&str> = highlight(text, &v.signals).into_iter().map(|(a, b)| &text[a..b]).collect();
+        assert!(marked.iter().any(|m| m.contains("giving away my whole inventory")), "{marked:?}");
+        assert!(marked.iter().any(|m| m.contains("steamcommunlty.com")), "{marked:?}");
+        // The quitting signal names "leaving CS2", so that phrase is marked too.
+        assert!(v.signals.iter().any(|s| s.text.contains("quitting")), "{:?}", v.signals);
+        assert!(marked.iter().any(|m| m.contains("leaving CS2")), "{marked:?}");
+    }
+
+    #[test]
+    fn highlight_is_empty_without_signals_and_marks_everyone() {
+        assert!(highlight("hello there friend", &[]).is_empty());
+        let text = "@everyone come here https://example.com/x";
+        let signals = vec![Signal { weight: 4, text: "@everyone or @here with a link".into() }];
+        let marked: Vec<&str> = highlight(text, &signals).into_iter().map(|(a, b)| &text[a..b]).collect();
+        assert_eq!(marked, vec!["@everyone"]);
     }
 
     #[test]
