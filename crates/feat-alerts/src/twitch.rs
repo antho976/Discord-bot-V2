@@ -20,7 +20,7 @@ use bot_core::{Ctx, discord::link_row, jiff, now_ms, text, tracing};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::{COLOR, DEFAULT_LIVE_MESSAGE, KEY, Settings, alert_guilds, due, logins, state_get, state_set};
+use crate::{COLOR, DEFAULT_LIVE_MESSAGE, KEY, Settings, alert_guilds, due, logins, state_del, state_get, state_set};
 
 const HELIX: &str = "https://api.twitch.tv/helix";
 /// EventSub subscription types and versions kept for every broadcaster.
@@ -132,6 +132,9 @@ pub struct HStream {
     pub viewer_count: i64,
     #[serde(default)]
     pub started_at: String,
+    /// The live preview, with `{width}` and `{height}` to fill in.
+    #[serde(default)]
+    pub thumbnail_url: String,
 }
 
 /// Live streams among these broadcaster ids.
@@ -268,7 +271,19 @@ pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
             continue;
         }
         tracing::info!(id = %s.id, kind = %s.kind, status = %s.status, "removing a Twitch subscription");
-        let _ = request(ctx, Method::DELETE, "eventsub/subscriptions", &[("id", s.id.clone())], None).await;
+        match request(ctx, Method::DELETE, "eventsub/subscriptions", &[("id", s.id.clone())], None).await {
+            Ok(r) if r.status().is_success() || r.status() == StatusCode::NOT_FOUND => {}
+            Ok(r) => tracing::warn!(id = %s.id, status = %r.status(), "Twitch refused to remove a subscription"),
+            Err(e) => tracing::warn!(id = %s.id, error = %e, "couldn't remove a Twitch subscription"),
+        }
+    }
+    // What each wanted subscription ended up as, for the Twitch tab.
+    let mut states: HashMap<String, HashMap<String, String>> = HashMap::new();
+    for s in subs.iter().filter(|s| s.transport.callback.as_deref() == Some(callback.as_str())) {
+        let bid = s.condition["broadcaster_user_id"].as_str().unwrap_or_default();
+        if have.contains(&(s.kind.clone(), bid.to_owned())) {
+            states.entry(bid.to_owned()).or_default().insert(s.kind.clone(), s.status.clone());
+        }
     }
     for bid in &wanted {
         for (kind, version) in TYPES {
@@ -281,16 +296,98 @@ pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
                 "transport": { "method": "webhook", "callback": callback, "secret": secret },
             });
             let res = request(ctx, Method::POST, "eventsub/subscriptions", &[], Some(&body)).await?;
-            if res.status().is_success() {
+            let state = if res.status().is_success() {
                 tracing::info!(kind, broadcaster = %bid, "subscribed to Twitch events");
+                let v: Value = res.json().await.unwrap_or_default();
+                v["data"][0]["status"].as_str().unwrap_or("webhook_callback_verification_pending").to_owned()
             } else {
                 let status = res.status();
                 let text = res.text().await.unwrap_or_default();
                 tracing::warn!(kind, broadcaster = %bid, %status, body = %text, "Twitch refused a subscription");
-            }
+                format!("refused ({})", status.as_u16())
+            };
+            states.entry(bid.clone()).or_default().insert((*kind).to_owned(), state);
         }
     }
+    save_sub_states(ctx, &states);
     Ok(())
+}
+
+// ---- what the Twitch tab shows about EventSub ----
+
+/// Broadcaster id -> subscription type -> Twitch's status, as of the last check.
+pub type SubStates = HashMap<String, HashMap<String, String>>;
+
+fn save_sub_states(ctx: &Ctx, states: &SubStates) {
+    state_set(ctx, "subs", &serde_json::to_string(states).unwrap_or_default());
+    state_set(ctx, "subs_at", &now_ms().to_string());
+    for (bid, kinds) in states {
+        note_online_state(ctx, bid, kinds.get("stream.online").map(String::as_str));
+    }
+}
+
+/// Keep when a broadcaster's go-live subscription was first seen working: set the first time
+/// it's enabled, cleared when it stops. Streams from before then can't have been missed.
+fn note_online_state(ctx: &Ctx, bid: &str, status: Option<&str>) {
+    let key = format!("online_since:{bid}");
+    if status == Some("enabled") {
+        if state_get(ctx, &key).is_none() {
+            state_set(ctx, &key, &now_ms().to_string());
+        }
+    } else {
+        state_del(ctx, &key);
+    }
+}
+
+/// Since when the go-live subscription has been working, if it is.
+pub fn online_since(ctx: &Ctx, bid: &str) -> Option<i64> {
+    state_get(ctx, &format!("online_since:{bid}")).and_then(|v| v.parse().ok())
+}
+
+/// The subscription states from the last check, and when that was.
+pub fn sub_states(ctx: &Ctx) -> (SubStates, Option<i64>) {
+    let states = state_get(ctx, "subs").and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default();
+    (states, state_get(ctx, "subs_at").and_then(|v| v.parse().ok()))
+}
+
+/// When the last event for a broadcaster arrived, and its type.
+pub fn last_event(ctx: &Ctx, bid: &str) -> Option<(i64, String)> {
+    let v = state_get(ctx, &format!("event:{bid}"))?;
+    let (at, kind) = v.split_once(' ')?;
+    Some((at.parse().ok()?, kind.to_owned()))
+}
+
+/// Broadcaster id -> (when read, newest VOD start), so page loads within a few minutes share one
+/// Helix call.
+type VodStarts = HashMap<String, (i64, Option<i64>)>;
+static VOD_STARTS: LazyLock<Mutex<VodStarts>> = LazyLock::new(Default::default);
+
+/// When Twitch's newest VOD of a broadcaster started, if it has one. One Helix call every five
+/// minutes at most, given up after 3 seconds so a slow Twitch doesn't hold the page.
+pub async fn latest_vod_start(ctx: &Ctx, bid: &str) -> Option<i64> {
+    let now = now_ms();
+    if let Some((at, start)) = VOD_STARTS.lock().unwrap().get(bid)
+        && now - at < FIVE_MIN
+    {
+        return *start;
+    }
+    let q = [("user_id", bid.to_owned()), ("type", "archive".into()), ("first", "1".into())];
+    let call = get::<List<HVideo>>(ctx, "videos", &q);
+    // A timeout or error isn't cached, so the next load tries again.
+    let list = bot_core::tokio::time::timeout(std::time::Duration::from_secs(3), call).await.ok()?.ok()?;
+    let start = list.and_then(|l| l.data.into_iter().next()).and_then(|v| v.created_at.parse::<jiff::Timestamp>().ok()).map(|t| t.as_millisecond());
+    let mut cache = VOD_STARTS.lock().unwrap();
+    cache.retain(|_, (at, _)| now - *at < FIVE_MIN);
+    cache.insert(bid.to_owned(), (now, start));
+    start
+}
+
+/// Push mode looks broken for a stream when Twitch shows it started more than 15 minutes ago,
+/// after the go-live subscription was working, no event has arrived since it started, and the
+/// bot has no record of it. A stream from before the subscription worked wasn't missed.
+pub fn missed_stream(vod_start: Option<i64>, online_since: Option<i64>, last_event: Option<i64>, recorded: bool, now: i64) -> bool {
+    let (Some(start), Some(since)) = (vod_start, online_since) else { return false };
+    start >= since && now - start > 15 * 60_000 && last_event.is_none_or(|e| e < start) && !recorded
 }
 
 /// When a message older than this arrives, it's refused (Twitch's replay advice).
@@ -346,10 +443,21 @@ pub async fn webhook(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) ->
             let sub = &v["subscription"];
             let (t, status) = (sub["type"].as_str().unwrap_or("?"), sub["status"].as_str().unwrap_or("?"));
             tracing::warn!(kind = t, status, "Twitch revoked a subscription");
+            if let Some(bid) = sub["condition"]["broadcaster_user_id"].as_str() {
+                let (mut states, _) = sub_states(&ctx);
+                states.entry(bid.to_owned()).or_default().insert(t.to_owned(), status.to_owned());
+                state_set(&ctx, "subs", &serde_json::to_string(&states).unwrap_or_default());
+                if t == "stream.online" {
+                    note_online_state(&ctx, bid, Some(status));
+                }
+            }
             ctx.notify(None, KEY, format!("Twitch stopped sending {t} events ({status}). The bot subscribes again within a day."), None);
             StatusCode::NO_CONTENT.into_response()
         }
         "notification" => {
+            let bid = v["event"]["broadcaster_user_id"].as_str().unwrap_or_default();
+            let kind = v["subscription"]["type"].as_str().unwrap_or_default();
+            state_set(&ctx, &format!("event:{bid}"), &format!("{now} {kind}"));
             bot_core::tokio::spawn(async move {
                 if let Err(e) = handle_event(&ctx, &v).await {
                     tracing::warn!(error = %e, "couldn't handle a Twitch event");
@@ -400,9 +508,24 @@ pub struct StreamRow {
     /// Last time viewers were read (or the stream was checked).
     pub last_sample: i64,
     pub vod_url: Option<String>,
+    /// A picture of the stream with `{width}` and `{height}` to fill in: the live preview while
+    /// live, the VOD's once Twitch has made one, or empty.
+    pub thumbnail: String,
 }
 
-const COLS: &str = "id, broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, last_sample, vod_url";
+impl StreamRow {
+    /// The thumbnail at 640x360, or `None` when there isn't one.
+    pub fn thumb_640(&self) -> Option<String> {
+        (!self.thumbnail.is_empty()).then(|| sized(&self.thumbnail, 640, 360))
+    }
+}
+
+/// Fill a Twitch image template. Live previews use `{width}`, VODs `%{width}`.
+pub fn sized(template: &str, w: u32, h: u32) -> String {
+    template.replace("%{width}", "{width}").replace("%{height}", "{height}").replace("{width}", &w.to_string()).replace("{height}", &h.to_string())
+}
+
+const COLS: &str = "id, broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, last_sample, vod_url, thumbnail";
 
 fn stream_row(r: &Row) -> bot_core::rusqlite::Result<StreamRow> {
     Ok(StreamRow {
@@ -419,6 +542,7 @@ fn stream_row(r: &Row) -> bot_core::rusqlite::Result<StreamRow> {
         samples: r.get(10)?,
         last_sample: r.get(11)?,
         vod_url: r.get(12)?,
+        thumbnail: r.get(13)?,
     })
 }
 
@@ -476,11 +600,12 @@ pub async fn on_online(ctx: &Ctx, b: &Broadcaster, stream_id: &str, started_at: 
         Some(i) => (i.title.clone(), i.game_name.clone()),
         None => channel_info(ctx, &b.user_id).await.unwrap_or_default(),
     };
+    let thumbnail = info.as_ref().map(|i| i.thumbnail_url.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| live_thumbnail(&b.login));
     let now = now_ms();
     let id = ctx.db.with(|c| {
         c.execute(
-            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, last_sample) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![b.user_id, stream_id, started_at, title, game, now],
+            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, last_sample, thumbnail) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![b.user_id, stream_id, started_at, title, game, now, thumbnail],
         )?;
         Ok(c.last_insert_rowid())
     })?;
@@ -522,17 +647,25 @@ pub async fn on_offline(ctx: &Ctx, bid: &str, ended: i64) -> Result<()> {
     finish(ctx, row, ended).await
 }
 
-/// Close a stream: duration, VOD link, and the live posts edited to say it ended.
+/// The live preview Twitch serves for a login while they're live.
+fn live_thumbnail(login: &str) -> String {
+    format!("https://static-cdn.jtvnw.net/previews-ttv/live_user_{login}-{{width}}x{{height}}.jpg")
+}
+
+/// Close a stream: duration, VOD link and picture, and the live posts edited to say it ended.
+/// The live preview stops working when the stream ends, so it's dropped; the VOD's picture
+/// takes its place now or, while Twitch is still making it, from `fill_thumbnails`.
 async fn finish(ctx: &Ctx, row: StreamRow, ended: i64) -> Result<()> {
     let duration = ((ended - row.started_at) / 1000).max(0);
-    let vod = vod_url(ctx, &row).await.unwrap_or_else(|e| {
+    let vod = vod(ctx, &row).await.unwrap_or_else(|e| {
         tracing::warn!(error = %e, "couldn't look up the VOD");
         None
     });
+    let (vod_url, thumbnail) = vod.map(|v| (Some(v.url), v.thumbnail_url)).unwrap_or_default();
     ctx.db.with(|c| {
         c.execute(
-            "UPDATE alerts_streams SET ended_at = ?2, duration_secs = ?3, vod_url = ?4 WHERE id = ?1",
-            params![row.id, ended, duration, vod],
+            "UPDATE alerts_streams SET ended_at = ?2, duration_secs = ?3, vod_url = ?4, thumbnail = ?5 WHERE id = ?1",
+            params![row.id, ended, duration, vod_url, thumbnail],
         )
     })?;
     MISSING.lock().unwrap().remove(&row.broadcaster_id);
@@ -540,28 +673,63 @@ async fn finish(ctx: &Ctx, row: StreamRow, ended: i64) -> Result<()> {
     edit_posts(ctx, row.id).await
 }
 
-async fn vod_url(ctx: &Ctx, row: &StreamRow) -> Result<Option<String>> {
-    #[derive(Deserialize)]
-    struct HVideo {
-        url: String,
-        #[serde(default)]
-        stream_id: Option<String>,
-        #[serde(default)]
-        created_at: String,
-    }
+#[derive(Deserialize)]
+struct HVideo {
+    #[serde(default)]
+    id: String,
+    url: String,
+    #[serde(default)]
+    stream_id: Option<String>,
+    #[serde(default)]
+    created_at: String,
+    /// Empty while Twitch is still processing the VOD.
+    #[serde(default)]
+    thumbnail_url: String,
+}
+
+async fn vod(ctx: &Ctx, row: &StreamRow) -> Result<Option<HVideo>> {
     let q = [("user_id", row.broadcaster_id.clone()), ("type", "archive".into()), ("first", "5".into())];
     let videos = get::<List<HVideo>>(ctx, "videos", &q).await?.map(|l| l.data).unwrap_or_default();
     let created = |v: &HVideo| v.created_at.parse::<jiff::Timestamp>().map(|t| t.as_millisecond()).unwrap_or(0);
-    Ok(videos
-        .iter()
-        .find(|v| {
-            if row.stream_id.is_empty() {
-                created(v) >= row.started_at - 15 * 60_000
-            } else {
-                v.stream_id.as_deref() == Some(row.stream_id.as_str())
+    Ok(videos.into_iter().find(|v| {
+        if row.stream_id.is_empty() {
+            created(v) >= row.started_at - 15 * 60_000
+        } else {
+            v.stream_id.as_deref() == Some(row.stream_id.as_str())
+        }
+    }))
+}
+
+/// Streams that ended in the last two days with a VOD but no picture yet: ask Twitch for the
+/// VODs' pictures, all in one call.
+pub async fn fill_thumbnails(ctx: &Ctx) -> Result<()> {
+    let since = now_ms() - 2 * 86_400_000;
+    let rows: Vec<(i64, String)> = ctx.db.with(|c| {
+        let mut s = c.prepare_cached(
+            "SELECT id, vod_url FROM alerts_streams WHERE ended_at >= ?1 AND thumbnail = '' AND vod_url IS NOT NULL LIMIT 100",
+        )?;
+        s.query_map([since], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+    })?;
+    let ids: Vec<(i64, String)> = rows.into_iter().filter_map(|(id, url)| video_id(&url).map(|v| (id, v.to_owned()))).collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let q: Vec<(&str, String)> = ids.iter().map(|(_, v)| ("id", v.clone())).collect();
+    let videos = get::<List<HVideo>>(ctx, "videos", &q).await?.map(|l| l.data).unwrap_or_default();
+    ctx.db.with(|c| {
+        for v in videos.iter().filter(|v| !v.thumbnail_url.is_empty()) {
+            if let Some((row, _)) = ids.iter().find(|(_, id)| *id == v.id) {
+                c.execute("UPDATE alerts_streams SET thumbnail = ?2 WHERE id = ?1", params![row, v.thumbnail_url])?;
             }
-        })
-        .map(|v| v.url.clone()))
+        }
+        Ok(())
+    })?;
+    Ok(())
+}
+
+/// "https://www.twitch.tv/videos/123" -> "123".
+fn video_id(url: &str) -> Option<&str> {
+    url.trim_end_matches('/').rsplit_once("/videos/").map(|(_, id)| id).filter(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Title or game changed while live: edit the live posts.
@@ -671,8 +839,10 @@ async fn followers(ctx: &Ctx, guilds: &[(u64, std::sync::Arc<Settings>)]) {
     }
     for (guild, s) in guilds {
         let found: Vec<i64> = s.twitch_logins.iter().filter_map(|l| totals.get(l).copied()).collect();
-        if !found.is_empty() {
-            let _ = ctx.record_stat(*guild, "followers", found.iter().sum());
+        if !found.is_empty()
+            && let Err(e) = ctx.record_stat(*guild, "followers", found.iter().sum())
+        {
+            tracing::warn!(guild, error = %e, "couldn't store the follower total");
         }
     }
 }
@@ -779,8 +949,17 @@ async fn edit_posts(ctx: &Ctx, stream_id: i64) -> Result<()> {
     let Some(b) = broadcasters(ctx).into_iter().find(|b| b.user_id == row.broadcaster_id) else { return Ok(()) };
     let none = AllowedMentions::default();
     for (guild, channel, message) in posts {
-        let s = ctx.settings::<Settings>(guild as u64, KEY)?;
-        let p = if row.ended_at.is_some() { ended_post(&b, &row) } else { live_post(&s, &b, &row) };
+        let p = if row.ended_at.is_some() {
+            ended_post(&b, &row)
+        } else {
+            match ctx.settings::<Settings>(guild as u64, KEY) {
+                Ok(s) => live_post(&s, &b, &row),
+                Err(e) => {
+                    tracing::warn!(guild, error = %e, "couldn't read alert settings to edit a live post");
+                    continue;
+                }
+            }
+        };
         let res = ctx
             .http
             .update_message(Id::new(channel as u64), Id::new(message as u64))
@@ -851,6 +1030,40 @@ mod tests {
         let fields: Vec<_> = p.embed.fields.iter().map(|f| (f.name.as_str(), f.value.as_str())).collect();
         assert!(fields.contains(&("Peak viewers", "48")));
         assert!(p.mentions.roles.is_empty());
+    }
+
+    #[test]
+    fn thumbnails_fill_both_templates() {
+        assert_eq!(sized(&live_thumbnail("antho"), 640, 360), "https://static-cdn.jtvnw.net/previews-ttv/live_user_antho-640x360.jpg");
+        assert_eq!(sized("https://x/thumb0-%{width}x%{height}.jpg", 320, 180), "https://x/thumb0-320x180.jpg");
+        let row = StreamRow::default();
+        assert_eq!(row.thumb_640(), None);
+    }
+
+    #[test]
+    fn vod_ids_come_from_links() {
+        assert_eq!(video_id("https://www.twitch.tv/videos/2283"), Some("2283"));
+        assert_eq!(video_id("https://www.twitch.tv/antho"), None);
+        assert_eq!(video_id("https://www.twitch.tv/videos/"), None);
+    }
+
+    #[test]
+    fn missed_streams_need_all_three_signs() {
+        let min = 60_000;
+        let now = 1_000 * min;
+        let start = now - 60 * min;
+        let since = Some(start - 60 * min);
+        // Twitch has a stream from an hour ago, nothing arrived, nothing recorded.
+        assert!(missed_stream(Some(start), since, None, false, now));
+        assert!(missed_stream(Some(start), since, Some(start - min), false, now));
+        // An event after it started, a recorded stream, or a fresh one: fine.
+        assert!(!missed_stream(Some(start), since, Some(start + min), false, now));
+        assert!(!missed_stream(Some(start), since, None, true, now));
+        assert!(!missed_stream(Some(now - 5 * min), since, None, false, now));
+        assert!(!missed_stream(None, since, None, false, now));
+        // Push mode was set up after that stream, or isn't working at all: nothing was missed.
+        assert!(!missed_stream(Some(start), Some(start + min), None, false, now));
+        assert!(!missed_stream(Some(start), None, None, false, now));
     }
 
     #[test]

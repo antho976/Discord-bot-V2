@@ -57,10 +57,18 @@ pub async fn refresh(ctx: &Ctx) -> Result<()> {
     }
     let logins = logins(&alert_guilds(ctx));
     let ms = |s: &str| s.parse::<Timestamp>().ok().map(|t| t.as_millisecond());
+    let mut failed = None;
     for b in twitch::broadcasters(ctx).into_iter().filter(|b| logins.contains(&b.login)) {
         let q = [("broadcaster_id", b.user_id.clone()), ("first", "25".to_owned())];
-        // 404 means the broadcaster has no schedule.
-        let segments = twitch::get::<Wrap>(ctx, "schedule", &q).await?.and_then(|w| w.data.segments).unwrap_or_default();
+        // 404 means the broadcaster has no schedule. Any other failure keeps what's stored, and
+        // the other broadcasters are still read.
+        let segments = match twitch::get::<Wrap>(ctx, "schedule", &q).await {
+            Ok(w) => w.and_then(|w| w.data.segments).unwrap_or_default(),
+            Err(e) => {
+                failed = Some(e.context(format!("schedule of {}", b.login)));
+                continue;
+            }
+        };
         let now = now_ms();
         let mut conn = ctx.db.lock();
         let tx = conn.transaction()?;
@@ -84,7 +92,7 @@ pub async fn refresh(ctx: &Ctx) -> Result<()> {
         tx.execute("DELETE FROM alerts_reminders_sent WHERE at < ?1", [now - 14 * 86_400_000])?;
         tx.commit()?;
     }
-    Ok(())
+    failed.map_or(Ok(()), Err)
 }
 
 /// Segments of these broadcasters starting in `[from, until)`, soonest first.
@@ -143,19 +151,24 @@ pub async fn send_reminders(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
                 continue;
             }
             let key = format!("{}@{}", seg.id, seg.starts_at);
-            let sent: Vec<i64> = ctx
-                .db
-                .with(|c| {
-                    let mut st = c.prepare_cached("SELECT minutes FROM alerts_reminders_sent WHERE guild_id = ?1 AND segment = ?2")?;
-                    st.query_map(params![*guild as i64, key], |r| r.get(0))?.collect()
-                })
-                .unwrap_or_default();
+            // Without knowing what was sent, posting could repeat a reminder every minute.
+            let sent: Vec<i64> = match ctx.db.with(|c| {
+                let mut st = c.prepare_cached("SELECT minutes FROM alerts_reminders_sent WHERE guild_id = ?1 AND segment = ?2")?;
+                st.query_map(params![*guild as i64, key], |r| r.get(0))?.collect()
+            }) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(guild, error = %e, "couldn't read sent reminders; skipping");
+                    continue;
+                }
+            };
             let (post, mark) = due_reminder(now, seg.starts_at, &s.reminder_minutes, &sent);
             if mark.is_empty() {
                 continue;
             }
-            // Marked before posting: a failing channel shouldn't be retried every minute.
-            let _ = ctx.db.with(|c| {
+            // Marked before posting: a failing channel shouldn't be retried every minute. If the
+            // mark doesn't stick, don't post, or the same reminder would go out every minute.
+            let marked = ctx.db.with(|c| {
                 for m in &mark {
                     c.execute(
                         "INSERT OR IGNORE INTO alerts_reminders_sent (guild_id, segment, minutes, at) VALUES (?1, ?2, ?3, ?4)",
@@ -164,6 +177,10 @@ pub async fn send_reminders(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
                 }
                 Ok(())
             });
+            if let Err(e) = marked {
+                tracing::warn!(guild, error = %e, "couldn't record a stream reminder; not posting it");
+                continue;
+            }
             if post.is_none() {
                 continue;
             }
@@ -404,6 +421,33 @@ mod tests {
         assert_eq!(monday_of(mon), mon);
         let sun: Date = "2026-11-01".parse().unwrap();
         assert_eq!(monday_of(sun).to_string(), "2026-10-26");
+    }
+
+    #[test]
+    fn weeks_cross_the_year() {
+        let new_year: Date = "2027-01-01".parse().unwrap();
+        assert_eq!(monday_of(new_year).to_string(), "2026-12-28");
+        let tz = TimeZone::get("Europe/Warsaw").unwrap();
+        let monday: Date = "2026-12-28".parse().unwrap();
+        let svg = week_svg("Antho", "", monday, monday, &tz, "Europe/Warsaw", &[]);
+        assert!(svg.contains("Dec 28 to Jan 3"), "range missing");
+        assert!(svg.contains("Jan 1") && svg.contains("No stream"));
+    }
+
+    #[test]
+    fn segments_land_on_their_local_day_across_dst() {
+        // Clocks go back in Toronto at 2 AM on Sunday, Nov 1 2026. A 7 PM stream that Sunday is
+        // still 7 PM on the image, on the Sunday row.
+        let tz = TimeZone::get("America/Toronto").unwrap();
+        let monday: Date = "2026-10-26".parse().unwrap();
+        let sunday = monday.checked_add(Span::new().days(6)).unwrap();
+        let start = sunday.at(19, 0, 0, 0).to_zoned(tz.clone()).unwrap().timestamp().as_millisecond();
+        let seg = Segment { id: "s".into(), broadcaster_id: "1".into(), starts_at: start, ends_at: None, title: "Sunday".into(), game: String::new(), canceled: false };
+        let svg = week_svg("Antho", "", monday, monday, &tz, "America/Toronto", &[seg]);
+        let sun_row = svg.find(">Nov 1<").unwrap();
+        let at = svg.find(">7:00 PM<").unwrap();
+        assert!(at > sun_row, "the stream is drawn on the Sunday row");
+        assert_eq!(svg.matches("No stream").count(), 6);
     }
 
     #[test]

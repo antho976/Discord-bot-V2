@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bot_core::axum::Router;
 use bot_core::axum::extract::{Path, State};
@@ -11,7 +11,7 @@ use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, User, WebResult, saved};
 use bot_core::{Ctx, Icon, text};
 
-use crate::{KEY, Settings, afk_clear, afk_list, restore_nick, tz_all, zones};
+use crate::{KEY, Settings, afk_clear, afk_list, name_of, name_or_stored, restore_nick, tz_all, tz_guild_users, zones};
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
@@ -19,26 +19,39 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/utility/afk/{user}/clear", post(clear_afk))
 }
 
-/// Members of this server with a timezone, by what their clock reads, earliest first.
-fn member_times(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<Vec<(u64, String, zones::Local)>> {
-    let members: HashSet<u64> = ctx
-        .cache
-        .guild_members(Id::new(guild))
-        .map(|set| set.iter().map(|u| u.get()).collect())
-        .unwrap_or_default();
-    let now = Timestamp::now();
-    let mut rows: Vec<_> = tz_all(ctx)?
-        .into_iter()
-        .filter(|(u, _)| members.contains(u))
-        .filter_map(|(u, zone)| zones::local(&zone, now).map(|l| (u, zone, l)))
-        .collect();
-    rows.sort_by(|a, b| a.2.offset_secs.cmp(&b.2.offset_secs).then_with(|| a.1.cmp(&b.1)));
-    Ok(rows)
+/// Members of this server with a timezone, by what their clock reads, earliest first. Then
+/// the members whose saved zone the bot no longer knows (a zone renamed in a tz update).
+/// A member counts when the cache has them or they set their zone in this server, so the grid
+/// doesn't shrink to whoever has spoken since a restart.
+type MemberTimes = (Vec<(u64, String, zones::Local)>, Vec<u64>);
+
+/// Everyone in the server, from the gateway cache.
+fn members(ctx: &Ctx, guild: u64) -> HashSet<u64> {
+    ctx.cache.guild_members(Id::new(guild)).map(|set| set.iter().map(|u| u.get()).collect()).unwrap_or_default()
 }
 
-/// "Europe/Warsaw" -> "Warsaw", "America/New_York" -> "New York".
-fn city(zone: &str) -> String {
-    zone.rsplit('/').next().unwrap_or(zone).replace('_', " ")
+fn member_times(ctx: &Ctx, members: &HashSet<u64>, set_here: &HashMap<u64, String>) -> bot_core::anyhow::Result<MemberTimes> {
+    let now = Timestamp::now();
+    let (mut rows, mut unknown) = (Vec::new(), Vec::new());
+    for (u, zone) in tz_all(ctx)?.into_iter().filter(|(u, _)| members.contains(u) || set_here.contains_key(u)) {
+        match zones::local(&zone, now) {
+            Some(l) => rows.push((u, zone, l)),
+            None => unknown.push(u),
+        }
+    }
+    rows.sort_by(|a, b| a.2.offset_secs.cmp(&b.2.offset_secs).then_with(|| a.1.cmp(&b.1)));
+    Ok((rows, unknown))
+}
+
+/// "Mira", "Mira and Teo", "Mira, Teo and 3 others".
+fn names_line(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [a, b] => format!("{a} and {b}"),
+        [a, b, c] => format!("{a}, {b} and {c}"),
+        [a, b, rest @ ..] => format!("{a}, {b} and {} others", rest.len()),
+    }
 }
 
 /// Daytime is 06:00 to 18:00 on the member's clock.
@@ -82,26 +95,29 @@ fn opt_switch(name: &str, label: &str, help: &str, on: bool) -> bot_core::maud::
 async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
+    // Leaving clears someone's AFK, so every row is someone in the server, cached or not.
     let away = afk_list(&ctx, guild)?;
-    let times = member_times(&ctx, guild)?;
+    let set_here = tz_guild_users(&ctx, guild)?;
+    let (times, unknown) = member_times(&ctx, &members(&ctx, guild), &set_here)?;
+    let who = |u: u64| name_or_stored(&ctx, guild, u, set_here.get(&u).map(String::as_str).unwrap_or_default());
+    let unknown: Vec<String> = unknown.into_iter().map(who).collect();
     const SHOWN: usize = 200;
-    let who = |u: u64| ctx.display_name(guild, u);
 
     let body = html! {
         style { (PreEscaped(CSS)) }
         div.with-rail.au {
             div.stack.au-main {
                 (ui::section("Where everyone is right now", None, html! {
-                    @if times.is_empty() {
+                    @if times.is_empty() && unknown.is_empty() {
                         (ui::empty(Icon::Clock, "Nobody has set a timezone", "Members add theirs with /timezone set, and their local time shows here."))
-                    } @else {
+                    } @else if !times.is_empty() {
                         div.au-grid {
                             @for (u, zone, l) in times.iter().take(SHOWN) {
                                 div.au-card title={ (zone) " · " (l.offset) } {
                                     img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="40" height="40" loading="lazy";
                                     div.au-who {
                                         strong.clip { (who(*u)) }
-                                        span.clip { (city(zone)) }
+                                        span.clip { (zones::place(zone, &l.offset)) }
                                     }
                                     span.au-time {
                                         @if is_day(l.hour) {
@@ -117,6 +133,12 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                         p.muted.small { (member_line(times.len())) }
                         @if times.len() > SHOWN { p.muted.small { "Showing the first " (SHOWN) " of " (times.len()) "." } }
                     }
+                    @if !unknown.is_empty() {
+                        p.muted.small {
+                            (names_line(&unknown)) " saved a timezone the bot no longer recognizes, so "
+                            (if unknown.len() == 1 { "it's" } else { "they're" }) " left out. /timezone set fixes it."
+                        }
+                    }
                 }))
             }
             aside.rail {
@@ -131,7 +153,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                                     img.avatar src=(ctx.member_avatar(guild, a.user_id)) alt="" width="28" height="28" loading="lazy";
                                     div.grow {
                                         span {
-                                            strong { (who(a.user_id)) }
+                                            strong { (name_or_stored(&ctx, guild, a.user_id, &a.name)) }
                                             @if !a.reason.is_empty() { span.muted { " · " (a.reason) } }
                                         }
                                         span.muted.small { "since " (text::ago(a.since_ms)) }
@@ -148,7 +170,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                     h2 { "Options" }
                     (ui::settings_form(&page, &page.path(KEY), html! {
                         div.au-opts {
-                            (opt_switch("afk_enabled", "AFK", "Off: /afk does nothing and mentions get no notice.", s.afk_enabled))
+                            (opt_switch("afk_enabled", "AFK", "Off: /afk does nothing, mentions get no notice, and anyone away now is back.", s.afk_enabled))
                             (opt_switch("nick_prefix", "Put [AFK] in their nickname", "Skipped for the owner and for members above the bot's role.", s.nick_prefix))
                             (opt_switch("welcome_back", "Say welcome back when they return", "A short message that deletes itself after a few seconds.", s.welcome_back))
                             (opt_switch("timezones_enabled", "Timezones", "Off: /timezone and /time do nothing. Saved zones are kept.", s.timezones_enabled))
@@ -163,6 +185,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
 
 async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let was_on = ctx.settings::<Settings>(guild, KEY)?.afk_enabled;
     let s = Settings {
         afk_enabled: form.bool("afk_enabled"),
         nick_prefix: form.bool("nick_prefix"),
@@ -170,6 +193,14 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         timezones_enabled: form.bool("timezones_enabled"),
     };
     ctx.save_settings(guild, KEY, &s)?;
+    // With AFK off nobody's next message ends it, so end everyone's now and put nicknames back.
+    if was_on && !s.afk_enabled {
+        for a in afk_list(&ctx, guild)? {
+            if let Some(was) = afk_clear(&ctx, guild, a.user_id)? {
+                restore_nick(&ctx, guild, a.user_id, &was).await;
+            }
+        }
+    }
     ctx.audit(&page.user, Some(guild), KEY, "Changed AFK and timezone settings");
     Ok(saved(&page.path(KEY)))
 }
@@ -178,7 +209,7 @@ async fn clear_afk(State(ctx): State<Ctx>, user: User, Path((guild, member)): Pa
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     if let Some(was) = afk_clear(&ctx, guild, member)? {
         restore_nick(&ctx, guild, member, &was).await;
-        ctx.audit(&page.user, Some(guild), KEY, format!("Cleared AFK for {}", ctx.display_name(guild, member)));
+        ctx.audit(&page.user, Some(guild), KEY, format!("Cleared AFK for {}", name_of(&ctx, guild, member)));
     }
     Ok(saved(&page.path(KEY)))
 }
@@ -211,3 +242,17 @@ const CSS: &str = r#"
 .au-opt .help { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
 .au-opt .switch { flex: none; }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_join_and_count() {
+        let n = |v: &[&str]| names_line(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(n(&["Mira"]), "Mira");
+        assert_eq!(n(&["Mira", "Teo"]), "Mira and Teo");
+        assert_eq!(n(&["Mira", "Teo", "Lu"]), "Mira, Teo and Lu");
+        assert_eq!(n(&["Mira", "Teo", "Lu", "Kai"]), "Mira, Teo and 2 others");
+    }
+}

@@ -129,8 +129,12 @@ impl Feature for Embeds {
     }
 }
 
+/// A stored embed. One that can't be read loads as empty, and the log says so.
 fn parse(json: String) -> EmbedData {
-    bot_core::serde_json::from_str(&json).unwrap_or_default()
+    bot_core::serde_json::from_str(&json).unwrap_or_else(|e| {
+        bot_core::tracing::warn!(error = %e, "couldn't read a stored embed");
+        EmbedData::default()
+    })
 }
 
 pub fn templates(ctx: &Ctx, guild: u64) -> Result<Vec<Template>> {

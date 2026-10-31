@@ -98,13 +98,54 @@ Found and fixed along the way:
 
 ### B: brisk-otter
 `crates/feat-alerts`, `crates/feat-utility`, `crates/feat-embeds`.
-- [ ] Stream alerts: show the real Twitch thumbnail where one is stored, and check every state
+- [x] Stream alerts: show the real Twitch thumbnail where one is stored, and check every state
       (not connected, polling, push, live, offline, no schedule).
-- [ ] Schedule, YouTube and Streams tabs: polish to match the Twitch tab.
-- [ ] AFK and timezones: city names for zones that aren't "Region/City", and members whose zone
+- [x] Schedule, YouTube and Streams tabs: polish to match the Twitch tab.
+- [x] AFK and timezones: city names for zones that aren't "Region/City", and members whose zone
       is invalid.
-- [ ] Embed builder: the preview column is narrow next to the editor. Balance them like the
+- [x] Embed builder: the preview column is narrow next to the editor. Balance them like the
       design. Check long titles, many fields and editing a sent message.
+- [x] Found: the stream `thumbnail` column was never written. Streams now keep the live preview,
+      then the VOD's picture (filled in later while Twitch makes it).
+- [x] Found: one broadcaster's failing schedule read stopped every other broadcaster's refresh,
+      and one server's settings error stopped live-post edits for the rest.
+- [x] Found: saving more than 10 YouTube channels looked each up on youtube.com before refusing.
+- [x] Found: the overview promised reminder times while live, when reminders are skipped.
+- [x] Found: with the [AFK] nickname prefix, notices, "Welcome back" and the dashboard showed
+      "[AFK] Mira". Turning AFK off left everyone already away stuck AFK with the prefix.
+- [x] Found: `/time` said "hasn't set a timezone" when the saved zone was unknown.
+- [x] Twitch tab shows EventSub state: each subscription's status as of the last check, the last
+      event, and a quiet warning when Twitch has a stream that no event arrived for (one Helix
+      call on page load, push mode only). Polling mode shows when the last check ran.
+- [x] Found: on a phone the "Twitch connected · instant alerts" pill overlapped the page title.
+      The detail now drops below 600 px.
+- [x] YouTube: "Send a test post" posts the newest stored video in the chosen channel, pinging
+      nobody, like the Twitch test alert.
+- [x] Embed builder: the form checks Discord's limits as you type (each part, field names and
+      values, 6,000 in total) and on send (half-filled fields), with the server's wording. It
+      offers 25 fields, Discord's limit, instead of 10. Duplicate on a template and on a sent
+      message.
+- [x] Found: a field added after removing another was sent out of order (rows were read by
+      number, not by position).
+- [x] Review pass (unwraps, silent errors, tests). Fixed: a failed read or write of "reminder
+      sent" could repost a reminder every minute; failed subscription removals and follower
+      writes were silent; an embed Discord accepted showed an error page when its reply couldn't
+      be read; YouTube handle links with a page (`/@name/videos`), `/c/` and `/user/` links and
+      Twitch links with a query didn't resolve. New tests: weeks and months across DST, the
+      schedule image across a year end and on a DST Sunday, southern and half-hour DST zones,
+      relative times, link parsing. Mutex `unwrap`s and `write!` into strings are left as they
+      are.
+- [ ] Not done: subscriptions pointing at an old `PUBLIC_URL` are never removed (they could
+      belong to another instance sharing the Twitch app, so removing them needs the owner's
+      call). AFK still runs one indexed DELETE per message to end someone's AFK; an in-memory
+      set of AFK people would avoid it if that ever matters.
+- [x] From teal-marten's review: the AFK list and timezone grid no longer depend on the member
+      cache (names are kept with the command); no "missed stream" warning for streams from before
+      push mode worked, and the VOD lookup is cached; the reminder preview uses the schedule's
+      zone; EventSub statuses read as words; Sent rows keep two buttons on a phone.
+- [ ] For core (brisk-heron): on a phone the page title wraps beside a header status pill
+      ("Stream alerts" next to "Twitch not connected"). The header could drop the pill under the
+      title below ~480 px.
 
 ### C: keen-hare
 `crates/feat-levels`, `crates/feat-welcome`, `crates/feat-tickets` (tickets and starboard).

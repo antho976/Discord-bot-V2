@@ -15,8 +15,8 @@ pub const MAX_FIELD_NAME: usize = 256;
 pub const MAX_FIELD_VALUE: usize = 1024;
 pub const MAX_FIELDS: usize = 25;
 pub const MAX_TOTAL: usize = 6000;
-/// How many field rows the form offers. Discord allows 25; ten is plenty by hand.
-pub const FORM_FIELDS: usize = 10;
+/// How many field rows the form offers: as many as Discord allows.
+pub const FORM_FIELDS: usize = MAX_FIELDS;
 /// The colour a new embed starts with.
 pub const DEFAULT_COLOR: &str = "#f0806a";
 

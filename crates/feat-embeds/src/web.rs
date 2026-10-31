@@ -23,6 +23,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/embeds/sent/{id}/delete", post(forget))
         .route("/g/{guild}/embeds/templates", post(save_template))
         .route("/g/{guild}/embeds/templates/{id}/delete", post(delete_template))
+        .route("/g/{guild}/embeds/templates/{id}/duplicate", post(duplicate_template))
 }
 
 /// What the composer shows: the embed, where it goes, and what it's replacing.
@@ -38,6 +39,8 @@ struct View<'a> {
 struct ComposeQuery {
     template: Option<i64>,
     sent: Option<i64>,
+    /// With `sent`: load that message as a new embed instead of editing it.
+    copy: Option<u8>,
 }
 
 /// The preset colours offered under the editor. The native picker and the hex field take any other.
@@ -57,8 +60,10 @@ async fn compose(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
         sent = crate::sent_get(&ctx, guild, id)?.ok_or(WebError::NotFound)?;
         view.data = sent.data.clone();
         view.channel = Some(sent.channel_id);
-        view.template_name = sent.template.clone().unwrap_or_default();
-        view.editing = Some(&sent);
+        if q.copy.is_none() {
+            view.template_name = sent.template.clone().unwrap_or_default();
+            view.editing = Some(&sent);
+        }
     } else if let Some(id) = q.template {
         let t = crate::template(&ctx, guild, id)?.ok_or(WebError::NotFound)?;
         view.data = t.data;
@@ -101,6 +106,7 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
             a.eb-chip.new href=(page.path("embeds")) { (ui::icon(Icon::Plus)) "New" }
             @if let Some(t) = templates.iter().find(|t| t.name == v.template_name && v.editing.is_none()) {
                 span.muted.small { "Saved " (text::ago(t.updated_at)) }
+                @if can_edit { (ui::action_button(&page.path(&format!("embeds/templates/{}/duplicate", t.id)), "Duplicate", Tone::Muted, false)) }
             }
         }
     };
@@ -108,7 +114,7 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
     let body = html! {
         style { (PreEscaped(CSS)) }
         (chips)
-        form #eb-form method="post" action=(page.path("embeds/send")) {
+        form #eb-form method="post" action=(page.path("embeds/send")) data-max-fields=(FORM_FIELDS) {
             fieldset.eb disabled[!can_edit] {
                 div.eb-card {
                     @if let Some(s) = v.editing {
@@ -162,10 +168,11 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                             }
                         }
                     }
+                    div.eb-error #eb-limit role="alert" hidden {}
                     @if can_edit {
                         div.eb-foot {
                             div.eb-chan {
-                                label for="channel" { "Channel" }
+                                label for="channel" { @if v.editing.is_some() { "Send as new to" } @else { "Channel" } }
                                 (ui::select("channel", &options, &selected))
                             }
                             div.eb-btns {
@@ -217,13 +224,20 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                 div.table-wrap { table.table.eb-tbl {
                     thead { tr { th { "Channel" } th { "Message" } th.m-hide { "Sent" } th {} } }
                     tbody { @for s in &sent {
-                        tr {
+                        @let current = v.editing.is_some_and(|e| e.id == s.id);
+                        tr.eb-cur[current] {
                             td { (channel_name(s.channel_id)) }
                             td { span.clip.cell { (s.summary) } @if let Some(t) = &s.template { " " span.muted.small { "from " (t) } } }
                             td.muted.m-hide { (text::ago(s.edited_at.unwrap_or(s.sent_at))) @if s.edited_at.is_some() { " (edited)" } }
                             td.actions {
-                                a.btn.small href=(page.path(&format!("embeds?sent={}", s.id))) { "Edit in Discord" }
-                                a.btn.small href={ "https://discord.com/channels/" (guild) "/" (s.channel_id) "/" (s.message_id) } target="_blank" rel="noreferrer noopener" { "Open" }
+                                @if current {
+                                    span.muted.small { "Editing" }
+                                } @else {
+                                    a.btn.small href=(page.path(&format!("embeds?sent={}", s.id))) { "Edit" }
+                                }
+                                // On a phone the row keeps Edit and Forget; Duplicate and Open would stack four high.
+                                @if can_edit { a.btn.small.m-hide href=(page.path(&format!("embeds?sent={}&copy=1", s.id))) title="Start a new embed from this one" { "Duplicate" } }
+                                a.btn.small.m-hide href={ "https://discord.com/channels/" (guild) "/" (s.channel_id) "/" (s.message_id) } target="_blank" rel="noreferrer noopener" { "Open" }
                                 @if can_edit { (ui::action_button(&page.path(&format!("embeds/sent/{}/delete", s.id)), "Forget", Tone::Bad, true)) }
                             }
                         }
@@ -288,7 +302,10 @@ fn explain(e: &bot_core::twilight_http::Error) -> String {
                 .ok()
                 .and_then(|v| v.get("message").and_then(|m| m.as_str().map(str::to_owned)))
                 .unwrap_or_default();
-            format!("Discord rejected the embed. {detail} Check the image and link addresses.")
+            match detail.trim().trim_end_matches('.') {
+                "" => "Discord rejected the embed. Check the image and link addresses.".into(),
+                d => format!("Discord rejected the embed: {d}. Check the image and link addresses."),
+            }
         }
         _ => format!("Discord refused it: {e}"),
     }
@@ -314,13 +331,20 @@ async fn send(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     if !data.content.is_empty() {
         req = req.content(&data.content);
     }
-    let message = match req.await {
-        Ok(r) => r.model().await?,
+    let res = match req.await {
+        Ok(r) => r,
         Err(e) => return rerender(&ctx, &page, failed(data, &form, None, explain(&e))),
     };
-    let name = form.string("template_name");
-    let template = crate::templates(&ctx, guild)?.into_iter().find(|t| t.name == name).map(|t| t.name);
-    crate::sent_add(&ctx, guild, channel, message.id.get(), template.as_deref(), &data, &page.user.name)?;
+    // The message is out even if its reply can't be read; an error page here invites a second
+    // copy. It just can't be listed for editing.
+    match res.model().await {
+        Ok(message) => {
+            let name = form.string("template_name");
+            let template = crate::templates(&ctx, guild)?.into_iter().find(|t| t.name == name).map(|t| t.name);
+            crate::sent_add(&ctx, guild, channel, message.id.get(), template.as_deref(), &data, &page.user.name)?;
+        }
+        Err(e) => bot_core::tracing::warn!(guild, channel, error = %e, "sent an embed but couldn't read Discord's reply; it won't be listed"),
+    }
     ctx.audit(&page.user, Some(guild), KEY, format!("Sent an embed to #{}", channel_label(&ctx, guild, channel)));
     Ok(saved(&page.path("embeds")))
 }
@@ -384,6 +408,27 @@ async fn save_template(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     Ok(saved(&page.path(&format!("embeds?template={id}"))))
 }
 
+/// "Rules" -> "Rules (copy)", then "Rules (copy 2)" and on, within the 60-character limit.
+fn copy_name(name: &str, taken: &[String]) -> String {
+    let base: String = name.chars().take(48).collect();
+    (1..)
+        .map(|n| if n == 1 { format!("{base} (copy)") } else { format!("{base} (copy {n})") })
+        .find(|c| !taken.contains(c))
+        .unwrap_or_default()
+}
+
+async fn duplicate_template(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let t = crate::template(&ctx, guild, id)?.ok_or(WebError::NotFound)?;
+    let taken: Vec<String> = crate::templates(&ctx, guild)?.into_iter().map(|t| t.name).collect();
+    let name = copy_name(&t.name, &taken);
+    let Some(new) = crate::template_save(&ctx, guild, &name, &t.data)? else {
+        return Err(WebError::Bad("This server has reached 50 templates. Delete one to duplicate another.".into()));
+    };
+    ctx.audit(&page.user, Some(guild), KEY, format!("Duplicated the embed template {} as {name}", t.name));
+    Ok(saved(&page.path(&format!("embeds?template={new}"))))
+}
+
 async fn delete_template(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     if let Some(name) = crate::template_delete(&ctx, guild, id)? {
@@ -399,6 +444,8 @@ const CSS: &str = r##"
 .eb-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .eb-chip-wrap { display: inline-flex; align-items: center; gap: 2px; }
 .eb-chip { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 13px; border-radius: 15px; background: var(--control); color: var(--ink-2); font-size: 13px; white-space: nowrap; }
+a.eb-chip:not(.new) { display: inline-block; line-height: 30px; max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
+.eb-chip-wrap { min-width: 0; max-width: 100%; }
 .eb-chip:hover { background: var(--hover); color: var(--ink); }
 .eb-chip.on { background: var(--ink); color: var(--ground); font-weight: 500; }
 .eb-chip.new { background: transparent; box-shadow: inset 0 0 0 1px var(--edge-2); }
@@ -410,7 +457,7 @@ const CSS: &str = r##"
 .eb-chip-wrap:hover .eb-x { opacity: 1; }
 @media (hover: none) { .eb-x { opacity: 1; } }
 
-fieldset.eb { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 440px); gap: 24px; align-items: start; }
+fieldset.eb { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; align-items: start; }
 .eb-card { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 20px; border-radius: var(--r-card); background: var(--veil); border: 1px solid var(--edge-1); }
 .eb-f { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .eb-lab { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
@@ -445,13 +492,16 @@ fieldset.eb { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gri
 .eb-note strong { font-weight: 500; }
 .eb-error { padding: 10px 14px; border-radius: var(--r-key); background: rgba(236, 106, 94, 0.1); border: 1px solid rgba(236, 106, 94, 0.35); color: var(--ink); font-size: 13px; }
 .eb-foot { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-top: 16px; border-top: 1px solid var(--edge-1); }
-.eb-chan { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; max-width: 220px; }
+.eb-chan { display: flex; flex-direction: column; gap: 6px; min-width: 160px; flex: 1; max-width: 220px; }
 .eb-btns { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .eb-savetpl .pop-body { width: 290px; }
 .eb-savetpl .pop-body .eb-btns { justify-content: flex-end; }
 .eb-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .eb-total { align-self: flex-start; }
+.eb-total.over { color: var(--held); }
 td .cell { display: inline-block; max-width: 38ch; vertical-align: bottom; }
+.eb-tbl tr.eb-cur td { background: var(--selected); }
+.eb-tbl td.actions .muted { display: inline-block; padding: 0 10px; }
 
 .dc { display: flex; gap: 14px; color: #dbdee1; font: 15px/1.4 var(--sans); min-width: 0; }
 .dc-av { flex: none; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
@@ -473,6 +523,7 @@ td .cell { display: inline-block; max-width: 38ch; vertical-align: bottom; }
 .dc-fields { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 8px; }
 .dc-field { grid-column: span 12; }
 .dc-field.in { grid-column: span 4; }
+.dc-embed.th .dc-field.in { grid-column: span 6; }
 .dc-fn { font-weight: 600; color: #f2f3f5; }
 .dc-fv { white-space: pre-wrap; }
 .dc-embed > .dc-img { margin-top: 16px; max-width: 100%; max-height: 300px; border-radius: 4px; }
@@ -490,6 +541,7 @@ td .cell { display: inline-block; max-width: 38ch; vertical-align: bottom; }
 }
 @media (max-width: 520px) {
   .eb-2 { grid-template-columns: minmax(0, 1fr); }
+  .eb-hex { margin-left: 0; }
   .eb-card { padding: 16px; }
   .eb-chan { max-width: none; }
   .eb-foot { flex-direction: column; align-items: stretch; }
@@ -510,7 +562,9 @@ const JS: &str = r##"
   const f = document.getElementById("eb-form");
   if (!f) return;
   const $ = (id) => document.getElementById(id);
-  const MAX_ROWS = 10, LIMIT = 6000;
+  const MAX_ROWS = +f.dataset.maxFields || 25, LIMIT = 6000;
+  // Discord's limits, worded like the server's own checks.
+  const LIMITS = [["title", 256, "The title"], ["description", 4096, "The description"], ["content", 2000, "The message text"], ["author", 256, "The author name"], ["footer", 2048, "The footer"]];
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const md = (s) => esc(s)
     .replace(/```(?:\w+\n)?([\s\S]*?)```/g, "<pre>$1</pre>")
@@ -533,6 +587,28 @@ const JS: &str = r##"
     inline: r.querySelector(".fn-inline").checked,
   })).filter((x) => x.n || x.v);
 
+  const over = (what, n, max) => what + " is " + n.toLocaleString("en-US") + " characters. Discord allows " + max.toLocaleString("en-US") + ".";
+  // The first thing Discord would refuse. Half-filled fields only count when sending, so a row
+  // being typed doesn't flag.
+  function problem(sending) {
+    for (const [name, max, what] of LIMITS) {
+      const n = len(val(name));
+      if (n > max) return over(what, n, max);
+    }
+    const fields = fieldRows();
+    if (fields.length > MAX_ROWS) return "There are " + fields.length + " fields. Discord allows " + MAX_ROWS + ".";
+    for (const [i, x] of fields.entries()) {
+      if (sending && (!x.n || !x.v)) return "Field " + (i + 1) + " needs both a name and a value.";
+      if (len(x.n) > 256) return over("The name of field " + (i + 1), len(x.n), 256);
+      if (len(x.v) > 1024) return over("The value of field " + (i + 1), len(x.v), 1024);
+    }
+    const total = ["title", "description", "author", "footer"].reduce((a, n) => a + len(val(n)), 0) + fields.reduce((a, x) => a + len(x.n) + len(x.v), 0);
+    if (total > LIMIT) return "The embed is " + total.toLocaleString("en-US") + " characters in total. Discord allows 6,000 across the title, description, author, footer and fields.";
+    return "";
+  }
+  const limit = $("eb-limit");
+  const show = (msg) => { limit.textContent = msg; limit.hidden = !msg; };
+
   function render() {
     const title = val("title"), desc = val("description"), author = val("author"), footer = val("footer");
     const image = web(val("image")), thumb = web(val("thumbnail")), link = web(val("url"));
@@ -542,7 +618,7 @@ const JS: &str = r##"
     const hex = /^#?[0-9a-f]{6}$/i.test(val("color")) ? "#" + val("color").replace("#", "").toLowerCase() : "";
     let h = "";
     if (has) {
-      h += '<div class="dc-embed"' + (hex ? ' style="--c:' + hex + '"' : "") + ">";
+      h += '<div class="dc-embed' + (thumb ? " th" : "") + '"' + (hex ? ' style="--c:' + hex + '"' : "") + ">";
       if (thumb) h += '<img class="dc-th" alt="" src="' + esc(thumb) + '">';
       if (author) h += '<div class="dc-author">' + esc(author) + "</div>";
       if (title) h += '<div class="dc-title">' + (link ? '<a href="' + esc(link) + '" target="_blank" rel="noreferrer noopener">' + esc(title) + "</a>" : esc(title)) + "</div>";
@@ -575,7 +651,25 @@ const JS: &str = r##"
     const n = rows.children.length;
     $("eb-fcount").textContent = n + " of " + MAX_ROWS;
     $("eb-add").disabled = n >= MAX_ROWS;
+    show(problem(false));
   }
+
+  f.addEventListener("submit", (e) => {
+    const msg = problem(true);
+    if (msg) {
+      e.preventDefault();
+      show(msg);
+      limit.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    // Rows are read by number on the server; number them in the order they're shown, so a row
+    // added after a removed one isn't sent out of place.
+    [...rows.children].forEach((r, i) => {
+      r.querySelector(".fn-name").name = "field_name_" + i;
+      r.querySelector(".fn-value").name = "field_value_" + i;
+      r.querySelector(".fn-inline").name = "field_inline_" + i;
+    });
+  });
 
   f.addEventListener("input", render);
   f.addEventListener("change", render);
@@ -610,3 +704,16 @@ const JS: &str = r##"
   render();
 })();
 "##;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copies_get_free_names() {
+        assert_eq!(copy_name("Rules", &[]), "Rules (copy)");
+        let taken = vec!["Rules (copy)".to_owned(), "Rules (copy 2)".to_owned()];
+        assert_eq!(copy_name("Rules", &taken), "Rules (copy 3)");
+        assert!(copy_name(&"n".repeat(60), &[]).chars().count() <= 60);
+    }
+}

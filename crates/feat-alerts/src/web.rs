@@ -24,6 +24,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/alerts/schedule", get(schedule_page).post(save_schedule))
         .route("/g/{guild}/alerts/schedule.png", get(schedule_png))
         .route("/g/{guild}/alerts/youtube", get(youtube_page).post(save_youtube))
+        .route("/g/{guild}/alerts/youtube/test", post(send_youtube_test))
         .route("/g/{guild}/alerts/streams", get(streams_page))
         .route("/webhooks/twitch", post(twitch::webhook))
 }
@@ -49,14 +50,14 @@ fn when(ms: i64, tz: &TimeZone) -> String {
     zoned(ms, tz).map(|z| z.strftime("%a, %b %-d · %-I:%M %p").to_string()).unwrap_or_default()
 }
 
-/// "in 40 min", "in 5 h", or the day and time.
-fn until(ms: i64, tz: &TimeZone) -> String {
-    let mins = (ms - now_ms()) / 60_000;
+/// "in 40 min", "in 5 h", "in 2 days".
+fn until(ms: i64, now: i64) -> String {
+    let mins = (ms - now) / 60_000;
     match mins {
         ..1 => "now".into(),
         1..60 => format!("in {mins} min"),
-        60..1440 => format!("in {} h", mins / 60),
-        _ => zoned(ms, tz).map(|z| z.strftime("%a %-I:%M %p").to_string()).unwrap_or_default(),
+        60..2880 => format!("in {} h", mins / 60),
+        _ => format!("in {} days", mins / 1440),
     }
 }
 
@@ -70,8 +71,13 @@ fn channel_name(ctx: &Ctx, guild: u64, channel: Option<u64>) -> Option<String> {
     ctx.text_channels(guild).into_iter().find(|(id, _)| *id == channel).map(|(_, n)| format!("#{n}"))
 }
 
-fn month_start(tz: &TimeZone) -> i64 {
-    let today = Timestamp::now().to_zoned(tz.clone()).date();
+/// The day `now` falls on in the zone.
+fn today(now: i64, tz: &TimeZone) -> Date {
+    zoned(now, tz).map(|z| z.date()).unwrap_or_else(|| Timestamp::now().to_zoned(tz.clone()).date())
+}
+
+fn month_start(tz: &TimeZone, now: i64) -> i64 {
+    let today = today(now, tz);
     today.first_of_month().to_zoned(tz.clone()).map(|z| z.timestamp().as_millisecond()).unwrap_or(0)
 }
 
@@ -92,12 +98,16 @@ const WEEKS: i64 = 12;
 
 /// The Twitch connection and how fast alerts arrive, at the right of the header.
 fn status_pill(ctx: &Ctx) -> Markup {
-    let (live, label) = match twitch::mode(ctx) {
-        Mode::Off => (false, "Twitch not connected"),
-        Mode::Poll => (true, "Twitch connected · checks every 2 min"),
-        Mode::Push => (true, "Twitch connected · instant alerts"),
+    let (live, label, more) = match twitch::mode(ctx) {
+        Mode::Off => (false, "Twitch not connected", ""),
+        Mode::Poll => (true, "Twitch connected", " · checks every 2 min"),
+        Mode::Push => (true, "Twitch connected", " · instant alerts"),
     };
-    html! { span.status { span.dot.live[live] {} (label) } }
+    // The detail drops on a phone so the pill doesn't crowd the page title.
+    html! {
+        style { "@media (max-width: 600px) { .sa-pill-more { display: none; } }" }
+        span.status { span.dot.live[live] {} (label) span.sa-pill-more { (more) } }
+    }
 }
 
 /// How alerts reach Discord, under the preview. Empty when Twitch isn't connected.
@@ -109,9 +119,19 @@ fn mode_line(mode: Mode) -> &'static str {
     }
 }
 
-/// The live post as Discord shows it: the bot with its APP tag, the ping and the message, the
-/// embed with its coral edge, and Watch. The thumbnail is a placeholder; nothing is fetched.
-fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broadcaster, title: &str, game: &str) -> Markup {
+/// What the preview of the live post shows.
+struct Sample<'a> {
+    title: &'a str,
+    game: &'a str,
+    /// "just now", or how long ago a live stream started.
+    started: String,
+    /// A real picture of the stream when one is stored, else a placeholder is drawn.
+    thumb: Option<String>,
+}
+
+/// A message from the bot as Discord shows it: avatar, name with its APP tag and the time,
+/// then `body`.
+fn bot_message(ctx: &Ctx, page: &Page, body: Markup) -> Markup {
     let bot = ctx.cache.current_user();
     let bot_name = bot.as_ref().map(|u| u.name.clone()).unwrap_or_else(|| "Bot".into());
     let bot_avatar = bot.as_ref().map(|u| bot_core::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref()));
@@ -129,30 +149,110 @@ fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broad
                     span.sa-app { "APP" }
                     span.sa-time { "Today at " (time) }
                 }
-                div.sa-line {
-                    @if let Some(r) = role { span.sa-ping { (r) } " " }
-                    (line)
-                }
-                div.sa-embed style="--embed:#f0806a" {
-                    div.sa-author { (b.name) " on Twitch" }
-                    div.sa-title { (title) }
-                    @if !game.is_empty() { div.sa-game { "Playing " (game) } }
-                    div.sa-thumb { (ui::icon(Icon::Live)) span { "Stream thumbnail" } }
-                }
-                a.sa-watch href=(b.url()) target="_blank" rel="noopener" { "Watch" }
+                (body)
             }
         }
     }
 }
 
+/// The ping in front of a post, when a role is set.
+fn ping(role: Option<String>) -> Markup {
+    html! { @if let Some(r) = role { span.sa-ping { (r) } " " } }
+}
+
+/// The live post as Discord shows it: the ping and the message, the embed with its coral edge,
+/// its fields, picture and footer, and the Watch on Twitch button.
+fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broadcaster, sample: &Sample) -> Markup {
+    bot_message(ctx, page, html! {
+        div.sa-line { (ping(role)) (line) }
+        div.sa-embed style="--embed:#f0806a" {
+            div.sa-author {
+                @if !b.avatar.is_empty() { img src=(b.avatar) alt="" width="24" height="24" loading="lazy"; }
+                (b.name)
+            }
+            div.sa-title { @if sample.title.is_empty() { (b.name) " is live" } @else { (sample.title) } }
+            div.sa-fields {
+                @if !sample.game.is_empty() { div { b { "Playing" } span { (sample.game) } } }
+                div { b { "Started" } span { (sample.started) } }
+            }
+            @match &sample.thumb {
+                Some(src) => { img.sa-thumb src=(src) alt="" width="640" height="360" loading="lazy"; }
+                None => { div.sa-thumb { (ui::icon(Icon::Live)) span { "Stream thumbnail" } } }
+            }
+            div.sa-foot { "Twitch" }
+        }
+        a.sa-watch href=(b.url()) target="_blank" rel="noopener" { "Watch on Twitch" (ui::icon(Icon::External)) }
+    })
+}
+
+/// The closest reminder before a stream, as Discord shows it. Discord fills the start time in for
+/// each reader; the preview gives it in the schedule's zone, like the rest of the tab.
+fn reminder_post(ctx: &Ctx, page: &Page, tz: &TimeZone, role: Option<String>, b: &Broadcaster, seg: Option<&schedule::Segment>, minutes: i64) -> Markup {
+    let start = seg.map(|g| g.starts_at).unwrap_or_else(|| now_ms() + minutes * 60_000);
+    let at = zoned(start, tz).map(|z| z.strftime("%-I:%M %p").to_string()).unwrap_or_default();
+    let (title, game) = seg.map(|g| (g.title.as_str(), g.game.as_str())).unwrap_or(("Your stream title", "Just Chatting"));
+    let when = in_minutes(minutes);
+    bot_message(ctx, page, html! {
+        div.sa-line {
+            (ping(role))
+            (b.name) " streams " span.sa-ts { (when) } " at " span.sa-ts { (at) }
+            @if !title.is_empty() { ": " b { (text::clip(title, 140)) } }
+            @if !game.is_empty() { " (" (game) ")" }
+            br;
+            a href=(b.url()) target="_blank" rel="noopener" { (b.url()) }
+        }
+    })
+}
+
+/// How Discord words a relative time this far ahead: "in 10 minutes", "in 1 hour", "in 2 hours".
+fn in_minutes(minutes: i64) -> String {
+    match minutes {
+        1 => "in a minute".into(),
+        60 => "in 1 hour".into(),
+        m if m % 60 == 0 => format!("in {} hours", m / 60),
+        m => format!("in {m} minutes"),
+    }
+}
+
+/// A new-video post as Discord shows it: the message, then the card Discord draws for the link.
+fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &youtube::Video) -> Markup {
+    let url = v.url();
+    let filled = youtube::fill_video(template, &v.author, &v.title, &url);
+    let unfurls = filled.contains(&url);
+    bot_message(ctx, page, html! {
+        div.sa-line.sa-pre {
+            (ping(role))
+            @for (i, part) in filled.split(url.as_str()).enumerate() {
+                @if i > 0 { a href=(url) target="_blank" rel="noopener" { (url) } }
+                (part)
+            }
+        }
+        @if unfurls {
+            div.sa-embed style="--embed:#ff0033" {
+                div.sa-provider { "YouTube" }
+                div.sa-author { (v.author) }
+                a.sa-title href=(url) target="_blank" rel="noopener" { (v.title) }
+                div.sa-yt {
+                    @if v.id.is_empty() {
+                        div.sa-thumb {}
+                    } @else {
+                        img.sa-thumb src=(youtube::thumb(&v.id)) alt="" width="320" height="180" loading="lazy";
+                    }
+                    span.sa-play { (ui::icon(Icon::Play)) }
+                }
+            }
+        }
+    })
+}
+
 /// The Monday of this week, in the zone.
-fn this_monday(tz: &TimeZone) -> Date {
-    schedule::monday_of(Timestamp::now().to_zoned(tz.clone()).date())
+fn this_monday(tz: &TimeZone, now: i64) -> Date {
+    schedule::monday_of(today(now, tz))
 }
 
 /// The Monday that starts the oldest of the last twelve weeks.
-fn first_monday(tz: &TimeZone) -> Date {
-    let this = this_monday(tz);
+fn first_monday(tz: &TimeZone, now: i64) -> Date {
+    let this = this_monday(tz, now);
     this.checked_sub(Span::new().days(7 * (WEEKS - 1))).unwrap_or(this)
 }
 
@@ -168,7 +268,7 @@ fn stream_secs(r: &StreamRow, now: i64) -> i64 {
 
 /// Hours streamed in each of the last twelve weeks, oldest first, labelled by their Monday.
 fn weekly_hours(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Vec<(String, i64)> {
-    let first = first_monday(tz);
+    let first = first_monday(tz, now);
     (0..WEEKS)
         .map(|w| {
             let start = first.checked_add(Span::new().days(7 * w)).unwrap_or(first);
@@ -258,9 +358,73 @@ fn week_block(tz: &TimeZone, has_channel: bool, week: &[schedule::Segment], cfg:
     }
 }
 
+/// The subscriptions the Twitch tab reports on, with what they do.
+const EVENT_KINDS: &[(&str, &str)] = &[("stream.online", "Going live"), ("stream.offline", "Going offline"), ("channel.update", "Title and category")];
+
+/// A subscription status in words, and how it reads: 0 working, 1 waiting, 2 broken.
+fn sub_status(status: Option<&str>) -> (u8, String) {
+    match status {
+        Some("enabled") => (0, "Active".into()),
+        Some("webhook_callback_verification_pending") => (1, "Waiting for Twitch to check the address".into()),
+        Some("webhook_callback_verification_failed") => (2, "Twitch couldn't reach the bot".into()),
+        Some("notification_failures_exceeded") => (2, "Twitch stopped after failed deliveries".into()),
+        Some("authorization_revoked" | "user_removed" | "moderator_removed") => (2, "Revoked by Twitch".into()),
+        Some("version_removed") => (2, "Twitch retired this event; the bot subscribes again within a day".into()),
+        Some(s) if s.starts_with("refused") => (2, "Twitch refused the subscription".into()),
+        Some(_) => (2, "Stopped by Twitch".into()),
+        None => (2, "Not set up yet".into()),
+    }
+}
+
+/// The rail's "Twitch events" in push mode: each subscription's state and the last event.
+/// In polling mode, when the last check ran.
+fn events_block(ctx: &Ctx, mode: Mode, bs: &[Broadcaster]) -> Markup {
+    let (states, checked) = twitch::sub_states(ctx);
+    html! {
+        @if mode == Mode::Push && !bs.is_empty() {
+            div.rail-block {
+                h2 { "Twitch events" }
+                @for b in bs {
+                    @if bs.len() > 1 { p.small.sa-who { (b.name) } }
+                    @for (kind, label) in EVENT_KINDS {
+                        @let (tone, text) = sub_status(states.get(&b.user_id).and_then(|m| m.get(*kind)).map(String::as_str));
+                        div.mini {
+                            span.dot.live[tone == 0].waiting[tone == 1].sa-bad[tone == 2] {}
+                            span.grow { span { (label) } span.muted { (text) } }
+                        }
+                    }
+                    p.muted.small {
+                        @match twitch::last_event(ctx, &b.user_id) {
+                            Some((at, _)) => { "Last event " (text::ago(at)) "." }
+                            None => { "No event has arrived yet." }
+                        }
+                        @if let Some(at) = checked { " Checked " (text::ago(at)) "." }
+                    }
+                }
+            }
+        } @else if mode == Mode::Poll && !bs.is_empty() {
+            div.rail-block {
+                h2 { "Twitch checks" }
+                div.mini {
+                    span.dot.live {}
+                    span.grow {
+                        span { "Every 2 minutes" }
+                        span.muted {
+                            @match crate::state_get(ctx, "at:poll").and_then(|v| v.parse::<i64>().ok()) {
+                                Some(at) => { "Last check " (text::ago(at)) }
+                                None => { "No check yet" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The rail's "Hours streamed": this week's hours, stream count and average peak, then the bars.
 fn hours_block(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Markup {
-    let monday = day_ms(this_monday(tz), tz);
+    let monday = day_ms(this_monday(tz, now), tz);
     let week: Vec<&StreamRow> = rows.iter().filter(|r| r.started_at >= monday).collect();
     let secs: i64 = week.iter().map(|r| stream_secs(r, now)).sum();
     let peak = avg_peak(&week).map(|p| format!(" · average peak {}", text::num(p))).unwrap_or_default();
@@ -293,14 +457,27 @@ const CSS: &str = r#"
 .sa-app { background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; border-radius: 3px; padding: 1px 4px; line-height: 12px; }
 .sa-time { color: #949ba4; font-size: 12px; }
 .sa-line { overflow-wrap: anywhere; max-width: 100%; }
+.sa-line a, a.sa-title { color: #00a8fc; }
+.sa-pre { white-space: pre-wrap; }
+.sa-ts { background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 0 2px; }
+.sa-provider { font-size: 12px; color: #b5bac1; }
+.sa-yt { position: relative; }
+.sa-play { position: absolute; inset: 0; margin: auto; width: 48px; height: 48px; border-radius: 50%; background: rgba(0, 0, 0, 0.6); color: #fff; display: grid; place-items: center; }
+.sa-play .icon { width: 20px; height: 20px; }
 .sa-ping { background: rgba(88, 101, 242, 0.3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; }
 .sa-embed { align-self: stretch; max-width: 480px; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 12px 16px 16px 14px; background: #2b2d31; border-left: 4px solid var(--embed, #1e1f22); border-radius: 4px; }
-.sa-author { font-size: 12.5px; font-weight: 600; color: #f2f3f5; }
+.sa-author { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #f2f3f5; }
+.sa-author img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
 .sa-title { font-size: 15px; font-weight: 600; color: #00a8fc; overflow-wrap: anywhere; }
-.sa-game { font-size: 13.5px; color: #dbdee1; }
-.sa-thumb { margin-top: 4px; aspect-ratio: 16 / 9; border-radius: 4px; background: linear-gradient(160deg, #3a3d44, #1e1f22); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #80848e; font-size: 12px; }
+.sa-fields { display: flex; flex-wrap: wrap; gap: 8px 32px; font-size: 13.5px; }
+.sa-fields div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sa-fields b { color: #f2f3f5; font-weight: 600; }
+.sa-fields span { overflow-wrap: anywhere; }
+.sa-thumb { width: 100%; height: auto; margin-top: 4px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; background: linear-gradient(160deg, #3a3d44, #1e1f22); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #80848e; font-size: 12px; }
 .sa-thumb .icon { width: 26px; height: 26px; }
-.sa-watch { display: inline-flex; align-items: center; height: 32px; padding: 0 16px; border-radius: 4px; background: #4e5058; color: #fff; font-size: 14px; font-weight: 500; }
+.sa-foot { font-size: 12px; color: #b5bac1; }
+.sa-watch { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 16px; border-radius: 4px; background: #4e5058; color: #fff; font-size: 14px; font-weight: 500; }
+.sa-watch .icon { width: 14px; height: 14px; }
 .sa-watch:hover { background: #6d6f78; }
 .sa-note { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: var(--ink-3); max-width: 72ch; }
 .sa-note > .icon { margin-top: 3px; flex: none; }
@@ -319,6 +496,13 @@ const CSS: &str = r#"
 .sa-seg.on .day, .sa-seg.on .when { color: var(--ink); }
 .sa-seg.off .what { text-decoration: line-through; color: var(--ink-3); }
 .sa-seg.off .when { font-family: var(--sans); color: var(--ink-3); }
+.sa-stream { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.sa-vt { flex: none; width: 64px; height: 36px; border-radius: 4px; object-fit: cover; background: var(--well); display: grid; place-items: center; color: var(--ink-3); }
+.sa-vt .icon { width: 16px; height: 16px; }
+.sa-bad { background: var(--held); }
+.sa-who { font-weight: 500; margin-top: 4px; }
+.sa-note.sa-warn { color: var(--ink-2); }
+.sa-note.sa-warn > .icon { color: var(--waiting); }
 .sa-bars svg { display: block; width: 100%; height: 52px; overflow: visible; }
 "#;
 
@@ -328,6 +512,16 @@ fn narrow_css() -> Markup {
 }
 
 // ---- Twitch ----
+
+/// The first broadcaster a server follows, for previews. A stand-in until Twitch has confirmed one.
+fn sample_broadcaster(bs: &[Broadcaster], s: &Settings) -> Broadcaster {
+    bs.first().cloned().unwrap_or_else(|| Broadcaster {
+        login: s.twitch_logins.first().cloned().unwrap_or_else(|| "yourname".into()),
+        user_id: String::new(),
+        name: s.twitch_logins.first().cloned().unwrap_or_else(|| "You".into()),
+        avatar: String::new(),
+    })
+}
 
 async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<HashMap<String, String>>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
@@ -340,18 +534,32 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     let live = twitch::open_streams(&ctx)?.into_iter().find(|r| ids.contains(&r.broadcaster_id));
     let recent = twitch::streams_since(&ctx, &ids, 0, 5)?;
     let last = recent.iter().find(|r| r.ended_at.is_some());
-    let rows = twitch::streams_since(&ctx, &ids, day_ms(first_monday(&tz), &tz), 1000)?;
+    let rows = twitch::streams_since(&ctx, &ids, day_ms(first_monday(&tz, now), &tz), 1000)?;
     let (_, _, week) = schedule::week(&ctx, &s);
     let missing: Vec<&String> = s.twitch_logins.iter().filter(|l| !bs.iter().any(|b| &&b.login == l)).collect();
-    let sample = bs.first().cloned().unwrap_or_else(|| twitch::Broadcaster {
-        login: s.twitch_logins.first().cloned().unwrap_or_else(|| "yourname".into()),
-        user_id: String::new(),
-        name: s.twitch_logins.first().cloned().unwrap_or_else(|| "You".into()),
-        avatar: String::new(),
-    });
-    let sample_title = last.map(|r| r.title.clone()).unwrap_or_else(|| "Your stream title".into());
-    let sample_game = last.map(|r| r.game.clone()).unwrap_or_else(|| "Just Chatting".into());
-    let line = twitch::fill_live(&s.live_message, &sample, &sample_title, &sample_game);
+    let sample = sample_broadcaster(&bs, &s);
+    // While live, the preview is the stream that's on; otherwise the last one, with its VOD's
+    // picture when Twitch has made one.
+    let shown = live.as_ref().or(last);
+    let preview = Sample {
+        title: shown.map(|r| r.title.as_str()).unwrap_or("Your stream title"),
+        game: shown.map(|r| r.game.as_str()).unwrap_or("Just Chatting"),
+        started: live.as_ref().map(|r| text::ago(r.started_at)).unwrap_or_else(|| "just now".into()),
+        thumb: shown.and_then(StreamRow::thumb_640),
+    };
+    let line = twitch::fill_live(&s.live_message, &sample, preview.title, preview.game);
+    // Push mode with nothing arriving looks like it works. One Helix call says whether Twitch
+    // has a stream the bot never heard about.
+    let missed = match (mode, bs.first()) {
+        (Mode::Push, Some(b)) => {
+            let start = twitch::latest_vod_start(&ctx, &b.user_id).await;
+            let recorded = start.is_some_and(|st| recent.iter().any(|r| r.broadcaster_id == b.user_id && (r.started_at - st).abs() < 15 * 60_000));
+            let last = twitch::last_event(&ctx, &b.user_id).map(|e| e.0);
+            let since = twitch::online_since(&ctx, &b.user_id);
+            start.filter(|st| twitch::missed_stream(Some(*st), since, last, recorded, now)).map(|st| (st, last))
+        }
+        _ => None,
+    };
     let role = role_name(&ctx, guild, s.live_role);
 
     let body = html! {
@@ -369,6 +577,19 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         }
                     }
                 }
+                @if let Some((start, last)) = missed {
+                    div.sa-note.sa-warn role="status" {
+                        (ui::icon(Icon::Plug))
+                        div {
+                            p {
+                                "Twitch shows a stream that started " (text::ago(start)) ", but no event about it reached the bot"
+                                @match last { Some(at) => { " (the last one came " (text::ago(at)) ")" } None => {} }
+                                ", so no alert was posted."
+                            }
+                            p { "Twitch has to reach " code { (twitch::callback_url(&ctx)) } " from the internet. Check the address and that the bot is reachable there." }
+                        }
+                    }
+                }
                 @if let Some(r) = &live {
                     div.sa-live {
                         span.dot.live {}
@@ -381,7 +602,7 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         h2 { "What members see when you go live" }
                         @if page.can_edit() { (ui::action_button(&page.path("alerts/test"), "Send a test alert", Tone::Muted, false)) }
                     }
-                    (live_post(&ctx, &page, role, &line, &sample, &sample_title, &sample_game))
+                    (live_post(&ctx, &page, role, &line, &sample, &preview))
                     p.muted.small {
                         @if page.can_edit() {
                             @match channel_name(&ctx, guild, s.live_channel) {
@@ -405,6 +626,7 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
             aside.rail {
                 (week_block(&tz, !bs.is_empty(), &week, &s, now))
                 (hours_block(&rows, &tz, now))
+                (events_block(&ctx, mode, &bs))
             }
         }
     };
@@ -415,7 +637,8 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
 fn parse_logins(raw: &str) -> Result<Vec<String>, WebError> {
     let mut out: Vec<String> = Vec::new();
     for part in raw.split([',', ' ', '\n']).map(str::trim).filter(|p| !p.is_empty()) {
-        let login = part.trim_end_matches('/').rsplit('/').next().unwrap_or(part).trim_start_matches('@').to_lowercase();
+        let path = part.split(['?', '#']).next().unwrap_or(part);
+        let login = path.trim_end_matches('/').rsplit('/').next().unwrap_or(path).trim_start_matches('@').to_lowercase();
         if !(3..=25).contains(&login.len()) || !login.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(WebError::Bad(format!("\"{part}\" isn't a Twitch channel name.")));
         }
@@ -491,6 +714,9 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let week_left = week.iter().filter(|g| !g.canceled && g.starts_at >= now).count();
     let mut minutes = s.reminder_minutes.clone();
     minutes.sort_unstable_by(|a, b| b.cmp(a));
+    let closest = minutes.last().copied().unwrap_or(10);
+    let sample = sample_broadcaster(&bs, &s);
+    let role = role_name(&ctx, guild, s.reminder_role);
     let hours: Vec<(String, String)> = (0..24).map(|h| (h.to_string(), format!("{h:02}:00"))).collect();
 
     let body = html! {
@@ -506,6 +732,14 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                             style="width:100%;max-width:720px;height:auto;border-radius:10px;border:1px solid var(--edge-1);display:block";
                     }
                 }))
+                section.block {
+                    div.sa-sechead { h2 { "What members see before a stream" } }
+                    (reminder_post(&ctx, &page, &tz, role, &sample, next, closest))
+                    p.muted.small {
+                        (reminder_line(&s))
+                        @if let Some(c) = channel_name(&ctx, guild, s.reminder_channel).filter(|_| s.reminders) { " Posted in " (c) "." }
+                    }
+                }
                 (narrow_css())
                 (ui::section("Coming up", None, html! {
                     @if upcoming.is_empty() {
@@ -516,7 +750,7 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                             tbody { @for g in &upcoming {
                                 tr {
                                     td style="white-space:nowrap" { (when(g.starts_at, &tz)) }
-                                    td { (g.title) }
+                                    td { @if g.title.is_empty() { span.muted { "Untitled" } } @else { (g.title) } }
                                     td.muted.wide-only { (g.game) }
                                     td.actions { @if g.canceled { (ui::badge("Cancelled", Tone::Muted)) } }
                                 }
@@ -544,8 +778,8 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     h2 { "Next stream" }
                     @if let Some(g) = next {
                         div.next-stream {
-                            strong { (until(g.starts_at, &tz)) }
-                            span { (when(g.starts_at, &tz)) }
+                            strong { (when(g.starts_at, &tz)) }
+                            span { (until(g.starts_at, now)) }
                             @if !g.title.is_empty() { span.muted { (g.title) } }
                         }
                     } @else {
@@ -624,21 +858,47 @@ async fn schedule_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 
 // ---- YouTube ----
 
-async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<HashMap<String, String>>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let videos = youtube::recent(&ctx, &s.youtube_ids, 10);
+    let feeds = youtube::latest_per_feed(&ctx, &s.youtube_ids);
+    let sample = videos.first().cloned().unwrap_or_else(|| youtube::Video {
+        id: String::new(),
+        title: "Your video title".into(),
+        author: "Your channel".into(),
+        published_ms: now_ms(),
+    });
+    let role = role_name(&ctx, guild, s.youtube_role);
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "YouTube"))
+        (toast_if(&q, "sent", "Test post sent"))
         div.with-rail {
             div.stack.sa-main {
-                (ui::section("Recent videos", Some("Checked every 5 minutes. A channel's first check only records what's there, so old videos aren't posted."), html! {
+                section.block {
+                    div.sa-sechead {
+                        h2 { "What members see when you upload" }
+                        @if page.can_edit() && !videos.is_empty() { (ui::action_button(&page.path("alerts/youtube/test"), "Send a test post", Tone::Muted, false)) }
+                    }
+                    (video_post(&ctx, &page, role, &s.youtube_message, &sample))
+                    p.muted.small {
+                        @match channel_name(&ctx, guild, s.youtube_channel) {
+                            Some(c) => {
+                                "Posted in " (c) " within 5 minutes of the upload."
+                                @if page.can_edit() && !videos.is_empty() { " The test posts your newest video there without pinging anyone." }
+                            }
+                            None => { "Pick a channel below and save to start posting." }
+                        }
+                    }
+                }
+                (ui::section("Recent videos", Some("A channel's first check only records what's there, so old videos aren't posted."), html! {
                     @if videos.is_empty() {
                         (ui::empty(Icon::Play, "No videos yet", if s.youtube_ids.is_empty() { "Add a YouTube channel below and its uploads show up here." } else { "Videos show up here after the next check." }))
                     } @else {
                         div.list { @for v in &videos {
                             div.list-item {
+                                img.sa-vt src=(youtube::thumb(&v.id)) alt="" width="64" height="36" loading="lazy";
                                 div.grow style="min-width:0" {
                                     a.clip style="display:block" href=(v.url()) target="_blank" rel="noopener" { (v.title) }
                                     p.muted.small { (v.author) }
@@ -659,10 +919,22 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             }
             aside.rail {
                 div.rail-block {
-                    h2 { "Posting" }
-                    div.mini { span.grow { span { "Channels" } } span.mono { (s.youtube_ids.len()) } }
-                    div.mini { span.grow { span { "Posts in" } } span.mono.clip { (channel_name(&ctx, guild, s.youtube_channel).unwrap_or_else(|| "Nowhere yet".into())) } }
-                    div.mini { span.grow { span { "Last upload" } } span.mono { (videos.first().map(|v| text::ago(v.published_ms)).unwrap_or_else(|| "None yet".into())) } }
+                    h2 { "Channels" }
+                    @if feeds.is_empty() {
+                        (ui::empty(Icon::Play, "No channels yet", "Add a channel below. It's checked every 5 minutes."))
+                    } @else {
+                        @for (n, (_, latest)) in feeds.iter().enumerate() {
+                            div.mini {
+                                (ui::icon(Icon::Play))
+                                span.grow {
+                                    @match latest {
+                                        Some(v) => { span { (v.author) } span.muted { "Last upload " (text::ago(v.published_ms)) } }
+                                        None => { span { "Channel " (n + 1) } span.muted { "Waiting for the first check" } }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -674,8 +946,14 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 async fn save_youtube(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let old = ctx.settings::<Settings>(guild, KEY)?;
+    let raw = form.string("youtube_ids");
+    let parts: Vec<&str> = raw.split([',', ' ', '\n']).map(str::trim).filter(|p| !p.is_empty()).collect();
+    // Checked before looking anything up: each new handle is a request to youtube.com.
+    if parts.len() > 10 {
+        return Err(WebError::Bad("Up to 10 YouTube channels per server.".into()));
+    }
     let mut ids: Vec<String> = Vec::new();
-    for part in form.string("youtube_ids").split([',', ' ', '\n']).map(str::trim).filter(|p| !p.is_empty()) {
+    for part in parts {
         let id = match old.youtube_ids.iter().find(|i| i.as_str() == part) {
             Some(known) => known.clone(),
             None => youtube::resolve_input(&ctx, part).await.ok_or_else(|| WebError::Bad(format!("Couldn't find a YouTube channel for \"{part}\". Try the channel's link or its ID.")))?,
@@ -700,6 +978,23 @@ async fn save_youtube(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     Ok(saved(&page.path("alerts/youtube")))
 }
 
+async fn send_youtube_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let Some(channel) = s.youtube_channel else {
+        return Err(WebError::Bad("Pick a channel for new videos and save first.".into()));
+    };
+    let Some(v) = youtube::recent(&ctx, &s.youtube_ids, 1).into_iter().next() else {
+        return Err(WebError::Bad("There's no video to post yet. Uploads show up after the first check.".into()));
+    };
+    if let Err(e) = youtube::test_post(&ctx, channel, &s, &v).await {
+        tracing::warn!(guild, error = %e, "YouTube test post failed");
+        return Err(WebError::Bad("Discord refused the post. Check that the bot can send messages in that channel.".into()));
+    }
+    ctx.audit(&page.user, Some(guild), KEY, "Sent a test YouTube post");
+    Ok(bot_core::axum::response::Redirect::to(&page.path("alerts/youtube?sent=1")).into_response())
+}
+
 // ---- Streams ----
 
 async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
@@ -709,9 +1004,9 @@ async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let ids: Vec<String> = twitch::for_settings(&ctx, &s).into_iter().map(|b| b.user_id).collect();
     let now = now_ms();
     // One query covers the twelve-week chart and this month.
-    let since = day_ms(first_monday(&tz), &tz).min(month_start(&tz));
+    let since = day_ms(first_monday(&tz, now), &tz).min(month_start(&tz, now));
     let all = twitch::streams_since(&ctx, &ids, since, 1000)?;
-    let month: Vec<&StreamRow> = all.iter().filter(|r| r.started_at >= month_start(&tz)).collect();
+    let month: Vec<&StreamRow> = all.iter().filter(|r| r.started_at >= month_start(&tz, now)).collect();
     let month_secs: i64 = month.iter().map(|r| stream_secs(r, now)).sum();
     let peak = avg_peak(&month).map(|p| format!("average peak {}", text::num(p))).unwrap_or_else(|| "no viewer counts yet".into());
     let followers: Option<i64> = ctx
@@ -744,12 +1039,20 @@ async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                 tr {
                                     td style="white-space:nowrap" { (zoned(r.started_at, &tz).map(|z| z.strftime("%b %-d").to_string()).unwrap_or_default()) }
                                     td {
-                                        div { (r.title) }
-                                        @if !r.game.is_empty() { div.muted.small { (r.game) } }
+                                        div.sa-stream {
+                                            @match r.thumbnail.is_empty() {
+                                                false => { img.sa-vt.wide-only src=(twitch::sized(&r.thumbnail, 320, 180)) alt="" width="64" height="36" loading="lazy"; }
+                                                true => { span.sa-vt.wide-only { (ui::icon(Icon::Live)) } }
+                                            }
+                                            div {
+                                                div { @if r.title.is_empty() { "Untitled stream" } @else { (r.title) } }
+                                                @if !r.game.is_empty() { div.muted.small { (r.game) } }
+                                            }
+                                        }
                                     }
                                     td.num style="white-space:nowrap" { @if r.ended_at.is_some() { (text::duration(r.duration_secs)) } @else { (ui::badge("Live", Tone::Ok)) } }
-                                    td.num { @if r.samples > 0 { (text::num(r.peak)) } @else { span.muted { "–" } } }
-                                    td.num.wide-only { @if r.samples > 0 { (text::num(r.average)) } @else { span.muted { "–" } } }
+                                    td.num { @if r.samples > 0 { (text::num(r.peak)) } }
+                                    td.num.wide-only { @if r.samples > 0 { (text::num(r.average)) } }
                                     td.actions.wide-only { @if let Some(v) = &r.vod_url { a.btn.small href=(v) target="_blank" rel="noopener" { "VOD" } } }
                                 }
                             } }
@@ -831,7 +1134,7 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
                 @if thumb.is_empty() {
                     span.stream-ph { (ui::icon(Icon::Live)) }
                 } @else {
-                    img src=(thumb.replace("{width}", "640").replace("{height}", "360")) alt="" loading="lazy";
+                    img src=(twitch::sized(thumb, 640, 360)) alt="" loading="lazy";
                 }
                 div.stream-cap {
                     span { (if live { "Live now" } else { "Last stream" }) }
@@ -848,7 +1151,8 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
                 span.muted.small { "Next stream" }
                 strong { (day_time(g.starts_at)) }
                 @if !g.title.is_empty() { span { (g.title) } }
-                @if s.reminders && !minutes.is_empty() {
+                // Reminders are skipped while live, so they aren't promised then.
+                @if s.reminders && !minutes.is_empty() && !live {
                     @if let Some(ch) = channel_name(ctx, page.guild_id, s.reminder_channel) {
                         @let times: Vec<String> = minutes.iter().filter_map(|m| zoned(g.starts_at - m * 60_000, &tz)).map(|z| z.strftime("%-I:%M %p").to_string()).collect();
                         span.muted.small { "Reminders at " (join_and(&times)) " in " (ch) }
@@ -870,6 +1174,8 @@ mod tests {
     #[test]
     fn logins_parse() {
         assert_eq!(parse_logins("https://www.twitch.tv/Antho/, other_one").unwrap(), vec!["antho", "other_one"]);
+        assert_eq!(parse_logins("https://twitch.tv/antho?sr=a, @Other_One, antho").unwrap(), vec!["antho", "other_one"]);
+        assert!(matches!(parse_logins("aaa, bbb, ccc, ddd, eee, fff"), Err(WebError::Bad(m)) if m.starts_with("Up to 5")));
         assert!(parse_logins("not a name!").is_err());
         assert!(parse_logins("").unwrap().is_empty());
     }
@@ -880,6 +1186,63 @@ mod tests {
         assert_eq!(parse_minutes("15m").unwrap(), vec![15]);
         assert!(parse_minutes("0").is_err());
         assert!(parse_minutes("soon").is_err());
+    }
+
+    #[test]
+    fn statuses_read_plainly() {
+        assert_eq!(sub_status(Some("enabled")).0, 0);
+        assert_eq!(sub_status(Some("webhook_callback_verification_pending")).0, 1);
+        assert_eq!(sub_status(Some("notification_failures_exceeded")), (2, "Twitch stopped after failed deliveries".into()));
+        assert_eq!(sub_status(None), (2, "Not set up yet".into()));
+        // Nothing Twitch can send renders as a machine word.
+        assert_eq!(sub_status(Some("refused (400)")).1, "Twitch refused the subscription");
+        assert_eq!(sub_status(Some("beta_maintenance")).1, "Stopped by Twitch");
+        assert!(!sub_status(Some("version_removed")).1.contains('_'));
+    }
+
+    fn toronto() -> TimeZone {
+        TimeZone::get("America/Toronto").unwrap()
+    }
+
+    /// Epoch ms of a wall-clock time in Toronto.
+    fn local_ms(at: &str) -> i64 {
+        at.parse::<bot_core::jiff::civil::DateTime>().unwrap().to_zoned(toronto()).unwrap().timestamp().as_millisecond()
+    }
+
+    #[test]
+    fn weeks_follow_local_midnight_across_dst() {
+        // Clocks go back at 2 AM on Sunday, Nov 1 2026, so that week is 169 hours long.
+        let tz = toronto();
+        let now = local_ms("2026-11-04T12:00:00");
+        let row = |at: &str| StreamRow { started_at: local_ms(at), ended_at: Some(0), duration_secs: 3600, ..Default::default() };
+        let rows = vec![row("2026-10-26T00:10:00"), row("2026-11-01T23:30:00"), row("2026-11-02T00:30:00")];
+        let series = weekly_hours(&rows, &tz, now);
+        assert_eq!(series.len(), WEEKS as usize);
+        assert_eq!(series[series.len() - 2], ("Oct 26".to_owned(), 2));
+        assert_eq!(series[series.len() - 1], ("Nov 2".to_owned(), 1));
+        assert_eq!(this_monday(&tz, now).to_string(), "2026-11-02");
+        assert_eq!(first_monday(&tz, now).to_string(), "2026-08-17");
+    }
+
+    #[test]
+    fn month_starts_at_local_midnight() {
+        assert_eq!(month_start(&toronto(), local_ms("2026-11-04T12:00:00")), local_ms("2026-11-01T00:00:00"));
+        // Just after midnight on the 1st is already the new month.
+        assert_eq!(month_start(&toronto(), local_ms("2027-01-01T00:05:00")), local_ms("2027-01-01T00:00:00"));
+    }
+
+    #[test]
+    fn relative_times_read_naturally() {
+        let now = 1_000_000_000_000;
+        let min = 60_000;
+        assert_eq!(until(now - min, now), "now");
+        assert_eq!(until(now + 40 * min, now), "in 40 min");
+        assert_eq!(until(now + 5 * 60 * min, now), "in 5 h");
+        assert_eq!(until(now + 3 * 1440 * min, now), "in 3 days");
+        assert_eq!(in_minutes(10), "in 10 minutes");
+        assert_eq!(in_minutes(60), "in 1 hour");
+        assert_eq!(in_minutes(120), "in 2 hours");
+        assert_eq!(in_minutes(90), "in 90 minutes");
     }
 
     #[test]

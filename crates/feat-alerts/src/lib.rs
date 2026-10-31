@@ -177,6 +177,11 @@ impl Feature for Alerts {
             {
                 bot_core::tracing::warn!(error = %e, "schedule refresh failed");
             }
+            if due(ctx, "thumbs", 15 * 60_000)
+                && let Err(e) = twitch::fill_thumbnails(ctx).await
+            {
+                bot_core::tracing::warn!(error = %e, "couldn't fill VOD pictures");
+            }
         }
         schedule::send_reminders(ctx, &guilds).await;
         schedule::weekly_posts(ctx, &guilds).await;
@@ -237,6 +242,12 @@ pub(crate) fn state_set(ctx: &Ctx, key: &str, value: &str) {
     });
     if let Err(e) = res {
         bot_core::tracing::warn!(key, error = %e, "couldn't store alerts state");
+    }
+}
+
+pub(crate) fn state_del(ctx: &Ctx, key: &str) {
+    if let Err(e) = ctx.db.with(|c| c.execute("DELETE FROM alerts_state WHERE key = ?1", [key])) {
+        bot_core::tracing::warn!(key, error = %e, "couldn't clear alerts state");
     }
 }
 
