@@ -312,6 +312,17 @@
     counters.forEach((el) => io.observe(el));
   }
 
+  // ---------------------------------------------------------------- tabs that scroll on a phone
+  // Fade the edge while more tabs sit off to the right.
+  $$(".tabs").forEach((t) => {
+    const edge = () => t.classList.toggle("more", t.scrollWidth - t.clientWidth - t.scrollLeft > 4);
+    edge();
+    t.addEventListener("scroll", edge, { passive: true });
+    addEventListener("resize", edge, { passive: true });
+    const on = $(".tab.on", t);
+    if (on && t.scrollWidth > t.clientWidth) t.scrollLeft = Math.max(0, on.offsetLeft - 24);
+  });
+
   // ---------------------------------------------------------------- segmented choices glide
   $$(".seg").forEach((seg) => {
     const lit = () => $(":scope > .on", seg) || $(":scope > :has(input:checked)", seg);

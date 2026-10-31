@@ -62,7 +62,7 @@ Never a raw grey in feature CSS. A colour that isn't a token is fine when it is 
 | --- | --- |
 | `ui::tabs` / `ui::tabs_counted` | Underline tabs; the lit line glides between tabs across pages |
 | `ui::readings` | Reading cards with a hue hairline on top; numbers count up when given `data-count` |
-| `b data-count` | Any number whose text is like `1,284`, `66 h`, `+42` counts up when it scrolls into view |
+| `b data-count` | Any number whose text is like `1,284`, `66 h`, `+42` counts up when it scrolls into view. The attribute is reserved for this: app.js rewrites the element's text, so never use `data-count` to carry other data |
 | `.card` | Groups settings rows or a block of related things. Never nest cards |
 | `div.with-rail` + `aside.rail` + `div.rail-block` | The right column: totals, who, what's next |
 | `div.mini` | Rail line: avatar or icon, name and detail, figure |
