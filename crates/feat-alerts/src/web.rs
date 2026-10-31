@@ -51,8 +51,8 @@ fn when(ms: i64, tz: &TimeZone) -> String {
 }
 
 /// "in 40 min", "in 5 h", "in 2 days".
-fn until(ms: i64) -> String {
-    let mins = (ms - now_ms()) / 60_000;
+fn until(ms: i64, now: i64) -> String {
+    let mins = (ms - now) / 60_000;
     match mins {
         ..1 => "now".into(),
         1..60 => format!("in {mins} min"),
@@ -71,8 +71,13 @@ fn channel_name(ctx: &Ctx, guild: u64, channel: Option<u64>) -> Option<String> {
     ctx.text_channels(guild).into_iter().find(|(id, _)| *id == channel).map(|(_, n)| format!("#{n}"))
 }
 
-fn month_start(tz: &TimeZone) -> i64 {
-    let today = Timestamp::now().to_zoned(tz.clone()).date();
+/// The day `now` falls on in the zone.
+fn today(now: i64, tz: &TimeZone) -> Date {
+    zoned(now, tz).map(|z| z.date()).unwrap_or_else(|| Timestamp::now().to_zoned(tz.clone()).date())
+}
+
+fn month_start(tz: &TimeZone, now: i64) -> i64 {
+    let today = today(now, tz);
     today.first_of_month().to_zoned(tz.clone()).map(|z| z.timestamp().as_millisecond()).unwrap_or(0)
 }
 
@@ -186,7 +191,7 @@ fn reminder_post(ctx: &Ctx, page: &Page, role: Option<String>, b: &Broadcaster, 
     let start = seg.map(|g| g.starts_at).unwrap_or_else(|| now_ms() + minutes * 60_000);
     let at = page.user.local(start).strftime("%-I:%M %p").to_string();
     let (title, game) = seg.map(|g| (g.title.as_str(), g.game.as_str())).unwrap_or(("Your stream title", "Just Chatting"));
-    let when = if minutes == 60 { "in 1 hour".to_owned() } else if minutes % 60 == 0 { format!("in {} hours", minutes / 60) } else { format!("in {minutes} minutes") };
+    let when = in_minutes(minutes);
     bot_message(ctx, page, html! {
         div.sa-line {
             (ping(role))
@@ -197,6 +202,16 @@ fn reminder_post(ctx: &Ctx, page: &Page, role: Option<String>, b: &Broadcaster, 
             a href=(b.url()) target="_blank" rel="noopener" { (b.url()) }
         }
     })
+}
+
+/// How Discord words a relative time this far ahead: "in 10 minutes", "in 1 hour", "in 2 hours".
+fn in_minutes(minutes: i64) -> String {
+    match minutes {
+        1 => "in a minute".into(),
+        60 => "in 1 hour".into(),
+        m if m % 60 == 0 => format!("in {} hours", m / 60),
+        m => format!("in {m} minutes"),
+    }
 }
 
 /// A new-video post as Discord shows it: the message, then the card Discord draws for the link.
@@ -231,13 +246,13 @@ fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &
 }
 
 /// The Monday of this week, in the zone.
-fn this_monday(tz: &TimeZone) -> Date {
-    schedule::monday_of(Timestamp::now().to_zoned(tz.clone()).date())
+fn this_monday(tz: &TimeZone, now: i64) -> Date {
+    schedule::monday_of(today(now, tz))
 }
 
 /// The Monday that starts the oldest of the last twelve weeks.
-fn first_monday(tz: &TimeZone) -> Date {
-    let this = this_monday(tz);
+fn first_monday(tz: &TimeZone, now: i64) -> Date {
+    let this = this_monday(tz, now);
     this.checked_sub(Span::new().days(7 * (WEEKS - 1))).unwrap_or(this)
 }
 
@@ -253,7 +268,7 @@ fn stream_secs(r: &StreamRow, now: i64) -> i64 {
 
 /// Hours streamed in each of the last twelve weeks, oldest first, labelled by their Monday.
 fn weekly_hours(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Vec<(String, i64)> {
-    let first = first_monday(tz);
+    let first = first_monday(tz, now);
     (0..WEEKS)
         .map(|w| {
             let start = first.checked_add(Span::new().days(7 * w)).unwrap_or(first);
@@ -407,7 +422,7 @@ fn events_block(ctx: &Ctx, mode: Mode, bs: &[Broadcaster]) -> Markup {
 
 /// The rail's "Hours streamed": this week's hours, stream count and average peak, then the bars.
 fn hours_block(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Markup {
-    let monday = day_ms(this_monday(tz), tz);
+    let monday = day_ms(this_monday(tz, now), tz);
     let week: Vec<&StreamRow> = rows.iter().filter(|r| r.started_at >= monday).collect();
     let secs: i64 = week.iter().map(|r| stream_secs(r, now)).sum();
     let peak = avg_peak(&week).map(|p| format!(" · average peak {}", text::num(p))).unwrap_or_default();
@@ -517,7 +532,7 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     let live = twitch::open_streams(&ctx)?.into_iter().find(|r| ids.contains(&r.broadcaster_id));
     let recent = twitch::streams_since(&ctx, &ids, 0, 5)?;
     let last = recent.iter().find(|r| r.ended_at.is_some());
-    let rows = twitch::streams_since(&ctx, &ids, day_ms(first_monday(&tz), &tz), 1000)?;
+    let rows = twitch::streams_since(&ctx, &ids, day_ms(first_monday(&tz, now), &tz), 1000)?;
     let (_, _, week) = schedule::week(&ctx, &s);
     let missing: Vec<&String> = s.twitch_logins.iter().filter(|l| !bs.iter().any(|b| &&b.login == l)).collect();
     let sample = sample_broadcaster(&bs, &s);
@@ -760,7 +775,7 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     @if let Some(g) = next {
                         div.next-stream {
                             strong { (when(g.starts_at, &tz)) }
-                            span { (until(g.starts_at)) }
+                            span { (until(g.starts_at, now)) }
                             @if !g.title.is_empty() { span.muted { (g.title) } }
                         }
                     } @else {
@@ -985,9 +1000,9 @@ async fn streams_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let ids: Vec<String> = twitch::for_settings(&ctx, &s).into_iter().map(|b| b.user_id).collect();
     let now = now_ms();
     // One query covers the twelve-week chart and this month.
-    let since = day_ms(first_monday(&tz), &tz).min(month_start(&tz));
+    let since = day_ms(first_monday(&tz, now), &tz).min(month_start(&tz, now));
     let all = twitch::streams_since(&ctx, &ids, since, 1000)?;
-    let month: Vec<&StreamRow> = all.iter().filter(|r| r.started_at >= month_start(&tz)).collect();
+    let month: Vec<&StreamRow> = all.iter().filter(|r| r.started_at >= month_start(&tz, now)).collect();
     let month_secs: i64 = month.iter().map(|r| stream_secs(r, now)).sum();
     let peak = avg_peak(&month).map(|p| format!("average peak {}", text::num(p))).unwrap_or_else(|| "no viewer counts yet".into());
     let followers: Option<i64> = ctx
@@ -1173,6 +1188,51 @@ mod tests {
         assert_eq!(sub_status(Some("webhook_callback_verification_pending")).0, 1);
         assert_eq!(sub_status(Some("notification_failures_exceeded")), (2, "Twitch stopped after failed deliveries".into()));
         assert_eq!(sub_status(None), (2, "Not set up yet".into()));
+    }
+
+    fn toronto() -> TimeZone {
+        TimeZone::get("America/Toronto").unwrap()
+    }
+
+    /// Epoch ms of a wall-clock time in Toronto.
+    fn local_ms(at: &str) -> i64 {
+        at.parse::<bot_core::jiff::civil::DateTime>().unwrap().to_zoned(toronto()).unwrap().timestamp().as_millisecond()
+    }
+
+    #[test]
+    fn weeks_follow_local_midnight_across_dst() {
+        // Clocks go back at 2 AM on Sunday, Nov 1 2026, so that week is 169 hours long.
+        let tz = toronto();
+        let now = local_ms("2026-11-04T12:00:00");
+        let row = |at: &str| StreamRow { started_at: local_ms(at), ended_at: Some(0), duration_secs: 3600, ..Default::default() };
+        let rows = vec![row("2026-10-26T00:10:00"), row("2026-11-01T23:30:00"), row("2026-11-02T00:30:00")];
+        let series = weekly_hours(&rows, &tz, now);
+        assert_eq!(series.len(), WEEKS as usize);
+        assert_eq!(series[series.len() - 2], ("Oct 26".to_owned(), 2));
+        assert_eq!(series[series.len() - 1], ("Nov 2".to_owned(), 1));
+        assert_eq!(this_monday(&tz, now).to_string(), "2026-11-02");
+        assert_eq!(first_monday(&tz, now).to_string(), "2026-08-17");
+    }
+
+    #[test]
+    fn month_starts_at_local_midnight() {
+        assert_eq!(month_start(&toronto(), local_ms("2026-11-04T12:00:00")), local_ms("2026-11-01T00:00:00"));
+        // Just after midnight on the 1st is already the new month.
+        assert_eq!(month_start(&toronto(), local_ms("2027-01-01T00:05:00")), local_ms("2027-01-01T00:00:00"));
+    }
+
+    #[test]
+    fn relative_times_read_naturally() {
+        let now = 1_000_000_000_000;
+        let min = 60_000;
+        assert_eq!(until(now - min, now), "now");
+        assert_eq!(until(now + 40 * min, now), "in 40 min");
+        assert_eq!(until(now + 5 * 60 * min, now), "in 5 h");
+        assert_eq!(until(now + 3 * 1440 * min, now), "in 3 days");
+        assert_eq!(in_minutes(10), "in 10 minutes");
+        assert_eq!(in_minutes(60), "in 1 hour");
+        assert_eq!(in_minutes(120), "in 2 hours");
+        assert_eq!(in_minutes(90), "in 90 minutes");
     }
 
     #[test]

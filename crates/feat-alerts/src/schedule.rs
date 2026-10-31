@@ -424,6 +424,33 @@ mod tests {
     }
 
     #[test]
+    fn weeks_cross_the_year() {
+        let new_year: Date = "2027-01-01".parse().unwrap();
+        assert_eq!(monday_of(new_year).to_string(), "2026-12-28");
+        let tz = TimeZone::get("Europe/Warsaw").unwrap();
+        let monday: Date = "2026-12-28".parse().unwrap();
+        let svg = week_svg("Antho", "", monday, monday, &tz, "Europe/Warsaw", &[]);
+        assert!(svg.contains("Dec 28 to Jan 3"), "range missing");
+        assert!(svg.contains("Jan 1") && svg.contains("No stream"));
+    }
+
+    #[test]
+    fn segments_land_on_their_local_day_across_dst() {
+        // Clocks go back in Toronto at 2 AM on Sunday, Nov 1 2026. A 7 PM stream that Sunday is
+        // still 7 PM on the image, on the Sunday row.
+        let tz = TimeZone::get("America/Toronto").unwrap();
+        let monday: Date = "2026-10-26".parse().unwrap();
+        let sunday = monday.checked_add(Span::new().days(6)).unwrap();
+        let start = sunday.at(19, 0, 0, 0).to_zoned(tz.clone()).unwrap().timestamp().as_millisecond();
+        let seg = Segment { id: "s".into(), broadcaster_id: "1".into(), starts_at: start, ends_at: None, title: "Sunday".into(), game: String::new(), canceled: false };
+        let svg = week_svg("Antho", "", monday, monday, &tz, "America/Toronto", &[seg]);
+        let sun_row = svg.find(">Nov 1<").unwrap();
+        let at = svg.find(">7:00 PM<").unwrap();
+        assert!(at > sun_row, "the stream is drawn on the Sunday row");
+        assert_eq!(svg.matches("No stream").count(), 6);
+    }
+
+    #[test]
     fn week_image_renders() {
         let tz = TimeZone::get("America/Toronto").unwrap();
         let monday: Date = "2026-10-26".parse().unwrap();
