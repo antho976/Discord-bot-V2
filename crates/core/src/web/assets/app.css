@@ -188,8 +188,8 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tab:hover { color: var(--ink); }
 .tab.on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 500; }
 /* A small segmented choice (None, View, Edit; 7 days, 30 days). */
-.seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--well); }
-.seg > * { position: relative; padding: 3px 10px; border-radius: 6px; font-size: 12px; color: var(--ink-3); cursor: pointer; }
+.seg { flex: none; display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--well); }
+.seg > * { position: relative; white-space: nowrap; padding: 3px 10px; border-radius: 6px; font-size: 12px; color: var(--ink-3); cursor: pointer; }
 .seg > *:hover { color: var(--ink); }
 .seg > .on, .seg > :has(input:checked) { background: var(--selected); color: var(--ink); }
 

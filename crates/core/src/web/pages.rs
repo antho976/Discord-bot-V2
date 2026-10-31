@@ -115,6 +115,13 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let now = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC);
     let day_share = (now.hour() as f64 * 60.0 + now.minute() as f64) / 1440.0;
     let pace = if day_share > 0.08 { Some((today_msgs as f64 / day_share) as i64) } else { None };
+    // Daily numbers are counted per UTC day. Anyone in another timezone is told where it starts.
+    let day_starts = now
+        .start_of_day()
+        .ok()
+        .map(|m| user.local(m.timestamp().as_millisecond()))
+        .filter(|l| l.offset() != jiff::tz::Offset::UTC)
+        .map(|l| l.strftime("%H:%M").to_string());
     let active_today = last(&active);
     let voice_week = sum_last(&voice, 7);
     let voice_prev = voice.iter().rev().skip(7).take(7).map(|d| d.1).sum::<i64>();
@@ -151,7 +158,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
 
     // What the features add, for the features this person can see.
     let mut needs = Vec::new();
-    let mut feed = Vec::new();
+    let mut feeds = Vec::new();
     let mut panel = Vec::new();
     let levels = ctx.levels(&user, guild);
     for f in ctx.features() {
@@ -163,13 +170,12 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         let fp = super::Page { user: user.clone(), guild_id: guild, key, level };
         let o = f.overview(&ctx, &fp);
         needs.extend(o.needs);
-        feed.extend(o.feed);
+        feeds.push(o.feed);
         panel.extend(o.panel);
     }
     // Alerts first, then whatever has waited longest.
     needs.sort_by_key(|n| (!n.alert, n.since));
-    feed.sort_by_key(|h| -h.at);
-    feed.truncate(6);
+    let feed = mix_feed(feeds, 6);
     panel.sort_by_key(|p| p.0);
     let on = ctx.features().iter().filter(|f| ctx.enabled(guild, f.meta().key)).count();
 
@@ -196,7 +202,10 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         }
         div.ov-chart {
             div.ov-chart-head {
-                span.muted.small { (caption) " · " (text::num(avg)) " on average" }
+                span.muted.small {
+                    (caption) " · " (text::num(avg)) " on average"
+                    @if let Some(t) = &day_starts { " · days start at " (t) " your time" }
+                }
                 div.seg {
                     a.on[days == 7] href=(link(show, 7)) { "7 days" }
                     a.on[days == 30] href=(link(show, 30)) { "30 days" }
@@ -293,6 +302,29 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         }
     };
     Ok(ui::layout_custom(&ctx, &page, &name, body).into_response())
+}
+
+/// Up to `n` happenings, newest first, taken from each source in turn so one busy feature (a run
+/// of level-ups) can't push the others out. Sources with the freshest news go first in a round.
+fn mix_feed(mut sources: Vec<Vec<crate::Happening>>, n: usize) -> Vec<crate::Happening> {
+    // Oldest first, so pop() gives each source's newest.
+    for s in &mut sources {
+        s.sort_by_key(|h| h.at);
+    }
+    sources.retain(|s| !s.is_empty());
+    sources.sort_by_key(|s| std::cmp::Reverse(s.last().map(|h| h.at)));
+    let mut out = Vec::new();
+    while out.len() < n && !sources.is_empty() {
+        for s in &mut sources {
+            if out.len() == n {
+                break;
+            }
+            out.extend(s.pop());
+        }
+        sources.retain(|s| !s.is_empty());
+    }
+    out.sort_by_key(|h| std::cmp::Reverse(h.at));
+    out
 }
 
 /// "12 min", "3 h", "2 d" for the overview's feed.
@@ -760,5 +792,34 @@ fn lower_first(s: &str) -> String {
     match c.next() {
         Some(f) if !c.as_str().starts_with(|x: char| x.is_uppercase()) => f.to_lowercase().chain(c).collect(),
         _ => s.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mix_feed;
+    use crate::Happening;
+
+    fn h(at: i64, who: &str) -> Happening {
+        Happening { at, avatar: String::new(), who: who.into(), text: String::new() }
+    }
+
+    #[test]
+    fn a_busy_source_shares_the_feed() {
+        let levels: Vec<_> = (0..10).map(|i| h(100 + i, "levels")).collect();
+        let welcome = vec![h(5, "welcome"), h(3, "welcome")];
+        let pets = vec![h(1, "pets")];
+        let feed = mix_feed(vec![levels, welcome, pets, vec![]], 6);
+        let who: Vec<_> = feed.iter().map(|h| h.who.as_str()).collect();
+        assert_eq!(feed.len(), 6);
+        assert_eq!(who.iter().filter(|w| **w == "levels").count(), 3);
+        assert!(who.contains(&"pets") && who.contains(&"welcome"));
+        assert!(feed.windows(2).all(|w| w[0].at >= w[1].at), "newest first");
+    }
+
+    #[test]
+    fn short_feeds_are_kept_whole() {
+        let feed = mix_feed(vec![vec![h(2, "a")], vec![h(1, "b")]], 6);
+        assert_eq!(feed.len(), 2);
     }
 }
