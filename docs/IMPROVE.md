@@ -66,13 +66,25 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
 
 ### B: brisk-otter
 `crates/feat-alerts`, `crates/feat-utility`, `crates/feat-embeds`.
-- [ ] Stream alerts: show the real Twitch thumbnail where one is stored, and check every state
+- [x] Stream alerts: show the real Twitch thumbnail where one is stored, and check every state
       (not connected, polling, push, live, offline, no schedule).
-- [ ] Schedule, YouTube and Streams tabs: polish to match the Twitch tab.
-- [ ] AFK and timezones: city names for zones that aren't "Region/City", and members whose zone
+- [x] Schedule, YouTube and Streams tabs: polish to match the Twitch tab.
+- [x] AFK and timezones: city names for zones that aren't "Region/City", and members whose zone
       is invalid.
-- [ ] Embed builder: the preview column is narrow next to the editor. Balance them like the
+- [x] Embed builder: the preview column is narrow next to the editor. Balance them like the
       design. Check long titles, many fields and editing a sent message.
+- [x] Found: the stream `thumbnail` column was never written. Streams now keep the live preview,
+      then the VOD's picture (filled in later while Twitch makes it).
+- [x] Found: one broadcaster's failing schedule read stopped every other broadcaster's refresh,
+      and one server's settings error stopped live-post edits for the rest.
+- [x] Found: saving more than 10 YouTube channels looked each up on youtube.com before refusing.
+- [x] Found: the overview promised reminder times while live, when reminders are skipped.
+- [x] Found: with the [AFK] nickname prefix, notices, "Welcome back" and the dashboard showed
+      "[AFK] Mira". Turning AFK off left everyone already away stuck AFK with the prefix.
+- [x] Found: `/time` said "hasn't set a timezone" when the saved zone was unknown.
+- [ ] For core (brisk-heron): on a phone the page title wraps beside a header status pill
+      ("Stream alerts" next to "Twitch not connected"). The header could drop the pill under the
+      title below ~480 px.
 
 ### C: keen-hare
 `crates/feat-levels`, `crates/feat-welcome`, `crates/feat-tickets` (tickets and starboard).

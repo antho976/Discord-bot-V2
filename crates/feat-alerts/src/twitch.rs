@@ -842,8 +842,17 @@ async fn edit_posts(ctx: &Ctx, stream_id: i64) -> Result<()> {
     let Some(b) = broadcasters(ctx).into_iter().find(|b| b.user_id == row.broadcaster_id) else { return Ok(()) };
     let none = AllowedMentions::default();
     for (guild, channel, message) in posts {
-        let s = ctx.settings::<Settings>(guild as u64, KEY)?;
-        let p = if row.ended_at.is_some() { ended_post(&b, &row) } else { live_post(&s, &b, &row) };
+        let p = if row.ended_at.is_some() {
+            ended_post(&b, &row)
+        } else {
+            match ctx.settings::<Settings>(guild as u64, KEY) {
+                Ok(s) => live_post(&s, &b, &row),
+                Err(e) => {
+                    tracing::warn!(guild, error = %e, "couldn't read alert settings to edit a live post");
+                    continue;
+                }
+            }
+        };
         let res = ctx
             .http
             .update_message(Id::new(channel as u64), Id::new(message as u64))
