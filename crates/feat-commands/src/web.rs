@@ -66,14 +66,6 @@ fn reregister(ctx: &Ctx, guild: u64) {
     });
 }
 
-/// Whether another feature already has a slash command with this name in this server.
-fn taken_elsewhere(ctx: &Ctx, guild: u64, name: &str) -> bool {
-    ctx.features()
-        .iter()
-        .filter(|f| f.meta().key != KEY)
-        .any(|f| f.commands().iter().chain(f.guild_commands(ctx, guild).iter()).any(|c| c.name == name))
-}
-
 // ---- commands ----
 
 async fn commands_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
@@ -82,6 +74,7 @@ async fn commands_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let uses = crate::uses(&ctx, guild)?;
     let total: i64 = uses.iter().filter(|((k, _), _)| k == Kind::Command.key()).map(|(_, (n, _))| n).sum();
     let actions = (page.can_edit() && s.commands.len() < MAX_COMMANDS).then(|| html! { a.btn.primary href=(page.path("commands/edit")) { "Add a command" } });
+    let taken = crate::names_elsewhere(&ctx, guild);
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, &s, "Commands"))
@@ -103,6 +96,10 @@ async fn commands_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                         strong.mono { "/" (c.name) }
                                         @if c.ephemeral { (ui::badge("Only they see it", Tone::Muted)) }
                                         @if c.embed.is_some() { (ui::badge("Embed", Tone::Muted)) }
+                                        @if taken.contains(&c.name) { (ui::badge("Not registered", Tone::Warn)) }
+                                    }
+                                    @if taken.contains(&c.name) {
+                                        span.small.cc-warn { "/" (c.name) " is now one of the bot's own commands, so this one isn't registered. Rename it." }
                                     }
                                     span.muted.small.clip { (crate::description(c)) }
                                     @let shown = if c.reply.trim().is_empty() { c.embed.as_ref().map(|e| if e.title.is_empty() { e.description.clone() } else { e.title.clone() }).unwrap_or_default() } else { c.reply.clone() };
@@ -281,7 +278,7 @@ async fn command_save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     if s.commands.iter().any(|c| c.name == name && Some(c.id) != id) {
         return Err(WebError::Bad(format!("You already have /{name}. Edit that one instead.")));
     }
-    if taken_elsewhere(&ctx, guild, &name) {
+    if crate::names_elsewhere(&ctx, guild).contains(&name) {
         return Err(WebError::Bad(format!("/{name} is one of the bot's own commands. Pick another name.")));
     }
     if pos.is_none() && s.commands.len() >= MAX_COMMANDS {
@@ -598,6 +595,7 @@ const CSS: &str = "
 .cc-title strong { font-weight: 500; }
 .cc-title strong.mono { font-size: 13px; }
 .cc-reply { font-size: 13px; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cc-warn { color: var(--waiting); }
 .cc-acts { display: flex; gap: 6px; align-items: center; }
 .cc-fs { border: 0; padding: 0; margin: 0; min-width: 0; }
 .cc-ph { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 12.5px; color: var(--ink-2); align-items: baseline; }

@@ -166,6 +166,12 @@ pub trait Feature: Send + Sync + 'static {
         Vec::new()
     }
 
+    /// Names [`Feature::guild_commands`] may use in some server, even where it doesn't now
+    /// (a setting that's off). Custom commands can't take them.
+    fn reserved_command_names(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     /// Dashboard pages and endpoints. Pages go under `/g/{guild}/{key}`, public pages under
     /// `/p/...`, machine endpoints under `/api/...`.
     fn routes(&self) -> axum::Router<Ctx> {

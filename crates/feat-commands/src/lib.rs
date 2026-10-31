@@ -3,7 +3,7 @@
 
 mod web;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -166,6 +166,17 @@ impl Settings {
     }
 }
 
+/// Slash command names other features use or may use in this server. A custom command with
+/// one of them isn't registered: the bot's own comes first.
+pub fn names_elsewhere(ctx: &Ctx, guild: u64) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for f in ctx.features().iter().filter(|f| f.meta().key != KEY) {
+        names.extend(f.commands().into_iter().chain(f.guild_commands(ctx, guild)).map(|c| c.name));
+        names.extend(f.reserved_command_names().iter().map(|n| (*n).to_owned()));
+    }
+    names
+}
+
 pub(crate) fn description(c: &CustomCommand) -> &str {
     if c.description.trim().is_empty() { "A custom command" } else { c.description.trim() }
 }
@@ -279,7 +290,15 @@ impl Feature for Commands {
 
     fn guild_commands(&self, ctx: &Ctx, guild: u64) -> Vec<Command> {
         let Ok(s) = ctx.settings::<Settings>(guild, KEY) else { return Vec::new() };
-        s.registered().into_iter().map(|(name, about)| CommandBuilder::new(name, about, CommandType::ChatInput).build()).collect()
+        if s.commands.is_empty() {
+            return Vec::new();
+        }
+        let taken = names_elsewhere(ctx, guild);
+        s.registered()
+            .into_iter()
+            .filter(|(name, _)| !taken.contains(*name))
+            .map(|(name, about)| CommandBuilder::new(name, about, CommandType::ChatInput).build())
+            .collect()
     }
 
     fn routes(&self) -> bot_core::axum::Router<Ctx> {
