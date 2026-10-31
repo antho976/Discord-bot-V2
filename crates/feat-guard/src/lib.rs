@@ -904,6 +904,12 @@ fn snowflake_at(ms: i64) -> u64 {
     ((ms - 1_420_070_400_000) as u64) << 22
 }
 
+/// `id` moved by a few counts in its low bits, so the preview shows sample face `face` (0 to 11)
+/// for it. The low bits aren't the time, so the account's age stays the same.
+fn with_face(id: u64, face: u64) -> u64 {
+    id + (face + 12 - id % 12) % 12
+}
+
 // ---- preview ----
 
 fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
@@ -936,8 +942,14 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     ];
     for (hours, account_days, user, name, honeypot_catch, msg, outcome, by) in samples {
         let at = now - hours * 3_600_000;
+        // The preview picks a face by id, so give each sample its own: a member's own picture,
+        // or one no member uses.
+        let face = match members.iter().position(|(id, _)| id == user) {
+            Some(i) => i as u64,
+            None => [11, 4, 9][(*user % 3) as usize],
+        };
         let user = match account_days {
-            Some(days) => snowflake_at(now - days * DAY_MS),
+            Some(days) => with_face(snowflake_at(now - days * DAY_MS), face),
             None => *user,
         };
         let (score, reason, signals) = if *honeypot_catch {
