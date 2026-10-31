@@ -289,7 +289,12 @@ pub async fn on_component(ctx: &Ctx, call: &ComponentCall, args: &[&str]) -> Res
             if !is_staff(&call.interaction, &settings) {
                 return ctx.reply(&call.interaction, Reply::text("Only staff can review suggestions.").ephemeral()).await;
             }
-            let pick = |st: Status, label: &str, style: ButtonStyle| button(&format!("{KEY}:sg:set:{id}:{}", st.as_str()), label, style, s.status == st);
+            // The current decision's button edits its reply instead; "Reopen" on an open one does nothing.
+            let pick = |st: Status, label: &str, style: ButtonStyle| {
+                let current = s.status == st;
+                let label = if current && st != Status::Open { "Edit reply" } else { label };
+                button(&format!("{KEY}:sg:set:{id}:{}", st.as_str()), label, style, current && st == Status::Open)
+            };
             let rows = vec![row(vec![
                 pick(Status::Considering, "Considering", ButtonStyle::Secondary),
                 pick(Status::Approved, "Approve", ButtonStyle::Success),
@@ -305,8 +310,10 @@ pub async fn on_component(ctx: &Ctx, call: &ComponentCall, args: &[&str]) -> Res
                 return ctx.reply(&call.interaction, Reply::text("Only staff can review suggestions.").ephemeral()).await;
             }
             let Some(status) = args.get(2).and_then(|s| Status::parse(s)) else { return Ok(()) };
-            let title = format!("{} suggestion #{id}", if status == Status::Open { "Reopen" } else { status.label() });
-            ctx.modal(&call.interaction, &format!("{KEY}:sg:status:{id}:{}", status.as_str()), &title, &[("reason", "Reason (optional)", true, false, None)]).await
+            let editing = s.status == status;
+            let title = if editing { format!("Edit the reply on #{id}") } else { format!("{} suggestion #{id}", if status == Status::Open { "Reopen" } else { status.label() }) };
+            let current = editing.then_some(s.reason.as_str()).filter(|r| !r.is_empty());
+            ctx.modal(&call.interaction, &format!("{KEY}:sg:status:{id}:{}", status.as_str()), &title, &[("reason", "Reason (optional)", true, false, current)]).await
         }
         _ => Ok(()),
     }
@@ -319,34 +326,28 @@ pub async fn on_modal(ctx: &Ctx, call: &ModalCall, args: &[&str]) -> Result<()> 
     if !is_staff(&call.interaction, &settings) {
         return ctx.reply(&call.interaction, Reply::text("Only staff can review suggestions.").ephemeral()).await;
     }
-    if ctx.db.with(|c| get(c, id))?.is_none_or(|s| s.guild_id != guild) {
+    let Some(before) = ctx.db.with(|c| get(c, id))?.filter(|s| s.guild_id == guild) else {
         return ctx.reply(&call.interaction, Reply::text("This suggestion doesn't exist any more.").ephemeral()).await;
-    }
+    };
     let reason = call.value("reason").unwrap_or_default();
     ctx.defer(&call.interaction, true).await?;
     set_status(ctx, id, status, &reason, call.user_id()).await?;
-    ctx.edit_original(&call.interaction, Reply::text(format!("Suggestion #{id} is now {}.", status.label().to_lowercase()))).await
+    let msg = if before.status == status && status != Status::Open {
+        format!("Updated the reply on suggestion #{id}.")
+    } else {
+        format!("Suggestion #{id} is now {}.", status.label().to_lowercase())
+    };
+    ctx.edit_original(&call.interaction, Reply::text(msg)).await
 }
 
 /// Record a status, rewrite the suggestion's message and tell the author. Used by the buttons and
-/// the dashboard.
+/// the dashboard. Saving the status it already has edits the reply: the message changes, but the
+/// decision keeps its date and the author isn't told again.
 pub async fn set_status(ctx: &Ctx, id: i64, status: Status, reason: &str, staff: u64) -> Result<Option<Suggestion>> {
     let reason = if status == Status::Open { String::new() } else { text::clip(reason.trim(), MAX_REASON) };
-    let changed = ctx.db.with(|c| {
-        c.execute(
-            "UPDATE suggestions SET status = ?2, reason = ?3, staff_id = ?4, status_at = ?5 WHERE id = ?1",
-            params![
-                id,
-                status.as_str(),
-                reason,
-                if status == Status::Open { None } else { Some(id_i64(staff)) },
-                if status == Status::Open { 0 } else { now_ms() }
-            ],
-        )
-    })?;
-    if changed == 0 {
-        return Ok(None);
-    }
+    let Some(before) = ctx.db.with(|c| get(c, id))? else { return Ok(None) };
+    let decided = status != before.status;
+    ctx.db.with(|c| record_status(c, id, status, &reason, staff, now_ms()))?;
     let Some(s) = ctx.db.with(|c| get(c, id))? else { return Ok(None) };
     if let Some(message) = s.message_id {
         let t = ctx.db.with(|c| tally(c, id))?;
@@ -357,7 +358,7 @@ pub async fn set_status(ctx: &Ctx, id: i64, status: Status, reason: &str, staff:
             tracing::warn!(suggestion = id, error = %e, "couldn't edit the suggestion message");
         }
     }
-    if status != Status::Open {
+    if decided && status != Status::Open {
         let mut dm = EmbedBuilder::new()
             .color(status.color())
             .title(format!("Your suggestion was {}", status.label().to_lowercase()))
@@ -371,6 +372,17 @@ pub async fn set_status(ctx: &Ctx, id: i64, status: Status, reason: &str, staff:
         }
     }
     Ok(Some(s))
+}
+
+/// Store a status and reply. A new status is dated `now`; the same status keeps its date.
+fn record_status(c: &Connection, id: i64, status: Status, reason: &str, staff: u64, now: i64) -> bot_core::rusqlite::Result<usize> {
+    let open = status == Status::Open;
+    c.execute(
+        "UPDATE suggestions SET reason = ?3, staff_id = ?4,
+           status_at = CASE WHEN ?5 THEN 0 WHEN status = ?2 THEN status_at ELSE ?6 END, status = ?2
+         WHERE id = ?1",
+        params![id, status.as_str(), reason, (!open).then(|| id_i64(staff)), open, now],
+    )
 }
 
 pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
@@ -444,6 +456,26 @@ mod tests {
             assert_eq!(cast_vote(c, 1, 10, -1)?, Tally { up: 1, down: 0 });
             // Other suggestions are separate.
             assert_eq!(tally(c, 2)?, Tally::default());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn editing_a_reply_keeps_the_decision_date() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        db.with(|c| {
+            c.execute("INSERT INTO suggestions (guild_id, channel_id, author_id, content) VALUES (1, 2, 3, 'a')", [])?;
+            let at = |c: &Connection| c.query_row("SELECT status, reason, status_at FROM suggestions WHERE id = 1", [], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)));
+            record_status(c, 1, Status::Approved, "Yes", 9, 100)?;
+            assert_eq!(at(c)?, ("approved".into(), "Yes".into(), 100));
+            record_status(c, 1, Status::Approved, "Yes, this week", 9, 200)?;
+            assert_eq!(at(c)?, ("approved".into(), "Yes, this week".into(), 100));
+            record_status(c, 1, Status::Implemented, "Done", 9, 300)?;
+            assert_eq!(at(c)?, ("implemented".into(), "Done".into(), 300));
+            record_status(c, 1, Status::Open, "", 9, 400)?;
+            assert_eq!(at(c)?, ("open".into(), "".into(), 0));
             Ok(())
         })
         .unwrap();

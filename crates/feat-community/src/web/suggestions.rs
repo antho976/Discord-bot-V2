@@ -163,8 +163,9 @@ fn review_pop(page: &Page, r: &Suggestion) -> Markup {
             div.pop-body {
                 form.stack method="post" action=(page.path(&format!("community/suggestions/{}/status", r.id))) {
                     (ui::select("status", &options, r.status.as_str()))
-                    input.input type="text" name="reason" value=(r.reason) placeholder="Reason, sent to the author" maxlength="800";
-                    button.btn.small.primary type="submit" style="align-self:flex-start" { "Save status" }
+                    textarea.input name="reason" rows="3" placeholder="Reply, shown on the post" maxlength="800" aria-label="Reply" { (r.reason) }
+                    @if r.status != Status::Open { p.muted.small { "Keeping the status edits the reply. The author hears only about a new status." } }
+                    button.btn.small.primary type="submit" style="align-self:flex-start" { "Save" }
                 }
             }
         }
@@ -211,12 +212,17 @@ pub async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path
 
 pub async fn set_status(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
-    match ctx.db.with(|c| sg::get(c, id))? {
-        Some(s) if s.guild_id == guild => {}
+    let before = match ctx.db.with(|c| sg::get(c, id))? {
+        Some(s) if s.guild_id == guild => s,
         _ => return Err(WebError::NotFound),
-    }
+    };
     let status = Status::parse(&form.string("status")).ok_or_else(|| WebError::Bad("Pick a status.".into()))?;
     sg::set_status(&ctx, id, status, &form.string("reason"), page.user.id).await?;
-    ctx.audit(&page.user, Some(guild), KEY, format!("Marked suggestion #{id} {}", status.label().to_lowercase()));
+    let what = if before.status == status && status != Status::Open {
+        format!("Edited the reply on suggestion #{id}")
+    } else {
+        format!("Marked suggestion #{id} {}", status.label().to_lowercase())
+    };
+    ctx.audit(&page.user, Some(guild), KEY, what);
     Ok(saved(&page.path("community/suggestions")))
 }
