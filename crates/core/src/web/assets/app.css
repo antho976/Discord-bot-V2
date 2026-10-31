@@ -387,7 +387,8 @@ body.public { background: var(--page); }
   .rail { position: static; }
   .change > .clip { display: none; }
   .ov-hero { padding: 14px 16px 24px; }
-  .ov-stats { gap: 20px; }
+  .ov-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 20px; border-bottom: 0; }
+  .ov-stat { border-bottom: 2px solid var(--edge-1); }
   .ov-stat b { font-size: 22px; }
   .rank { grid-template-columns: 24px 28px minmax(0, 1fr) auto; }
   .rank .progress, .rank .set-xp { display: none; }
