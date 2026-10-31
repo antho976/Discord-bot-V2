@@ -785,17 +785,21 @@ impl Ctx {
     }
 
     /// A member's display name from the cache, or "Unknown member" for someone the cache hasn't
-    /// seen (left, or not loaded in a large server). Ids never render on the dashboard.
+    /// seen (left, or not loaded in a large server). Ids never render on the dashboard. For
+    /// display only: to store a name, use [`Ctx::known_name`] and keep the event's own name
+    /// (or the one saved before) when it's None.
     pub fn display_name(&self, guild_id: u64, user_id: u64) -> String {
+        self.known_name(guild_id, user_id).unwrap_or_else(|| "Unknown member".to_owned())
+    }
+
+    /// A member's server nickname, else their global name, else their username, when the cache
+    /// has them. None means the cache doesn't know them, not that they have no name.
+    pub fn known_name(&self, guild_id: u64, user_id: u64) -> Option<String> {
         let (g, u) = (Id::<GuildMarker>::new(guild_id), Id::<UserMarker>::new(user_id));
-        if let Some(m) = self.cache.member(g, u)
-            && let Some(nick) = m.nick() {
-                return nick.to_owned();
-            }
-        match self.cache.user(u) {
-            Some(user) => user.global_name.clone().unwrap_or_else(|| user.name.clone()),
-            None => "Unknown member".to_owned(),
+        if let Some(nick) = self.cache.member(g, u).and_then(|m| m.nick().map(str::to_owned)) {
+            return Some(nick);
         }
+        self.cache.user(u).map(|user| user.global_name.clone().unwrap_or_else(|| user.name.clone()))
     }
 
     /// Text channels of a server as `(id, name)`, in sidebar order.
@@ -953,6 +957,19 @@ mod tests {
         assert_eq!(refusal(Some(404), &"x"), "The channel was deleted. Pick another one.");
         assert_eq!(refusal(Some(500), &"Response error: status code 500"), "Discord refused the message: Response error: status code 500");
         assert_eq!(refusal(None, &"timed out"), "Discord refused the message: timed out");
+    }
+
+    #[tokio::test]
+    async fn names_known_and_unknown() {
+        use crate::preview::{GUILD_A, MEMBERS};
+        let ctx = crate::Ctx::new(crate::Config::preview(0), crate::Db::memory().unwrap()).unwrap();
+        crate::preview::seed(&ctx).unwrap();
+        let (mira, _) = MEMBERS[0];
+        assert_eq!(ctx.known_name(GUILD_A, mira).as_deref(), Some("Mira"));
+        assert_eq!(ctx.display_name(GUILD_A, mira), "Mira");
+        // Someone the cache never saw: nothing to store, and no id on the page.
+        assert_eq!(ctx.known_name(GUILD_A, 1_234_567_890_123), None);
+        assert_eq!(ctx.display_name(GUILD_A, 1_234_567_890_123), "Unknown member");
     }
 
     #[test]
