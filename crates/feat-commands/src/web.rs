@@ -58,12 +58,23 @@ fn reregister(ctx: &Ctx, guild: u64) {
                 guild,
                 KEY,
                 "register",
-                format!("Discord didn't take the custom commands: {e}"),
+                format!("The custom commands didn't reach Discord. {}", why_not_registered(&e)),
                 Some(format!("/g/{guild}/commands")),
                 std::time::Duration::from_secs(3600),
             );
         }
     });
+}
+
+/// Why Discord refused the server's commands. A 403 here is the bot's invite, not a channel.
+fn why_not_registered(e: &bot_core::anyhow::Error) -> String {
+    use bot_core::twilight_http::error::ErrorType;
+    match e.downcast_ref::<bot_core::twilight_http::Error>().map(|h| h.kind()) {
+        Some(ErrorType::Response { status, .. }) if status.get() == 403 => {
+            "The bot isn't allowed to add slash commands here. Invite it again with the applications.commands scope.".into()
+        }
+        _ => bot_core::discord::why_refused_any(e),
+    }
 }
 
 // ---- commands ----
@@ -244,12 +255,12 @@ async fn command_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     (ui::field_textarea("reply", "Message", None, &c.reply, "Twitch: twitch.tv/antho, schedule in #announcements"))
                     (ui::field_toggle("ephemeral", "Only they see it", Some("For the slash command. A !name reply is always public."), c.ephemeral))
                 })))
-                (ui::section("Embed", None, ui::card(html! {
+                (ui::section("Embed", None, html! { div.cc-ecard { (ui::card(html! {
                     (ui::field_toggle("embed", "Add an embed", Some("A box under the message with a coral edge."), c.embed.is_some()))
                     (ui::field_text("embed_title", "Title", None, &e.title, "Links"))
                     (ui::field_textarea("embed_desc", "Text", None, &e.description, ""))
                     (ui::field_text("embed_image", "Picture", Some("An https link to an image."), &e.image, "https://"))
-                })))
+                })) } }))
             }))
             aside.rail.cc-side {
                 div.rail-block {
@@ -356,6 +367,11 @@ fn channel_list(ctx: &Ctx, guild: u64, t: &Trigger) -> String {
     if more > 0 { format!("{} and {more} more", names.join(", ")) } else { names.join(", ") }
 }
 
+/// "5 min cooldown", or "No cooldown".
+fn cooldown_line(secs: i64) -> String {
+    if secs <= 0 { "No cooldown".into() } else { format!("{} cooldown", text::duration(secs)) }
+}
+
 fn where_line(ctx: &Ctx, guild: u64, t: &Trigger) -> String {
     if t.channels.is_empty() { "Everywhere".into() } else { format!("In {}", channel_list(ctx, guild, t)) }
 }
@@ -388,7 +404,7 @@ async fn responder_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
                                 div.cc-body {
                                     div.cc-title { span.muted { (t.mode.label()) } strong { "“" (t.pattern) "”" } }
                                     p.cc-reply { (text::clip(t.reply.trim(), 140)) }
-                                    span.muted.small { (where_line(&ctx, guild, t)) " · " (t.cooldown_secs) " s cooldown · " (use_line(&uses, Kind::Trigger, t.id)) }
+                                    span.muted.small { (where_line(&ctx, guild, t)) " · " (cooldown_line(t.cooldown_secs)) " · " (use_line(&uses, Kind::Trigger, t.id)) }
                                 }
                                 @if page.can_edit() {
                                     div.cc-acts {
@@ -562,7 +578,7 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
     }
     let triggers = [
         (Mode::Contains, "when is stream", "Streams are Tuesday and Friday at 8 pm Eastern. The schedule is in #announcements.", vec![], 60),
-        (Mode::StartsWith, "how do i get pets", "Ask in #pets with the pet's name, {user}. A mod approves it within a day.", vec![ch(4)], 120),
+        (Mode::StartsWith, "how do i get pets", "Post the pet's name here, {user}. A mod approves it within a day.", vec![ch(6)], 120),
         (Mode::Exact, "gm", "gm {user}", vec![ch(4)], 300),
     ];
     for (mode, pattern, reply, channels, cooldown_secs) in triggers {
@@ -596,6 +612,7 @@ const CSS: &str = "
 .cc-title strong.mono { font-size: 13px; }
 .cc-reply { font-size: 13px; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .cc-warn { color: var(--waiting); }
+.cc-ecard:has(#embed:not(:checked)) .row + .row { display: none; }
 .cc-acts { display: flex; gap: 6px; align-items: center; }
 .cc-fs { border: 0; padding: 0; margin: 0; min-width: 0; }
 .cc-ph { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; font-size: 12.5px; color: var(--ink-2); align-items: baseline; }

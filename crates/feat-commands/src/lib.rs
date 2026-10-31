@@ -187,6 +187,14 @@ impl Settings {
         self.triggers.iter().find(|t| place.is_none_or(|(c, p)| t.allowed_in(c, p)) && t.matches(lower))
     }
 
+    /// Whether a command or trigger with this id is still there. Ids are never reused.
+    pub fn has(&self, kind: Kind, id: u32) -> bool {
+        match kind {
+            Kind::Command => self.commands.iter().any(|c| c.id == id),
+            Kind::Trigger => self.triggers.iter().any(|t| t.id == id),
+        }
+    }
+
     pub fn take_id(&mut self) -> u32 {
         let id = self.next_id.max(1);
         self.next_id = id + 1;
@@ -444,9 +452,11 @@ impl Commands {
         e.1 = now_ms();
     }
 
-    /// Write the use counts gathered since the last minute.
+    /// Write the use counts gathered since the last minute. A command or trigger deleted since
+    /// has had its counts forgotten, so its last uses are dropped rather than written back.
     fn flush(&self, ctx: &Ctx) -> Result<()> {
         let drained: Vec<_> = self.uses.lock().unwrap().drain().collect();
+        let drained: Vec<_> = drained.into_iter().filter(|((guild, kind, id), _)| ctx.settings::<Settings>(*guild, KEY).map_or(true, |s| s.has(*kind, *id))).collect();
         if drained.is_empty() {
             return Ok(());
         }
@@ -641,6 +651,29 @@ mod tests {
         // A trigger with the same id has its own cooldown.
         assert!(cooled_down(&mut until, Quiet::Trigger { guild: 1, id: 2 }, 30, t));
         assert!(cooled_down(&mut until, rules(10), BANG_COOLDOWN_SECS, t + Duration::from_secs(5)));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_deleted_commands_last_uses_are_dropped() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(Commands::default())]).unwrap();
+        let mut s = Settings::default();
+        for name in ["links", "rules"] {
+            let id = s.take_id();
+            s.commands.push(CustomCommand { id, name: name.into(), reply: "r".into(), ..CustomCommand::default() });
+        }
+        ctx.save_settings(1, KEY, &s).unwrap();
+        let c = Commands::default();
+        c.used(1, Kind::Command, 1);
+        c.used(1, Kind::Command, 2);
+        // /rules is deleted before the minute's flush.
+        s.commands.retain(|c| c.id != 2);
+        ctx.save_settings(1, KEY, &s).unwrap();
+        forget_uses(&ctx, 1, Kind::Command, 2).unwrap();
+        c.flush(&ctx).unwrap();
+        let uses = uses(&ctx, 1).unwrap();
+        assert_eq!(uses.get(&("command".to_owned(), 1)).map(|u| u.0), Some(1));
+        assert!(!uses.contains_key(&("command".to_owned(), 2)));
     }
 
     #[test]
