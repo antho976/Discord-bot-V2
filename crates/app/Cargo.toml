@@ -23,6 +23,7 @@ feat-utility = { path = "../feat-utility" }
 feat-embeds = { path = "../feat-embeds" }
 feat-modmail = { path = "../feat-modmail" }
 feat-rules = { path = "../feat-rules" }
+feat-commands = { path = "../feat-commands" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true

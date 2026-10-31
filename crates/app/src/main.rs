@@ -21,6 +21,7 @@ fn features() -> Vec<Arc<dyn Feature>> {
         Arc::new(feat_embeds::Embeds),
         Arc::new(feat_modmail::Modmail::default()),
         Arc::new(feat_rules::Rules::default()),
+        Arc::new(feat_commands::Commands::default()),
     ]
 }
 

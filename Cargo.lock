@@ -176,6 +176,7 @@ dependencies = [
  "bot-core",
  "feat-alerts",
  "feat-audit",
+ "feat-commands",
  "feat-community",
  "feat-connect",
  "feat-embeds",
@@ -522,6 +523,15 @@ dependencies = [
 
 [[package]]
 name = "feat-audit"
+version = "0.1.0"
+dependencies = [
+ "bot-core",
+ "maud",
+ "serde",
+]
+
+[[package]]
+name = "feat-commands"
 version = "0.1.0"
 dependencies = [
  "bot-core",
