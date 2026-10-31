@@ -167,7 +167,15 @@ pub async fn claim_answer(ctx: &Ctx, bytes: &[u8]) -> Answer {
     // Count the claim first: another claim at the same moment may have taken the last one.
     match store::reserve_claim(ctx, &row.id, now) {
         Ok(true) => {}
-        Ok(false) => return status(ClaimState::Spent),
+        // Taken, run out or answered since the read above: say which.
+        Ok(false) => {
+            let now_state = store::get(ctx, &row.id)
+                .ok()
+                .flatten()
+                .map(|r| domain::claim_state(&r.kind, &r.status, r.expires_at, r.claims, r.pc_link.is_some(), now_ms()))
+                .filter(|s| *s != ClaimState::Ready);
+            return status(now_state.unwrap_or(ClaimState::Spent));
+        }
         Err(e) => {
             bot_core::tracing::error!(error = %e, "couldn't count a claim");
             return busy();

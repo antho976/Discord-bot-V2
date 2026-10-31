@@ -581,13 +581,19 @@ pub async fn resolve(
         return Err(already(&now));
     }
     let done = act_on_member(ctx, guild, &c, outcome, by_name, reason.as_deref()).await;
-    if let Err(msg) = done {
-        // Put it back, so someone can try again.
+    // The call can fail on our side after Discord made the change (a dropped connection). The
+    // member update it sent was skipped while the catch was claimed, so ask the cache.
+    let lifted_anyway = outcome == Outcome::Released && !timed_out_now(ctx, guild, c.user_id);
+    if let Err(msg) = done
+        && !lifted_anyway
+    {
+        // Put it back, so someone can try again; only if nothing else decided it meanwhile.
         ctx.db
             .with(|db| {
                 db.execute(
-                    "UPDATE guard_catches SET outcome = ?2, acted_by = NULL, acted_by_name = NULL, acted_reason = NULL, acted_at = NULL WHERE id = ?1",
-                    params![id, c.outcome.key()],
+                    "UPDATE guard_catches SET outcome = ?2, acted_by = NULL, acted_by_name = NULL, acted_reason = NULL, acted_at = NULL
+                     WHERE id = ?1 AND outcome = ?3 AND acted_by = ?4 AND acted_in_discord = 0",
+                    params![id, c.outcome.key(), outcome.key(), by as i64],
                 )
             })
             .map_err(fail)?;
@@ -598,6 +604,12 @@ pub async fn resolve(
         update_alert(ctx, guild, &c).await;
     }
     Ok(c)
+}
+
+/// Whether the cache still shows the member timed out. A member it doesn't know counts as still
+/// timed out, so a failed release is never taken for a done one.
+fn timed_out_now(ctx: &Ctx, guild: u64, user: u64) -> bool {
+    ctx.cache.member(Id::new(guild), Id::new(user)).is_none_or(|m| m.communication_disabled_until().is_some_and(|t| t.as_micros() / 1000 > now_ms()))
 }
 
 /// "Already banned by Mira."
