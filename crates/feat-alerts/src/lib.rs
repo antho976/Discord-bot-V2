@@ -4,6 +4,7 @@
 //! EventSub secret, and falls back to polling Helix every 2 minutes otherwise. Viewer counts are
 //! only polled while a stream is live. Each stream is one row in `alerts_streams`.
 
+mod clips;
 pub mod hmac;
 mod schedule;
 mod twitch;
@@ -53,6 +54,10 @@ pub struct Settings {
     pub youtube_channel: Option<u64>,
     pub youtube_role: Option<u64>,
     pub youtube_message: String,
+
+    /// Post new Twitch clips of the followed channels.
+    pub clips: bool,
+    pub clips_channel: Option<u64>,
 }
 
 impl Default for Settings {
@@ -74,6 +79,8 @@ impl Default for Settings {
             youtube_channel: None,
             youtube_role: None,
             youtube_message: DEFAULT_VIDEO_MESSAGE.into(),
+            clips: false,
+            clips_channel: None,
         }
     }
 }
@@ -119,6 +126,16 @@ const MIGRATIONS: &[Migration] = &[Migration {
         ALTER TABLE alerts_streams ADD COLUMN viewer_sum INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE alerts_streams ADD COLUMN games TEXT NOT NULL DEFAULT '';
         UPDATE alerts_streams SET viewer_sum = average * samples, games = game;
+    ",
+}, Migration {
+    // Clips seen on Twitch, so each is posted once. The newest 50 per broadcaster are kept.
+    name: "003_alerts_clips",
+    sql: "
+        CREATE TABLE alerts_clips (
+            id TEXT PRIMARY KEY, broadcaster_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+            creator TEXT NOT NULL DEFAULT '', url TEXT NOT NULL, thumbnail TEXT NOT NULL DEFAULT '',
+            views INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, seen_at INTEGER NOT NULL);
+        CREATE INDEX alerts_clips_by_time ON alerts_clips(broadcaster_id, created_at DESC);
     ",
 }];
 
@@ -190,6 +207,7 @@ impl Feature for Alerts {
             {
                 bot_core::tracing::warn!(error = %e, "couldn't fill VOD pictures");
             }
+            clips::check(ctx, &guilds).await;
         }
         schedule::send_reminders(ctx, &guilds).await;
         schedule::weekly_posts(ctx, &guilds).await;
@@ -284,6 +302,8 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         weekly_channel: channel("announcements"),
         youtube_ids: vec!["UCx7Antho0000000000000a".into()],
         youtube_channel: channel("announcements"),
+        clips: true,
+        clips_channel: channel("stream-alerts"),
         ..Settings::default()
     };
     ctx.save_settings(guild, KEY, &s)?;
@@ -369,6 +389,21 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         )?;
     }
     tx.execute("INSERT OR REPLACE INTO alerts_state (key, value) VALUES ('yt_init:UCx7Antho0000000000000a', '1')", [])?;
+    let clips = [
+        ("Antho misses the easiest jump in the Underworld", "mossy_t", 3, 412),
+        ("Gold stake, final hand", "kiwi", 26, 1_204),
+        ("Pet tier list goes wrong", "Raeven", 50, 233),
+        ("Chat picks the build", "dune_walker", 74, 98),
+        ("World 6 boss on the first try", "mossy_t", 120, 640),
+    ];
+    for (n, (title, creator, back, views)) in clips.iter().enumerate() {
+        tx.execute(
+            "INSERT OR REPLACE INTO alerts_clips (id, broadcaster_id, title, creator, url, views, created_at, seen_at)
+             VALUES (?1, '41234567', ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![format!("PreviewClip{n}"), title, creator, format!("https://clips.twitch.tv/PreviewClip{n}"), views, now - back * hour],
+        )?;
+    }
+    tx.execute("INSERT OR REPLACE INTO alerts_state (key, value) VALUES ('clips_ok:41234567', ?1)", [(now - 6 * 60_000).to_string()])?;
     tx.commit()?;
     Ok(())
 }

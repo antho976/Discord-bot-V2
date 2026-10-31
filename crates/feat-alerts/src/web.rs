@@ -15,7 +15,7 @@ use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text, tracing};
 
 use crate::twitch::{self, Broadcaster, Mode, StreamRow};
-use crate::{KEY, Settings, schedule, youtube};
+use crate::{KEY, Settings, clips, schedule, youtube};
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
@@ -23,6 +23,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/alerts/test", post(send_test))
         .route("/g/{guild}/alerts/schedule", get(schedule_page).post(save_schedule))
         .route("/g/{guild}/alerts/schedule.png", get(schedule_png))
+        .route("/g/{guild}/alerts/clips", get(clips_page).post(save_clips))
         .route("/g/{guild}/alerts/youtube", get(youtube_page).post(save_youtube))
         .route("/g/{guild}/alerts/youtube/test", post(send_youtube_test))
         .route("/g/{guild}/alerts/stats", get(stats_page))
@@ -35,6 +36,7 @@ fn tabs(page: &Page, active: &str) -> Markup {
         &[
             ("Twitch", page.path("alerts")),
             ("Schedule", page.path("alerts/schedule")),
+            ("Clips", page.path("alerts/clips")),
             ("YouTube", page.path("alerts/youtube")),
             ("Stats", page.path("alerts/stats")),
         ],
@@ -855,6 +857,133 @@ async fn schedule_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let png = schedule::week_png(&ctx, &s).await?;
     Ok(([(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "private, max-age=60")], png).into_response())
+}
+
+// ---- Clips ----
+
+/// A clip post as Discord shows it: the line with the link, then the card Discord draws for it.
+fn clip_post(ctx: &Ctx, page: &Page, b: &Broadcaster, c: &clips::Clip) -> Markup {
+    let line = clips::post_text(c);
+    let (text, _) = line.split_once('\n').unwrap_or((line.as_str(), ""));
+    bot_message(ctx, page, html! {
+        div.sa-line { (text) br; a href=(c.url) target="_blank" rel="noopener" { (c.url) } }
+        div.sa-embed style="--embed:#9146ff" {
+            div.sa-provider { "Twitch" }
+            a.sa-title href=(c.url) target="_blank" rel="noopener" { (c.title) " - " (b.name) }
+            div.sa-yt {
+                @if c.thumbnail.is_empty() {
+                    div.sa-thumb {}
+                } @else {
+                    img.sa-thumb src=(c.thumbnail) alt="" width="480" height="272" loading="lazy";
+                }
+                span.sa-play { (ui::icon(Icon::Play)) }
+            }
+        }
+    })
+}
+
+async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::View)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let mode = twitch::mode(&ctx);
+    let bs = twitch::for_settings(&ctx, &s);
+    let ids: Vec<String> = bs.iter().map(|b| b.user_id.clone()).collect();
+    let list = clips::recent(&ctx, &ids, 12);
+    let now = now_ms();
+    let month = list.iter().filter(|c| now - c.created_at < 30 * 86_400_000).count();
+    let checked = ids.iter().filter_map(|id| clips::last_check(&ctx, id)).max();
+    let b = sample_broadcaster(&bs, &s);
+    let sample = list.first().cloned().unwrap_or_else(|| clips::Clip {
+        id: String::new(),
+        title: "Your clip's title".into(),
+        creator: "a viewer".into(),
+        url: format!("https://clips.twitch.tv/{}", b.login),
+        thumbnail: String::new(),
+        views: 0,
+        created_at: now,
+    });
+    let posting = s.clips && s.clips_channel.is_some();
+
+    let body = html! {
+        style { (PreEscaped(CSS)) }
+        (tabs(&page, "Clips"))
+        div.with-rail {
+            div.stack.sa-main {
+                @if mode == Mode::Off {
+                    div.sa-note {
+                        (ui::icon(Icon::Plug))
+                        div { p { "Twitch isn't connected, so clips can't be read. Set " code { "TWITCH_CLIENT_ID" } " and " code { "TWITCH_CLIENT_SECRET" } " in the bot's environment and restart it." } }
+                    }
+                }
+                section.block {
+                    div.sa-sechead { h2 { "What members see for a new clip" } }
+                    (clip_post(&ctx, &page, &b, &sample))
+                    p.muted.small {
+                        @match (posting, channel_name(&ctx, guild, s.clips_channel)) {
+                            (true, Some(c)) => { "Posted in " (c) " within 15 minutes of Twitch listing the clip. Nobody is pinged." }
+                            (false, Some(_)) if !s.clips => { "Clip posts are off." }
+                            _ => { "Pick a channel below and save to start posting." }
+                        }
+                    }
+                }
+                (ui::section("Recent clips", Some("Clips made after posting was turned on. Older ones are never posted."), html! {
+                    @if list.is_empty() {
+                        (ui::empty(Icon::Play, "No clips yet", if bs.is_empty() { "Add your Twitch channel on the Twitch tab, then turn clips on below." } else if !posting { "Turn clips on below. New clips show up here and in the channel you pick." } else { "New clips show up here within 15 minutes." }))
+                    } @else {
+                        div.list { @for c in &list {
+                            div.list-item {
+                                @if c.thumbnail.is_empty() {
+                                    span.sa-vt { (ui::icon(Icon::Play)) }
+                                } @else {
+                                    img.sa-vt src=(c.thumbnail) alt="" width="64" height="36" loading="lazy";
+                                }
+                                div.grow style="min-width:0" {
+                                    a.clip style="display:block" href=(c.url) target="_blank" rel="noopener" { (if c.title.is_empty() { "Untitled clip" } else { c.title.as_str() }) }
+                                    p.muted.small {
+                                        @if !c.creator.is_empty() { "Clipped by " (c.creator) " · " }
+                                        (text::num(c.views)) (if c.views == 1 { " view" } else { " views" })
+                                    }
+                                }
+                                span.meta { (text::ago(c.created_at)) }
+                            }
+                        } }
+                    }
+                }))
+                (ui::settings_form(&page, &page.path("alerts/clips"), html! {
+                    (ui::section("Settings", None, ui::card(html! {
+                        (ui::field_toggle("clips", "Post new clips", Some("Clips of the channels on the Twitch tab, made by anyone."), s.clips))
+                        (ui::field_channel(&ctx, guild, "clips_channel", "Post in", None, s.clips_channel))
+                    })))
+                }))
+            }
+            aside.rail {
+                div.rail-block {
+                    h2 { "Clips" }
+                    (ui::rail_numbers(&[("in 30 days", month.to_string())]))
+                    p.muted.small {
+                        @if !posting { "Twitch is checked every 15 minutes while posting is on." }
+                        @else {
+                            "Checked every 15 minutes."
+                            @match checked { Some(at) => { " Last check " (text::ago(at)) "." } None => { " The first check marks where posting starts." } }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    Ok(ui::layout(&ctx, &page, "Stream alerts", Some(status_pill(&ctx)), body).into_response())
+}
+
+async fn save_clips(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let old = ctx.settings::<Settings>(guild, KEY)?;
+    let s = Settings { clips: form.bool("clips"), clips_channel: form.channel(&ctx, guild, "clips_channel"), ..(*old).clone() };
+    if s.clips && s.clips_channel.is_none() {
+        return Err(WebError::Bad("Pick a channel for clips.".into()));
+    }
+    ctx.save_settings(guild, KEY, &s)?;
+    ctx.audit(&page.user, Some(guild), KEY, if s.clips { "Changed Twitch clip posts" } else { "Turned off Twitch clip posts" });
+    Ok(saved(&page.path("alerts/clips")))
 }
 
 // ---- YouTube ----

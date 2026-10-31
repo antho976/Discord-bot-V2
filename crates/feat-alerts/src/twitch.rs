@@ -110,7 +110,7 @@ pub(crate) async fn get<T: DeserializeOwned>(ctx: &Ctx, path: &str, query: &[(&s
 
 #[derive(Deserialize)]
 pub(crate) struct List<T> {
-    data: Vec<T>,
+    pub(crate) data: Vec<T>,
     #[serde(default)]
     pagination: Option<Pagination>,
 }
