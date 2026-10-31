@@ -128,6 +128,13 @@ after deploying:
 - The relay pairing subprocess.
 - The Docker image. Docker wasn't available where this was built.
 
+## CI and deploys
+
+GitHub Actions (`.github/workflows/ci.yml`) runs clippy with warnings as errors, the tests and a
+Docker image build on every pull request and every push to `main`. Render deploys `main`. In the
+service's settings, set Auto-Deploy to **After CI checks pass** so a red build never ships
+(`render.yaml` says the same for a Blueprint).
+
 ## Code
 
 - `crates/core` is the shared runtime: config, SQLite, the gateway, interaction helpers, and the

@@ -8,6 +8,8 @@ services:
     region: virginia
     plan: starter
     healthCheckPath: /healthz
+    # Deploy main only after GitHub Actions passes (.github/workflows/ci.yml).
+    autoDeployTrigger: checksPass
     disk:
       name: data
       mountPath: /data
