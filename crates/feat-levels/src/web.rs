@@ -83,7 +83,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_number("prestige_level", "Prestige from level", Some("Members at this level or higher can use /prestige to start over at level 0 and rank above everyone with less prestige. 0 turns it off."), s.prestige_level as i64, 0, 500, None))
                 (ui::field_number("prestige_bonus", "Bonus per prestige", Some("Extra XP from messages, voice and reactions, for each prestige."), s.prestige_bonus, 0, 100, Some("%")))
             })))
-            (ui::section("Streaks", Some("A streak counts the days in a row, in UTC, a member earned XP. It shows on /rank and the leaderboard."), ui::card(html! {
+            (ui::section("Streaks", Some("A streak counts the days in a row, in UTC, a member earned XP. Streaks show on /rank and the leaderboard while the bonus is on."), ui::card(html! {
                 (ui::field_number("streak_bonus", "Bonus per day", Some("Extra XP from messages, voice and reactions for each day in a row after the first. 0 turns the bonus off."), s.streak_bonus, 0, 100, Some("%")))
                 (ui::field_number("streak_max", "Bonus cap", Some("The streak bonus stops growing here."), s.streak_max, 0, 500, Some("%")))
             })))
@@ -397,7 +397,7 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         if s.prestige_on() && m.prestige > 0 {
             parts.push(format!("Prestige {}", m.prestige));
         }
-        if m.streak > 1 {
+        if s.streaks_on() && m.streak > 1 {
             parts.push(format!("{}-day streak", m.streak));
         }
         parts.join(" · ")
@@ -410,7 +410,7 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         if s.reaction_xp > 0 {
             parts.push(format!("{} for a reaction.", s.reaction_xp));
         }
-        if s.streak_bonus > 0 && s.streak_max > 0 {
+        if s.streaks_on() {
             parts.push(format!("Each day in a row with XP adds {}% more, up to {}%.", s.streak_bonus, s.streak_max));
         }
         if s.prestige_on() {

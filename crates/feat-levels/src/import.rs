@@ -279,6 +279,8 @@ fn write_rows(ctx: &Ctx, rows: &[Row], targets: &[u64], mode: Mode, report: &mut
                    prestige = excluded.prestige, updated_at = excluded.updated_at",
                 params![r.guild as i64, r.user as i64, xp, level as i64, r.messages, r.voice_minutes, r.prestige, bot_core::now_ms()],
             )?;
+            // Imported XP wasn't earned this week: keep it off the weekly board.
+            crate::shift_week(&tx, r.guild, r.user, xp - existing.unwrap_or(0))?;
             n += 1;
         }
         report.imported.push((*guild, n));

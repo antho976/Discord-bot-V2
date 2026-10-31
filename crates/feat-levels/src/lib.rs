@@ -114,6 +114,12 @@ impl Settings {
 
     /// The extra XP, in percent, a streak of `streak` days earns: nothing on the first day, then
     /// `streak_bonus` for each day after it, up to `streak_max`.
+    /// Streaks show only while they earn something, like prestige, so a server that never set a
+    /// bonus doesn't see them on /rank and the boards.
+    pub fn streaks_on(&self) -> bool {
+        self.streak_bonus > 0 && self.streak_max > 0
+    }
+
     pub fn streak_pct(&self, streak: i64) -> i64 {
         (streak - 1).max(0).saturating_mul(self.streak_bonus.max(0)).min(self.streak_max.max(0))
     }
@@ -396,14 +402,16 @@ impl Feature for Levels {
                     let value = if bonus > 0 { format!("{}, +{bonus}% XP", m.prestige) } else { m.prestige.to_string() };
                     embed = embed.field(EmbedFieldBuilder::new("Prestige", value).inline());
                 }
-                let streak = match (m.streak, s.streak_pct(m.streak)) {
-                    (0, _) => "None".to_owned(),
-                    (1, _) => "1 day".to_owned(),
-                    (n, 0) => format!("{n} days"),
-                    (n, pct) => format!("{n} days, +{pct}% XP"),
-                };
+                if s.streaks_on() {
+                    let streak = match (m.streak, s.streak_pct(m.streak)) {
+                        (0, _) => "None".to_owned(),
+                        (1, _) => "1 day".to_owned(),
+                        (n, 0) => format!("{n} days"),
+                        (n, pct) => format!("{n} days, +{pct}% XP"),
+                    };
+                    embed = embed.field(EmbedFieldBuilder::new("Streak", streak).inline());
+                }
                 let embed = embed
-                    .field(EmbedFieldBuilder::new("Streak", streak).inline())
                     .field(EmbedFieldBuilder::new("Messages", text::num(m.messages)).inline())
                     .field(EmbedFieldBuilder::new("Voice", text::duration(m.voice_minutes * 60)).inline())
                     .build();
@@ -489,7 +497,8 @@ impl Feature for Levels {
             let text = match prestige(ctx, guild, call.user_id(), s.prestige_level)? {
                 Some(n) => {
                     sync_rewards(ctx, guild, call.user_id(), 0).await;
-                    format!("You're prestige {n} now, back at level 0. You earn {}% more XP from here.", s.prestige_pct(n))
+                    let bonus = if s.prestige_bonus > 0 { format!(" You earn {}% more XP from here.", s.prestige_pct(n)) } else { String::new() };
+                    format!("You're prestige {n} now, back at level 0.{bonus}")
                 }
                 None => prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()).err().unwrap_or_else(|| "Nothing changed. Try /prestige again.".into()),
             };
@@ -660,7 +669,7 @@ fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64) -> Result<(bot_co
             None => format!("{} XP", text::num(m.xp)),
         };
         let prestige = if s.prestige_on() && m.prestige > 0 { format!("prestige {}  ·  ", m.prestige) } else { String::new() };
-        let streak = if m.streak > 1 { format!("{}-day streak  ·  ", m.streak) } else { String::new() };
+        let streak = if s.streaks_on() && m.streak > 1 { format!("{}-day streak  ·  ", m.streak) } else { String::new() };
         lines.push(format!("`{place:>2}`  {}  ·  {prestige}level {}  ·  {streak}{figure}", ctx.display_name(guild, m.user_id), m.level));
     }
     let (title, nobody, prefix) = match board {
@@ -782,6 +791,8 @@ fn roll_week(ctx: &Ctx, guild: u64) -> Result<Vec<(u64, i64)>> {
     roll_week_to(ctx, guild, &week_key())
 }
 
+/// The top three kept for the stored week are measured from that week's start to now, so after
+/// the bot was down for a whole week they also hold the missed week's XP.
 fn roll_week_to(ctx: &Ctx, guild: u64, week: &str) -> Result<Vec<(u64, i64)>> {
     let mut conn = ctx.db.lock();
     let stored: Option<String> =
@@ -845,14 +856,35 @@ pub async fn set_xp(ctx: &Ctx, guild: u64, user: u64, xp: i64) -> Result<()> {
     let xp = xp.clamp(0, curve::MAX_XP);
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let level = s.progress(xp).level;
-    ctx.db.with(|c| {
-        c.execute(
+    {
+        let mut conn = ctx.db.lock();
+        let tx = conn.transaction()?;
+        let old: i64 = tx
+            .query_row("SELECT xp FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| r.get(0))
+            .optional()?
+            .unwrap_or(0);
+        tx.execute(
             "INSERT INTO levels (guild_id, user_id, xp, level, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT (guild_id, user_id) DO UPDATE SET xp = excluded.xp, level = excluded.level, updated_at = excluded.updated_at",
             params![guild as i64, user as i64, xp, level as i64, bot_core::now_ms()],
-        )
-    })?;
+        )?;
+        shift_week(&tx, guild, user, xp - old)?;
+        tx.commit()?;
+    }
     sync_rewards(ctx, guild, user, level).await;
+    Ok(())
+}
+
+/// Move a member's XP at the start of the week by `delta` alongside a staff change or an import,
+/// so XP that wasn't earned this week doesn't count as earned this week. A member with no row
+/// counts from zero, so the new row is the change itself.
+pub(crate) fn shift_week(c: &bot_core::rusqlite::Connection, guild: u64, user: u64, delta: i64) -> bot_core::rusqlite::Result<()> {
+    if delta != 0 {
+        c.execute(
+            "INSERT INTO level_week (guild_id, user_id, xp) VALUES (?1, ?2, ?3) ON CONFLICT (guild_id, user_id) DO UPDATE SET xp = xp + ?3",
+            params![guild as i64, user as i64, delta],
+        )?;
+    }
     Ok(())
 }
 
@@ -1211,6 +1243,23 @@ mod tests {
         assert_eq!(ids(&ctx), vec![10, 11, 12]);
         assert_eq!(rank_of(&ctx, 1, 12).unwrap(), Some(3));
         assert_eq!(count(&ctx, 1).unwrap(), 3);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn staff_changes_and_imports_stay_off_the_weekly_board() {
+        let ctx = ctx();
+        set_level(&ctx, 10, 4_000, 18, 0);
+        roll_week_to(&ctx, 1, "2026-W44").unwrap();
+        set_level(&ctx, 10, 4_500, 18, 0);
+        // Staff set 10 to 9,000 and 11 (no XP before) to 2,000, as Set XP and an import do.
+        let shift = |user, delta| ctx.db.with(|c| shift_week(c, 1, user, delta)).unwrap();
+        set_level(&ctx, 10, 9_000, 30, 0);
+        shift(10, 4_500);
+        set_level(&ctx, 11, 2_000, 12, 0);
+        shift(11, 2_000);
+        let week: Vec<(u64, i64)> = crate::week_top(&ctx, 1, 0, 10).unwrap().into_iter().map(|(m, g)| (m.user_id, g)).collect();
+        assert_eq!(week.iter().find(|w| w.0 == 10), Some(&(10, 500)));
+        assert!(week.iter().all(|w| w.0 != 11 || w.1 == 0));
     }
 
     #[test]
