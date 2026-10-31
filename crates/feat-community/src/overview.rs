@@ -88,19 +88,20 @@ fn running_giveaways(c: &Connection, page: &Page, now: i64) -> bot_core::rusqlit
     .collect()
 }
 
-/// Polls only show when they close: live results aren't stored, so the line leaves them out.
+/// Open polls with the votes the bot has seen on them so far.
 fn running_polls(c: &Connection, page: &Page, now: i64) -> bot_core::rusqlite::Result<Vec<Open>> {
     let href = page.path("community/polls");
     let mut s = c.prepare_cached(
-        "SELECT question, ends_at FROM polls WHERE guild_id = ?1 AND ends_at > ?2 ORDER BY ends_at ASC LIMIT ?3",
+        "SELECT p.question, p.ends_at, (SELECT COUNT(*) FROM poll_votes v WHERE v.poll_id = p.id)
+         FROM polls p WHERE p.guild_id = ?1 AND p.ends_at > ?2 ORDER BY p.ends_at ASC LIMIT ?3",
     )?;
     s.query_map(params![id_i64(page.guild_id), now, RUNNING_MAX], |r| {
-        let (question, ends_at): (String, i64) = (r.get(0)?, r.get(1)?);
+        let (question, ends_at, votes): (String, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?);
         Ok(Open {
             ends_at,
             icon: Icon::Poll,
             title: text::clip(&question, 80),
-            detail: format!("Closes in {}", until(ends_at)),
+            detail: format!("Closes in {} · {} {}", until(ends_at), text::num(votes), if votes == 1 { "vote" } else { "votes" }),
             href: href.clone(),
         })
     })?

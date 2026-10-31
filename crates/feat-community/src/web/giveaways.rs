@@ -48,7 +48,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                                 img.avatar src=(ctx.member_avatar(guild, *w)) alt="" width="32" height="32" loading="lazy";
                                 div.grow {
                                     span { strong { (ctx.display_name(guild, *w)) } " won " (g.prize) }
-                                    span.muted.small { (text::ago(ended_at(g))) " · out of " (entries_text(*n)) }
+                                    span.muted.small { (text::ago(g.finished_at())) " · out of " (entries_text(*n)) }
                                 }
                             }
                         }
@@ -146,7 +146,7 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
                         div.cm-tile { (ui::icon(Icon::Gift)) }
                         div.cm-row-main {
                             strong.clip { (g.prize) }
-                            span.muted.small { "Ended " (text::ago(ended_at(g))) " · " (channel_name(ctx, guild, g.channel_id)) " · " (winners_text(g)) }
+                            span.muted.small { "Ended " (text::ago(g.finished_at())) " · " (channel_name(ctx, guild, g.channel_id)) " · " (winners_text(g)) }
                         }
                         div.cm-winners {
                             @if g.winner_ids.is_empty() {
@@ -159,7 +159,7 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
                         span.cm-entries { (entries_text(*n)) }
                         div.cm-row-actions {
                             (open_link(page, g.channel_id, g.message_id, "Open in Discord"))
-                            @if edit && *n > g.winner_ids.len() as i64 {
+                            @if edit && *n > (g.winner_ids.len() + g.passed_ids.len()) as i64 {
                                 (ui::action_button(&page.path(&format!("community/giveaways/{}/reroll", g.id)), "Reroll", Tone::Muted, false))
                             }
                         }
@@ -184,11 +184,6 @@ fn start_form(ctx: &Ctx, page: &Page, guild: u64) -> Markup {
             div.cm-pop-foot { button.btn.primary type="submit" { "Start giveaway" } }
         }
     }
-}
-
-/// When a giveaway finished: its end, or its scheduled end for rows from before it was kept.
-fn ended_at(g: &Giveaway) -> i64 {
-    if g.ended_at > 0 { g.ended_at } else { g.ends_at }
 }
 
 /// How far from the start to the end, 0 to 100.

@@ -179,7 +179,7 @@ const STYLE: &str = r#"
 .cm-month > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cm-month b { font-size: 24px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
 .cm-month span { font-size: 12px; color: var(--ink-3); }
-.cm-voters { display: flex; justify-content: space-between; gap: 6px; }
+.cm-top { display: flex; justify-content: space-between; gap: 6px; }
 .cm-voter { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; font-size: 12.5px; text-align: center; }
 .cm-voter .avatar { width: 44px; height: 44px; }
 .cm-voter strong { font-weight: 500; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

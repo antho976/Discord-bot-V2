@@ -41,12 +41,30 @@ pub struct Giveaway {
     pub created_at: i64,
     /// When it was ended. 0 for rows ended before this was kept, and for running ones.
     pub ended_at: i64,
+    /// Earlier winners that a reroll replaced. They aren't picked again.
+    pub passed_ids: Vec<u64>,
 }
 
-const COLS: &str = "id, guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, ended, winner_ids, created_at, ended_at";
+impl Giveaway {
+    /// When it finished: the time it was ended, or its scheduled end for rows from before that
+    /// was kept.
+    pub fn finished_at(&self) -> i64 {
+        if self.ended_at > 0 { self.ended_at } else { self.ends_at }
+    }
+}
+
+const COLS: &str =
+    "id, guild_id, channel_id, message_id, prize, winners, ends_at, required_role, created_by, ended, winner_ids, created_at, ended_at, passed_ids";
+
+fn ids(s: &str) -> Vec<u64> {
+    s.split(',').filter_map(|s| s.parse().ok()).collect()
+}
+
+fn join_ids(ids: &[u64]) -> String {
+    ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",")
+}
 
 fn from_row(r: &Row) -> bot_core::rusqlite::Result<Giveaway> {
-    let winners: String = r.get(10)?;
     Ok(Giveaway {
         id: r.get(0)?,
         guild_id: r.get::<_, i64>(1)? as u64,
@@ -58,9 +76,10 @@ fn from_row(r: &Row) -> bot_core::rusqlite::Result<Giveaway> {
         required_role: r.get::<_, Option<i64>>(7)?.map(|m| m as u64),
         created_by: r.get::<_, i64>(8)? as u64,
         ended: r.get::<_, i64>(9)? != 0,
-        winner_ids: winners.split(',').filter_map(|s| s.parse().ok()).collect(),
+        winner_ids: ids(&r.get::<_, String>(10)?),
         created_at: r.get(11)?,
         ended_at: r.get(12)?,
+        passed_ids: ids(&r.get::<_, String>(13)?),
     })
 }
 
@@ -113,7 +132,7 @@ pub fn list(c: &Connection, guild: u64, ended: bool, limit: i64) -> bot_core::ru
         "SELECT {COLS}, (SELECT COUNT(*) FROM giveaway_entries e WHERE e.giveaway_id = giveaways.id)
          FROM giveaways WHERE guild_id = ?1 AND ended = ?2 ORDER BY {order} LIMIT ?3"
     ))?;
-    s.query_map(params![id_i64(guild), ended as i64, limit], |r| Ok((from_row(r)?, r.get(13)?)))?.collect()
+    s.query_map(params![id_i64(guild), ended as i64, limit], |r| Ok((from_row(r)?, r.get(14)?)))?.collect()
 }
 
 /// Add the member to the giveaway, or take them out if they're already in. True when they're in
@@ -154,7 +173,6 @@ pub fn parse_span(input: &str) -> Result<i64, &'static str> {
 }
 
 pub fn embed(g: &Giveaway, entries: i64) -> Embed {
-    let ends = g.ends_at / 1000;
     let mut b = EmbedBuilder::new().title(text::clip(&g.prize, 250)).footer(EmbedFooterBuilder::new(format!("Giveaway #{}", g.id)));
     if g.ended {
         let winners = if g.winner_ids.is_empty() {
@@ -164,7 +182,7 @@ pub fn embed(g: &Giveaway, entries: i64) -> Embed {
         };
         b = b
             .color(NEUTRAL)
-            .description(format!("Ended <t:{ends}:R>"))
+            .description(format!("Ended <t:{}:R>", g.finished_at() / 1000))
             .field(EmbedFieldBuilder::new(if g.winner_ids.len() == 1 { "Winner" } else { "Winners" }, winners))
             .field(EmbedFieldBuilder::new("Entries", text::num(entries)).inline());
     } else {
@@ -175,7 +193,7 @@ pub fn embed(g: &Giveaway, entries: i64) -> Embed {
         b = b
             .color(CORAL)
             .description(desc)
-            .field(EmbedFieldBuilder::new("Ends", format!("<t:{ends}:R>")).inline())
+            .field(EmbedFieldBuilder::new("Ends", format!("<t:{}:R>", g.ends_at / 1000)).inline())
             .field(EmbedFieldBuilder::new("Winners", g.winners.to_string()).inline())
             .field(EmbedFieldBuilder::new("Entries", text::num(entries)).inline());
     }
@@ -275,7 +293,7 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
         "list" => {
             let (running, ended) = ctx.db.with(|c| Ok((list(c, guild, false, 10)?, list(c, guild, true, 5)?)))?;
             let line = |(g, n): &(Giveaway, i64)| {
-                let state = if g.ended { format!("ended <t:{}:R>", g.ends_at / 1000) } else { format!("ends <t:{}:R>", g.ends_at / 1000) };
+                let state = if g.ended { format!("ended <t:{}:R>", g.finished_at() / 1000) } else { format!("ends <t:{}:R>", g.ends_at / 1000) };
                 format!("`#{}` {}, {state}, {} entries", g.id, text::clip(&g.prize, 60), text::num(*n))
             };
             let mut lines: Vec<String> = Vec::new();
@@ -384,40 +402,43 @@ pub enum RerollOutcome {
 pub async fn end(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
     let Some(g) = ctx.db.with(|c| get(c, id))? else { return Ok(EndOutcome::Missing) };
     // Only one caller wins the race to end it.
-    let claimed = ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 1, ended_at = ?2 WHERE id = ?1 AND ended = 0", params![id, now_ms()]))?;
+    let now = now_ms();
+    let claimed = ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 1, ended_at = ?2 WHERE id = ?1 AND ended = 0", params![id, now]))?;
     if claimed == 0 {
         return Ok(EndOutcome::AlreadyEnded);
     }
     let all = ctx.db.with(|c| entries(c, id))?;
     let winners = pick_winners(&all, g.winners.max(1) as usize, &[], &mut bot_core::rand::rng());
     store_winners(ctx, id, &winners)?;
-    let g = Giveaway { ended: true, winner_ids: winners.clone(), ..g };
+    let g = Giveaway { ended: true, ended_at: now, winner_ids: winners.clone(), ..g };
     refresh(ctx, &g, all.len() as i64).await;
     announce(ctx, &g, &winners, false).await;
     Ok(EndOutcome::Ended(winners))
 }
 
-/// Pick new winners from everyone who entered, leaving out the previous ones.
+/// Pick new winners from everyone who entered, leaving out everyone picked before.
 pub async fn reroll(ctx: &Ctx, id: i64) -> Result<RerollOutcome> {
     let Some(g) = ctx.db.with(|c| get(c, id))? else { return Ok(RerollOutcome::Missing) };
     if !g.ended {
         return Ok(RerollOutcome::StillRunning);
     }
     let all = ctx.db.with(|c| entries(c, id))?;
-    let winners = pick_winners(&all, g.winners.max(1) as usize, &g.winner_ids, &mut bot_core::rand::rng());
+    let picked_before: Vec<u64> = g.passed_ids.iter().chain(&g.winner_ids).copied().collect();
+    let winners = pick_winners(&all, g.winners.max(1) as usize, &picked_before, &mut bot_core::rand::rng());
     if winners.is_empty() {
         return Ok(RerollOutcome::NoOneElse);
     }
-    store_winners(ctx, id, &winners)?;
-    let g = Giveaway { winner_ids: winners.clone(), ..g };
+    ctx.db.with(|c| {
+        c.execute("UPDATE giveaways SET winner_ids = ?2, passed_ids = ?3 WHERE id = ?1", params![id, join_ids(&winners), join_ids(&picked_before)])
+    })?;
+    let g = Giveaway { winner_ids: winners.clone(), passed_ids: picked_before, ..g };
     refresh(ctx, &g, all.len() as i64).await;
     announce(ctx, &g, &winners, true).await;
     Ok(RerollOutcome::Rolled(winners))
 }
 
 fn store_winners(ctx: &Ctx, id: i64, winners: &[u64]) -> Result<()> {
-    let joined = winners.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
-    ctx.db.with(|c| c.execute("UPDATE giveaways SET winner_ids = ?2 WHERE id = ?1", params![id, joined]))?;
+    ctx.db.with(|c| c.execute("UPDATE giveaways SET winner_ids = ?2 WHERE id = ?1", params![id, join_ids(winners)]))?;
     Ok(())
 }
 

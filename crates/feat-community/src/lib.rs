@@ -81,6 +81,9 @@ const MIGRATIONS: &[Migration] = &[Migration {
             poll_id INTEGER NOT NULL, user_id INTEGER NOT NULL, answer INTEGER NOT NULL, at INTEGER NOT NULL,
             PRIMARY KEY (poll_id, user_id, answer));
     ",
+}, Migration {
+    name: "004_giveaway_passed",
+    sql: "ALTER TABLE giveaways ADD COLUMN passed_ids TEXT NOT NULL DEFAULT '';",
 }];
 
 #[feature_async]

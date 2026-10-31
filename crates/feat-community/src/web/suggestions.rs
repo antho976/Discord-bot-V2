@@ -97,7 +97,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                         @if voters.is_empty() {
                             (ui::empty(Icon::Bulb, "No votes yet", "Members vote with the buttons on each suggestion."))
                         } @else {
-                            div.cm-voters {
+                            div.cm-top {
                                 @for (u, n) in &voters {
                                     div.cm-voter {
                                         img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="44" height="44" loading="lazy";
