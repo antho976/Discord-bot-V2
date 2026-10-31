@@ -3,9 +3,9 @@ use bot_core::axum::response::IntoResponse;
 use bot_core::maud::{Markup, html};
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
-use bot_core::{Ctx, Icon, text};
+use bot_core::{Ctx, Icon, now_ms, text};
 
-use super::{TabQuery, channel_in, channel_name, channel_select, header_pop, open_link, style, tabs, until};
+use super::{TabQuery, channel_in, channel_name, channel_select, header_pop, month_start, open_link, style, tabs, until};
 use crate::KEY;
 use crate::polls::{self as pl, Poll};
 
@@ -14,10 +14,15 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let ended_tab = q.tab.as_deref() == Some("ended");
     let edit = page.can_edit();
     let polls = ctx.db.with(|c| pl::recent(c, guild, 200))?;
-    let (open, over): (Vec<Poll>, Vec<Poll>) = polls.into_iter().partition(|p| !p.is_over());
+    let (open, mut over): (Vec<Poll>, Vec<Poll>) = polls.into_iter().partition(|p| !p.is_over());
+    // Ended ones read by when they closed, not when they were posted.
+    over.sort_by_key(|p| std::cmp::Reverse(p.ends_at));
     // Votes cast while the bot was offline: read the open polls from Discord when they're due.
     pl::wait_briefly(pl::catch_up(&ctx, &open, pl::RESYNC_MS), 1500).await;
 
+    // Polls that closed this month in the viewer's time, and the votes they got.
+    let since = month_start(&page.user, now_ms());
+    let month = over.iter().filter(|p| p.ends_at >= since).fold((0i64, 0i64), |(n, v), p| (n + 1, v + p.results.as_deref().map(|r| r.iter().sum::<i64>()).unwrap_or(0)));
     let main = if ended_tab { ended_list(&ctx, &page, guild, &over) } else { open_view(&ctx, &page, guild, &open, edit) };
     let actions = edit.then(|| header_pop("Post a poll", post_form(&ctx, &page, guild)));
 
@@ -30,12 +35,23 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         div.with-rail {
             div.stack.cm-main { (main) }
             aside.rail {
-                div.rail-block {
-                    h2 { "Recently ended" }
-                    @if over.is_empty() {
-                        (ui::empty(Icon::Poll, "Nothing ended yet", "Closed polls and their winning answers show up here."))
-                    } @else {
-                        @for p in over.iter().take(3) { (recent_item(p)) }
+                @if ended_tab {
+                    div.rail-block {
+                        h2 { "This month" }
+                        div.cm-month {
+                            div { b.mono { (text::num(month.0)) } span { "closed" } }
+                            div { b.mono { (text::num(month.1)) } span { "votes" } }
+                            div { b.mono { (text::num(open.len() as i64)) } span { "open now" } }
+                        }
+                    }
+                } @else {
+                    div.rail-block {
+                        h2 { "Recently ended" }
+                        @if over.is_empty() {
+                            (ui::empty(Icon::Poll, "Nothing ended yet", "Closed polls and their winning answers show up here."))
+                        } @else {
+                            @for p in over.iter().take(3) { (recent_item(p)) }
+                        }
                     }
                 }
             }
@@ -138,51 +154,55 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, over: &[Poll]) -> Markup {
         @if over.is_empty() {
             (ui::empty(Icon::Poll, "Nothing ended yet", "Closed polls show their final results here."))
         } @else {
-            div.cm-list {
-                @for p in over {
-                    div.cm-row {
-                        div.cm-tile { (ui::icon(Icon::Poll)) }
-                        div.cm-row-main {
-                            strong.clip { (p.question) }
-                            span.muted.small { (channel_name(ctx, guild, p.channel_id)) " · ended " (text::ago(p.ends_at)) }
-                        }
-                        (results(p))
-                        div.cm-row-actions {
-                            (open_link(page, p.channel_id, Some(p.message_id), "Open in Discord"))
-                        }
-                    }
-                }
+            div.cm-ended {
+                @for p in over { (ended_card(ctx, page, guild, p)) }
             }
         }
     }
 }
 
-/// Final counts as bars, the winning answer filled. Says what's missing when there are none.
-fn results(p: &Poll) -> Markup {
-    let Some(counts) = p.results.as_deref() else {
-        return html! { span.muted.small.cm-results { "Counting" } };
-    };
-    if counts.is_empty() {
-        return html! { span.muted.small.cm-results { "Results not available" } };
-    }
+/// An ended poll in the hero's shape: who asked, the question, and the final counts as bars
+/// with the winning answer filled. Says what's missing when Discord hasn't given the counts.
+fn ended_card(ctx: &Ctx, page: &Page, guild: u64, p: &Poll) -> Markup {
+    let counts = p.results.as_deref();
     let shares = pl::shares(p);
+    let total: i64 = counts.map(|c| c.iter().sum()).unwrap_or(0);
     let top = shares.iter().map(|s| s.1).max().unwrap_or(0);
-    let total: i64 = counts.iter().sum();
     html! {
-        div.cm-results {
-            div.cm-bars {
-                @for (answer, n, pct) in &shares {
-                    div.cm-bar-row {
-                        div.cm-bar.win[*n == top && top > 0] {
-                            i style=(format!("width:{pct}%")) {}
-                            span { (answer) }
-                            span.pct { (pct) "%" }
-                        }
-                        span.votes { (text::num(*n)) }
-                    }
+        article.cm-poll.ended {
+            div.cm-poll-head {
+                img.avatar src=(ctx.member_avatar(guild, p.created_by)) alt="" width="28" height="28" loading="lazy";
+                span {
+                    strong { (ctx.display_name(guild, p.created_by)) } " asked in " (channel_name(ctx, guild, p.channel_id)) " · ended " (text::ago(p.ends_at))
                 }
+                span.status { span.dot {} "Ended" }
             }
-            p.muted.small { (text::num(total)) " " (if total == 1 { "vote" } else { "votes" }) " in all" }
+            h2.cm-question { (p.question) }
+            @match counts {
+                None => p.muted.small { "Counting. Discord finalises the results a moment after the poll closes." },
+                Some([]) => p.muted.small { "Results not available. The message was deleted or the bot lost access before it could read them." },
+                Some(_) => div.cm-bars.cm-live {
+                    @for (answer, n, pct) in &shares {
+                        div.cm-bar-row {
+                            div.cm-bar.win[*n == top && top > 0] {
+                                i style=(format!("width:{pct}%")) {}
+                                span { (answer) }
+                                span.pct { (pct) "%" }
+                            }
+                            span.votes { (text::num(*n)) " " (if *n == 1 { "vote" } else { "votes" }) }
+                        }
+                    }
+                },
+            }
+            div.cm-poll-foot {
+                p.muted.small {
+                    @if counts.is_some_and(|c| !c.is_empty()) {
+                        (text::num(total)) " " (if total == 1 { "vote" } else { "votes" }) " in all · "
+                    }
+                    (if p.multi { "several answers allowed" } else { "one answer each" })
+                }
+                div.cm-actions { (open_link(page, p.channel_id, Some(p.message_id), "Open in Discord")) }
+            }
         }
     }
 }

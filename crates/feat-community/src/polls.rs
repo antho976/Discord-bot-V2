@@ -441,12 +441,30 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     let hour = 3_600_000i64;
     let now = now_ms();
     type Row = (&'static str, &'static [&'static str], bool, i64, Option<&'static [i64]>);
-    let rows: [Row; 5] = [
+    let rows: [Row; 6] = [
         ("What should the next stream be?", &["Hades II", "Idleon grind", "Viewer games", "Just chatting"], false, 31 * hour, None),
         ("Movie night on Friday: which one?", &["Dune Part Two", "Spirited Away", "Paddington 2"], false, 6 * hour, None),
         ("Which channels do you actually read?", &["general", "announcements", "stream-alerts", "pets"], true, -20 * hour, Some(&[41, 63, 22, 18])),
         ("New emoji set: keep or revert?", &["Keep", "Revert"], false, -4 * 24 * hour, Some(&[88, 31])),
         ("Pick a colour for the Regulars role", &["Green", "Teal", "Amber"], false, -9 * 24 * hour, Some(&[14, 20, 9])),
+        (
+            "Which world do you leave your characters in overnight, and why that one?",
+            &[
+                "Blunder Hills",
+                "Yum-Yum Desert, for the sandy pot drops",
+                "Frostbite Tundra",
+                "Hyperion Nebula, it's the only one that pays off for me",
+                "Smolderin' Plateau",
+                "Spirited Valley",
+                "Shimmerfin Deep",
+                "Wherever the daily quests point",
+                "I don't idle overnight",
+                "Something else, I'll say in chat",
+            ],
+            false,
+            -2 * 24 * hour,
+            Some(&[3, 12, 5, 21, 9, 14, 6, 2, 1, 4]),
+        ),
     ];
     for (i, (question, answers, multi, ends_in, results)) in rows.into_iter().enumerate() {
         ctx.db.with(|c| {
