@@ -228,6 +228,8 @@ pub struct CtxInner {
     /// Live member counts: set from GuildCreate, then moved by joins and leaves (the cache's own
     /// count never changes after connect).
     pub(crate) member_counts: Mutex<HashMap<u64, u64>>,
+    /// When [`Ctx::notify_once`] last posted, per `(server, feature, key)`.
+    notified: Mutex<HashMap<(u64, String, String), std::time::Instant>>,
 }
 
 /// Cheap to clone; everything a handler needs.
@@ -283,6 +285,7 @@ impl Ctx {
             active: Mutex::new((today(), HashMap::new())),
             snapshots: Mutex::new(discord::Snapshots::default()),
             member_counts: Mutex::new(HashMap::new()),
+            notified: Mutex::new(HashMap::new()),
         })))
     }
 
@@ -400,6 +403,24 @@ impl Ctx {
         }
     }
 
+    /// [`Ctx::notify`], at most once per `every` for each server, feature and `key`, so something
+    /// that keeps failing (a deleted channel, a missing permission) is noticed without a notice
+    /// for every attempt. `key` tells a feature's kinds of failure apart ("post", "roles").
+    /// Remembered in memory: after a restart the next failure posts again. Returns whether it
+    /// posted.
+    pub fn notify_once(&self, guild_id: u64, feature: &str, key: &str, text: impl Into<String>, link: Option<String>, every: std::time::Duration) -> bool {
+        {
+            let mut last = self.notified.lock().unwrap();
+            let k = (guild_id, feature.to_owned(), key.to_owned());
+            if last.get(&k).is_some_and(|t| t.elapsed() < every) {
+                return false;
+            }
+            last.insert(k, std::time::Instant::now());
+        }
+        self.notify(Some(guild_id), feature, text, link);
+        true
+    }
+
     /// Record a dashboard change in the activity log.
     pub fn audit(&self, user: &web::auth::User, guild_id: Option<u64>, feature: &str, action: impl Into<String>) {
         let action = action.into();
@@ -471,5 +492,30 @@ impl Ctx {
         }
         tx.commit()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{Config, Ctx, Db};
+
+    #[tokio::test]
+    async fn notify_once_posts_once_per_window_and_key() {
+        let ctx = Ctx::new(Config::preview(0), Db::memory().unwrap()).unwrap();
+        let day = Duration::from_secs(86_400);
+        let count = || ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM notifications", [], |r| r.get::<_, i64>(0))).unwrap();
+        assert!(ctx.notify_once(1, "levels", "post", "Level-ups aren't being posted.", None, day));
+        assert!(!ctx.notify_once(1, "levels", "post", "Level-ups aren't being posted.", None, day));
+        assert_eq!(count(), 1);
+        // Another key, feature or server has its own window.
+        assert!(ctx.notify_once(1, "levels", "roles", "x", None, day));
+        assert!(ctx.notify_once(1, "welcome", "post", "x", None, day));
+        assert!(ctx.notify_once(2, "levels", "post", "x", None, day));
+        assert_eq!(count(), 4);
+        // A window of zero never holds anything back.
+        assert!(ctx.notify_once(1, "levels", "post", "again", None, Duration::ZERO));
+        assert_eq!(count(), 5);
     }
 }

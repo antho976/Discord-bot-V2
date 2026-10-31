@@ -385,6 +385,32 @@ impl CommandCall {
     }
 }
 
+/// Why Discord refused a post, in words a server owner can act on: a missing permission, a
+/// deleted channel, or Discord's own message.
+pub fn why_refused(e: &twilight_http::Error) -> String {
+    let status = match e.kind() {
+        twilight_http::error::ErrorType::Response { status, .. } => Some(status.get()),
+        _ => None,
+    };
+    refusal(status, e)
+}
+
+/// [`why_refused`] for an error that may wrap a Discord one.
+pub fn why_refused_any(e: &anyhow::Error) -> String {
+    match e.downcast_ref::<twilight_http::Error>() {
+        Some(http) => why_refused(http),
+        None => refusal(None, e),
+    }
+}
+
+fn refusal(status: Option<u16>, e: &dyn std::fmt::Display) -> String {
+    match status {
+        Some(403) => "The bot can't post in that channel. Check it can see the channel and send messages there, and attach files if it posts images.".into(),
+        Some(404) => "The channel was deleted. Pick another one.".into(),
+        _ => format!("Discord refused the message: {e}"),
+    }
+}
+
 /// True when a Discord REST error is a 404 (the message, channel or member is gone).
 pub fn is_not_found(e: &twilight_http::Error) -> bool {
     matches!(e.kind(), twilight_http::error::ErrorType::Response { status, .. } if status.get() == 404)
@@ -914,5 +940,23 @@ pub fn avatar_url(user_id: u64, avatar: Option<&str>) -> String {
     match avatar {
         Some(hash) => format!("https://cdn.discordapp.com/avatars/{user_id}/{hash}.png?size=128"),
         None => format!("https://cdn.discordapp.com/embed/avatars/{}.png", (user_id >> 22) % 6),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refusal;
+
+    #[test]
+    fn refusals_say_what_to_fix() {
+        assert!(refusal(Some(403), &"x").starts_with("The bot can't post in that channel."));
+        assert_eq!(refusal(Some(404), &"x"), "The channel was deleted. Pick another one.");
+        assert_eq!(refusal(Some(500), &"Response error: status code 500"), "Discord refused the message: Response error: status code 500");
+        assert_eq!(refusal(None, &"timed out"), "Discord refused the message: timed out");
+    }
+
+    #[test]
+    fn errors_that_arent_discords_keep_their_words() {
+        assert_eq!(super::why_refused_any(&anyhow::anyhow!("no link")), "Discord refused the message: no link");
     }
 }
