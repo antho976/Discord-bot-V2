@@ -151,6 +151,19 @@ pub fn toggle_entry(c: &Connection, id: i64, user: u64) -> bot_core::rusqlite::R
     Ok(true)
 }
 
+/// Join or leave a giveaway that is still running, and read it back. None once it has ended or
+/// its time is up. The check and the change run under one hold of the connection, the same lock
+/// `end` claims under, so an entry can't land after the winners were drawn.
+pub fn enter_if_running(c: &Connection, id: i64, user: u64, now: i64) -> bot_core::rusqlite::Result<Option<(Giveaway, bool, i64)>> {
+    match get(c, id)? {
+        Some(g) if !g.ended && g.ends_at > now => {
+            let entered = toggle_entry(c, id, user)?;
+            Ok(Some((g, entered, entry_count(c, id)?)))
+        }
+        _ => Ok(None),
+    }
+}
+
 /// Entries made since `since`.
 pub fn entered_since(c: &Connection, id: i64, since: i64) -> bot_core::rusqlite::Result<i64> {
     c.query_row("SELECT COUNT(*) FROM giveaway_entries WHERE giveaway_id = ?1 AND entered_at >= ?2", params![id, since], |r| r.get(0))
@@ -361,9 +374,16 @@ pub async fn on_enter(ctx: &Ctx, call: &ComponentCall, id: i64) -> Result<()> {
             return ctx.reply(&call.interaction, Reply::text(format!("You need <@&{role}> to enter this one.")).ephemeral()).await;
         }
     }
-    let user = call.user_id();
-    let (entered, count) = ctx.db.with(|c| Ok((toggle_entry(c, id, user)?, entry_count(c, id)?)))?;
+    let Some((g, entered, count)) = ctx.db.with(|c| enter_if_running(c, id, call.user_id(), now_ms()))? else {
+        return reply("This giveaway has ended.").await;
+    };
     ctx.update(&call.interaction, Reply::embed(embed(&g, count)).components(components(id))).await?;
+    // If it ended while that update was on its way, the running post may have landed after the
+    // ended one. Put the ended one back.
+    if let Some(now) = ctx.db.with(|c| get(c, id))?.filter(|g| g.ended) {
+        let n = ctx.db.with(|c| entry_count(c, id))?;
+        refresh(ctx, &now, n).await;
+    }
     let note = if entered { "You're in." } else { "You left the giveaway." };
     ctx.followup(&call.interaction, Reply::text(note).ephemeral()).await
 }
@@ -467,7 +487,15 @@ pub async fn end(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
     if claimed == 0 {
         return Ok(EndOutcome::AlreadyEnded);
     }
-    let all = ctx.db.with(|c| entries(c, id))?;
+    let all = match ctx.db.with(|c| entries(c, id)) {
+        Ok(all) => all,
+        Err(e) => {
+            // Let it go back to running so the next tick tries again, rather than ending with
+            // no winners and no announcement.
+            ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 0, ended_at = 0 WHERE id = ?1", [id]))?;
+            return Err(e);
+        }
+    };
     let winners = pick_winners(&all, g.winners.max(1) as usize, &[], &mut bot_core::rand::rng());
     store_winners(ctx, id, &winners)?;
     let g = Giveaway { ended: true, ended_at: now, winner_ids: winners.clone(), ..g };
@@ -682,6 +710,26 @@ mod tests {
         let g = ctx.db.with(|c| get(c, 1)).unwrap().unwrap();
         assert_eq!((g.prize.as_str(), g.emoji.as_str(), g.ends_at, g.winners), ("New prize", "🎮", 99, MAX_WINNERS));
         assert_eq!(ctx.db.with(|c| get(c, 2)).unwrap().unwrap().prize, "done");
+    }
+
+    #[test]
+    fn entries_stop_when_it_ends() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        db.with(|c| {
+            c.execute("INSERT INTO giveaways (id, guild_id, channel_id, prize, ends_at) VALUES (1, 1, 2, 'x', 100)", [])?;
+            let (g, entered, n) = enter_if_running(c, 1, 7, 50)?.unwrap();
+            assert!(entered && n == 1 && g.prize == "x");
+            // Time is up but the tick hasn't ended it yet.
+            assert!(enter_if_running(c, 1, 8, 100)?.is_none());
+            // Ended: nobody joins or leaves.
+            c.execute("UPDATE giveaways SET ended = 1 WHERE id = 1", [])?;
+            assert!(enter_if_running(c, 1, 7, 50)?.is_none());
+            assert_eq!(entries(c, 1)?, vec![7]);
+            assert!(enter_if_running(c, 2, 7, 50)?.is_none());
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]
