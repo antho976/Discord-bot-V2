@@ -45,6 +45,7 @@ pub enum Icon {
     Menu,
     Logout,
     Hash,
+    Search,
 }
 
 impl Icon {
@@ -82,6 +83,7 @@ impl Icon {
             Icon::Close => (16, r#"<path d="m4 4 8 8M12 4l-8 8"/>"#),
             Icon::Chevron => (16, r#"<path d="m4.5 6.5 3.5 3.5 3.5-3.5"/>"#),
             Icon::External => (16, r#"<path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3"/>"#),
+            Icon::Search => (16, r#"<path d="M3 7a4 4 0 1 0 8 0 4 4 0 1 0-8 0M10 10l3.5 3.5"/>"#),
             Icon::Menu => (16, r#"<path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11"/>"#),
             Icon::Logout => (24, r#"<path d="M10 4.5H6.5A1.5 1.5 0 0 0 5 6v12a1.5 1.5 0 0 0 1.5 1.5H10M14.5 8l4 4-4 4M18.5 12h-9"/>"#),
             Icon::Hash => (16, r#"<path d="M6 2.5 5 13.5M11 2.5l-1 11M2.75 6h11M2.25 10h11"/>"#),
@@ -177,14 +179,14 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
     let guild = page.guild_id;
     let guilds = ctx.guilds_for(&page.user);
     let levels = ctx.levels(&page.user, guild);
-    type Link = (&'static str, &'static str, Icon, &'static str);
+    type Link = (&'static str, &'static str, Icon, &'static str, &'static str);
     let mut groups: Vec<(Group, Vec<Link>)> = Vec::new();
     for f in ctx.features() {
         let meta = f.meta();
         if !ctx.enabled(guild, meta.key) || levels.get(meta.key) == Level::None {
             continue;
         }
-        let items: Vec<_> = meta.nav.iter().map(|n| (n.label, n.path, n.icon, meta.key)).collect();
+        let items: Vec<_> = meta.nav.iter().map(|n| (n.label, n.path, n.icon, meta.key, n.about)).collect();
         if items.is_empty() {
             continue;
         }
@@ -195,6 +197,9 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
     }
     groups.sort_by_key(|(g, _)| *g);
     let current = page.key;
+    // Unread notices per feature: a folded group shows their total, so nothing waiting hides.
+    let unread = unread_by_feature(ctx, page);
+    let waiting = |key: &str| unread.get(key).copied().unwrap_or(0);
 
     html! {
         (DOCTYPE)
@@ -223,28 +228,49 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, top: Markup, body: Markup) -> Mark
                             }
                             button.icon-btn.menu-btn type="button" aria-label="Menu" aria-expanded="false" { (icon(Icon::Menu)) }
                         }
+                        label.nav-search {
+                            (icon(Icon::Search))
+                            input #nav-q type="search" placeholder="Search pages" aria-label="Search pages" autocomplete="off" spellcheck="false";
+                            kbd { "/" }
+                        }
                         div.side-links {
-                            a.nav.on[current == "overview"] aria-current=[(current == "overview").then_some("page")] href={ "/g/" (guild) } { (icon(Icon::Home)) span { "Overview" } }
+                            a.nav.on[current == "overview"] aria-current=[(current == "overview").then_some("page")] href={ "/g/" (guild) } data-about="home summary" { (icon(Icon::Home)) span { "Overview" } }
                             @for (group, items) in &groups {
-                                div.nav-group { (group.label()) }
-                                @for (label, path, ic, _key) in items {
-                                    a.nav href={ "/g/" (guild) "/" (path) } data-path={ "/g/" (guild) "/" (path) } {
-                                        (icon(*ic)) span { (label) }
+                                @let here = items.iter().any(|l| l.3 == current);
+                                @let count: i64 = items.iter().map(|l| waiting(l.3)).sum();
+                                details.nav-fold open[here] data-group=(group.label()) {
+                                    summary.nav-group {
+                                        span.grow { (group.label()) }
+                                        @if count > 0 { span.nav-count.folded { (count) } }
+                                        (icon(Icon::Chevron))
+                                    }
+                                    @for (label, path, ic, key, about) in items {
+                                        a.nav href={ "/g/" (guild) "/" (path) } data-path={ "/g/" (guild) "/" (path) } data-about=(about) {
+                                            (icon(*ic)) span.grow { (label) }
+                                            @if waiting(key) > 0 { span.nav-count { (waiting(key)) } }
+                                        }
                                     }
                                 }
                             }
-                            @if page.user.admin {
-                                div.nav-group { "Admin" }
-                                a.nav.on[current == "features"] aria-current=[(current == "features").then_some("page")] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
-                                a.nav.on[current == "users"] aria-current=[(current == "users").then_some("page")] href="/users" { (icon(Icon::Users)) span { "People" } }
-                                a.nav.on[current == "activity"] aria-current=[(current == "activity").then_some("page")] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
-                            }
+                            p.nav-none hidden { "No page matches." }
                         }
                         div.side-foot {
-                            img.avatar src=(page.user.avatar_url()) alt="" width="24" height="24" loading="lazy";
-                            span.grow.clip { (page.user.name) }
-                            form method="post" action="/logout" {
-                                button.icon-btn type="submit" title="Sign out" aria-label="Sign out" { (icon(Icon::Logout)) }
+                            details.pop.account {
+                                summary.account-btn aria-label="Account and admin" {
+                                    img.avatar src=(page.user.avatar_url()) alt="" width="24" height="24" loading="lazy";
+                                    span.grow.clip { (page.user.name) }
+                                    (icon(Icon::Chevron))
+                                }
+                                div.pop-body.account-menu {
+                                    @if page.user.admin {
+                                        a.menu-item.on[current == "features"] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
+                                        a.menu-item.on[current == "users"] href="/users" { (icon(Icon::Users)) span { "People" } }
+                                        a.menu-item.on[current == "activity"] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
+                                    }
+                                    form method="post" action="/logout" {
+                                        button.menu-item type="submit" { (icon(Icon::Logout)) span { "Sign out" } }
+                                    }
+                                }
                             }
                         }
                     }
@@ -278,6 +304,11 @@ pub fn public_layout(title: &str, subtitle: Option<&str>, body: Markup) -> Marku
 }
 
 fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
+    unread_by_feature(ctx, page).values().sum()
+}
+
+/// Unread notices this person may see, by feature key ("" for notices about no server).
+fn unread_by_feature(ctx: &Ctx, page: &Page) -> std::collections::HashMap<String, i64> {
     let seen = notifications_seen(ctx, page.user.id, page.guild_id);
     let global_seen = notifications_seen_anywhere(ctx, page.user.id);
     let rows: Vec<(String, bool)> = ctx
@@ -294,9 +325,13 @@ fn unread_count(ctx: &Ctx, page: &Page) -> i64 {
         })
         .unwrap_or_default();
     let levels = ctx.levels(&page.user, page.guild_id);
-    rows.iter()
-        .filter(|(feature, global)| if *global { page.user.admin } else { levels.get(feature) >= Level::View })
-        .count() as i64
+    let mut out = std::collections::HashMap::new();
+    for (feature, global) in rows {
+        if if global { page.user.admin } else { levels.get(&feature) >= Level::View } {
+            *out.entry(if global { String::new() } else { feature }).or_insert(0) += 1;
+        }
+    }
+    out
 }
 
 /// When this person last opened any server's notifications. Notices with no server (app

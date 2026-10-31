@@ -71,7 +71,7 @@ impl Group {
             Group::Community => "Community",
             Group::Members => "Members",
             Group::Safety => "Safety",
-            Group::Pets => "Idleon pets",
+            Group::Pets => "Idleon",
             Group::Tools => "Tools",
         }
     }
