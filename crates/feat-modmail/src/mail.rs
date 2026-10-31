@@ -696,8 +696,10 @@ pub async fn on_component(f: &Modmail, ctx: &Ctx, call: &ComponentCall) -> Resul
 async fn pick(f: &Modmail, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
     let user = call.user_id();
     let Some(guild) = call.data.values.first().and_then(|v| v.parse::<u64>().ok()) else { return Ok(()) };
-    let allowed = takes_mail(ctx, guild)
-        && (ctx.cache.member(Id::new(guild), Id::new(user)).is_some() || ctx.db.with(|c| open_in(c, guild, user))?.is_some());
+    // An open conversation can be picked while the server is reachable; a new one needs a staff
+    // channel, like routing.
+    let allowed = (reachable(ctx, guild) && ctx.db.with(|c| open_in(c, guild, user))?.is_some())
+        || (takes_mail(ctx, guild) && ctx.cache.member(Id::new(guild), Id::new(user)).is_some());
     if !allowed {
         return ctx.update(&call.interaction, Reply::text("That server doesn't take modmail now. Send your message again to pick another.")).await;
     }
