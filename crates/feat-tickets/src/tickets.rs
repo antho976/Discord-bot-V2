@@ -305,9 +305,11 @@ fn is_not_found(e: &bot_core::twilight_http::Error) -> bool {
 
 // ---- who is allowed ----
 
-fn user_of(i: &Interaction) -> (u64, String, String) {
+/// Who is behind an interaction: id, name and avatar. None in the odd case Discord leaves the
+/// author out, which would otherwise become user 0.
+fn user_of(i: &Interaction) -> Option<(u64, String, String)> {
     let user = i.author();
-    let id = user.map(|u| u.id.get()).unwrap_or_default();
+    let id = user.map(|u| u.id.get())?;
     let name = i
         .member
         .as_ref()
@@ -316,7 +318,17 @@ fn user_of(i: &Interaction) -> (u64, String, String) {
         .or_else(|| user.map(|u| u.name.clone()))
         .unwrap_or_else(|| "Member".into());
     let avatar = bot_core::discord::avatar_url(id, user.and_then(|u| u.avatar.map(|a| a.to_string())).as_deref());
-    (id, name, avatar)
+    Some((id, name, avatar))
+}
+
+/// What to tell a member who is at their open-ticket limit. Thread 0 is a ticket still being
+/// opened: they pressed the button twice.
+fn already_open(thread: u64) -> String {
+    if thread == 0 {
+        "Your ticket is still being opened. It shows up in a moment.".into()
+    } else {
+        format!("You already have an open ticket: <#{thread}>. Close it before opening another.")
+    }
 }
 
 fn has_perm(i: &Interaction, perms: Permissions) -> bool {
@@ -408,8 +420,7 @@ pub async fn on_component(ctx: &Ctx, call: &ComponentCall) -> bot_core::anyhow::
                 return ctx.reply(&call.interaction, Reply::text("Tickets aren't set up on this server yet.").ephemeral()).await;
             }
             if let Some(thread) = ctx.db.with(|c| full_thread(c, guild, call.user_id(), s.max_open))? {
-                let msg = format!("You already have an open ticket: <#{thread}>. Close it before opening another.");
-                return ctx.reply(&call.interaction, Reply::text(msg).ephemeral()).await;
+                return ctx.reply(&call.interaction, Reply::text(already_open(thread)).ephemeral()).await;
             }
             ctx.modal(
                 &call.interaction,
@@ -466,8 +477,8 @@ async fn open_ticket(ctx: &Ctx, call: &ModalCall, guild: u64, s: &Settings) -> b
     let Some(channel) = s.ticket_channel else {
         return ctx.reply(&call.interaction, Reply::text("Tickets aren't set up on this server yet.").ephemeral()).await;
     };
+    let Some((user, name, avatar)) = user_of(&call.interaction) else { return Ok(()) };
     ctx.defer(&call.interaction, true).await?;
-    let (user, name, avatar) = user_of(&call.interaction);
     let subject = text::clip(call.value("subject").unwrap_or_default().trim(), 200);
     let details = text::clip(call.value("details").unwrap_or_default().trim(), 2000);
     let subject = if subject.is_empty() { "No subject".to_owned() } else { subject };
@@ -478,10 +489,7 @@ async fn open_ticket(ctx: &Ctx, call: &ModalCall, guild: u64, s: &Settings) -> b
     };
     let number = match reserved {
         Reserved::Number(n) => n,
-        Reserved::Full(thread) => {
-            let msg = format!("You already have an open ticket: <#{thread}>. Close it before opening another.");
-            return ctx.edit_original(&call.interaction, Reply::text(msg)).await;
-        }
+        Reserved::Full(thread) => return ctx.edit_original(&call.interaction, Reply::text(already_open(thread))).await,
     };
 
     let thread_name = format!("ticket-{number:04} {}", text::clip(&name, 60));
@@ -540,7 +548,7 @@ fn closing_text(by: u64, reason: Option<&str>) -> String {
 
 /// Close from a button, modal or command: say so in the thread, then archive and lock it.
 async fn close_from_interaction(ctx: &Ctx, i: &Interaction, guild: u64, t: &Ticket, reason: Option<&str>) -> bot_core::anyhow::Result<()> {
-    let by = i.author_id().map(|u| u.get()).unwrap_or_default();
+    let Some(by) = i.author_id().map(|u| u.get()) else { return Ok(()) };
     let reason = reason.map(|r| text::clip(r, 300));
     if !ctx.db.with(|c| mark_closed(c, guild, t.number, Some(by), reason.as_deref(), CLOSED, now_ms()))? {
         return ctx.reply(i, Reply::text("This ticket is already closed.").ephemeral()).await;
@@ -751,6 +759,33 @@ mod tests {
         let t = by_thread(&c, 1, 555).unwrap().unwrap();
         assert_eq!((t.status.as_str(), t.closed_by, t.closed_at), (CLOSED, Some(99), Some(5000)));
         assert!(matches!(reserve(&mut c, 1, 10, "again", "", 1, 7000).unwrap(), Reserved::Number(2)));
+    }
+
+    #[test]
+    fn numbers_are_never_reused_once_a_ticket_has_a_thread() {
+        let db = db();
+        let mut c = db.lock();
+        for (user, thread) in [(10u64, 501u64), (11, 502), (12, 503)] {
+            let Reserved::Number(n) = reserve(&mut c, 1, user, "a", "", 1, 1000).unwrap() else { panic!("full") };
+            set_thread(&c, 1, n, thread).unwrap();
+        }
+        // Closing, or releasing a ticket that already has its thread, frees nothing.
+        mark_closed(&c, 1, 3, None, None, IDLE, 2000).unwrap();
+        release(&c, 1, 3).unwrap();
+        assert!(by_number(&c, 1, 3).unwrap().is_some());
+        assert!(matches!(reserve(&mut c, 1, 13, "b", "", 1, 3000).unwrap(), Reserved::Number(4)));
+        assert!(by_number(&c, 1, 99).unwrap().is_none());
+    }
+
+    #[test]
+    fn pressing_twice_finds_the_ticket_still_being_opened() {
+        let db = db();
+        let mut c = db.lock();
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap(), Reserved::Number(1)));
+        // No thread yet: the second press is told to wait, not sent to <#0>.
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap(), Reserved::Full(0)));
+        assert_eq!(already_open(0), "Your ticket is still being opened. It shows up in a moment.");
+        assert!(already_open(555).contains("<#555>"));
     }
 
     #[test]
