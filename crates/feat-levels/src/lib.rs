@@ -266,7 +266,6 @@ impl Feature for Levels {
             CommandBuilder::new("leaderboard", "The server's top members by XP", CommandType::ChatInput)
                 .option(StringBuilder::new("board", "All time, or this week's XP").choices([("All time", "all"), ("This week", "week")]))
                 .build(),
-            CommandBuilder::new("prestige", "Start over at level 0 for a prestige rank and more XP", CommandType::ChatInput).build(),
             CommandBuilder::new("xp", "Change a member's XP", CommandType::ChatInput)
                 .default_member_permissions(Permissions::MANAGE_GUILD)
                 .option(
@@ -286,6 +285,16 @@ impl Feature for Levels {
                 )
                 .build(),
         ]
+    }
+
+    /// `/prestige` only where prestige is on, so members elsewhere don't see a command that
+    /// would only say it's off.
+    fn guild_commands(&self, ctx: &Ctx, guild: u64) -> Vec<Command> {
+        if ctx.settings::<Settings>(guild, KEY).is_ok_and(|s| s.prestige_on()) {
+            vec![CommandBuilder::new("prestige", "Start over at level 0 for a prestige rank and more XP", CommandType::ChatInput).build()]
+        } else {
+            Vec::new()
+        }
     }
 
     fn routes(&self) -> bot_core::axum::Router<Ctx> {
@@ -1141,6 +1150,17 @@ mod tests {
         let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
         ctx.install_features(vec![std::sync::Arc::new(Levels::default())]).unwrap();
         ctx
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn prestige_is_a_command_only_where_it_is_on() {
+        let ctx = ctx();
+        let names = |ctx: &Ctx| Levels::default().guild_commands(ctx, 1).into_iter().map(|c| c.name).collect::<Vec<_>>();
+        assert!(names(&ctx).is_empty());
+        assert!(!Levels::default().commands().iter().any(|c| c.name == "prestige"));
+        ctx.save_settings(1, KEY, &Settings { prestige_level: 50, ..Settings::default() }).unwrap();
+        assert_eq!(names(&ctx), vec!["prestige"]);
+        assert!(Levels::default().guild_commands(&ctx, 2).is_empty());
     }
 
     fn set(ctx: &Ctx, user: u64, xp: i64) {
