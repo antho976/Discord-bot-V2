@@ -5,7 +5,7 @@ use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 
-use super::{TabQuery, channel_in, channel_name, channel_select, header_pop, month_start, open_link, style, tabs, until};
+use super::{TabQuery, channel_in, channel_name, channel_select, countdown, discord_message, header_pop, month_start, open_link, plural, rail_figures, script, style};
 use crate::KEY;
 use crate::polls::{self as pl, Poll};
 
@@ -22,29 +22,49 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
 
     // Polls that closed this month in the viewer's time, and the votes they got.
     let since = month_start(&page.user, now_ms());
-    let month = over.iter().filter(|p| p.ends_at >= since).fold((0i64, 0i64), |(n, v), p| (n + 1, v + p.results.as_deref().map(|r| r.iter().sum::<i64>()).unwrap_or(0)));
+    let month = over.iter().filter(|p| p.ends_at >= since).fold((0i64, 0i64), |(n, v), p| (n + 1, v + total_of(p)));
+    // The closed polls with the most votes, for the rail.
+    let mut busiest: Vec<(&Poll, i64)> = over.iter().map(|p| (p, total_of(p))).filter(|(_, n)| *n > 0).collect();
+    busiest.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    busiest.truncate(4);
+    let most = busiest.first().map(|b| b.1).unwrap_or(1).max(1);
+
     let main = if ended_tab { ended_list(&ctx, &page, guild, &over) } else { open_view(&ctx, &page, guild, &open, edit) };
     let actions = edit.then(|| header_pop("Post a poll", post_form(&ctx, &page, guild)));
 
     let body = html! {
         (style())
-        (tabs(
+        (ui::tabs_counted(
             &[("Open", page.path("community/polls"), Some(open.len() as i64)), ("Ended", page.path("community/polls?tab=ended"), None)],
             if ended_tab { "Ended" } else { "Open" },
         ))
         div.with-rail {
-            div.stack.cm-main { (main) }
-            aside.rail {
+            div.cm-main { (main) }
+            aside.rail.cm-rail {
                 @if ended_tab {
                     div.rail-block {
                         h2 { "This month" }
-                        div.cm-month {
-                            div { b.mono { (text::num(month.0)) } span { "closed" } }
-                            div { b.mono { (text::num(month.1)) } span { "votes" } }
-                            div { b.mono { (text::num(open.len() as i64)) } span { "open now" } }
+                        (rail_figures(&[("closed", month.0), ("votes", month.1), ("open now", open.len() as i64)]))
+                    }
+                    div.rail-block {
+                        h2 { "Most votes" }
+                        @if busiest.is_empty() {
+                            p.muted.small { "Closed polls with votes show up here, most votes first." }
+                        }
+                        @for (p, n) in &busiest {
+                            div.pl-busy {
+                                div { span title=(p.question) { (p.question) } span.mono { (text::num(*n)) } }
+                                span.meter { span style=(format!("width:{}%", n * 100 / most)) {} }
+                            }
                         }
                     }
                 } @else {
+                    @if let Some(p) = open.first() {
+                        div.rail-block {
+                            h2 { "The poll" span.muted { (channel_name(&ctx, guild, p.channel_id)) } }
+                            (discord_message(&ctx, &page, p.created_at, poll_preview(&ctx, p)))
+                        }
+                    }
                     div.rail-block {
                         h2 { "Recently ended" }
                         @if over.is_empty() {
@@ -56,8 +76,18 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                 }
             }
         }
+        (script())
     };
     Ok(ui::layout(&ctx, &page, "Polls", actions, body).into_response())
+}
+
+/// Votes in a closed poll's final counts; 0 while they're being counted.
+fn total_of(p: &Poll) -> i64 {
+    p.results.as_deref().map(|r| r.iter().sum::<i64>()).unwrap_or(0)
+}
+
+fn votes(n: i64) -> String {
+    format!("{} {}", text::num(n), plural(n, "vote", "votes"))
 }
 
 fn open_view(ctx: &Ctx, page: &Page, guild: u64, open: &[Poll], edit: bool) -> Markup {
@@ -68,52 +98,57 @@ fn open_view(ctx: &Ctx, page: &Page, guild: u64, open: &[Poll], edit: bool) -> M
             (ui::empty(Icon::Poll, "No open polls", "Post one with the button above or /poll. Open polls wait here until they close."))
         }
         @if open.len() > 1 {
-            div.cm-list {
-                @for p in &open[1..] { (row_open(ctx, page, guild, p, edit)) }
+            section.cm-block {
+                h2 { "Also open" }
+                div.pl-list {
+                    @for (i, p) in open[1..].iter().enumerate() { (open_card(ctx, page, guild, p, i, edit)) }
+                }
             }
         }
     }
 }
 
-/// The newest open poll: who asked, the question, and each answer with its live count and the
-/// latest voters.
+/// Live counts for an open poll, with every answer present even when nothing was read.
+fn live_answers(ctx: &Ctx, p: &Poll) -> pl::Live {
+    ctx.db.with(|c| pl::live(c, p)).unwrap_or_else(|_| pl::Live { answers: p.answers.iter().map(|a| (a.clone(), 0, 0, Vec::new())).collect(), voters: 0 })
+}
+
+/// The newest open poll: who asked, the question, and each answer's bar filling to its share,
+/// with the latest voters' faces.
 fn hero(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, edit: bool) -> Markup {
-    let live = ctx.db.with(|c| pl::live(c, p)).ok();
-    let top = live.as_ref().and_then(|l| l.answers.iter().map(|a| a.1).max()).unwrap_or(0);
-    let total: i64 = live.as_ref().map(|l| l.answers.iter().map(|a| a.1).sum()).unwrap_or(0);
+    let pl::Live { answers, voters } = live_answers(ctx, p);
+    let top = answers.iter().map(|a| a.1).max().unwrap_or(0);
+    let total: i64 = answers.iter().map(|a| a.1).sum();
     html! {
-        article.cm-poll {
-            div.cm-poll-head {
-                img.avatar src=(ctx.member_avatar(guild, p.created_by)) alt="" width="28" height="28" loading="lazy";
-                span {
-                    strong { (ctx.display_name(guild, p.created_by)) } " asked in " (channel_name(ctx, guild, p.channel_id)) " · " (text::ago(p.created_at))
-                }
-                span.status { span.dot.live {} (until("Closes in", p.ends_at)) }
+        article.pl-hero {
+            div.pl-ask {
+                img.avatar src=(ctx.member_avatar(guild, p.created_by)) alt="" width="34" height="34" loading="lazy";
+                span { strong { (ctx.display_name(guild, p.created_by)) } " asked in " (channel_name(ctx, guild, p.channel_id)) " · " (text::ago(p.created_at)) }
+                span.status { span.dot.live {} (countdown("Closes in", p.ends_at)) }
             }
-            h2.cm-question { (p.question) }
-            div.cm-bars.cm-live {
-                @for (answer, n, pct, voters) in live.as_ref().map(|l| l.answers.as_slice()).unwrap_or_default() {
-                    div.cm-bar-row {
-                        div.cm-bar.win[*n == top && top > 0] {
-                            i style=(format!("width:{pct}%")) {}
-                            span { (answer) }
-                            span.pct { (pct) "%" }
+            h2.pl-q { (p.question) }
+            div.pl-answers {
+                @for (i, (answer, n, pct, who)) in answers.iter().enumerate() {
+                    div.pl-ans.lead[*n == top && top > 0] style={ "--i:" (i) } {
+                        div.pl-bar {
+                            span.pl-fill style={ "width:" (pct) "%" } {}
+                            span.pl-label { @if *n == top && top > 0 { (ui::icon(Icon::Check)) } (answer) }
+                            b.pl-pct data-count { (pct) "%" }
                         }
-                        span.cm-voters { (ui::avatars(&voters.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), 3)) }
-                        span.votes { (text::num(*n)) " " (if *n == 1 { "vote" } else { "votes" }) }
+                        span.pl-voters { (ui::avatars(&who.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), 3)) }
+                        span.pl-n { (votes(*n)) }
                     }
                 }
             }
-            div.cm-poll-foot {
-                p.muted.small {
-                    @let voters = live.as_ref().map(|l| l.voters).unwrap_or(0);
+            div.pl-foot {
+                span {
                     @if total == 0 { "No votes yet" } @else {
-                        (text::num(total)) " " (if total == 1 { "vote" } else { "votes" }) " from " (text::num(voters)) " " (if voters == 1 { "member" } else { "members" })
+                        b { (votes(total)) } " from " b { (text::num(voters)) " " (plural(voters, "member", "members")) }
                     }
                     " · " (if p.multi { "several answers allowed" } else { "one answer each" })
                 }
                 div.cm-actions {
-                    (open_link(page, p.channel_id, Some(p.message_id), "Open in Discord"))
+                    (open_link(page, p.channel_id, Some(p.message_id), false))
                     @if edit { (ui::action_button(&page.path(&format!("community/polls/{}/end", p.id)), "End now", Tone::Muted, true)) }
                 }
             }
@@ -121,29 +156,75 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, edit: bool) -> Markup {
     }
 }
 
-fn row_open(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, edit: bool) -> Markup {
-    let live = ctx.db.with(|c| pl::live(c, p)).ok();
-    let total: i64 = live.as_ref().map(|l| l.answers.iter().map(|a| a.1).sum()).unwrap_or(0);
-    let lead = live.as_ref().and_then(|l| {
-        let top = l.answers.iter().map(|a| a.1).max()?;
-        let leaders: Vec<_> = l.answers.iter().filter(|a| a.1 == top && top > 0).collect();
-        (leaders.len() == 1).then(|| format!("{} leads with {}%", leaders[0].0, leaders[0].2))
-    });
+/// Another open poll: the question, the share of votes as one bar, and who leads.
+fn open_card(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, i: usize, edit: bool) -> Markup {
+    let answers = live_answers(ctx, p).answers;
+    let total: i64 = answers.iter().map(|a| a.1).sum();
+    let parts: Vec<(String, i64)> = answers.iter().map(|a| (a.0.clone(), a.1)).collect();
+    let mut faces: Vec<u64> = Vec::new();
+    for u in answers.iter().flat_map(|a| a.3.iter()) {
+        if !faces.contains(u) {
+            faces.push(*u);
+        }
+    }
+    let shares: Vec<(String, i64, i64)> = answers.iter().map(|a| (a.0.clone(), a.1, a.2)).collect();
     html! {
-        div.cm-row {
-            div.cm-tile { (ui::icon(Icon::Poll)) }
-            div.cm-row-main {
-                strong.clip { (p.question) }
-                span.muted.small {
-                    @match &lead { Some(l) => { (l) }, None => { (p.answers.len()) " answers" } }
-                    " · " (channel_name(ctx, guild, p.channel_id)) " · " (until("Closes in", p.ends_at))
-                    @if p.multi { " · pick several" }
+        article.pl-card style={ "--i:" (i.min(8)) } {
+            div.pl-card-top {
+                img.avatar src=(ctx.member_avatar(guild, p.created_by)) alt="" width="30" height="30" loading="lazy";
+                div.pl-card-text {
+                    strong { (p.question) }
+                    span.muted {
+                        (channel_name(ctx, guild, p.channel_id)) " · " (countdown("Closes in", p.ends_at))
+                        @if p.multi { " · pick several" }
+                    }
+                }
+                div.cm-actions {
+                    (open_link(page, p.channel_id, Some(p.message_id), true))
+                    @if edit { (ui::action_button(&page.path(&format!("community/polls/{}/end", p.id)), "End now", Tone::Muted, true)) }
                 }
             }
-            span.cm-entries { (text::num(total)) " " (if total == 1 { "vote" } else { "votes" }) }
-            div.cm-row-actions {
-                (open_link(page, p.channel_id, Some(p.message_id), "Open in Discord"))
-                @if edit { (ui::action_button(&page.path(&format!("community/polls/{}/end", p.id)), "End now", Tone::Muted, true)) }
+            (stack(&parts))
+            div.pl-lead {
+                span { (leader(&shares, total)) }
+                span.gv-people {
+                    (ui::avatars(&faces.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), 4))
+                    span { (votes(total)) }
+                }
+            }
+        }
+    }
+}
+
+/// "Dune Part Two leads with 60%", a tie, or no votes.
+fn leader(shares: &[(String, i64, i64)], total: i64) -> Markup {
+    let top = shares.iter().map(|s| s.1).max().unwrap_or(0);
+    let leaders: Vec<&(String, i64, i64)> = shares.iter().filter(|s| s.1 == top && top > 0).collect();
+    html! {
+        @if total == 0 { "No votes yet" }
+        @else if leaders.len() == 1 { strong { (leaders[0].0) } " leads with " (leaders[0].2) "%" }
+        @else { "Tied at " (leaders.first().map(|l| l.2).unwrap_or(0)) "% between " (leaders.len()) " answers" }
+    }
+}
+
+/// Every answer's share of the votes as one bar, the biggest share brightest. Hovering a part
+/// names the answer.
+fn stack(parts: &[(String, i64)]) -> Markup {
+    let total: i64 = parts.iter().map(|p| p.1).sum();
+    let mut order: Vec<usize> = (0..parts.len()).collect();
+    order.sort_by_key(|i| std::cmp::Reverse(parts[*i].1));
+    let shade = |i: usize| match order.iter().position(|j| *j == i).unwrap_or(9) {
+        0 => "var(--data)",
+        1 => "color-mix(in oklab, var(--data) 62%, transparent)",
+        2 => "color-mix(in oklab, var(--data) 42%, transparent)",
+        _ => "color-mix(in oklab, var(--data) 26%, transparent)",
+    };
+    html! {
+        div.pl-stack role="img" aria-label="Share of the votes by answer" {
+            @for (i, (answer, n)) in parts.iter().enumerate() {
+                @if *n > 0 {
+                    span style={ "flex:" (n) ";background:" (shade(i)) } data-tip={ (answer) ": " ((n * 100 + total / 2) / total.max(1)) "%" } {}
+                }
             }
         }
     }
@@ -154,80 +235,112 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, over: &[Poll]) -> Markup {
         @if over.is_empty() {
             (ui::empty(Icon::Poll, "Nothing ended yet", "Closed polls show their final results here."))
         } @else {
-            div.cm-ended {
-                @for p in over { (ended_card(ctx, page, guild, p)) }
+            div.pl-list {
+                @for (i, p) in over.iter().enumerate() { (ended_card(ctx, page, guild, p, i)) }
             }
         }
     }
 }
 
-/// An ended poll in the hero's shape: who asked, the question, and the final counts as bars
-/// with the winning answer filled. Says what's missing when Discord hasn't given the counts.
-fn ended_card(ctx: &Ctx, page: &Page, guild: u64, p: &Poll) -> Markup {
+/// A closed poll: who asked, the question, and the final counts as bars with the winning
+/// answer lit. Says what's missing when Discord hasn't given the counts.
+fn ended_card(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, i: usize) -> Markup {
     let counts = p.results.as_deref();
     let shares = pl::shares(p);
-    let total: i64 = counts.map(|c| c.iter().sum()).unwrap_or(0);
+    let total = total_of(p);
     let top = shares.iter().map(|s| s.1).max().unwrap_or(0);
     html! {
-        article.cm-poll.ended {
-            div.cm-poll-head {
-                img.avatar src=(ctx.member_avatar(guild, p.created_by)) alt="" width="28" height="28" loading="lazy";
-                span {
-                    strong { (ctx.display_name(guild, p.created_by)) } " asked in " (channel_name(ctx, guild, p.channel_id)) " · ended " (text::ago(p.ends_at))
+        article.pl-card.ended style={ "--i:" (i.min(8)) } {
+            div.pl-card-top {
+                img.avatar src=(ctx.member_avatar(guild, p.created_by)) alt="" width="30" height="30" loading="lazy";
+                div.pl-card-text {
+                    strong { (p.question) }
+                    span.muted { (ctx.display_name(guild, p.created_by)) " asked in " (channel_name(ctx, guild, p.channel_id)) " · ended " (text::ago(p.ends_at)) }
                 }
-                span.status { span.dot {} "Ended" }
+                div.cm-actions { (open_link(page, p.channel_id, Some(p.message_id), true)) }
             }
-            h2.cm-question { (p.question) }
             @match counts {
                 None => p.muted.small { "Counting. Discord finalises the results a moment after the poll closes." },
                 Some([]) => p.muted.small { "Results not available. The message was deleted or the bot lost access before it could read them." },
-                Some(_) => div.cm-bars.cm-live {
-                    @for (answer, n, pct) in &shares {
-                        div.cm-bar-row {
-                            div.cm-bar.win[*n == top && top > 0] {
-                                i style=(format!("width:{pct}%")) {}
-                                span { (answer) }
-                                span.pct { (pct) "%" }
+                Some(_) => div.pl-answers {
+                    @for (j, (answer, n, pct)) in shares.iter().enumerate() {
+                        div.pl-ans.bare.lead[*n == top && top > 0] style={ "--i:" (j) } {
+                            div.pl-bar {
+                                span.pl-fill style={ "width:" (pct) "%" } {}
+                                span.pl-label { @if *n == top && top > 0 { (ui::icon(Icon::Check)) } (answer) }
+                                b.pl-pct data-count { (pct) "%" }
                             }
-                            span.votes { (text::num(*n)) " " (if *n == 1 { "vote" } else { "votes" }) }
+                            span.pl-n { (votes(*n)) }
                         }
                     }
                 },
             }
-            div.cm-poll-foot {
-                p.muted.small {
-                    @if counts.is_some_and(|c| !c.is_empty()) {
-                        (text::num(total)) " " (if total == 1 { "vote" } else { "votes" }) " in all · "
-                    }
+            div.pl-foot {
+                span {
+                    @if counts.is_some_and(|c| !c.is_empty()) { b { (votes(total)) } " in all · " }
                     (if p.multi { "several answers allowed" } else { "one answer each" })
                 }
-                div.cm-actions { (open_link(page, p.channel_id, Some(p.message_id), "Open in Discord")) }
             }
         }
     }
 }
 
-/// One line in "Recently ended": the winning answer as a chip and the vote total.
+/// One closed poll in the rail: the question, the share bar, the winner and the vote total.
 fn recent_item(p: &Poll) -> Markup {
     let Some(counts) = p.results.as_deref().filter(|c| !c.is_empty()) else {
         let note = if p.results.is_some() { "Results not available" } else { "Counting" };
-        return html! { div.cm-recent { strong.clip { (p.question) } span.muted { (note) } } };
+        return html! { div.pl-recent { strong title=(p.question) { (p.question) } span.muted.small { (note) } } };
     };
     let total: i64 = counts.iter().sum();
     let shares = pl::shares(p);
+    let parts: Vec<(String, i64)> = shares.iter().map(|s| (s.0.clone(), s.1)).collect();
     let top = shares.iter().map(|s| s.1).max().unwrap_or(0);
     let leaders: Vec<&(String, i64, i64)> = shares.iter().filter(|s| s.1 == top && top > 0).collect();
     html! {
-        div.cm-recent {
-            strong.clip { (p.question) }
-            @if total == 0 {
-                span.muted { "No votes" }
-            } @else if leaders.len() == 1 {
-                span.cm-chip.data title=(leaders[0].0) { span.cm-chip-text { (leaders[0].0) } span.pct { "· " (leaders[0].2) "%" } }
-            } @else {
-                span.cm-chip.data { "Tie" }
+        div.pl-recent {
+            strong title=(p.question) { (p.question) }
+            (stack(&parts))
+            div.pl-lead {
+                @if total == 0 {
+                    span { "No votes" }
+                } @else if leaders.len() == 1 {
+                    span title=(leaders[0].0) { strong { (leaders[0].0) } " · " (leaders[0].2) "%" }
+                } @else {
+                    span { "Tie" }
+                }
+                span { (votes(total)) " · " (text::ago(p.ends_at)) }
             }
-            span.muted { (text::num(total)) " " (if total == 1 { "vote" } else { "votes" }) " · " (text::ago(p.ends_at)) }
+        }
+    }
+}
+
+/// Time left on a poll as Discord writes it under one: "30h left", "6d left", "12m left".
+fn poll_left(secs: i64) -> String {
+    match secs {
+        s if s >= 86_400 => format!("{}d left", s / 86_400),
+        s if s >= 3600 => format!("{}h left", s / 3600),
+        s if s >= 60 => format!("{}m left", s / 60),
+        s => format!("{s}s left"),
+    }
+}
+
+/// The poll as Discord draws it before you vote: the question, each answer with its choice
+/// mark, the votes so far and the time left.
+fn poll_preview(ctx: &Ctx, p: &Poll) -> Markup {
+    let answers = live_answers(ctx, p).answers;
+    let total: i64 = answers.iter().map(|a| a.1).sum();
+    let secs = ((p.ends_at - now_ms()) / 1000).max(0);
+    html! {
+        div.cm-dc-poll {
+            strong { (p.question) }
+            small { (if p.multi { "Select one or more answers" } else { "Select one answer" }) }
+            @for a in &p.answers {
+                div.cm-dc-opt { span { (a) } span.cm-dc-radio.box[p.multi] {} }
+            }
+            div.cm-dc-poll-foot {
+                span { (votes(total)) " · " (poll_left(secs)) }
+                span.cm-dc-btn.blurple.off { "Vote" }
+            }
         }
     }
 }

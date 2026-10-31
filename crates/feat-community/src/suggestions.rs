@@ -53,7 +53,7 @@ impl Status {
         }
     }
 
-    fn color(self) -> u32 {
+    pub(crate) fn color(self) -> u32 {
         match self {
             Status::Open => NEUTRAL,
             Status::Considering => 0xe3a948,

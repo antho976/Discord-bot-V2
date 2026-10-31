@@ -5,9 +5,12 @@ use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 
-use super::{TabQuery, channel_in, channel_name, channel_select, face_row, header_pop, month_start, open_link, role_name, style, tabs, until};
-use crate::KEY;
+use super::{
+    TabQuery, channel_in, channel_name, channel_select, countdown, discord_message, discord_relative, face_row, header_pop, month_start, open_link, plural,
+    rail_figures, role_name, script, style, until, when,
+};
 use crate::giveaways::{self as gw, EditOutcome, EndOutcome, Giveaway, RerollOutcome};
+use crate::{CORAL, KEY, NEUTRAL};
 
 pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<TabQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
@@ -15,69 +18,93 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let edit = page.can_edit();
     let ended_tab = q.tab.as_deref() == Some("ended");
     let since = month_start(&page.user, now);
-    let (running, ended, (n_running, _), totals, faces) = ctx.db.with(|c| {
+    let (running, ended, (n_running, _), totals, faces, last_hour) = ctx.db.with(|c| {
         let running = gw::list(c, guild, false, 50)?;
-        let faces = running.iter().map(|(g, _)| gw::newest_entrants(c, g.id, 6)).collect::<bot_core::rusqlite::Result<Vec<_>>>()?;
-        Ok((running, gw::list(c, guild, true, 25)?, gw::counts(c, guild)?, gw::since_totals(c, guild, since)?, faces))
+        let faces = running.iter().map(|(g, _)| gw::newest_entrants(c, g.id, 8)).collect::<bot_core::rusqlite::Result<Vec<_>>>()?;
+        let last_hour = match running.first() {
+            Some((g, _)) => gw::entered_since(c, g.id, now - 3_600_000)?,
+            None => 0,
+        };
+        Ok((running, gw::list(c, guild, true, 25)?, gw::counts(c, guild)?, gw::since_totals(c, guild, since)?, faces, last_hour))
     })?;
     let winners: Vec<(u64, &Giveaway, i64)> = ended.iter().flat_map(|(g, n)| g.winner_ids.iter().map(move |w| (*w, g, *n))).take(5).collect();
 
     let main = if ended_tab {
         ended_list(&ctx, &page, guild, &ended, edit)
     } else {
-        running_view(&ctx, &page, guild, &running, &faces, edit)
+        running_view(&ctx, &page, guild, &running, &faces, last_hour, edit)
     };
+    let month = rail_figures(&[("giveaways", totals.0), ("entries", totals.1), ("members", totals.2)]);
     let actions = edit.then(|| header_pop("Start a giveaway", start_form(&ctx, &page, guild)));
 
     let body = html! {
         (style())
-        (tabs(
+        (ui::tabs_counted(
             &[("Running", page.path("community/giveaways"), Some(n_running)), ("Ended", page.path("community/giveaways?tab=ended"), None)],
             if ended_tab { "Ended" } else { "Running" },
         ))
         div.with-rail {
-            div.stack.cm-main { (main) }
-            aside.rail {
-                div.rail-block {
-                    h2 { "Recent winners" }
-                    @if winners.is_empty() {
-                        (ui::empty(Icon::Trophy, "No winners yet", "Winners show up here once a giveaway ends."))
-                    } @else {
-                        @for (w, g, n) in &winners {
-                            div.mini {
-                                img.avatar src=(ctx.member_avatar(guild, *w)) alt="" width="32" height="32" loading="lazy";
-                                div.grow {
-                                    span { strong { (ctx.display_name(guild, *w)) } " won " (g.prize) }
-                                    span.muted.small { (text::ago(g.finished_at())) " · out of " (entries_text(*n)) }
+            div.cm-main { (main) }
+            aside.rail.cm-rail {
+                @if ended_tab {
+                    div.rail-block {
+                        h2 { "This month" }
+                        (month)
+                    }
+                    @if let Some((g, n)) = ended.first() {
+                        div.rail-block {
+                            h2 { "The last result" span.muted { (channel_name(&ctx, guild, g.channel_id)) } }
+                            (discord_message(&ctx, &page, g.finished_at(), post_preview(&ctx, guild, g, *n)))
+                        }
+                    }
+                } @else {
+                    @if let Some((g, n)) = running.first() {
+                        div.rail-block {
+                            h2 { "The post" span.muted { (channel_name(&ctx, guild, g.channel_id)) } }
+                            (discord_message(&ctx, &page, g.created_at, post_preview(&ctx, guild, g, *n)))
+                        }
+                    }
+                    div.rail-block {
+                        h2 { "Recent winners" }
+                        @if winners.is_empty() {
+                            (ui::empty(Icon::Trophy, "No winners yet", "Winners show up here once a giveaway ends."))
+                        } @else {
+                            @for (w, g, n) in &winners {
+                                div.mini.cm-winner {
+                                    img.avatar src=(ctx.member_avatar(guild, *w)) alt="" width="32" height="32" loading="lazy";
+                                    div.grow {
+                                        span { strong { (ctx.display_name(guild, *w)) } " won " (g.prize) }
+                                        span.muted { (text::ago(g.finished_at())) " · out of " (entries_text(*n)) }
+                                    }
                                 }
                             }
                         }
                     }
-                    p.muted.small {
-                        (text::num(totals.0)) " " (plural(totals.0, "giveaway", "giveaways")) " this month · "
-                        (text::num(totals.1)) " " (plural(totals.1, "entry", "entries")) " from "
-                        (text::num(totals.2)) " " (plural(totals.2, "member", "members"))
+                    div.rail-block {
+                        h2 { "This month" }
+                        (month)
                     }
                 }
             }
         }
+        (script())
     };
     Ok(ui::layout(&ctx, &page, "Giveaways", actions, body).into_response())
 }
 
-fn running_view(ctx: &Ctx, page: &Page, guild: u64, running: &[(Giveaway, i64)], faces: &[Vec<u64>], edit: bool) -> Markup {
+fn running_view(ctx: &Ctx, page: &Page, guild: u64, running: &[(Giveaway, i64)], faces: &[Vec<u64>], last_hour: i64, edit: bool) -> Markup {
     html! {
         @if let Some(((g, n), people)) = running.first().zip(faces.first()) {
-            (hero(ctx, page, guild, g, *n, people, edit))
+            (hero(ctx, page, guild, g, *n, people, last_hour, edit))
         } @else {
             (ui::empty(Icon::Gift, "Nothing running", "Start one with the button above or /giveaway start. Members enter with the button on the message."))
         }
         @if running.len() > 1 {
-            div.cm-also {
+            section.cm-block {
                 h2 { "Also running" }
-                div.cm-list {
-                    @for ((g, n), people) in running.iter().zip(faces).skip(1) {
-                        (row_running(ctx, page, guild, g, *n, people, edit))
+                div.gv-grid {
+                    @for (i, ((g, n), people)) in running.iter().zip(faces).skip(1).enumerate() {
+                        (card(ctx, page, guild, g, *n, people, i, edit))
                     }
                 }
             }
@@ -85,56 +112,95 @@ fn running_view(ctx: &Ctx, page: &Page, guild: u64, running: &[(Giveaway, i64)],
     }
 }
 
-/// The giveaway ending soonest, with its progress.
-fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64], edit: bool) -> Markup {
+/// The giveaway ending soonest: its prize, a clock counting down to the draw, how far along it
+/// is, and the latest faces to enter.
+#[allow(clippy::too_many_arguments)]
+fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64], last_hour: i64, edit: bool) -> Markup {
+    let secs = ((g.ends_at - now_ms()) / 1000).max(0);
+    let units = [(secs / 86_400, "d", "days"), (secs % 86_400 / 3600, "h", "hours"), (secs % 3600 / 60, "m", "min"), (secs % 60, "s", "sec")];
     html! {
-        article.cm-hero {
-            (tile(g, true))
-            div.cm-hero-body {
-                span.cm-chip.warn { (ui::icon(Icon::Clock)) (until("Ends in", g.ends_at)) }
-                h2.cm-hero-title { (g.prize) }
-                p.muted { (winners_text(g)) " · in " (channel_name(ctx, guild, g.channel_id)) " · started by " (ctx.display_name(guild, g.created_by)) ", " (text::ago(g.created_at)) }
-                div.cm-faces {
-                    (face_row(ctx, guild, people, 5))
-                    @let recent = ctx.db.with(|c| gw::entered_since(c, g.id, bot_core::now_ms() - 3_600_000)).unwrap_or(0);
-                    @if n == 0 { span { "No entries yet" } } @else {
-                        span {
-                            strong.mono { (text::num(n)) } " " (plural(n, "entry", "entries"))
-                            @if recent > 0 { ", " (text::num(recent)) " in the last hour" }
+        article.gv-hero {
+            (art(g, "big"))
+            div.gv-hero-body {
+                h2.gv-prize { (g.prize) }
+                div.gv-meta {
+                    span { (winners_text(g)) " · " (channel_name(ctx, guild, g.channel_id)) " ·" }
+                    span.gv-by {
+                        img.avatar src=(ctx.member_avatar(guild, g.created_by)) alt="" width="20" height="20" loading="lazy";
+                        span { "started by " strong { (ctx.display_name(guild, g.created_by)) } ", " (text::ago(g.created_at)) }
+                    }
+                    @if let Some(r) = g.required_role { span.gv-role { "Only " (role_name(ctx, guild, r)) } }
+                }
+                div.gv-clock data-ends=(g.ends_at) data-clock role="timer" aria-label=(until("Ends in", g.ends_at)) {
+                    // Units start at the first one that isn't zero; minutes and seconds always show.
+                    @for (i, (v, u, label)) in units.iter().enumerate() {
+                        @if i >= 2 || units[..=i].iter().any(|x| x.0 > 0) {
+                            div.gv-unit { b data-u=(u) { (format!("{v:02}")) } span { (label) } }
                         }
                     }
                 }
-                span.meter { span style=(format!("width:{}%", elapsed(g))) {} }
+                div.gv-time {
+                    span.meter { span style=(format!("width:{}%", elapsed(g))) {} }
+                    div.gv-time-cap {
+                        span { "Started " (text::ago(g.created_at)) }
+                        span { "Draws " strong { (when(page, g.ends_at)) } }
+                    }
+                }
+                div.gv-people {
+                    @if n == 0 {
+                        span { "No entries yet. Members join with Enter on the post." }
+                    } @else {
+                        (face_row(ctx, guild, people, 8))
+                        span {
+                            b data-count { (text::num(n)) } " " (plural(n, "entry", "entries"))
+                            @if last_hour > 0 { " · " (text::num(last_hour)) " in the last hour" }
+                        }
+                    }
+                }
                 div.cm-actions {
                     @if edit {
                         (edit_pop(page, g, true))
                         (ui::action_button(&page.path(&format!("community/giveaways/{}/end", g.id)), "End now", Tone::Muted, true))
                     }
-                    (open_link(page, g.channel_id, g.message_id, "Open in Discord"))
+                    (open_link(page, g.channel_id, g.message_id, false))
                 }
             }
         }
     }
 }
 
-fn row_running(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64], edit: bool) -> Markup {
+/// Another running giveaway, as a card in the grid.
+#[allow(clippy::too_many_arguments)]
+fn card(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64], i: usize, edit: bool) -> Markup {
     html! {
-        div.cm-row {
-            (tile(g, false))
-            div.cm-row-main {
-                strong.clip { (g.prize) }
-                span.muted.small {
-                    (until("Ends in", g.ends_at)) " · " (winners_text(g))
-                    @if let Some(r) = g.required_role { " · needs " (role_name(ctx, guild, r)) }
+        article.gv-card style={ "--i:" (i.min(8)) } {
+            div.gv-card-top {
+                (art(g, ""))
+                div.grow {
+                    strong title=(g.prize) { (g.prize) }
+                    span.muted { (winners_text(g)) " · " (channel_name(ctx, guild, g.channel_id)) }
                 }
+                (open_link(page, g.channel_id, g.message_id, true))
             }
-            (face_row(ctx, guild, people, 4))
-            span.cm-entries { (entries_text(n)) }
-            div.cm-row-actions {
-                (open_link(page, g.channel_id, g.message_id, "Open in Discord"))
-                @if edit {
-                    (edit_pop(page, g, false))
-                    (ui::action_button(&page.path(&format!("community/giveaways/{}/end", g.id)), "End now", Tone::Muted, true))
+            div.stack style="gap:8px" {
+                div.gv-left {
+                    span { (ui::icon(Icon::Clock)) (countdown("Ends in", g.ends_at)) }
+                    @if let Some(r) = g.required_role { span.gv-role { "Only " (role_name(ctx, guild, r)) } }
+                }
+                span.meter { span style=(format!("width:{}%", elapsed(g))) {} }
+            }
+            div.gv-card-foot {
+                div.gv-people {
+                    @if n == 0 { span { "No entries yet" } } @else {
+                        (face_row(ctx, guild, people, 4))
+                        span { b { (text::num(n)) } " " (plural(n, "entry", "entries")) }
+                    }
+                }
+                div.cm-actions {
+                    @if edit {
+                        (edit_pop(page, g, false))
+                        (ui::action_button(&page.path(&format!("community/giveaways/{}/end", g.id)), "End now", Tone::Muted, true))
+                    }
                 }
             }
         }
@@ -146,25 +212,25 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
         @if ended.is_empty() {
             (ui::empty(Icon::Trophy, "Nothing ended yet", "Finished giveaways and their winners show up here."))
         } @else {
-            div.cm-list {
-                @for (g, n) in ended {
-                    div.cm-row {
-                        (tile(g, false))
-                        div.cm-row-main {
-                            strong.clip { (g.prize) }
-                            span.muted.small { "Ended " (text::ago(g.finished_at())) " · " (channel_name(ctx, guild, g.channel_id)) " · " (winners_text(g)) }
-                        }
-                        div.cm-winners {
+            div.gv-done-list {
+                @for (i, (g, n)) in ended.iter().enumerate() {
+                    article.gv-done style={ "--i:" (i.min(8)) } {
+                        (art(g, "ended"))
+                        div.gv-done-main {
+                            strong title=(g.prize) { (g.prize) }
+                            span.muted { "Ended " (text::ago(g.finished_at())) " · " (channel_name(ctx, guild, g.channel_id)) " · " (winners_text(g)) " · " (entries_text(*n)) }
                             @if g.winner_ids.is_empty() {
-                                span.muted { "Nobody entered" }
+                                span.gv-nobody { "Nobody entered" }
                             } @else {
-                                (face_row(ctx, guild, &g.winner_ids, 4))
-                                span { (g.winner_ids.iter().map(|u| ctx.display_name(guild, *u)).collect::<Vec<_>>().join(", ")) }
+                                div.gv-won {
+                                    (ui::icon(Icon::Trophy))
+                                    (face_row(ctx, guild, &g.winner_ids, 5))
+                                    span { strong { (names(ctx, guild, &g.winner_ids)) } " won" }
+                                }
                             }
                         }
-                        span.cm-entries { (entries_text(*n)) }
-                        div.cm-row-actions {
-                            (open_link(page, g.channel_id, g.message_id, "Open in Discord"))
+                        div.gv-done-side {
+                            (open_link(page, g.channel_id, g.message_id, true))
                             @if edit && *n > (g.winner_ids.len() + g.passed_ids.len()) as i64 {
                                 (ui::action_button(&page.path(&format!("community/giveaways/{}/reroll", g.id)), "Reroll", Tone::Muted, false))
                             }
@@ -176,12 +242,57 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
     }
 }
 
-/// The prize tile: the creator's emoji, or the gift icon.
-fn tile(g: &Giveaway, big: bool) -> Markup {
+/// "Mira", "Mira and Kasia", "Mira, Kasia and bramble".
+fn names(ctx: &Ctx, guild: u64, users: &[u64]) -> String {
+    let all: Vec<String> = users.iter().map(|u| ctx.display_name(guild, *u)).collect();
+    match all.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => all.join(""),
+    }
+}
+
+/// The prize art: the creator's emoji on a glowing tile, or the gift icon.
+fn art(g: &Giveaway, class: &str) -> Markup {
     html! {
-        div.cm-tile.big[big] aria-hidden="true" {
-            @if g.emoji.is_empty() { (ui::icon(Icon::Gift)) } @else { span.cm-emoji { (g.emoji) } }
+        div class={ "gv-art " (class) } aria-hidden="true" {
+            @if g.emoji.is_empty() { (ui::icon(Icon::Gift)) } @else { span.gv-emoji { (g.emoji) } }
         }
+    }
+}
+
+/// The giveaway's post as members see it: the embed, and the Enter button while it runs.
+fn post_preview(ctx: &Ctx, guild: u64, g: &Giveaway, n: i64) -> Markup {
+    let title = if g.emoji.is_empty() { g.prize.clone() } else { format!("{} {}", g.emoji, g.prize) };
+    let color = if g.ended { NEUTRAL } else { CORAL };
+    html! {
+        div.cm-dc-embed style={ "--embed:#" (format!("{color:06x}")) } {
+            div.cm-dc-title { (text::clip(&title, 250)) }
+            @if g.ended {
+                div.cm-dc-desc { "Ended " span.cm-dc-ts { (discord_relative(g.finished_at())) } }
+                div.cm-dc-fields {
+                    div style="flex-basis:100%" {
+                        b { (if g.winner_ids.len() == 1 { "Winner" } else { "Winners" }) }
+                        span {
+                            @if g.winner_ids.is_empty() { "Nobody entered" }
+                            @for w in &g.winner_ids { span.cm-dc-ping { "@" (ctx.display_name(guild, *w)) } " " }
+                        }
+                    }
+                    div { b { "Entries" } span { (text::num(n)) } }
+                }
+            } @else {
+                div.cm-dc-desc {
+                    "Press Enter to join. Press it again to leave."
+                    @if let Some(r) = g.required_role { "\nOnly for " span.cm-dc-ping { (role_name(ctx, guild, r)) } "." }
+                }
+                div.cm-dc-fields {
+                    div { b { "Ends" } span { span.cm-dc-ts { (discord_relative(g.ends_at)) } } }
+                    div { b { "Winners" } span { (g.winners) } }
+                    div { b { "Entries" } span { (text::num(n)) } }
+                }
+            }
+            div.cm-dc-foot { "Giveaway #" (g.id) }
+        }
+        @if !g.ended { div.cm-dc-btns { span.cm-dc-btn.blurple { "Enter" } } }
     }
 }
 
@@ -236,10 +347,6 @@ fn winners_text(g: &Giveaway) -> String {
 
 fn entries_text(n: i64) -> String {
     format!("{} {}", text::num(n), plural(n, "entry", "entries"))
-}
-
-fn plural(n: i64, one: &'static str, many: &'static str) -> &'static str {
-    if n == 1 { one } else { many }
 }
 
 pub async fn create(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
