@@ -129,7 +129,7 @@ async fn queue_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
     let search = q.q.as_deref().map(str::trim).filter(|t| !t.is_empty());
     let shown: Vec<&Review> = open.iter().filter(|r| search.is_none_or(|t| matches_search(&ctx, guild, r, t))).collect();
     let redeemed = open.iter().filter(|r| r.redeemed_at.is_some()).count();
-    let longest = open.iter().map(|r| r.requested_at).min().map(|t| wait_words(now - t)).unwrap_or_else(|| "None".into());
+    let longest = open.iter().map(|r| r.eligible_at.unwrap_or(r.requested_at)).min().map(|t| wait_words(now - t)).unwrap_or_else(|| "None".into());
     let done_week = store::done_since(&ctx, guild, now - 7 * DAY_MS)?;
     let can_sync = conn.as_ref().is_some_and(|c| c.connected() && c.can_manage()) && s.reward_id.is_some();
     let actions = page.can_edit().then(|| {
@@ -245,7 +245,7 @@ fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, num
                             textarea.input id={ "notes-" (r.id) } name="notes" rows="4" placeholder="Profile link, what to look at" { (r.notes) }
                             div { button.btn.small.primary type="submit" { "Save notes" } }
                         }
-                        div.rv-pop-foot { (remove_button(page, r)) }
+                        div.rv-pop-foot { (remove_button(page, r, store::refundable(ctx, page.guild_id, r.id))) }
                     }))
                 }
             }
@@ -255,8 +255,8 @@ fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, num
 
 /// Remove, asking for a second click. With channel points, the second click says the points go
 /// back to the viewer.
-fn remove_button(page: &Page, r: &Review) -> Markup {
-    let confirm = if r.redemption_id.is_some() { "Click again to remove and refund the points" } else { "Click again to confirm" };
+fn remove_button(page: &Page, r: &Review, refundable: bool) -> Markup {
+    let confirm = if refundable { "Click again to remove and refund the points" } else { "Click again to confirm" };
     html! {
         form.inline method="post" action=(page.path(&format!("reviews/{}/remove", r.id))) {
             button.btn.small.danger type="submit" data-confirm=(confirm) { "Remove" }
@@ -310,7 +310,7 @@ async fn waitlist_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         (tabs(&ctx, &page, &s, "Waitlist")?)
         div.stack.rv-main {
             @if s.wait_days > 0 {
-                p.muted.small { "Someone who asks again within " (days(s.wait_days)) " of their last review waits here, and joins the queue on their own when the time is up, in the place they asked." }
+                p.muted.small { "Someone who asks again within " (days(s.wait_days)) " of their last review waits here, and joins the back of the queue on their own when the time is up." }
             } @else {
                 p.muted.small { "The waitlist is off, so new requests go straight to the queue. The ones still here join it at their time." }
             }
@@ -352,8 +352,9 @@ fn waitlist_row(ctx: &Ctx, page: &Page, r: &Review, now: i64) -> Markup {
                 div.rv-acts {
                     (ui::action_button(&page.path(&format!("reviews/{}/promote", r.id)), "Move to queue now", Tone::Muted, false))
                     (ui::pop("rv-pop", "More", None, "small", html! {
-                        p.help { "Removing takes them off the waitlist" @if r.redemption_id.is_some() { " and refunds their channel points" } "." }
-                        div { (remove_button(page, r)) }
+                        @let refundable = store::refundable(ctx, page.guild_id, r.id);
+                        p.help { "Removing takes them off the waitlist" @if refundable { " and refunds their channel points" } "." }
+                        div { (remove_button(page, r, refundable)) }
                     }))
                 }
             }
@@ -397,8 +398,8 @@ async fn done_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
                                 }
                                 @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
                             }
-                            // A removed redemption was refunded, so it doesn't go back.
-                            @if page.can_edit() && (r.status == "done" || r.redemption_id.is_none()) {
+                            // A request whose points were refunded doesn't go back.
+                            @if page.can_edit() && (r.status == "done" || !store::refunded(&ctx, guild, r.id)) {
                                 div.rv-acts { (ui::action_button(&page.path(&format!("reviews/{}/reopen", r.id)), "Back to queue", Tone::Muted, false)) }
                             }
                         }

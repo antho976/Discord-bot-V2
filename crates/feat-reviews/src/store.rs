@@ -109,7 +109,7 @@ pub fn open(ctx: &Ctx, guild: u64) -> Result<Vec<Review>> {
 
 fn open_in(c: &Connection, guild: u64) -> bot_core::rusqlite::Result<Vec<Review>> {
     let mut st = c.prepare(&format!(
-        "SELECT {COLS} FROM reviews WHERE guild_id = ?1 AND status = 'open' ORDER BY redeemed_at IS NULL, requested_at, id"
+        "SELECT {COLS} FROM reviews WHERE guild_id = ?1 AND status = 'open' ORDER BY redeemed_at IS NULL, COALESCE(eligible_at, requested_at), id"
     ))?;
     st.query_map([guild as i64], row)?.collect()
 }
@@ -147,6 +147,8 @@ pub fn last_done(c: &Connection, guild: u64, user: Option<u64>, viewer: Option<&
 }
 
 /// Move waitlisted requests whose time has come into the queue, keeping when they first asked.
+/// Requests whose wait is over join the queue. They queue from the time they became eligible,
+/// so the waitlist doesn't let a repeat asker pass people waiting for a first review.
 pub fn promote_due(ctx: &Ctx, now: i64) -> Result<usize> {
     ctx.db.with(|c| c.execute("UPDATE reviews SET status = 'open' WHERE status = 'waiting' AND eligible_at <= ?1", [now]))
 }
@@ -154,9 +156,36 @@ pub fn promote_due(ctx: &Ctx, now: i64) -> Result<usize> {
 /// The last 50 finished or removed, newest first.
 pub fn closed(ctx: &Ctx, guild: u64) -> Result<Vec<Review>> {
     ctx.db.with(|c| {
-        let mut st = c.prepare(&format!("SELECT {COLS} FROM reviews WHERE guild_id = ?1 AND status != 'open' ORDER BY closed_at DESC, id DESC LIMIT 50"))?;
+        let mut st = c.prepare(&format!("SELECT {COLS} FROM reviews WHERE guild_id = ?1 AND status IN ('done', 'removed') ORDER BY closed_at DESC, id DESC LIMIT 50"))?;
         st.query_map([guild as i64], row)?.collect()
     })
+}
+
+/// Whether removing this request would give channel points back: a redemption of it is still
+/// untouched on Twitch, or its fulfil hasn't gone through yet.
+pub fn refundable(ctx: &Ctx, guild: u64, review: i64) -> bool {
+    ctx.db
+        .with(|c| {
+            c.query_row(
+                "SELECT EXISTS (SELECT 1 FROM reviews_sources WHERE guild_id = ?1 AND review_id = ?2 AND kind = 'redemption' AND reward_id IS NOT NULL AND (twitch IS NULL OR twitch_pending = 1))",
+                params![guild as i64, review],
+                |r| r.get(0),
+            )
+        })
+        .unwrap_or(false)
+}
+
+/// Whether this request's channel points were given back, so it can't return to the queue.
+pub fn refunded(ctx: &Ctx, guild: u64, review: i64) -> bool {
+    ctx.db
+        .with(|c| {
+            c.query_row(
+                "SELECT EXISTS (SELECT 1 FROM reviews_sources WHERE guild_id = ?1 AND review_id = ?2 AND twitch = 'CANCELED')",
+                params![guild as i64, review],
+                |r| r.get(0),
+            )
+        })
+        .unwrap_or(false)
 }
 
 pub fn get(ctx: &Ctx, guild: u64, id: i64) -> Result<Option<Review>> {
@@ -429,11 +458,16 @@ pub fn claim(ctx: &Ctx, guild: u64, id: i64, to: Move, by: &str) -> Result<bool>
             "UPDATE reviews SET status = 'removed', closed_at = ?3, closed_by = ?4 WHERE guild_id = ?1 AND id = ?2 AND status IN ('open', 'waiting')",
             params![guild as i64, id, now_ms(), by],
         )?,
-        Move::Promote => tx.execute("UPDATE reviews SET status = 'open' WHERE guild_id = ?1 AND id = ?2 AND status = 'waiting'", params![guild as i64, id])?,
+        // Moved early, they queue from now, like everyone else from the waitlist.
+        Move::Promote => tx.execute(
+            "UPDATE reviews SET status = 'open', eligible_at = ?3 WHERE guild_id = ?1 AND id = ?2 AND status = 'waiting'",
+            params![guild as i64, id, now_ms()],
+        )?,
         Move::Reopen => {
             let n = tx.execute(
                 "UPDATE reviews SET status = 'open', closed_at = NULL, closed_by = NULL
-                 WHERE guild_id = ?1 AND id = ?2 AND (status = 'done' OR (status = 'removed' AND redemption_id IS NULL))",
+                 WHERE guild_id = ?1 AND id = ?2 AND (status = 'done' OR (status = 'removed' AND NOT EXISTS (
+                   SELECT 1 FROM reviews_sources x WHERE x.guild_id = ?1 AND x.review_id = ?2 AND x.twitch = 'CANCELED')))",
                 params![guild as i64, id],
             )?;
             if n > 0 {
@@ -603,7 +637,22 @@ mod tests {
         let points = Request { name: "Moonfrost".into(), twitch_user: Some("pavel_tv".into()), reward_id: Some("rw".into()), redemption_id: Some("rd1".into()), redeemed_at: Some(5), requested_at: 5, source: "twitch", ..Request::default() };
         let Added::New(paid) = add(&ctx, 1, &points, 0).unwrap() else { panic!("new") };
         assert!(claim(&ctx, 1, paid, Move::Remove, "Antho").unwrap());
+        // Removing cancels the redemption, as the page does: refunded, so it can't come back.
+        assert!(refundable(&ctx, 1, paid));
+        set_twitch(&ctx, 1, paid, "CANCELED").unwrap();
+        assert!(refunded(&ctx, 1, paid));
         assert!(!claim(&ctx, 1, paid, Move::Reopen, "Antho").unwrap());
+        // Completed and fulfilled, then back in the queue: removing it refunds nothing, and it
+        // can come back again.
+        let later = Request { name: "Kasia".into(), twitch_user: Some("kasia_plays".into()), reward_id: Some("rw".into()), redemption_id: Some("rd9".into()), redeemed_at: Some(6), requested_at: 6, source: "twitch", ..Request::default() };
+        let Added::New(done) = add(&ctx, 1, &later, 0).unwrap() else { panic!("new") };
+        assert!(claim(&ctx, 1, done, Move::Complete, "Antho").unwrap());
+        set_twitch(&ctx, 1, done, "FULFILLED").unwrap();
+        twitch_settled(&ctx, 1, "rd9").unwrap();
+        assert!(claim(&ctx, 1, done, Move::Reopen, "Antho").unwrap());
+        assert!(!refundable(&ctx, 1, done));
+        assert!(claim(&ctx, 1, done, Move::Remove, "Antho").unwrap());
+        assert!(claim(&ctx, 1, done, Move::Reopen, "Antho").unwrap());
     }
 
     #[test]
