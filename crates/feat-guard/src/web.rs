@@ -147,8 +147,8 @@ fn catch_row(ctx: &Ctx, page: &Page, guild: u64, c: &Catch) -> Markup {
                 div.gd-did { (did(ctx, c)) }
                 @if page.can_edit() && c.outcome.open() {
                     div.gd-actions {
-                        (ui::action_button(&page.path(&format!("{KEY}/catches/{}/release", c.id)), "Release as mistake", Tone::Muted, false))
-                        (ui::action_button(&page.path(&format!("{KEY}/catches/{}/ban", c.id)), "Ban", Tone::Bad, true))
+                        (decide_pop(page, c, Outcome::Released))
+                        (decide_pop(page, c, Outcome::Banned))
                     }
                 }
                 (decided(ctx, guild, c))
@@ -217,27 +217,61 @@ fn did(ctx: &Ctx, c: &Catch) -> Markup {
     }
 }
 
-/// Who released or banned the member, when it was done from the dashboard or the alert.
+/// Release or Ban, with an optional reason, in a small popover. The popover is the second step,
+/// so Ban needs no confirm click.
+fn decide_pop(page: &Page, c: &Catch, outcome: Outcome) -> Markup {
+    let ban = outcome == Outcome::Banned;
+    let (label, path, help) = if ban {
+        ("Ban", "ban", "Also deletes their messages from the last day.")
+    } else if c.outcome == Outcome::TimedOut {
+        ("Release as mistake", "release", "Lifts the timeout.")
+    } else {
+        ("Release as mistake", "release", "Marks the catch as a mistake.")
+    };
+    let class = if ban { "btn small danger" } else { "btn small" };
+    html! {
+        details.pop.gd-pop {
+            summary class=(class) { (label) }
+            div.pop-body {
+                form.stack method="post" action=(page.path(&format!("{KEY}/catches/{}/{path}", c.id))) {
+                    input.input type="text" name="reason" maxlength="300" placeholder="Reason, optional" aria-label="Reason, optional" autocomplete="off";
+                    div.gd-pop-foot {
+                        span.muted.small { (help) }
+                        button class=(class) type="submit" { (label) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Who released or banned the member, when, where and why.
 fn decided(ctx: &Ctx, guild: u64, c: &Catch) -> Markup {
     let verb = match c.outcome {
+        Outcome::Released if c.acted_in_discord => "removed the timeout in Discord",
         Outcome::Released => "released them as a mistake",
+        _ if c.acted_in_discord => "banned them in Discord",
         _ => "banned them",
     };
-    let done_in_discord = match c.outcome {
-        Outcome::Released => "Released in Discord.",
-        _ => "Banned in Discord.",
+    let nameless = match c.outcome {
+        Outcome::Released => "Timeout removed in Discord",
+        _ => "Banned in Discord",
     };
+    let when = c.acted_at.map(text::ago);
     html! {
         @if c.outcome.open() {
             p.muted.small { "Nobody has decided yet." }
         } @else {
-            @if let (Some(id), Some(by)) = (c.acted_by, &c.acted_by_name) {
-                div.gd-decided {
+            div.gd-decided {
+                @if let (Some(id), Some(by)) = (c.acted_by, &c.acted_by_name) {
                     img.avatar src=(ctx.member_avatar(guild, id)) alt="" width="18" height="18" loading="lazy";
-                    span { strong { (by) } " " (verb) "." }
+                    span { strong { (member_name(ctx, guild, id, by)) } " " (verb) @if let Some(w) = &when { span.muted { " · " (w) } } }
+                } @else {
+                    span.muted { (nameless) @if let Some(w) = &when { " · " (w) } }
                 }
-            } @else {
-                p.muted.small { (done_in_discord) }
+            }
+            @if let Some(reason) = &c.acted_reason {
+                p.gd-why { (reason) }
             }
         }
     }
@@ -245,10 +279,13 @@ fn decided(ctx: &Ctx, guild: u64, c: &Catch) -> Markup {
 
 /// The score, the threshold on a bar, and each signal with its points.
 fn test_rail(page: &Page, s: &Settings, test: Option<&str>, new: bool, repeat: bool, ads: bool) -> Markup {
+    // A new account is one a day old, or made today when the setting counts only that.
+    let young = if s.new_account_days > 1 { 1.0 } else { 0.5 };
+    let checks_age = s.new_account_days > 0;
     let result = test.map(|t| {
         let facts = Facts {
-            account_age_days: Some(if new { 1.0 } else { 365.0 }),
-            new_account_days: s.new_account_days.max(2),
+            account_age_days: Some(if new && checks_age { young } else { 365.0 }),
+            new_account_days: s.new_account_days,
             repeat_channels: if repeat { 3 } else { 1 },
             has_attachments: false,
             catch_ads: ads,
@@ -262,7 +299,9 @@ fn test_rail(page: &Page, s: &Settings, test: Option<&str>, new: bool, repeat: b
         form.stack id="test" method="get" action={ (page.path(KEY)) "#test" } {
             textarea.input name="test" rows="4" placeholder="free nitro for everyone https://..." { (test.unwrap_or_default()) }
             div.chips {
-                label.chip { input type="checkbox" name="new" value="1" checked[new]; span { "From a new account" } }
+                @if checks_age {
+                    label.chip { input type="checkbox" name="new" value="1" checked[new]; span { "From a new account" } }
+                }
                 label.chip { input type="checkbox" name="repeat" value="1" checked[repeat]; span { "Posted in 3 channels at once" } }
                 label.chip { input type="checkbox" name="ads" value="1" checked[ads]; span { "Count ads" } }
             }
@@ -272,14 +311,17 @@ fn test_rail(page: &Page, s: &Settings, test: Option<&str>, new: bool, repeat: b
             @let scale = v.score.max(20).max(threshold);
             div.stack style="gap:10px" {
                 div.gd-score {
-                    span { "Score " b.mono { (v.score) } " of " (threshold) " needed" }
+                    span { "Score " b.mono { (v.score) } span.muted { " · catches at " (threshold) } }
                     @if v.caught(s.strictness) {
                         (ui::badge("Would catch", Tone::Bad))
                     } @else {
                         (ui::badge("Not caught", Tone::Muted))
                     }
                 }
-                div.gd-gauge { span.gd-mark style={ "left:" (threshold * 100 / scale) "%" } {} }
+                div.gd-gauge role="img" aria-label={ "Score " (v.score) ", catches at " (threshold) } {
+                    span.gd-fill.over[v.caught(s.strictness)] style={ "width:" (v.score.clamp(0, scale) * 100 / scale) "%" } {}
+                    span.gd-mark style={ "left:" (threshold * 100 / scale) "%" } {}
+                }
                 p.muted.small { "The white line is where a message gets caught." }
                 @if v.signals.is_empty() {
                     p.muted.small { "Nothing suspicious in it." }
@@ -349,21 +391,24 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     Ok(saved(&page.path("guard/settings")))
 }
 
-async fn release(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
-    act(ctx, user, guild, id, Outcome::Released).await
+async fn release(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {
+    act(ctx, user, guild, id, Outcome::Released, form.get("reason")).await
 }
 
-async fn ban(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
-    act(ctx, user, guild, id, Outcome::Banned).await
+async fn ban(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {
+    act(ctx, user, guild, id, Outcome::Banned, form.get("reason")).await
 }
 
-async fn act(ctx: Ctx, user: User, guild: u64, id: i64, outcome: Outcome) -> WebResult {
+async fn act(ctx: Ctx, user: User, guild: u64, id: i64, outcome: Outcome, reason: Option<&str>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
-    let c = crate::resolve(&ctx, guild, id, outcome, page.user.id, &page.user.name, true).await.map_err(WebError::Bad)?;
-    let what = match outcome {
+    let c = crate::resolve(&ctx, guild, id, outcome, page.user.id, &page.user.name, reason, true).await.map_err(WebError::Bad)?;
+    let mut what = match outcome {
         Outcome::Banned => format!("Banned {} from a scam catch", c.user_name),
         _ => format!("Released {} from a scam catch as a mistake", c.user_name),
     };
+    if let Some(r) = &c.acted_reason {
+        what.push_str(&format!(": {r}"));
+    }
     ctx.audit(&page.user, Some(guild), KEY, what);
     Ok(saved(&page.path(KEY)))
 }
@@ -430,11 +475,18 @@ const STYLE: &str = r#"
 .gd-did span { display: inline-flex; align-items: center; gap: 6px; }
 .gd-did .icon { width: 14px; height: 14px; }
 .gd-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.gd-actions { position: relative; }
+.gd-pop { position: static; }
+.gd-pop .pop-body { left: 0; right: auto; width: 340px; }
+.gd-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .gd-decided { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2); }
 .gd-decided .avatar { width: 18px; height: 18px; }
+.gd-why { font-size: 12.5px; color: var(--ink-2); padding-left: 10px; border-left: 2px solid var(--edge-2); overflow-wrap: anywhere; }
 .gd-score { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
 .gd-score b { font-weight: 500; color: var(--ink); }
-.gd-gauge { position: relative; height: 6px; border-radius: 3px; margin: 6px 0 2px; background: linear-gradient(90deg, var(--waiting), var(--signal)); }
+.gd-gauge { position: relative; height: 6px; border-radius: 3px; margin: 6px 0 2px; background: var(--control); }
+.gd-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--waiting); }
+.gd-fill.over { background: var(--signal); }
 .gd-mark { position: absolute; top: -5px; bottom: -5px; width: 2px; border-radius: 1px; background: var(--ink); transform: translateX(-1px); }
 .gd-sigs { display: flex; flex-direction: column; }
 .gd-sig { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 8px 0; font-size: 13px; border-top: 1px solid var(--edge-1); }
