@@ -20,6 +20,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/tickets/settings", post(save_tickets))
         .route("/g/{guild}/tickets/panel", post(send_panel))
         .route("/g/{guild}/tickets/{number}/close", post(close_ticket))
+        .route("/g/{guild}/tickets/{number}/reopen", post(reopen_ticket))
         .route("/g/{guild}/tickets/starboard", get(starboard_page).post(save_starboard))
 }
 
@@ -212,6 +213,7 @@ fn ticket_row(ctx: &Ctx, page: &Page, guild: u64, t: &Ticket, now: i64) -> Marku
                 }
                 @if !t.details.is_empty() { p.tk-quote { "“" (text::clip(&t.details, 240)) "”" } }
                 @if let Some((who, said)) = &act.staff_reply { p.tk-reply { strong { (who) } ": " span { "“" (said) "”" } } }
+                @if let Some(reason) = t.reason.as_deref().filter(|_| !t.is_open()) { p.tk-reason { "Reason: " (reason) } }
                 div.tk-meta {
                     (name) " · opened " (text::ago(t.opened_at))
                     @if t.is_open() {
@@ -231,6 +233,7 @@ fn ticket_row(ctx: &Ctx, page: &Page, guild: u64, t: &Ticket, now: i64) -> Marku
                 div.tk-acts {
                     @if t.thread_id != 0 { a.btn.small href=(thread_url(guild, t.thread_id)) target="_blank" rel="noopener" { "Open thread" } }
                     @if page.can_edit() && t.is_open() { (ui::action_button(&page.path(&format!("tickets/{}/close", t.number)), "Close", Tone::Bad, true)) }
+                    @if page.can_edit() && t.can_reopen(now) { (ui::action_button(&page.path(&format!("tickets/{}/reopen", t.number)), "Reopen", Tone::Muted, false)) }
                 }
             }
         }
@@ -316,6 +319,13 @@ async fn close_ticket(State(ctx): State<Ctx>, user: User, Path((guild, number)):
     if tickets::close_from_dashboard(&ctx, guild, number, page.user.id).await? {
         ctx.audit(&page.user, Some(guild), KEY, format!("Closed ticket {number:04}"));
     }
+    Ok(saved(&page.path("tickets")))
+}
+
+async fn reopen_ticket(State(ctx): State<Ctx>, user: User, Path((guild, number)): Path<(u64, i64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    tickets::reopen_from_dashboard(&ctx, guild, number, page.user.id).await.map_err(WebError::Bad)?;
+    ctx.audit(&page.user, Some(guild), KEY, format!("Reopened ticket {number:04}"));
     Ok(saved(&page.path("tickets")))
 }
 
@@ -474,6 +484,7 @@ const CSS: &str = "
 .tk-reply { font-size: 13px; color: var(--ink-2); line-height: 1.45; }
 .tk-reply strong { color: var(--ink); font-weight: 500; }
 .tk-meta { font-size: 12px; color: var(--ink-3); }
+.tk-reason { font-size: 13px; color: var(--ink-2); }
 .tk-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
 .tk-acts { display: flex; gap: 6px; align-items: center; }
 .tk-mini { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; align-items: center; }

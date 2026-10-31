@@ -159,6 +159,26 @@ pub fn mark_closed(conn: &Connection, guild: u64, number: i64, by: Option<u64>, 
     Ok(n > 0)
 }
 
+/// Staff can reopen a ticket for this long after it closed.
+pub const REOPEN_DAYS: i64 = 7;
+
+impl Ticket {
+    /// Whether staff can still reopen it: closed in the last [`REOPEN_DAYS`], with a thread to go back to.
+    pub fn can_reopen(&self, now: i64) -> bool {
+        !self.is_open() && self.thread_id != 0 && self.closed_at.is_some_and(|at| now - at <= REOPEN_DAYS * DAY_MS)
+    }
+}
+
+/// Set a closed ticket open again. False when it was already open.
+pub fn mark_reopened(conn: &Connection, guild: u64, number: i64) -> bot_core::rusqlite::Result<bool> {
+    let n = conn.execute(
+        "UPDATE tickets SET status = 'open', closed_at = NULL, closed_by = NULL, close_reason = NULL
+         WHERE guild_id = ?1 AND number = ?2 AND status != 'open'",
+        params![guild as i64, number],
+    )?;
+    Ok(n > 0)
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub enum Filter {
     Open,
@@ -543,6 +563,29 @@ pub async fn close_from_dashboard(ctx: &Ctx, guild: u64, number: i64, by: u64) -
     Ok(true)
 }
 
+/// The dashboard's Reopen button: unarchive the thread, then count the ticket as open again.
+pub async fn reopen_from_dashboard(ctx: &Ctx, guild: u64, number: i64, by: u64) -> Result<(), String> {
+    let t = ctx.db.with(|c| by_number(c, guild, number)).map_err(|e| e.to_string())?.ok_or("That ticket doesn't exist.")?;
+    if t.is_open() {
+        return Ok(());
+    }
+    if !t.can_reopen(now_ms()) {
+        return Err(format!("Only tickets closed in the last {REOPEN_DAYS} days can be reopened."));
+    }
+    // Discord first: if the thread can't come back, the ticket stays closed.
+    if let Err(e) = ctx.http.update_thread(Id::new(t.thread_id)).archived(false).locked(false).await {
+        bot_core::tracing::warn!(guild, thread = t.thread_id, error = %e, "couldn't reopen a ticket thread");
+        return Err(if is_not_found(&e) {
+            "The ticket's thread was deleted, so it can't be reopened.".into()
+        } else {
+            "Couldn't unarchive the thread. The bot needs the Manage Threads permission in the ticket channel.".into()
+        });
+    }
+    ctx.db.with(|c| mark_reopened(c, guild, number)).map_err(|e| e.to_string())?;
+    let _ = ctx.say(t.thread_id, &format!("Reopened by <@{by}>.")).await;
+    Ok(())
+}
+
 async fn archive(ctx: &Ctx, thread: u64) {
     if let Err(e) = ctx.http.update_thread(Id::new(thread)).archived(true).locked(true).await {
         bot_core::tracing::warn!(thread, error = %e, "couldn't archive a closed ticket");
@@ -788,6 +831,25 @@ mod tests {
         mark_closed(&c, 1, 1, Some(10), None, CLOSED, 2000).unwrap();
         mark_closed(&c, 1, 2, Some(99), None, CLOSED, 2000).unwrap();
         assert_eq!(closers(&c, 1, 0, 5).unwrap(), vec![(99, 1)]);
+    }
+
+    #[test]
+    fn reopening_is_for_recent_closes_with_a_thread() {
+        let db = db();
+        let mut c = db.lock();
+        reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
+        set_thread(&c, 1, 1, 555).unwrap();
+        mark_closed(&c, 1, 1, Some(99), Some("done"), CLOSED, 2000).unwrap();
+        let t = by_number(&c, 1, 1).unwrap().unwrap();
+        assert!(t.can_reopen(2000 + REOPEN_DAYS * DAY_MS));
+        assert!(!t.can_reopen(2001 + REOPEN_DAYS * DAY_MS));
+        assert!(mark_reopened(&c, 1, 1).unwrap());
+        assert!(!mark_reopened(&c, 1, 1).unwrap());
+        let t = by_number(&c, 1, 1).unwrap().unwrap();
+        assert_eq!((t.status.as_str(), t.closed_at, t.closed_by, t.reason.as_deref()), (OPEN, None, None, None));
+        assert!(!t.can_reopen(3000));
+        // The member is at their limit again.
+        assert!(matches!(reserve(&mut c, 1, 10, "b", "", 1, 4000).unwrap(), Reserved::Full(555)));
     }
 
     #[test]

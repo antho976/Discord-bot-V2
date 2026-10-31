@@ -87,6 +87,14 @@ Ports for `bot preview`: core 3201, B 3202, C 3203, D 3204, E 3205.
       it on "Joined today".
 - [x] Starboard: clearing all reactions, or one emoji, from a message left the post with its old
       count. Both now update or take down the post.
+- [x] Tickets: staff can reopen a ticket closed in the last 7 days from the Closed tab (unarchives
+      the thread). Closed rows show the close reason and who closed it.
+- [ ] Levels: the Rewards tab with role colour dots, editing a reward's level or role in place, and
+      a warning on rewards the bot can no longer give (deleted role, or above the bot's role).
+- [ ] Welcome: previews and cards with long names, other scripts and no avatar; the Roles tab with
+      a deleted saved role.
+- [ ] Code review of all three crates: unwraps on Discord data, silent errors that matter, missing
+      tests (curve maths, invite attribution when two invites tick at once, ticket numbering).
 
 ### D: keen-tapir
 `crates/feat-guard`, `crates/feat-audit`, `crates/feat-connect`.
