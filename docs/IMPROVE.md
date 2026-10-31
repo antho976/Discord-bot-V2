@@ -90,6 +90,11 @@ Found and fixed along the way:
       brisk-otter). Actions that don't fit now drop under the title.
 - [x] `ui::rail_numbers` for the three-figure rail grid (community, pets; flagged by
       teal-marten).
+- [x] `Ctx::notify_once` and `discord::why_refused` / `why_refused_any`, copied into levels,
+      welcome and starboard (asked by the lead for keen-hare).
+- [x] From keen-tapir's review of #3: header popovers opened off the left edge at 390 px;
+      notices with no server had to be cleared once per server; `Ctx::known_name` so stored
+      names don't become "Unknown member".
 
 ### B: brisk-otter
 `crates/feat-alerts`, `crates/feat-utility`, `crates/feat-embeds`.
