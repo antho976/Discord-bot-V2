@@ -84,8 +84,12 @@ Found and fixed along the way:
 - [x] Activity log entries showed people's ids ("Changed access for 2000…").
 - [x] Overview: the 7/30 days switch wrapped at phone width; an empty server showed "On pace
       for 0" over a flat line.
-- [ ] `display_name` falls back to "User 123…" for members not in the cache, so an id can
-      render in notices and feeds. Needs a wording decision (lead).
+- [x] `display_name` fell back to "User 123…" for members not in the cache, so ids rendered
+      on the leaderboard and in notices. Now "Unknown member" (flagged by keen-hare).
+- [x] Page headers at phone width squeezed the title beside a status pill (flagged by
+      brisk-otter). Actions that don't fit now drop under the title.
+- [x] `ui::rail_numbers` for the three-figure rail grid (community, pets; flagged by
+      teal-marten).
 
 ### B: brisk-otter
 `crates/feat-alerts`, `crates/feat-utility`, `crates/feat-embeds`.
