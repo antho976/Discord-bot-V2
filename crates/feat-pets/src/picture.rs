@@ -10,7 +10,8 @@ use bot_core::axum::extract::{Path, State};
 use bot_core::axum::http::header;
 use bot_core::axum::response::IntoResponse;
 use bot_core::axum::routing::get;
-use bot_core::web::{WebError, WebResult};
+use bot_core::web::auth::MaybeUser;
+use bot_core::web::{Level, WebError, WebResult};
 
 use crate::{KEY, store};
 
@@ -21,13 +22,21 @@ pub fn routes() -> Router<Ctx> {
     Router::new().route("/p/{guild}/pet-pictures/{id}", get(serve))
 }
 
-/// Public like the collection page: the address carries when it changed, so it caches for good.
-async fn serve(State(ctx): State<Ctx>, Path((guild, id)): Path<(u64, String)>) -> WebResult {
-    if !ctx.guild_ids().contains(&guild) || !ctx.enabled(guild, KEY) {
+/// Public like the collection page while Pets is on. While it's off, staff who can see Pets on
+/// the dashboard still get them, so a catalog can be built before the feature is switched on.
+/// The address carries when it changed, so it caches for good.
+async fn serve(State(ctx): State<Ctx>, viewer: MaybeUser, Path((guild, id)): Path<(u64, String)>) -> WebResult {
+    if !ctx.guild_ids().contains(&guild) {
+        return Err(WebError::NotFound);
+    }
+    let public = ctx.enabled(guild, KEY);
+    if !public && !viewer.0.as_ref().is_some_and(|u| ctx.level(u, guild, KEY) >= Level::View) {
         return Err(WebError::NotFound);
     }
     let Some((mime, data)) = store::picture(&ctx, guild, &id)? else { return Err(WebError::NotFound) };
-    Ok(([(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, "public, max-age=31536000, immutable".to_owned())], data).into_response())
+    // Seen only by staff for now: no shared cache keeps a copy.
+    let cache = if public { "public, max-age=31536000, immutable" } else { "private, max-age=31536000, immutable" };
+    Ok(([(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, cache.to_owned())], data).into_response())
 }
 
 /// What kind of image these bytes are, from their first bytes. Anything else is refused.

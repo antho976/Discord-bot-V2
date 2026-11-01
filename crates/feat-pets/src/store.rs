@@ -201,10 +201,15 @@ pub fn pet(ctx: &Ctx, guild: u64, id: &str) -> Result<Option<Pet>> {
     ctx.db.with(|c| c.query_row(&format!("{PET_SELECT} WHERE c.guild_id = ?1 AND c.id = ?2"), params![guild as i64, id], pet_row).optional())
 }
 
+/// A name as two pets' names are compared: trimmed, ignoring case.
+pub fn name_key(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
 /// Another pet in the catalog with this name, ignoring case.
 pub fn name_taken(ctx: &Ctx, guild: u64, name: &str, except: Option<&str>) -> Result<Option<Pet>> {
-    let needle = name.trim().to_lowercase();
-    Ok(catalog(ctx, guild)?.into_iter().find(|p| p.name.trim().to_lowercase() == needle && Some(p.id.as_str()) != except))
+    let needle = name_key(name);
+    Ok(catalog(ctx, guild)?.into_iter().find(|p| name_key(&p.name) == needle && Some(p.id.as_str()) != except))
 }
 
 /// A pet by id, or by name when someone typed instead of picking a suggestion.
@@ -255,15 +260,24 @@ pub fn delete_category(ctx: &Ctx, guild: u64, name: &str) -> Result<bool> {
 
 /// A url-safe id from a name, unique in the server's catalog.
 pub fn new_pet_id(ctx: &Ctx, guild: u64, name: &str) -> Result<String> {
+    let ids: HashSet<String> = ctx.db.with(|c| {
+        let mut s = c.prepare_cached("SELECT id FROM pets_catalog WHERE guild_id = ?1")?;
+        s.query_map([guild as i64], |r| r.get(0))?.collect()
+    })?;
+    Ok(free_id(name, &ids))
+}
+
+/// A url-safe id from a name that isn't one of `taken`: "slime", then "slime-2", ...
+pub fn free_id(name: &str, taken: &HashSet<String>) -> String {
     let base = slug(name);
     let base = if base.is_empty() { "pet".to_owned() } else { base };
     let mut id = base.clone();
     let mut n = 2;
-    while pet(ctx, guild, &id)?.is_some() {
+    while taken.contains(&id) {
         id = format!("{base}-{n}");
         n += 1;
     }
-    Ok(id)
+    id
 }
 
 pub fn slug(name: &str) -> String {
@@ -899,6 +913,11 @@ mod tests {
         assert_eq!(slug("King Doot"), "king-doot");
         assert_eq!(slug("  Santa's Little Helper!! "), "santa-s-little-helper");
         assert_eq!(slug("???"), "");
+        let taken: HashSet<String> = ["slime".to_owned(), "slime-2".to_owned(), "pet".to_owned()].into();
+        assert_eq!(free_id("Slime", &taken), "slime-3");
+        assert_eq!(free_id("???", &taken), "pet-2");
+        assert_eq!(free_id("Frog", &taken), "frog");
+        assert_eq!(name_key("  King DOOT "), "king doot");
     }
 
     #[test]

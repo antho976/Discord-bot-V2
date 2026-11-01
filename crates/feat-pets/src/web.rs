@@ -180,6 +180,8 @@ span.pets-dc-av img { width: 22px; height: 22px; }
 .pets-pick:not(:has(input:checked)) img { filter: grayscale(1); }
 .pets-pick-art { display: grid; place-items: center; height: 52px; }
 .pets-pick-art img { max-width: 56px; max-height: 52px; object-fit: contain; }
+.pets-pick.off { cursor: default; }
+.pets-pick.off:hover { background: none; }
 .pets-pick-name { max-width: 100%; font-size: 12.5px; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; }
 .pets-io-foot { display: flex; justify-content: flex-end; padding-top: 4px; }
 
@@ -212,17 +214,6 @@ fn header_pop(label: &str, body: Markup) -> Markup {
         details.pop.pets-pop {
             summary.btn.primary aria-label=(label) { (ui::icon(Icon::Plus)) span.pets-pop-label { (label) } }
             div.pop-body { (body) }
-        }
-    }
-}
-
-/// A toast after a test was sent (`?sent=...` in the address).
-fn toast_if(show: bool, msg: &str) -> Markup {
-    html! {
-        @if show {
-            script { (PreEscaped(format!(
-                "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg:?});history.replaceState(history.state,'',location.pathname)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go):setTimeout(go)}})()"
-            ))) }
         }
     }
 }
@@ -445,7 +436,7 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
     let submitters = pending.iter().map(|p| p.user_id).collect::<HashSet<_>>().len() as i64;
     let body = html! {
         (tabs(&page, "Approvals", pending.len() as i64))
-        (toast_if(q.sent.is_some(), "Test DMs sent. Check your DMs."))
+        (ui::sent_toast(q.sent.is_some(), "Test DMs sent. Check your DMs."))
         div.with-rail {
             div.stack.pets-main {
                 (view::readings(&[
@@ -463,6 +454,8 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
                     form method="post" action=(approve) data-review-form {
                         // Enter in the reason box must not approve anything.
                         button type="submit" disabled hidden {}
+                        // What Approve all approves: the rows on this page, not ones sent since.
+                        @if edit { @for p in &pending { input type="hidden" name="shown" value=(p.id); } }
                         div.pets-list-head {
                             @if edit { label.pets-check { input #sel-all type="checkbox"; "Select all" } }
                             span { "Approved pets join the collection, credited to whoever submitted them." }
@@ -548,13 +541,15 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
     shell(&ctx, &page, None, body)
 }
 
-fn picked(ctx: &Ctx, guild: u64, form: &FormData) -> WebResult<Vec<i64>> {
+/// The submissions a review button names: one, the ticked ones, or all the page showed.
+fn picked(form: &FormData) -> WebResult<Vec<i64>> {
+    let list = |name: &str| form.all(name).into_iter().filter_map(|v| v.parse().ok()).collect();
     let ids: Vec<i64> = if form.bool("all") {
-        store::pending(ctx, guild)?.into_iter().map(|p| p.id).collect()
+        list("shown")
     } else if let Some(one) = form.i64("only") {
         vec![one]
     } else {
-        form.all("sel").into_iter().filter_map(|v| v.parse().ok()).collect()
+        list("sel")
     };
     if ids.is_empty() {
         return Err(WebError::Bad("Tick at least one submission first.".into()));
@@ -572,7 +567,7 @@ async fn reject(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form
 
 async fn review(ctx: Ctx, user: User, guild: u64, form: FormData, approve: bool) -> WebResult {
     let page = open(&ctx, &user, guild, Level::Edit)?;
-    let ids = picked(&ctx, guild, &form)?;
+    let ids = picked(&form)?;
     let reason = if approve { String::new() } else { text::clip(&form.string("reason"), 300) };
     let changed = store::review(&ctx, guild, &ids, approve, &page.user.name, &reason)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
@@ -1214,7 +1209,7 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
     };
     let body = html! {
         (tabs(&page, "Giveaways", waiting))
-        (toast_if(sent.is_some(), sent.unwrap_or_default()))
+        (ui::sent_toast(sent.is_some(), sent.unwrap_or_default()))
         div.with-rail {
             div.stack.pets-main {
                 (view::readings(&[
@@ -1368,13 +1363,13 @@ fn history_row(ctx: &Ctx, page: &Page, g: &Giveaway, image: Option<&str>, commen
 async fn test_post(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = open(&ctx, &user, guild, Level::Edit)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let Some(channel) = s.announce_channel else {
+    let Some((channel, to)) = s.announce_channel.and_then(|c| Some((c, Id::new_checked(c)?))) else {
         return Err(WebError::Bad("Pick a channel for confirmed giveaways and save first.".into()));
     };
     let (icon, name) = sample_pet(&ctx, guild)?;
     let content = format!("Test from the dashboard, nothing was given: {}", crate::announcement(page.user.id, page.user.id, &icon, &name));
     let nobody = AllowedMentions::default();
-    if let Err(e) = ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&nobody)).await {
+    if let Err(e) = ctx.http.create_message(to).content(&content).allowed_mentions(Some(&nobody)).await {
         bot_core::tracing::warn!(guild, channel, error = %e, "test pet announcement failed");
         return Err(WebError::Bad(bot_core::discord::why_refused(&e)));
     }
@@ -1578,6 +1573,10 @@ async fn add_ban(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, for
 
 async fn remove_ban(State(ctx): State<Ctx>, user: User, Path((guild, member)): Path<(u64, u64)>) -> WebResult {
     let page = open(&ctx, &user, guild, Level::Edit)?;
+    // 0 isn't a Discord id; nobody is banned under it.
+    if member == 0 {
+        return Err(WebError::NotFound);
+    }
     store::remove_ban(&ctx, guild, member)?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Unbanned {} from giving pets", ctx.display_name(guild, member)));
     Ok(saved(&page.path("pets/bans")))
@@ -1598,5 +1597,14 @@ mod tests {
         assert_eq!(changes(&old, &new, Some(true)), ["renamed it to Pirate Deckhand", "made it Rare", "gave it a new picture"]);
         assert!(changes(&old, &old, None).is_empty());
         assert!(haystack(&new).contains("pirate deckhand rare"));
+    }
+
+    #[test]
+    fn approve_all_takes_only_what_the_page_showed() {
+        let ids = |body: &str| picked(&FormData::parse(body.as_bytes())).ok();
+        assert_eq!(ids("shown=3&shown=5&all=1"), Some(vec![3, 5]));
+        assert_eq!(ids("shown=3&shown=5&sel=5"), Some(vec![5]));
+        assert_eq!(ids("shown=3&shown=5&only=3"), Some(vec![3]));
+        assert_eq!(ids("all=1"), None, "nothing shown, nothing approved");
     }
 }

@@ -12,7 +12,9 @@
 //!   `/afk_targets/<Name>.png` when that's missing.
 //!
 //! The list is kept for an hour and pictures until the bot restarts, so a check followed by an
-//! add downloads each picture once. Adding stores the picture like an upload: nothing hotlinks.
+//! add downloads each picture once. A picture that couldn't be read (a timeout, the site's own
+//! error) isn't kept, so the next check tries it again. Adding stores the picture like an
+//! upload: nothing hotlinks.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
@@ -66,7 +68,8 @@ struct Pic {
 #[derive(Default)]
 struct Cache {
     list: Option<(Instant, i64, Arc<Vec<SitePet>>)>,
-    /// By sprite name. `None`: tried, and the site had no usable picture.
+    /// By sprite name. `None`: the site has no usable picture, for sure. A picture that
+    /// couldn't be read isn't here at all.
     pics: HashMap<String, Option<Pic>>,
     /// The last check's failure per server, shown until the next check.
     errors: HashMap<u64, String>,
@@ -119,21 +122,41 @@ fn why(e: reqwest::Error) -> String {
     }
 }
 
+/// A GET that didn't bring the file back: what to tell staff, and whether the site said for
+/// sure there's nothing usable there (404, 410, or more than the bot accepts).
+struct Fail {
+    msg: String,
+    definite: bool,
+}
+
+impl Fail {
+    fn unsure(msg: String) -> Self {
+        Self { msg, definite: false }
+    }
+}
+
+impl From<Fail> for String {
+    fn from(f: Fail) -> String {
+        f.msg
+    }
+}
+
 /// GET a path on the site, refusing anything larger than `max` bytes.
-async fn fetch(client: &reqwest::Client, path: &str, max: usize) -> Result<Vec<u8>, String> {
-    let mut res = client.get(format!("{SITE}{path}")).send().await.map_err(why)?;
+async fn fetch(client: &reqwest::Client, path: &str, max: usize) -> Result<Vec<u8>, Fail> {
+    let mut res = client.get(format!("{SITE}{path}")).send().await.map_err(|e| Fail::unsure(why(e)))?;
     if res.url().host_str() != Some(HOST) {
-        return Err("idleontoolbox.com sent the bot to another site, so it stopped.".into());
+        return Err(Fail::unsure("idleontoolbox.com sent the bot to another site, so it stopped.".into()));
     }
+    let status = res.status().as_u16();
     if !res.status().is_success() {
-        return Err(format!("idleontoolbox.com answered {} for {path}.", res.status().as_u16()));
+        return Err(Fail { msg: format!("idleontoolbox.com answered {status} for {path}."), definite: matches!(status, 404 | 410) });
     }
-    let too_big = || format!("idleontoolbox.com sent more for {path} than the bot accepts.");
+    let too_big = || Fail { msg: format!("idleontoolbox.com sent more for {path} than the bot accepts."), definite: true };
     if res.content_length().is_some_and(|n| n > max as u64) {
         return Err(too_big());
     }
     let mut out = Vec::new();
-    while let Some(part) = res.chunk().await.map_err(why)? {
+    while let Some(part) = res.chunk().await.map_err(|e| Fail::unsure(why(e)))? {
         out.extend_from_slice(&part);
         if out.len() > max {
             return Err(too_big());
@@ -206,7 +229,8 @@ fn parse_pets(js: &str) -> Option<Vec<RawPet>> {
     const OPEN: &str = "JSON.parse('[{";
     for (at, _) in js.match_indices(OPEN) {
         let start = at + OPEN.len() - 2;
-        let head = &js[start..js.len().min(start + 400)];
+        // A cut inside a character (é, or the U+FFFD of a lossy read) would panic.
+        let head = &js[start..js.floor_char_boundary(start + 400)];
         if !head.contains("\"rawName\"") || !head.contains("\"effect\"") {
             continue;
         }
@@ -237,7 +261,7 @@ fn parse_groups(js: &str) -> Option<Vec<Group>> {
         Some(Ok(groups)) if !groups.is_empty() => Some(groups),
         // Inside a JavaScript string the quotes may be escaped; read the string's text instead.
         _ => {
-            let window = &rest[..rest.len().min(64 * 1024)];
+            let window = &rest[..rest.floor_char_boundary(64 * 1024)];
             let text = js_string(&format!("{window}'"))?;
             serde_json::Deserializer::from_str(&text).into_iter::<Vec<Group>>().next()?.ok().filter(|g| !g.is_empty())
         }
@@ -287,7 +311,7 @@ async fn read_list() -> Result<Vec<SitePet>, String> {
     let mut set = bot_core::tokio::task::JoinSet::new();
     let spawn = |set: &mut bot_core::tokio::task::JoinSet<Result<Vec<u8>, String>>, path: String| {
         let client = client.clone();
-        set.spawn(async move { fetch(&client, &path, 12 << 20).await });
+        set.spawn(async move { fetch(&client, &path, 12 << 20).await.map_err(String::from) });
     };
     for path in queue.by_ref().take(PARALLEL) {
         spawn(&mut set, path);
@@ -342,21 +366,43 @@ fn read_at() -> Option<i64> {
     cache().list.as_ref().filter(|(at, _, _)| at.elapsed() < KEEP).map(|(_, ms, _)| *ms)
 }
 
-/// A pet's picture from the site, stored the way an upload is checked.
-async fn read_picture(client: &reqwest::Client, p: &SitePet) -> Option<Pic> {
+/// What asking the site for a pet's picture came to.
+enum Found {
+    Pic(Pic),
+    /// The site has nothing usable, for sure: a 404, or a file that isn't a picture.
+    Missing,
+    /// It couldn't be read right now (a timeout, no connection, the site's own error).
+    Unsure,
+}
+
+/// One answer for a picture, checked the way an upload is.
+fn judge(got: Result<Vec<u8>, Fail>) -> Found {
+    match got {
+        Ok(bytes) => match picture::check(&bytes) {
+            Ok(mime) => Found::Pic(Pic { mime, data: Arc::new(bytes) }),
+            Err(_) => Found::Missing,
+        },
+        Err(f) if f.definite => Found::Missing,
+        Err(_) => Found::Unsure,
+    }
+}
+
+/// A pet's picture from the site: where the site draws it from, then its other folder.
+async fn read_picture(client: &reqwest::Client, p: &SitePet) -> Found {
     let mut paths = vec![format!("/monsters/{}/static.png", p.raw)];
     let underscored = p.name.replace(' ', "_");
     if safe(&underscored) {
         paths.push(format!("/afk_targets/{underscored}.png"));
     }
+    let mut unsure = false;
     for path in paths {
-        if let Ok(bytes) = fetch(client, &path, picture::MAX_BYTES).await
-            && let Ok(mime) = picture::check(&bytes)
-        {
-            return Some(Pic { mime, data: Arc::new(bytes) });
+        match judge(fetch(client, &path, picture::MAX_BYTES).await) {
+            Found::Pic(pic) => return Found::Pic(pic),
+            Found::Missing => {}
+            Found::Unsure => unsure = true,
         }
     }
-    None
+    if unsure { Found::Unsure } else { Found::Missing }
 }
 
 /// Download the pictures of these pets that aren't held yet.
@@ -368,7 +414,7 @@ async fn read_pictures(want: Vec<SitePet>) -> Result<(), String> {
     };
     let mut queue = todo.into_iter();
     let mut set = bot_core::tokio::task::JoinSet::new();
-    let spawn = |set: &mut bot_core::tokio::task::JoinSet<(String, Option<Pic>)>, p: SitePet| {
+    let spawn = |set: &mut bot_core::tokio::task::JoinSet<(String, Found)>, p: SitePet| {
         let client = client.clone();
         set.spawn(async move { (p.raw.clone(), read_picture(&client, &p).await) });
     };
@@ -376,8 +422,17 @@ async fn read_pictures(want: Vec<SitePet>) -> Result<(), String> {
         spawn(&mut set, p);
     }
     while let Some(done) = set.join_next().await {
-        if let Ok((raw, pic)) = done {
-            cache().pics.insert(raw, pic);
+        if let Ok((raw, found)) = done {
+            match found {
+                Found::Pic(pic) => {
+                    cache().pics.insert(raw, Some(pic));
+                }
+                Found::Missing => {
+                    cache().pics.insert(raw, None);
+                }
+                // Not kept, so the next check tries it again.
+                Found::Unsure => {}
+            }
         }
         if let Some(p) = queue.next() {
             spawn(&mut set, p);
@@ -388,6 +443,11 @@ async fn read_pictures(want: Vec<SitePet>) -> Result<(), String> {
 
 fn held_picture(raw: &str) -> Option<Pic> {
     cache().pics.get(raw).cloned().flatten()
+}
+
+/// The last check couldn't read this picture: it isn't known to be missing.
+fn picture_unread(raw: &str) -> bool {
+    !cache().pics.contains_key(raw)
 }
 
 // ---- comparing with a catalog ----
@@ -439,6 +499,36 @@ fn category_for(group: &str, cats: &[String]) -> String {
     cats.iter().find(|c| first(c) == first(group)).cloned().unwrap_or_else(|| group.to_owned())
 }
 
+/// The catalog entries for the ticked site pets. Names the catalog has are skipped, a name the
+/// site lists twice goes in once, and each id is free in the catalog and among the new ones.
+/// The catalog is read once for all of them.
+fn new_pets<'a>(ticked: impl IntoIterator<Item = &'a SitePet>, catalog: &[Pet], cats: &[String], guild: u64) -> Vec<(Pet, &'a SitePet)> {
+    let mut names: HashSet<String> = catalog.iter().map(|p| store::name_key(&p.name)).collect();
+    let mut ids: HashSet<String> = catalog.iter().map(|p| p.id.clone()).collect();
+    let mut out = Vec::new();
+    for s in ticked {
+        if !names.insert(store::name_key(&s.name)) {
+            continue;
+        }
+        let id = store::free_id(&s.name, &ids);
+        ids.insert(id.clone());
+        let pet = Pet {
+            id,
+            name: s.name.clone(),
+            emoji: String::new(),
+            category: category_for(&s.group, cats),
+            rarity: "common".into(),
+            description: String::new(),
+            bonus: s.bonus.clone(),
+            image: String::new(),
+            guild,
+            picture: None,
+        };
+        out.push((pet, s));
+    }
+    out
+}
+
 // ---- routes ----
 
 async fn check(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
@@ -478,25 +568,10 @@ async fn add(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: F
     }
     let catalog = store::catalog(&ctx, guild)?;
     let cats = store::categories(&ctx, guild)?;
+    // Compared with the catalog as it is now, whatever the list said a moment ago.
     let (missing, pictured) = compare(&site, &catalog);
     let mut added: Vec<String> = Vec::new();
-    for s in missing.into_iter().filter(|s| new.contains(s.raw.as_str())) {
-        // Names that already exist are skipped, whatever the list said a moment ago.
-        if store::name_taken(&ctx, guild, &s.name, None)?.is_some() {
-            continue;
-        }
-        let pet = Pet {
-            id: store::new_pet_id(&ctx, guild, &s.name)?,
-            name: s.name.clone(),
-            emoji: String::new(),
-            category: category_for(&s.group, &cats),
-            rarity: "common".into(),
-            description: String::new(),
-            bonus: s.bonus.clone(),
-            image: String::new(),
-            guild,
-            picture: None,
-        };
+    for (pet, s) in new_pets(missing.into_iter().filter(|s| new.contains(s.raw.as_str())), &catalog, &cats, guild) {
         store::save_pet(&ctx, guild, &pet)?;
         if let Some(p) = held_picture(&s.raw) {
             store::set_picture(&ctx, guild, &pet.id, p.mime, &p.data)?;
@@ -580,6 +655,9 @@ pub fn panel(page: &Page, catalog: &[Pet]) -> Markup {
         (n, _) => format!("{n} pets aren't in your catalog"),
     };
     let checked = format!("Checked {} on idleontoolbox.com.", text::ago(at));
+    let unread = missing.iter().copied().chain(pictures.iter().map(|(_, s)| *s)).filter(|s| picture_unread(&s.raw)).count();
+    // Only pictures the check has can be taken; the rest show without a tick box.
+    let takeable = pictures.iter().filter(|(_, s)| held_picture(&s.raw).is_some()).count();
     html! {
         section.pets-io #idleon {
             div.pets-io-head {
@@ -588,8 +666,10 @@ pub fn panel(page: &Page, catalog: &[Pet]) -> Markup {
                     p {
                         (checked)
                         @if !missing.is_empty() { " The site doesn't list rarity, so new pets start as Common. Change it from each pet." }
+                        @if unread > 0 { " " (unread_line(unread)) }
                     }
                 }
+                @if unread > 0 { form method="post" action=(again) { button.btn.small type="submit" { "Check again" } } }
                 a.btn.small.ghost href=(close) { "Close" }
             }
             @if !missing.is_empty() || !pictures.is_empty() {
@@ -602,7 +682,7 @@ pub fn panel(page: &Page, catalog: &[Pet]) -> Markup {
                             @for s in &missing {
                                 label.pets-pick data-tip={ (s.group) @if !s.bonus.is_empty() { ": " (s.bonus) } } {
                                     input type="checkbox" name="new" value=(s.raw) checked;
-                                    (pick_art(src(&s.raw).as_deref()))
+                                    (pick_art(src(&s.raw).as_deref(), picture_unread(&s.raw)))
                                     span.pets-pick-name { (s.name) }
                                 }
                             }
@@ -611,20 +691,29 @@ pub fn panel(page: &Page, catalog: &[Pet]) -> Markup {
                     @if !pictures.is_empty() {
                         div.pets-io-sub {
                             h3 { @if pictures.len() == 1 { "1 of your pets has no picture" } @else { (pictures.len()) " of your pets have no picture" } }
-                            label.pets-check { input type="checkbox" data-all="pic" checked; "Select all" }
+                            @if takeable > 0 { label.pets-check { input type="checkbox" data-all="pic" checked; "Select all" } }
                         }
                         div.pets-picks {
                             @for (p, s) in &pictures {
-                                label.pets-pick data-tip={ "Picture for " (p.name) } {
-                                    input type="checkbox" name="pic" value=(p.id) checked;
-                                    (pick_art(src(&s.raw).as_deref()))
-                                    span.pets-pick-name { (p.name) }
+                                @let art = src(&s.raw);
+                                @if art.is_some() {
+                                    label.pets-pick data-tip={ "Picture for " (p.name) } {
+                                        input type="checkbox" name="pic" value=(p.id) checked;
+                                        (pick_art(art.as_deref(), false))
+                                        span.pets-pick-name { (p.name) }
+                                    }
+                                } @else {
+                                    @let failed = picture_unread(&s.raw);
+                                    div.pets-pick.off data-tip=(if failed { "Its picture couldn't be fetched right now" } else { "idleontoolbox.com has no picture for it" }) {
+                                        (pick_art(None, failed))
+                                        span.pets-pick-name { (p.name) }
+                                    }
                                 }
                             }
                         }
                     }
                     div.pets-io-foot {
-                        button.btn.primary type="submit" data-label { (add_label(missing.len(), pictures.len())) }
+                        button.btn.primary type="submit" data-label { (add_label(missing.len(), takeable)) }
                     }
                 }
                 script { (PreEscaped(PANEL_JS)) }
@@ -633,14 +722,25 @@ pub fn panel(page: &Page, catalog: &[Pet]) -> Markup {
     }
 }
 
-fn pick_art(src: Option<&str>) -> Markup {
+/// A pick's picture, or why there's none: the site has none, or it couldn't be read just now.
+fn pick_art(src: Option<&str>, unread: bool) -> Markup {
     html! {
         span.pets-pick-art aria-hidden="true" {
             @match src {
                 Some(s) => img src=(s) alt="" loading="lazy";,
+                None if unread => span.muted.small { "Couldn't fetch" },
                 None => span.muted.small { "No picture" },
             }
         }
+    }
+}
+
+/// The panel's line about pictures the check couldn't read.
+fn unread_line(n: usize) -> String {
+    if n == 1 {
+        "1 picture couldn't be fetched right now. Check again to try it again.".into()
+    } else {
+        format!("{n} pictures couldn't be fetched right now. Check again to try them again.")
     }
 }
 
@@ -701,6 +801,63 @@ mod tests {
         assert_eq!(names, ["King Doot", "Slime", "Santas Little Helper", "Pirate Deckhand"]);
         assert_eq!(list[2].bonus, "+5% Santa's bonus");
         assert_eq!(list[2].group, "Exclusive Pets");
+    }
+
+    /// A character of two or three bytes across the 400-byte look-ahead used to panic and take
+    /// the bot down: é from the site, or the U+FFFD a lossy read puts in for bad bytes.
+    #[test]
+    fn a_character_across_the_look_ahead_is_fine() {
+        let start = JS.find("JSON.parse('[{").unwrap() + "JSON.parse('".len();
+        let at = JS.find("All_Divinities").unwrap() - start;
+        for c in ['é', '\u{fffd}'] {
+            for back in 1..c.len_utf8() {
+                let js = JS.replacen("All_Divinities", &format!("{}{c}All_Divinities", "x".repeat(400 - at - back)), 1);
+                assert!(!js.is_char_boundary(start + 400), "the character sits across the cut");
+                let pets = parse_pets(&js).expect("pet list");
+                assert!(pets[0].effect.contains(c));
+            }
+        }
+    }
+
+    /// The same for the 64 KiB window the sets are read from when their quotes are escaped.
+    #[test]
+    fn a_character_across_the_sets_window_is_fine() {
+        let head = r#"x=JSON.parse('{"companionGroups":"#;
+        let groups = r#"[{"name":"Santa\'s Pets","indices":[0,1]}],"pad":""#;
+        for c in ['é', '\u{fffd}'] {
+            for back in 1..c.len_utf8() {
+                let js = format!("{head}{groups}{}{c}\"}}')", "x".repeat(64 * 1024 - groups.len() - back));
+                assert!(!js.is_char_boundary(head.len() + 64 * 1024), "the character sits across the cut");
+                let got = parse_groups(&js).expect("groups");
+                assert_eq!((got[0].name.as_str(), got[0].indices.as_slice()), ("Santa's Pets", &[0, 1][..]));
+            }
+        }
+    }
+
+    #[test]
+    fn only_a_sure_answer_means_no_picture() {
+        let fail = |status: Option<u16>, definite| Err(Fail { msg: format!("{status:?}"), definite });
+        assert!(matches!(judge(Ok(b"\x89PNG\r\n\x1a\n....".to_vec())), Found::Pic(p) if p.mime == "image/png"));
+        assert!(matches!(judge(Ok(b"<!doctype html>".to_vec())), Found::Missing), "a page instead of a picture");
+        assert!(matches!(judge(fail(Some(404), true)), Found::Missing));
+        assert!(matches!(judge(fail(Some(503), false)), Found::Unsure), "the site's error is tried again");
+        assert!(matches!(judge(fail(None, false)), Found::Unsure), "a timeout is tried again");
+        assert!(pick_art(None, true).into_string().contains("Couldn't fetch"));
+        assert!(pick_art(None, false).into_string().contains("No picture"));
+        assert_eq!(unread_line(2), "2 pictures couldn't be fetched right now. Check again to try them again.");
+    }
+
+    #[test]
+    fn new_pets_read_the_catalog_once() {
+        let site = |name: &str, raw: &str| SitePet { name: name.into(), raw: raw.into(), group: "Legacy Pets".into(), bonus: "+1% x".into() };
+        let ticked = [site("Glimbo", "a"), site("glimbo", "b"), site("Slime", "c"), site("Glimbo!", "d")];
+        let catalog = [pet("glimbo", "Glimbo Classic", ""), pet("slime", "Slime", "")];
+        let cats = ["Legacy Companions".to_owned()];
+        let out = new_pets(&ticked, &catalog, &cats, 1);
+        let got: Vec<(&str, &str, &str)> = out.iter().map(|(p, s)| (p.id.as_str(), p.name.as_str(), s.raw.as_str())).collect();
+        // Slime is in the catalog; the second Glimbo is the same name; ids never collide.
+        assert_eq!(got, [("glimbo-2", "Glimbo", "a"), ("glimbo-3", "Glimbo!", "d")]);
+        assert_eq!((out[0].0.category.as_str(), out[0].0.bonus.as_str()), ("Legacy Companions", "+1% x"));
     }
 
     #[test]

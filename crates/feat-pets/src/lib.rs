@@ -479,10 +479,10 @@ pub(crate) fn announce_recorded(ctx: &Ctx, guild: u64, g: &Giveaway) {
 /// Post a confirmed giveaway in the announce channel, mentioning both.
 pub(crate) async fn announce_confirmed(ctx: &Ctx, guild: u64, g: &Giveaway) {
     let Ok(s) = ctx.settings::<Settings>(guild, KEY) else { return };
-    let Some(channel) = s.announce_channel else { return };
+    let Some((channel, to)) = s.announce_channel.and_then(|c| Some((c, Id::new_checked(c)?))) else { return };
     let content = announcement(g.giver_id, g.winner_id, g.icon(), &g.pet_name);
-    let mentions = AllowedMentions { users: vec![Id::new(g.giver_id), Id::new(g.winner_id)], ..Default::default() };
-    if let Err(e) = ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&mentions)).await {
+    let mentions = AllowedMentions { users: [g.giver_id, g.winner_id].into_iter().filter_map(Id::new_checked).collect(), ..Default::default() };
+    if let Err(e) = ctx.http.create_message(to).content(&content).allowed_mentions(Some(&mentions)).await {
         bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post a confirmed pet giveaway");
     }
 }
