@@ -579,7 +579,15 @@ impl Audit {
 
     /// Remember the entry for the dashboard and queue the embed for its channel.
     fn emit(&self, ctx: &Ctx, s: &Settings, item: Item) {
-        let Some(target) = s.route(item.kind) else { return };
+        if let Some(target) = self.queue(ctx, s, item) {
+            let (ctx, batcher) = (ctx.clone(), self.batcher.clone());
+            bot_core::tokio::spawn(async move { flush(ctx, batcher, target).await });
+        }
+    }
+
+    /// Store the entry and queue its post. The channel to flush when this started a new batch.
+    fn queue(&self, ctx: &Ctx, s: &Settings, item: Item) -> Option<u64> {
+        let target = s.route(item.kind)?;
         // The name the post shows, so the page and the channel agree: a member who left or was
         // banned is named from the event, not "Unknown member".
         let name = match (&item.embed.author, item.user) {
@@ -600,10 +608,7 @@ impl Audit {
             }
             _ => None,
         };
-        if self.batcher.push(target, item.kind, item.embed, who) {
-            let (ctx, batcher) = (ctx.clone(), self.batcher.clone());
-            bot_core::tokio::spawn(async move { flush(ctx, batcher, target).await });
-        }
+        self.batcher.push(target, item.kind, item.embed, who).then_some(target)
     }
 }
 
@@ -1325,9 +1330,10 @@ mod tests {
         ctx.db
             .with(|c| c.execute("INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, channel_id) VALUES (1, ?1, 9, 'delete', 5, 20)", [now_ms()]))
             .unwrap();
-        audit.emit(&ctx, &s, item(5));
-        audit.emit(&ctx, &s, item(5));
-        audit.emit(&ctx, &s, item(6));
+        // Queued without the flush task, which would post (and drain) them while this waits.
+        audit.queue(&ctx, &s, item(5));
+        audit.queue(&ctx, &s, item(5));
+        audit.queue(&ctx, &s, item(6));
         // Their posts wait for entries until a few seconds after the events; pretend that's now.
         attribute(&ctx, &audit.batcher, 10).await;
         let by = |q: &batch::Queued| q.embed.fields.iter().find(|f| f.name == "By").map(|f| f.value.clone());
