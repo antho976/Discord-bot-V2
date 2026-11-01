@@ -5,7 +5,7 @@ use bot_core::web::ui;
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 
-use super::{TabQuery, discord_message, dm_refused, month_start, open_link, plural, rail_figures, sent_toast, style};
+use super::{TabQuery, discord_message, dm_refused, month_start, open_link, plural, rail_figures, style};
 use crate::suggestions::{self as sg, Status, Suggestion, Tally};
 use crate::{KEY, Settings};
 
@@ -128,7 +128,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             }
         }
     };
-    let main = html! { (main) (sent_toast(&q, "Test sent to your DMs")) };
+    let main = html! { (main) (ui::sent_toast(q.sent.is_some(), "Test sent to your DMs")) };
     Ok(ui::layout(&ctx, &page, "Suggestions", None, main).into_response())
 }
 

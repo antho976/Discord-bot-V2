@@ -7,7 +7,9 @@ use std::time::Instant;
 use bot_core::rusqlite::{Connection, OptionalExtension, params};
 use bot_core::twilight_http::error::ErrorType;
 use bot_core::twilight_http::request::channel::reaction::RequestReactionType;
-use bot_core::twilight_model::channel::Message;
+use bot_core::twilight_model::channel::permission_overwrite::{PermissionOverwrite, PermissionOverwriteType};
+use bot_core::twilight_model::channel::{ChannelType, Message};
+use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::channel::message::{AllowedMentions, EmojiReactionType};
 use bot_core::twilight_model::id::marker::{ChannelMarker, EmojiMarker, GuildMarker, MessageMarker};
 use bot_core::twilight_model::id::Id;
@@ -205,6 +207,10 @@ pub async fn on_reaction(
     if channel.get() == star_channel || s.star_ignored.contains(&channel.get()) {
         return Ok(());
     }
+    let star_nsfw = ctx.cache.channel(Id::new(star_channel)).is_some_and(|c| c.nsfw.unwrap_or(false));
+    if !place_of(ctx, guild, channel).is_some_and(|p| may_repost(&p, star_channel, star_nsfw, &s.star_ignored)) {
+        return Ok(());
+    }
     let Some(wanted) = parse_emoji(&s.star_emoji) else { return Ok(()) };
     if emoji.is_some_and(|e| !wanted.matches(e)) {
         return Ok(());
@@ -214,6 +220,62 @@ pub async fn on_reaction(
         bot_core::tracing::warn!(guild, message = message.get(), error = %e, "couldn't update the starboard");
     }
     Ok(())
+}
+
+/// Where a starred message is, as far as the starboard cares.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Place {
+    /// The channel, or for a thread the channel it's in.
+    pub channel: u64,
+    /// A private thread, like a ticket.
+    pub private_thread: bool,
+    /// @everyone can't see the channel (a thread's parent).
+    pub hidden: bool,
+    /// The channel (a thread's parent) is age-restricted.
+    pub nsfw: bool,
+}
+
+/// Whether a message may be reposted: the starboard is public to the server, so nothing from a
+/// private thread or a channel @everyone can't see, nothing age-restricted unless the starboard
+/// is too, and nothing from the starboard or an ignored channel, threads included.
+pub fn may_repost(p: &Place, star_channel: u64, star_nsfw: bool, ignored: &[u64]) -> bool {
+    p.channel != star_channel && !ignored.contains(&p.channel) && !p.private_thread && !p.hidden && (!p.nsfw || star_nsfw)
+}
+
+/// Where a message is, from the cache. The cache holds every channel and every thread the bot
+/// can see (active ones arrive with the server, new ones as they're made), so None, a channel
+/// it doesn't know, means no repost rather than a guess.
+fn place_of(ctx: &Ctx, guild: u64, channel: Id<ChannelMarker>) -> Option<Place> {
+    let base = ctx.cache.role(Id::new(guild)).map(|r| r.permissions).unwrap_or_else(Permissions::empty);
+    // One cache entry at a time: the first is let go before the parent is read.
+    let (kind, parent_id) = ctx.cache.channel(channel).map(|c| (c.kind, c.parent_id))?;
+    let thread = matches!(kind, ChannelType::PublicThread | ChannelType::PrivateThread | ChannelType::AnnouncementThread);
+    let private_thread = kind == ChannelType::PrivateThread;
+    let parent = ctx.cache.channel(if thread { parent_id? } else { channel })?;
+    Some(Place {
+        channel: parent.id.get(),
+        private_thread,
+        hidden: !everyone_sees(base, parent.permission_overwrites.as_deref().unwrap_or_default(), guild),
+        nsfw: parent.nsfw.unwrap_or(false),
+    })
+}
+
+/// @everyone's view of a channel: the role's permissions, then the channel's overwrite for
+/// @everyone (the role shares the server's id).
+fn everyone_sees(base: Permissions, overwrites: &[PermissionOverwrite], guild: u64) -> bool {
+    if base.contains(Permissions::ADMINISTRATOR) {
+        return true;
+    }
+    let mut view = base.contains(Permissions::VIEW_CHANNEL);
+    if let Some(o) = overwrites.iter().find(|o| o.kind == PermissionOverwriteType::Role && o.id.get() == guild) {
+        if o.deny.contains(Permissions::VIEW_CHANNEL) {
+            view = false;
+        }
+        if o.allow.contains(Permissions::VIEW_CHANNEL) {
+            view = true;
+        }
+    }
+    view
 }
 
 /// Fetch the message and its star count, then post, update or take down its starboard post.
@@ -396,6 +458,37 @@ pub async fn test_post(ctx: &Ctx, s: &Settings, who: &str, avatar: &str) -> bot_
     Ok(())
 }
 
+/// Discord refuses an embed field longer than this.
+const FIELD_MAX: usize = 1024;
+
+/// The Attachments field: a link per file, five at most, while they fit in a field, then
+/// "and N more". Signed attachment links run 200 characters and more, so a few fill it.
+fn attachments_field(files: &[(&str, &str)]) -> Option<String> {
+    // Discord counts UTF-16 units; counting them never undercounts.
+    let len = |s: &str| s.encode_utf16().count();
+    let more_line = |n: usize| format!("and {n} more");
+    let mut lines: Vec<String> = Vec::new();
+    let mut used = 0;
+    for (i, (name, url)) in files.iter().enumerate().take(5) {
+        let line = format!("[{}]({})", text::clip(name, 60), url);
+        let after = files.len() - i - 1;
+        // This line, and the "and N more" line in case nothing more fits after it.
+        let need = used + usize::from(!lines.is_empty()) + len(&line) + if after > 0 { 1 + len(&more_line(after)) } else { 0 };
+        if need > FIELD_MAX {
+            break;
+        }
+        used += usize::from(!lines.is_empty()) + len(&line);
+        lines.push(line);
+    }
+    let left = files.len() - lines.len();
+    match (lines.is_empty(), left) {
+        (true, 0) => None,
+        (true, n) => Some(if n == 1 { "1 file".to_owned() } else { format!("{n} files") }),
+        (false, 0) => Some(lines.join("\n")),
+        (false, n) => Some(format!("{}\n{}", lines.join("\n"), more_line(n))),
+    }
+}
+
 fn build_embed(guild: u64, m: &Message) -> bot_core::twilight_model::channel::message::Embed {
     let name = m
         .member
@@ -415,9 +508,9 @@ fn build_embed(guild: u64, m: &Message) -> bot_core::twilight_model::channel::me
     if let Some(Ok(source)) = image_of(m).map(ImageSource::url) {
         embed = embed.image(source);
     }
-    let files: Vec<String> = m.attachments.iter().filter(|a| !is_image(a)).take(5).map(|a| format!("[{}]({})", text::clip(&a.filename, 60), a.url)).collect();
-    if !files.is_empty() {
-        embed = embed.field(EmbedFieldBuilder::new("Attachments", files.join("\n")));
+    let files: Vec<(&str, &str)> = m.attachments.iter().filter(|a| !is_image(a)).map(|a| (a.filename.as_str(), a.url.as_str())).collect();
+    if let Some(value) = attachments_field(&files) {
+        embed = embed.field(EmbedFieldBuilder::new("Attachments", value));
     }
     embed = embed.field(EmbedFieldBuilder::new("Source", format!("[Jump to message](https://discord.com/channels/{guild}/{}/{})", m.channel_id, m.id)));
     embed.build()
@@ -614,6 +707,73 @@ mod tests {
         assert!(custom.matches(&EmojiReactionType::Custom { animated: false, id: Id::new(5), name: None }));
         assert!(!custom.matches(&EmojiReactionType::Custom { animated: false, id: Id::new(6), name: None }));
         assert!(!custom.matches(&EmojiReactionType::Unicode { name: "⭐".into() }));
+    }
+
+    #[test]
+    fn only_public_places_reach_the_starboard() {
+        let open = Place { channel: 10, private_thread: false, hidden: false, nsfw: false };
+        assert!(may_repost(&open, 99, false, &[]));
+        // The starboard itself, an ignored channel (or a thread in one, which carries its parent).
+        assert!(!may_repost(&Place { channel: 99, ..open.clone() }, 99, false, &[]));
+        assert!(!may_repost(&open, 99, false, &[10]));
+        // A ticket, a staff channel, an age-restricted channel on an ordinary starboard.
+        assert!(!may_repost(&Place { private_thread: true, ..open.clone() }, 99, false, &[]));
+        assert!(!may_repost(&Place { hidden: true, ..open.clone() }, 99, false, &[]));
+        assert!(!may_repost(&Place { nsfw: true, ..open.clone() }, 99, false, &[]));
+        assert!(may_repost(&Place { nsfw: true, ..open }, 99, true, &[]));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn places_come_from_the_cache_with_threads_under_their_parent() {
+        use bot_core::twilight_model::gateway::event::Event;
+        use bot_core::twilight_model::gateway::payload::incoming::ChannelCreate;
+        let ctx = Ctx::new(bot_core::Config::preview(0), Db::memory().unwrap()).unwrap();
+        let everyone = bot_core::serde_json::json!({"guild_id": "1", "role": {"id": "1", "name": "@everyone", "color": 0, "colors": {"primary_color": 0}, "hoist": false, "managed": false, "mentionable": false, "permissions": (1u64 << 10).to_string(), "position": 0, "flags": 0}});
+        ctx.cache.update(&Event::RoleCreate(bot_core::serde_json::from_value(everyone).unwrap()));
+        // 10 public, 11 hidden from @everyone, 12 age-restricted; 500 a public thread in 11,
+        // 501 a private thread in 10, 502 a public thread in 10.
+        let deny_view = bot_core::serde_json::json!([{"id": "1", "type": 0, "allow": "0", "deny": (1u64 << 10).to_string()}]);
+        let none = bot_core::serde_json::json!([]);
+        for (id, kind, parent, overwrites, nsfw) in
+            [(10u64, 0u8, None, &none, false), (11, 0, None, &deny_view, false), (12, 0, None, &none, true), (500, 11, Some(11u64), &none, false), (501, 12, Some(10), &none, false), (502, 11, Some(10), &none, false)]
+        {
+            let channel = bot_core::serde_json::json!({
+                "id": id.to_string(), "type": kind, "name": "x", "guild_id": "1", "parent_id": parent.map(|p| p.to_string()), "nsfw": nsfw,
+                "permission_overwrites": overwrites, "thread_metadata": {"archived": false, "auto_archive_duration": 60, "archive_timestamp": "2026-01-01T00:00:00.000000+00:00", "locked": false}
+            });
+            ctx.cache.update(&Event::ChannelCreate(Box::new(ChannelCreate(bot_core::serde_json::from_value(channel).unwrap()))));
+        }
+        let place = |id: u64| place_of(&ctx, 1, Id::new(id));
+        assert_eq!(place(10), Some(Place { channel: 10, private_thread: false, hidden: false, nsfw: false }));
+        assert!(place(11).unwrap().hidden && place(12).unwrap().nsfw);
+        assert_eq!(place(500), Some(Place { channel: 11, private_thread: false, hidden: true, nsfw: false }));
+        assert_eq!(place(501), Some(Place { channel: 10, private_thread: true, hidden: false, nsfw: false }));
+        // Ignoring 10 covers its threads.
+        assert!(may_repost(&place(10).unwrap(), 99, false, &[]));
+        assert!(!may_repost(&place(502).unwrap(), 99, false, &[10]));
+        // Unknown to the cache: no repost.
+        assert_eq!(place(999), None);
+    }
+
+    #[test]
+    fn attachment_links_fit_in_one_field() {
+        let url = format!("https://cdn.discordapp.com/attachments/1/2/report.pdf?ex=1&is=2&hm={}", "a".repeat(180));
+        let files: Vec<(&str, &str)> = (0..7).map(|_| ("report.pdf", url.as_str())).collect();
+        let field = attachments_field(&files).unwrap();
+        assert!(field.encode_utf16().count() <= FIELD_MAX, "{}", field.len());
+        let links = field.lines().filter(|l| l.starts_with('[')).count();
+        assert!((1..5).contains(&links), "{links}");
+        assert_eq!(field.lines().last().unwrap(), format!("and {} more", 7 - links));
+        // Short links: up to five, then the rest counted.
+        let short: Vec<(&str, &str)> = (0..7).map(|_| ("a.txt", "https://x/a.txt")).collect();
+        let field = attachments_field(&short).unwrap();
+        assert_eq!(field.lines().count(), 6);
+        assert!(field.ends_with("and 2 more"));
+        assert_eq!(attachments_field(&short[..2]).unwrap(), "[a.txt](https://x/a.txt)\n[a.txt](https://x/a.txt)");
+        assert_eq!(attachments_field(&[]), None);
+        // One link too long for a field on its own.
+        let huge = "x".repeat(2000);
+        assert_eq!(attachments_field(&[("a", huge.as_str())]).unwrap(), "1 file");
     }
 
     fn post(message: u64, stars: i64, created: i64) -> Post {

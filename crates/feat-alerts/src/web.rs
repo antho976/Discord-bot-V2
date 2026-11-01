@@ -87,16 +87,6 @@ fn month_start(tz: &TimeZone, now: i64) -> i64 {
     today.first_of_month().to_zoned(tz.clone()).map(|z| z.timestamp().as_millisecond()).unwrap_or(0)
 }
 
-fn toast_if(q: &HashMap<String, String>, key: &str, msg: &str) -> Markup {
-    html! {
-        @if q.contains_key(key) {
-            script { (PreEscaped(format!(
-                "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg:?});history.replaceState(history.state,'',location.pathname)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go):setTimeout(go)}})()"
-            ))) }
-        }
-    }
-}
-
 // ---- Twitch helpers ----
 
 /// Weeks in the "Hours streamed" chart, this one last.
@@ -598,7 +588,7 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Twitch"))
-        (toast_if(&q, "sent", "Test alert sent"))
+        (ui::sent_toast(q.contains_key("sent"), "Test alert sent"))
         div.with-rail {
             div.stack.sa-main {
                 @if mode == Mode::Off {
@@ -879,7 +869,7 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Schedule"))
-        (toast_if(&q, "sent", "Test sent. It uses the saved settings."))
+        (ui::sent_toast(q.contains_key("sent"), "Test sent. It uses the saved settings."))
         @if bs.is_empty() {
             (ui::empty(Icon::Calendar, "No Twitch channel yet", "Add your channel on the Twitch tab and its schedule shows up here."))
         } @else if let Some(g) = next {
@@ -1205,7 +1195,7 @@ async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Clips"))
-        (toast_if(&q, "sent", "Test post sent"))
+        (ui::sent_toast(q.contains_key("sent"), "Test post sent"))
         @if mode == Mode::Off {
             div.sa-note {
                 span.need-icon { (ui::icon(Icon::Plug)) }
@@ -1324,7 +1314,7 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "YouTube"))
-        (toast_if(&q, "sent", "Test post sent"))
+        (ui::sent_toast(q.contains_key("sent"), "Test post sent"))
         section.block {
             div.sa-sechead {
                 div {

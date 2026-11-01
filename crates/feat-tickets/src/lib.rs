@@ -177,7 +177,10 @@ impl Feature for Tickets {
                 if let (Some(guild), Some(meta)) = (t.guild_id, &t.thread_metadata)
                     && meta.archived
                 {
-                    tickets::on_thread_gone(ctx, guild.get(), t.id.get(), "The thread was archived in Discord")?;
+                    let last = t.last_message_id.map_or(0, |m| tickets::snowflake_ms(m.get())).max(tickets::snowflake_ms(t.id.get()));
+                    let at = meta.archive_timestamp.as_micros() / 1000;
+                    let by_discord = tickets::archived_by_discord(meta.locked, last, at, meta.auto_archive_duration.number().into());
+                    tickets::on_thread_archived(ctx, guild.get(), t.id.get(), by_discord).await?;
                 }
             }
             _ => {}

@@ -247,7 +247,6 @@ fn store(ctx: &Ctx, bid: &str, found: &[HClip], since: i64) -> Result<Vec<Clip>>
     Ok(fresh)
 }
 
-/// The newest stored clips of these broadcasters.
 /// The dashboard's "Send a test post" for clips: the newest stored clip, posted now.
 pub async fn test_post(ctx: &Ctx, s: &Settings) -> Result<()> {
     let channel = s.clips_channel.ok_or_else(|| bot_core::anyhow::anyhow!("no channel"))?;
@@ -257,6 +256,7 @@ pub async fn test_post(ctx: &Ctx, s: &Settings) -> Result<()> {
     Ok(())
 }
 
+/// The newest stored clips of these broadcasters.
 pub fn recent(ctx: &Ctx, ids: &[String], limit: i64) -> Vec<Clip> {
     if ids.is_empty() {
         return Vec::new();

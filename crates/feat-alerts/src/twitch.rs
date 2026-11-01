@@ -10,7 +10,7 @@ use bot_core::axum::extract::State;
 use bot_core::axum::http::{HeaderMap, StatusCode, header};
 use bot_core::axum::response::{IntoResponse, Response};
 use bot_core::reqwest::Method;
-use bot_core::rusqlite::{OptionalExtension, Row, params, params_from_iter};
+use bot_core::rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use bot_core::serde_json::{self, Value, json};
 use bot_core::twilight_model::channel::message::component::Component;
 use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
@@ -237,9 +237,15 @@ pub fn callback_url(ctx: &Ctx) -> String {
     format!("{}/webhooks/twitch", ctx.cfg.public_url)
 }
 
+/// One `ensure_subscriptions` at a time. A save and the daily check can overlap, and two runs
+/// would both create the same missing subscriptions.
+static ENSURING: bot_core::tokio::sync::Mutex<()> = bot_core::tokio::sync::Mutex::const_new(());
+
 /// Make the app's webhook subscriptions match the broadcasters servers follow: create missing
-/// ones, drop failed ones and ones nobody needs.
+/// ones, drop failed ones and ones nobody needs. Runs one at a time; a second call waits and
+/// then finds what the first created.
 pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
+    let _one_at_a_time = ENSURING.lock().await;
     #[derive(Deserialize)]
     struct Sub {
         id: String,
@@ -255,6 +261,7 @@ pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
     }
     let Some(secret) = ctx.cfg.twitch_eventsub_secret.clone() else { return Ok(()) };
     let callback = callback_url(ctx);
+    let (before, _) = sub_states(ctx);
     let wanted: Vec<String> = {
         let logins = logins(&alert_guilds(ctx));
         broadcasters(ctx).into_iter().filter(|b| logins.contains(&b.login)).map(|b| b.user_id).collect()
@@ -302,11 +309,22 @@ pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
                 "condition": { "broadcaster_user_id": bid },
                 "transport": { "method": "webhook", "callback": callback, "secret": secret },
             });
-            let res = request(ctx, Method::POST, "eventsub/subscriptions", &[], Some(&body)).await?;
+            // One failed create doesn't stop the rest, and what was learned is still saved.
+            let res = match request(ctx, Method::POST, "eventsub/subscriptions", &[], Some(&body)).await {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(kind, broadcaster = %bid, error = %e, "couldn't reach Twitch to subscribe");
+                    continue;
+                }
+            };
             let state = if res.status().is_success() {
                 tracing::info!(kind, broadcaster = %bid, "subscribed to Twitch events");
                 let v: Value = res.json().await.unwrap_or_default();
                 v["data"][0]["status"].as_str().unwrap_or("webhook_callback_verification_pending").to_owned()
+            } else if res.status() == StatusCode::CONFLICT {
+                // It already exists (made after the list above was read).
+                let last = before.get(bid).and_then(|m| m.get(*kind)).map(String::as_str);
+                existing_state(last).to_owned()
             } else {
                 let status = res.status();
                 let text = res.text().await.unwrap_or_default();
@@ -318,6 +336,13 @@ pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
     }
     save_sub_states(ctx, &states);
     Ok(())
+}
+
+/// The state to show for a subscription Twitch says already exists (409) but the listing
+/// didn't have: still working if it was working at the last check, else waiting for Twitch's
+/// check of the address, which is where every new subscription starts.
+fn existing_state(last: Option<&str>) -> &'static str {
+    if last == Some("enabled") { "enabled" } else { "webhook_callback_verification_pending" }
 }
 
 // ---- what the Twitch tab shows about EventSub ----
@@ -582,6 +607,12 @@ pub fn open_streams(ctx: &Ctx) -> Result<Vec<StreamRow>> {
     })
 }
 
+/// A broadcaster's latest stream: the open one if there is one, else the newest.
+fn latest_stream(c: &Connection, bid: &str) -> bot_core::rusqlite::Result<Option<StreamRow>> {
+    c.query_row(&format!("SELECT {COLS} FROM alerts_streams WHERE broadcaster_id = ?1 ORDER BY ended_at IS NULL DESC, id DESC LIMIT 1"), [bid], stream_row)
+        .optional()
+}
+
 fn stream(ctx: &Ctx, id: i64) -> Result<Option<StreamRow>> {
     ctx.db.with(|c| c.query_row(&format!("SELECT {COLS} FROM alerts_streams WHERE id = ?1"), [id], stream_row).optional())
 }
@@ -610,15 +641,67 @@ fn sample(ctx: &Ctx, id: i64, viewers: i64) -> Result<()> {
     Ok(())
 }
 
-/// A broadcaster went live: store the stream and post in every server that follows them.
+/// A stream that drops and comes back within this long is the same stream: its posts go back to
+/// live instead of a second post (and ping).
+const RECONNECT_MS: i64 = 10 * 60_000;
+
+/// What going live does with the broadcaster's latest stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoLive {
+    /// It's already recorded as live.
+    Known,
+    /// The same stream back after a drop: keep its row and posts, and edit them back to live.
+    Resume,
+    /// A new stream, posted everywhere. An open one before it is closed first.
+    New,
+}
+
+/// `latest` is the broadcaster's open stream, else their newest. A stream counts as the same
+/// one when Twitch gives the same id, or when it starts within [`RECONNECT_MS`] of the last one
+/// ending (or, when the offline event never came, of the last sign of it).
+fn go_live(latest: Option<&StreamRow>, stream_id: &str, started_at: i64) -> GoLive {
+    let Some(prev) = latest else { return GoLive::New };
+    let same_id = !stream_id.is_empty() && prev.stream_id == stream_id;
+    let (last_seen, open) = match prev.ended_at {
+        Some(ended) => (ended, false),
+        None => (prev.last_sample.max(prev.started_at), true),
+    };
+    if open && (same_id || stream_id.is_empty()) {
+        GoLive::Known
+    } else if same_id || started_at - last_seen <= RECONNECT_MS {
+        GoLive::Resume
+    } else {
+        GoLive::New
+    }
+}
+
+/// Put a stream back on air after a drop, under the stream id Twitch gave it this time.
+/// Duration and VOD are worked out again when it ends.
+fn resume_row(c: &Connection, prev: &StreamRow, stream_id: &str, title: &str, game: &str, thumbnail: &str, now: i64) -> bot_core::rusqlite::Result<()> {
+    let stream_id = if stream_id.is_empty() { prev.stream_id.as_str() } else { stream_id };
+    let title = if title.is_empty() { prev.title.as_str() } else { title };
+    let game = if game.is_empty() { prev.game.as_str() } else { game };
+    c.execute(
+        "UPDATE alerts_streams SET ended_at = NULL, duration_secs = 0, vod_url = NULL, stream_id = ?2, title = ?3, game = ?4, games = ?5,
+         thumbnail = ?6, last_sample = ?7 WHERE id = ?1",
+        params![prev.id, stream_id, title, game, add_game(&prev.games, game), thumbnail, now],
+    )?;
+    Ok(())
+}
+
+/// A broadcaster went live: store the stream and post in every server that follows them. When
+/// it's the last stream back after a drop, its posts are edited back to live instead.
 pub async fn on_online(ctx: &Ctx, b: &Broadcaster, stream_id: &str, started_at: i64, info: Option<HStream>) -> Result<()> {
-    if let Some(open) = open_streams(ctx)?.into_iter().find(|r| r.broadcaster_id == b.user_id) {
-        if open.stream_id == stream_id || stream_id.is_empty() {
-            return Ok(());
-        }
+    let latest = ctx.db.with(|c| latest_stream(c, &b.user_id))?;
+    let decision = go_live(latest.as_ref(), stream_id, started_at);
+    match (&latest, decision) {
+        (_, GoLive::Known) => return Ok(()),
         // The offline event for the last stream never came.
-        let end = open.last_sample.max(open.started_at);
-        finish(ctx, open, end).await?;
+        (Some(open), GoLive::New) if open.ended_at.is_none() => {
+            let end = open.last_sample.max(open.started_at);
+            finish(ctx, open.clone(), end).await?;
+        }
+        _ => {}
     }
     let info = match info {
         Some(i) => Some(i),
@@ -630,6 +713,15 @@ pub async fn on_online(ctx: &Ctx, b: &Broadcaster, stream_id: &str, started_at: 
     };
     let thumbnail = info.as_ref().map(|i| i.thumbnail_url.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| live_thumbnail(&b.login));
     let now = now_ms();
+    if let (GoLive::Resume, Some(prev)) = (decision, &latest) {
+        ctx.db.with(|c| resume_row(c, prev, stream_id, &title, &game, &thumbnail, now))?;
+        MISSING.lock().unwrap().remove(&b.user_id);
+        if let Some(i) = &info {
+            sample(ctx, prev.id, i.viewer_count)?;
+        }
+        tracing::info!(login = %b.login, "stream came back after a drop");
+        return edit_posts(ctx, prev.id).await;
+    }
     let id = ctx.db.with(|c| {
         c.execute(
             "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, games, last_sample, thumbnail) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7)",
@@ -690,13 +782,19 @@ async fn finish(ctx: &Ctx, row: StreamRow, ended: i64) -> Result<()> {
         None
     });
     let (vod_url, thumbnail) = vod.map(|v| (Some(v.url), v.thumbnail_url)).unwrap_or_default();
-    ctx.db.with(|c| {
+    // Only while it's still the stream that was read: a reconnect may have resumed the row
+    // under a new stream id during the VOD lookup, and an end from elsewhere may have won.
+    let n = ctx.db.with(|c| {
         c.execute(
-            "UPDATE alerts_streams SET ended_at = ?2, duration_secs = ?3, vod_url = ?4, thumbnail = ?5 WHERE id = ?1",
-            params![row.id, ended, duration, vod_url, thumbnail],
+            "UPDATE alerts_streams SET ended_at = ?2, duration_secs = ?3, vod_url = ?4, thumbnail = ?5
+             WHERE id = ?1 AND stream_id = ?6 AND ended_at IS NULL",
+            params![row.id, ended, duration, vod_url, thumbnail, row.stream_id],
         )
     })?;
     MISSING.lock().unwrap().remove(&row.broadcaster_id);
+    if n == 0 {
+        return Ok(());
+    }
     tracing::info!(broadcaster = %row.broadcaster_id, duration, "stream ended");
     edit_posts(ctx, row.id).await
 }
@@ -1172,6 +1270,104 @@ mod tests {
         assert!(fresh("2026-10-30T17:55:00.123456789Z", now));
         assert!(!fresh("2026-10-30T17:49:00Z", now));
         assert!(!fresh("not a time", now));
+    }
+
+    #[test]
+    fn a_stream_back_within_ten_minutes_is_the_same_stream() {
+        let min = 60_000;
+        let ended = |at: i64, id: &str| StreamRow { stream_id: id.into(), started_at: at - 120 * min, ended_at: Some(at), ..Default::default() };
+        let open = |seen: i64, id: &str| StreamRow { stream_id: id.into(), started_at: seen - 120 * min, last_sample: seen, ..Default::default() };
+        let t = 1_000 * min;
+        // Nothing before: a new stream.
+        assert_eq!(go_live(None, "b", t), GoLive::New);
+        // Ended 3 or 10 minutes before the new one started: a drop, so the posts go back to live.
+        assert_eq!(go_live(Some(&ended(t - 3 * min, "a")), "b", t), GoLive::Resume);
+        assert_eq!(go_live(Some(&ended(t - 10 * min, "a")), "b", t), GoLive::Resume);
+        assert_eq!(go_live(Some(&ended(t - 3 * min, "a")), "", t), GoLive::Resume);
+        // Ended longer ago: a new stream, posted and pinged.
+        assert_eq!(go_live(Some(&ended(t - 11 * min, "a")), "b", t), GoLive::New);
+        // Polling ended it after two misses but Twitch still has the same stream: resume.
+        assert_eq!(go_live(Some(&ended(t - 60 * min, "a")), "a", t), GoLive::Resume);
+        // Still open with the same id (or none given): already known.
+        assert_eq!(go_live(Some(&open(t - min, "a")), "a", t), GoLive::Known);
+        assert_eq!(go_live(Some(&open(t - min, "a")), "", t), GoLive::Known);
+        // Still open with a new id: the offline event got lost in a quick reconnect, or it's an
+        // old stream that never got closed.
+        assert_eq!(go_live(Some(&open(t - 4 * min, "a")), "b", t), GoLive::Resume);
+        assert_eq!(go_live(Some(&open(t - 90 * min, "a")), "b", t), GoLive::New);
+    }
+
+    fn ctx() -> Ctx {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Alerts)]).unwrap();
+        ctx
+    }
+
+    fn rows(ctx: &Ctx) -> Vec<StreamRow> {
+        ctx.db
+            .with(|c| {
+                let mut s = c.prepare(&format!("SELECT {COLS} FROM alerts_streams ORDER BY id"))?;
+                s.query_map([], stream_row)?.collect()
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn a_reconnect_reopens_the_stream_instead_of_adding_one() {
+        let rt = bot_core::tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _in = rt.enter();
+        let ctx = ctx();
+        let b = antho();
+        let min = 60_000;
+        let t = now_ms();
+        ctx.db
+            .with(|c| {
+                c.execute(
+                    "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, games, vod_url, peak, samples)
+                     VALUES ('1', 'a', ?1, ?2, 7200, 'Pets', 'Idleon', 'Idleon', 'https://www.twitch.tv/videos/9', 40, 24)",
+                    params![t - 122 * min, t - 2 * min],
+                )
+            })
+            .unwrap();
+        rt.block_on(async {
+            // Twitch isn't reachable in tests, so title and game come back empty and are kept.
+            on_online(&ctx, &b, "b", t - min, None).await.unwrap();
+        });
+        let r = rows(&ctx);
+        assert_eq!(r.len(), 1);
+        let r = &r[0];
+        assert_eq!((r.stream_id.as_str(), r.ended_at, r.vod_url.as_deref(), r.title.as_str(), r.peak), ("b", None, None, "Pets", 40));
+        assert_eq!(r.started_at, t - 122 * min);
+        // The end that comes later closes it.
+        rt.block_on(async { on_offline(&ctx, "1", t).await.unwrap() });
+        let r = &rows(&ctx)[0];
+        assert_eq!((r.ended_at, r.duration_secs), (Some(t), 122 * 60));
+        // An hour later it's a new stream.
+        rt.block_on(async { on_online(&ctx, &b, "c", t + 60 * min, None).await.unwrap() });
+        let r = rows(&ctx);
+        assert_eq!(r.len(), 2);
+        assert_eq!((r[1].stream_id.as_str(), r[1].ended_at), ("c", None));
+    }
+
+    #[test]
+    fn an_end_for_a_stream_that_moved_on_is_ignored() {
+        let rt = bot_core::tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _in = rt.enter();
+        let ctx = ctx();
+        let t = now_ms();
+        ctx.db.with(|c| c.execute("INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, last_sample) VALUES ('1', 'b', ?1, ?1)", [t])).unwrap();
+        // The row was read as stream "a", then a reconnect moved it to "b".
+        let stale = StreamRow { stream_id: "a".into(), ..rows(&ctx)[0].clone() };
+        rt.block_on(async { finish(&ctx, stale, t).await.unwrap() });
+        assert_eq!(rows(&ctx)[0].ended_at, None);
+    }
+
+    #[test]
+    fn a_subscription_that_already_exists_keeps_its_state() {
+        assert_eq!(existing_state(Some("enabled")), "enabled");
+        assert_eq!(existing_state(Some("refused (409)")), "webhook_callback_verification_pending");
+        assert_eq!(existing_state(Some("webhook_callback_verification_failed")), "webhook_callback_verification_pending");
+        assert_eq!(existing_state(None), "webhook_callback_verification_pending");
     }
 
     #[test]

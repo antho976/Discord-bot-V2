@@ -37,17 +37,6 @@ pub struct TabQuery {
     pub sent: Option<String>,
 }
 
-/// A "Test sent" toast after a test, once; the flag then leaves the address.
-fn sent_toast(q: &TabQuery, msg: &str) -> Markup {
-    html! {
-        @if q.sent.is_some() {
-            script { (PreEscaped(format!(
-                "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg:?});const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go):setTimeout(go)}})()"
-            ))) }
-        }
-    }
-}
-
 /// A test the bot couldn't DM to the person who asked for it.
 fn dm_refused() -> WebError {
     WebError::Bad("Discord didn't let the bot DM you. Allow direct messages from members of this server (the server's Privacy Settings in Discord), then try again.".into())
@@ -321,6 +310,11 @@ const STYLE: &str = r#"
 .cm-edit .pop-body .card { padding: 0 14px; }
 .cm-review .pop-body { width: 290px; }
 .cm-review .stack { gap: 8px; }
+.gv-reroll .pop-body { display: flex; flex-direction: column; gap: 8px; }
+.gv-reroll .pop-body > .muted { margin: 0 0 2px; }
+.gv-reroll-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.gv-reroll-row .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.gv-reroll .pop-body > form:last-child { align-self: flex-start; margin-top: 4px; }
 /* A block with an open form lifts above the blocks after it, so the form isn't painted under them. */
 .gv-hero:has(.pop[open]), .gv-card:has(.pop[open]), .sg-card:has(.pop[open]) { position: relative; z-index: 5; }
 /* Settings beside the post they shape: the preview keeps about Discord's own width, the form

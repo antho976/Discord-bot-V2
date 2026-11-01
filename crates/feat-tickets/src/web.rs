@@ -521,9 +521,7 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs)
-        @if q.sent.is_some() {
-            script { (PreEscaped("(()=>{const go=()=>{window.botToast&&window.botToast('Test post sent');history.replaceState(history.state,'',location.pathname+'?view=settings')};document.readyState==='loading'?addEventListener('DOMContentLoaded',go):setTimeout(go)})()")) }
-        }
+        (ui::sent_toast(q.sent.is_some(), "Test post sent"))
         @if view == "settings" {
             // The settings beside the repost they shape.
             div.compose.tk-compose {
@@ -533,7 +531,7 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
                     (ui::field_number("star_threshold", "Stars needed", Some("A message is reposted once it has this many."), s.star_threshold, 1, 100, Some("stars")))
                     (ui::field_toggle("star_remove_below", "Remove when it drops below", Some("Takes the post down if stars fall under the number above. Off keeps it with the lower count."), s.star_remove_below))
                     (ui::field_toggle("star_self", "Count the author's own star", Some("Off: a member starring their own message doesn't count."), s.star_self))
-                    (ui::field_channels(&ctx, guild, "star_ignored", "Ignored channels", Some("Stars in these channels never reach the starboard. The starboard channel is always ignored."), &s.star_ignored))
+                    (ui::field_channels(&ctx, guild, "star_ignored", "Ignored channels", Some("Stars in these channels and their threads never reach the starboard. Neither do the starboard itself, private threads, channels @everyone can't see, or age-restricted channels unless the starboard is one."), &s.star_ignored))
                 })))
                 aside.rail.tk-rail.compose-preview {
                     div.rail-block {
