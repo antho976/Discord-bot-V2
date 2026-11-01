@@ -301,7 +301,8 @@ pub async fn register_commands(ctx: &Ctx, guild_id: u64) -> Result<()> {
         // the same one `route_interaction` sends the call to.
         .filter(|c| seen.insert(c.name.clone()))
         .collect();
-    ctx.interaction().set_guild_commands(Id::new(guild_id), &commands).await?;
+    let Some(guild) = Id::new_checked(guild_id) else { return Ok(()) };
+    ctx.interaction().set_guild_commands(guild, &commands).await?;
     tracing::info!(guild = guild_id, count = commands.len(), "registered commands");
     Ok(())
 }
@@ -825,9 +826,11 @@ impl Ctx {
     /// Send a plain message to a channel with mentions off. Returns the message id.
     pub async fn say(&self, channel_id: u64, content: &str) -> Result<u64> {
         let none = AllowedMentions::default();
+        // An id of 0 would panic in twilight; treat it as "no channel".
+        let channel = Id::new_checked(channel_id).ok_or_else(|| anyhow::anyhow!("no channel"))?;
         let msg = self
             .http
-            .create_message(Id::new(channel_id))
+            .create_message(channel)
             .content(content)
             .allowed_mentions(Some(&none))
             .await?
@@ -838,7 +841,8 @@ impl Ctx {
 
     /// DM a user. Returns false when their DMs are closed.
     pub async fn dm(&self, user_id: u64, content: &str, embeds: &[Embed], components: &[Component]) -> Result<Option<(u64, u64)>> {
-        let channel = match self.http.create_private_channel(Id::new(user_id)).await {
+        let Some(user) = Id::new_checked(user_id) else { return Ok(None) };
+        let channel = match self.http.create_private_channel(user).await {
             Ok(r) => r.model().await?,
             Err(_) => return Ok(None),
         };
@@ -872,7 +876,7 @@ impl Ctx {
     /// A member's server nickname, else their global name, else their username, when the cache
     /// has them. None means the cache doesn't know them, not that they have no name.
     pub fn known_name(&self, guild_id: u64, user_id: u64) -> Option<String> {
-        let (g, u) = (Id::<GuildMarker>::new(guild_id), Id::<UserMarker>::new(user_id));
+        let (Some(g), Some(u)) = (Id::<GuildMarker>::new_checked(guild_id), Id::<UserMarker>::new_checked(user_id)) else { return None };
         if let Some(nick) = self.cache.member(g, u).and_then(|m| m.nick().map(str::to_owned)) {
             return Some(nick);
         }
@@ -882,7 +886,7 @@ impl Ctx {
     /// Text channels of a server as `(id, name)`, in sidebar order.
     pub fn text_channels(&self, guild_id: u64) -> Vec<(u64, String)> {
         use twilight_model::channel::ChannelType;
-        let Some(ids) = self.cache.guild_channels(Id::new(guild_id)) else { return Vec::new() };
+        let Some(ids) = (|| self.cache.guild_channels(Id::new_checked(guild_id)?))() else { return Vec::new() };
         let mut out: Vec<_> = ids
             .iter()
             .filter_map(|id| self.cache.channel(*id))
@@ -896,7 +900,7 @@ impl Ctx {
     /// Categories of a server as `(id, name)`.
     pub fn categories(&self, guild_id: u64) -> Vec<(u64, String)> {
         use twilight_model::channel::ChannelType;
-        let Some(ids) = self.cache.guild_channels(Id::new(guild_id)) else { return Vec::new() };
+        let Some(ids) = (|| self.cache.guild_channels(Id::new_checked(guild_id)?))() else { return Vec::new() };
         let mut out: Vec<_> = ids
             .iter()
             .filter_map(|id| self.cache.channel(*id))
@@ -910,7 +914,7 @@ impl Ctx {
     /// Assignable roles of a server as `(id, name, colour)`, highest first, without @everyone
     /// and bot-managed roles.
     pub fn roles(&self, guild_id: u64) -> Vec<(u64, String, u32)> {
-        let Some(ids) = self.cache.guild_roles(Id::new(guild_id)) else { return Vec::new() };
+        let Some(ids) = (|| self.cache.guild_roles(Id::new_checked(guild_id)?))() else { return Vec::new() };
         let mut out: Vec<_> = ids
             .iter()
             .filter_map(|id| self.cache.role(*id))
@@ -925,14 +929,15 @@ impl Ctx {
     /// from a form, so a channel from another server can't be saved.
     pub fn channel_in(&self, guild_id: u64, channel: Option<u64>) -> Option<u64> {
         let id = channel?;
-        let c = self.cache.channel(Id::new(id))?;
+        let c = self.cache.channel(Id::new_checked(id)?)?;
         (c.guild_id.map(|g| g.get()) == Some(guild_id)).then_some(id)
     }
 
     /// The bot's highest role position in a server.
     pub fn bot_top_role_position(&self, guild_id: u64) -> i64 {
         let Some(bot) = self.bot_id() else { return 0 };
-        let Some(member) = self.cache.member(Id::new(guild_id), Id::new(bot)) else { return 0 };
+        let (Some(g), Some(b)) = (Id::new_checked(guild_id), Id::new_checked(bot)) else { return 0 };
+        let Some(member) = self.cache.member(g, b) else { return 0 };
         member
             .roles()
             .iter()
@@ -947,7 +952,8 @@ impl Ctx {
     /// from non-admins, so a dashboard grant can't be turned into server admin.
     pub fn safe_role(&self, guild_id: u64, role: u64) -> bool {
         use twilight_model::guild::Permissions as P;
-        let Some(r) = self.cache.role(Id::new(role)) else { return false };
+        let (Some(role_id), Some(g)) = (Id::new_checked(role), Id::<GuildMarker>::new_checked(guild_id)) else { return false };
+        let Some(r) = self.cache.role(role_id) else { return false };
         let dangerous = P::ADMINISTRATOR
             | P::MANAGE_GUILD
             | P::MANAGE_ROLES
@@ -960,14 +966,14 @@ impl Ctx {
             | P::MENTION_EVERYONE;
         role != guild_id
             && !r.managed
-            && self.cache.guild_roles(Id::new(guild_id)).is_some_and(|set| set.contains(&r.id))
+            && self.cache.guild_roles(g).is_some_and(|set| set.contains(&r.id))
             && !r.permissions.intersects(dangerous)
             && (self.bot_id().is_none() || r.position < self.bot_top_role_position(guild_id))
     }
 
     pub fn guild_name(&self, guild_id: u64) -> String {
-        self.cache
-            .guild(Id::new(guild_id))
+        Id::new_checked(guild_id)
+            .and_then(|id| self.cache.guild(id))
             .map(|g| g.name().to_owned())
             .unwrap_or_else(|| format!("Server {guild_id}"))
     }
@@ -980,7 +986,7 @@ impl Ctx {
                 _ => None,
             };
         }
-        let g = self.cache.guild(Id::new(guild_id))?;
+        let g = self.cache.guild(Id::new_checked(guild_id)?)?;
         let icon = g.icon()?;
         Some(format!("https://cdn.discordapp.com/icons/{guild_id}/{icon}.png?size=64"))
     }
@@ -999,7 +1005,7 @@ impl Ctx {
 
     /// The banner set in Discord's server settings (boost level 2), if any.
     pub fn discord_banner_url(&self, guild_id: u64) -> Option<String> {
-        let g = self.cache.guild(Id::new(guild_id))?;
+        let g = self.cache.guild(Id::new_checked(guild_id)?)?;
         let banner = g.banner()?;
         Some(format!("https://cdn.discordapp.com/banners/{guild_id}/{banner}.png?size=1024"))
     }
@@ -1011,7 +1017,9 @@ impl Ctx {
 
     /// A member's avatar: their server avatar, else their account avatar, else Discord's default.
     pub fn member_avatar(&self, guild_id: u64, user_id: u64) -> String {
-        let (g, u) = (Id::<GuildMarker>::new(guild_id), Id::<UserMarker>::new(user_id));
+        let (Some(g), Some(u)) = (Id::<GuildMarker>::new_checked(guild_id), Id::<UserMarker>::new_checked(user_id)) else {
+            return avatar_url(user_id, None);
+        };
         if let Some(m) = self.cache.member(g, u)
             && let Some(a) = m.avatar() {
                 return format!("https://cdn.discordapp.com/guilds/{guild_id}/users/{user_id}/avatars/{a}.png?size=128");
@@ -1026,7 +1034,7 @@ impl Ctx {
             .unwrap()
             .get(&guild_id)
             .copied()
-            .or_else(|| self.cache.guild(Id::new(guild_id)).and_then(|g| g.member_count()))
+            .or_else(|| Id::new_checked(guild_id).and_then(|id| self.cache.guild(id)).and_then(|g| g.member_count()))
     }
 }
 
@@ -1129,6 +1137,27 @@ mod tests {
         assert_eq!(owner(Some(2), "links"), None);
         assert_eq!(owner(None, "links"), None);
         assert_eq!(owner(Some(1), "old-name"), None);
+    }
+
+    #[tokio::test]
+    async fn an_id_of_zero_is_not_found_rather_than_a_crash() {
+        // twilight's Id::new panics on 0, and release builds abort on panic, so a 0 from a form,
+        // a path or an imported file used to take the whole bot down.
+        let ctx = crate::Ctx::new(crate::Config::preview(0), crate::Db::memory().unwrap()).unwrap();
+        assert_eq!(ctx.display_name(0, 0), "Unknown member");
+        assert_eq!(ctx.display_name(1, 0), "Unknown member");
+        assert_eq!(ctx.known_name(0, 5), None);
+        assert!(ctx.member_avatar(1, 0).starts_with("https://"));
+        assert!(!ctx.safe_role(1, 0));
+        assert!(!ctx.safe_role(0, 5));
+        assert_eq!(ctx.channel_in(1, Some(0)), None);
+        assert!(ctx.text_channels(0).is_empty());
+        assert!(ctx.roles(0).is_empty());
+        assert!(ctx.categories(0).is_empty());
+        assert_eq!(ctx.bot_top_role_position(0), 0);
+        assert!(ctx.guild_name(0).starts_with("Server"));
+        assert!(ctx.say(0, "x").await.is_err());
+        assert!(ctx.dm(0, "x", &[], &[]).await.unwrap().is_none());
     }
 
     #[test]

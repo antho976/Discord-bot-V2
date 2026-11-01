@@ -746,6 +746,12 @@ pub fn action_button(action: &str, label: &str, tone: Tone, destructive: bool) -
     }
 }
 
+/// After a test post the page comes back with `?sent=…`: pass whether the flag is there and
+/// what to say. app.js shows it as a toast and takes only `sent` out of the address.
+pub fn sent_toast(sent: bool, msg: &str) -> Markup {
+    html! { @if sent { span hidden data-toast=(msg) {} } }
+}
+
 /// Sub-page switcher inside a feature: `(label, href)`.
 pub fn tabs(items: &[(&str, String)], active: &str) -> Markup {
     let items: Vec<_> = items.iter().map(|(l, h)| (*l, h.clone(), None)).collect();

@@ -544,6 +544,15 @@
       url.searchParams.delete("saved");
       history.replaceState(history.state, "", url.pathname + url.search + url.hash);
     }
+    // A test post's answer (`ui::sent_toast`): say it, then drop only the `sent` flag.
+    const told = $("[data-toast]", page);
+    if (told) {
+      toast(told.dataset.toast);
+      told.remove();
+      const u = new URL(location.href);
+      u.searchParams.delete("sent");
+      history.replaceState(history.state, "", u.pathname + u.search + u.hash);
+    }
     $$("figure.area[data-points]", page).forEach(areaCursor);
     const counters = $$("[data-count]", page);
     if (counters.length) {
