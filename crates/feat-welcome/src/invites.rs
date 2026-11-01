@@ -1,8 +1,9 @@
 //! Invite tracking: remember each invite's use count, and on a join find the one that went up.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use bot_core::Ctx;
 use bot_core::anyhow::Result;
@@ -101,11 +102,19 @@ fn store_error(ctx: &Ctx, guild: u64, error: &str) {
     }
 }
 
+/// What's stored when Discord refuses to show the invites: the bot lacks Manage Server.
+const REFUSED: &str = "Discord refused the request. The bot needs the Manage Server permission to read invites.";
+
+/// Whether the last reading was refused for want of Manage Server. Joins don't ask again then:
+/// each would be one more refusal, and enough of those in a join raid get the bot shut out of
+/// Discord for a while. The hourly reading in the tick finds out when the permission is back.
+pub fn refused(ctx: &Ctx, guild: u64) -> bool {
+    state(ctx, guild).ok().flatten().is_some_and(|s| !s.ok && s.error.as_deref() == Some(REFUSED))
+}
+
 fn describe(e: &bot_core::twilight_http::Error) -> String {
     match e.kind() {
-        ErrorType::Response { status, .. } if status.get() == 403 => {
-            "Discord refused the request. The bot needs the Manage Server permission to read invites.".into()
-        }
+        ErrorType::Response { status, .. } if status.get() == 403 => REFUSED.into(),
         _ => format!("Discord returned an error: {e}"),
     }
 }
@@ -124,21 +133,28 @@ async fn fetch(ctx: &Ctx, guild: u64) -> Result<Vec<Inv>, String> {
 /// A reading stored: the invites before it, when there was a good reading to compare with, and now.
 type Stored = (Option<Vec<Inv>>, Vec<Inv>);
 
-/// The invite readings in flight. Each one asks Discord without holding any lock, so a slow or
-/// rate-limited answer (a join raid can rate-limit reading invites) holds up only that reading,
-/// never another join or another server. Readings are numbered as they start; one that answers
-/// after a later one was stored is older than the baseline and isn't stored over it.
+/// The last reading of a server made through [`Readings::read`]: its number and what it stored.
+type Flight = Arc<bot_core::tokio::sync::Mutex<(u64, Option<Stored>)>>;
+
+/// The invite readings in flight. Each server has at most one at a time: joins that arrive while
+/// one is out wait for it, then share the next reading between them, so a join raid sends a
+/// handful of requests instead of one per join. A slow answer holds up only that server's
+/// readings, never another server or the rest of a join. Readings are numbered as they start;
+/// one that answers after a later one was stored is older than the baseline and isn't stored
+/// over it.
 #[derive(Default)]
 pub struct Readings {
     started: AtomicU64,
     /// Per server, the number of the newest reading stored. Locked only to compare and store,
     /// never across a call to Discord.
     newest: Mutex<HashMap<u64, u64>>,
+    /// Per server, the reading in flight or the last one made. One entry per server.
+    flights: Mutex<HashMap<u64, Flight>>,
 }
 
 impl Readings {
     fn start(&self) -> u64 {
-        self.started.fetch_add(1, Ordering::Relaxed) + 1
+        self.started.fetch_add(1, Ordering::SeqCst) + 1
     }
 
     /// Store reading `n` of `guild` as the new baseline, unless a reading that started later was
@@ -167,10 +183,20 @@ impl Readings {
         }
     }
 
+    /// Read the server's invites, or share a reading that started after this call did: that one
+    /// already sees whatever happened before the call, such as the join it's for.
     async fn read(&self, ctx: &Ctx, guild: u64) -> Option<Stored> {
+        let arrived = self.started.load(Ordering::SeqCst);
+        let flight = self.flights.lock().unwrap().entry(guild).or_default().clone();
+        let mut last = flight.lock().await;
+        if last.0 > arrived {
+            return last.1.clone();
+        }
         let n = self.start();
         let fetched = fetch(ctx, guild).await;
-        self.settle(ctx, guild, n, fetched)
+        let stored = self.settle(ctx, guild, n, fetched);
+        *last = (n, stored.clone());
+        stored
     }
 }
 
@@ -214,13 +240,16 @@ pub fn on_invite_delete(ctx: &Ctx, guild: u64, code: &str) {
     }
 }
 
-/// Work out which invite a new member used and record the join. Two joins at the same moment
-/// each compare their reading with the one stored before it (see [`Readings`]).
+/// Work out which invite a new member used and record the join. Joins at the same moment share
+/// a reading and compare it with the one stored before it (see [`Readings`]). Nothing is asked
+/// while Discord refuses to show the invites, and a join waits at most 15 seconds for a reading;
+/// either way it's recorded without an invite.
 pub async fn record_join(ctx: &Ctx, readings: &Readings, guild: u64, user: u64, bot: bool, track: bool) {
     let mut used: Option<Inv> = None;
     if track
         && !bot
-        && let Some((Some(before), now)) = readings.read(ctx, guild).await
+        && !refused(ctx, guild)
+        && let Ok(Some((Some(before), now))) = bot_core::tokio::time::timeout(Duration::from_secs(15), readings.read(ctx, guild)).await
     {
         used = find_used(&before, &now);
     }
@@ -413,6 +442,48 @@ mod tests {
         let fourth = r.start();
         assert_eq!(r.settle(&ctx, 1, fourth, Err("refused".into())), None);
         assert!(!state(&ctx, 1).unwrap().unwrap().ok);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn joins_dont_ask_while_discord_refuses() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Welcome::default())]).unwrap();
+        assert!(!refused(&ctx, 1), "never read");
+        store_error(&ctx, 1, "Discord returned an error: 500");
+        assert!(!refused(&ctx, 1), "another failure is tried again on the next join");
+        store_error(&ctx, 1, REFUSED);
+        assert!(refused(&ctx, 1));
+        // A join is still recorded, without asking Discord.
+        let r = Readings::default();
+        record_join(&ctx, &r, 1, 10, false, true).await;
+        assert_eq!(r.started.load(Ordering::SeqCst), 0);
+        assert_eq!(recent_joins(&ctx, 1, 10).unwrap().len(), 1);
+        // A good reading clears it.
+        store(&ctx, 1, &[inv("a", 1, 0)]).unwrap();
+        assert!(!refused(&ctx, 1));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn joins_during_a_reading_share_the_next_one() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Welcome::default())]).unwrap();
+        let r = Arc::new(Readings::default());
+        // A reading of server 1 is out when a join arrives.
+        let flight = r.flights.lock().unwrap().entry(1).or_default().clone();
+        let mut out = flight.lock().await;
+        let join = bot_core::tokio::spawn({
+            let (r, ctx) = (r.clone(), ctx.clone());
+            async move { r.read(&ctx, 1).await }
+        });
+        bot_core::tokio::task::yield_now().await;
+        // The next reading starts after the join arrived, and the join shares it.
+        let n = r.start();
+        let stored = r.settle(&ctx, 1, n, Ok(vec![inv("a", 1, 0)]));
+        *out = (n, stored.clone());
+        drop(out);
+        assert_eq!(join.await.unwrap(), stored);
+        assert_eq!(r.started.load(Ordering::SeqCst), n, "the join didn't ask Discord again");
+        assert_eq!(r.flights.lock().unwrap().len(), 1);
     }
 
     #[test]

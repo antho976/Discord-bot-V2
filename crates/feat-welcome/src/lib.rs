@@ -241,7 +241,10 @@ impl Welcome {
             && let Some(before) = ctx.before_member(guild, user)
         {
             let kept: Vec<u64> = before.roles.into_iter().filter(|r| *r != guild).collect();
-            if !kept.is_empty() {
+            if kept.is_empty() {
+                // Left with no roles: a save from an earlier leave mustn't come back on the next join.
+                roles::forget(ctx, guild, user)?;
+            } else {
                 roles::save(ctx, guild, user, &kept)?;
             }
         }

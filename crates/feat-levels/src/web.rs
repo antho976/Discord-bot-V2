@@ -589,7 +589,14 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let curve_changed = s.curve_base != old.curve_base || s.curve_factor != old.curve_factor || s.custom_curve != old.custom_curve;
     ctx.save_settings(guild, KEY, &s)?;
     if curve_changed {
-        recompute_levels(&ctx, guild, &s)?;
+        {
+            let mut conn = ctx.db.lock();
+            let tx = conn.transaction().map_err(|e| WebError::Internal(e.into()))?;
+            crate::recompute_levels(&tx, guild, &s).and_then(|_| tx.commit()).map_err(|e| WebError::Internal(e.into()))?;
+        }
+        // Levels moved without anyone earning XP, so roles wouldn't follow until each member's
+        // level next changed. This runs in the background.
+        crate::resync_rewards(&ctx, guild, 0, None);
     }
     // /level has its prestige part only where prestige is on.
     // Saving again while prestige is on retries a registration that failed; names Discord
@@ -606,22 +613,6 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     }
     ctx.audit(&page.user, Some(guild), KEY, "Changed XP settings");
     Ok(saved(&page.path("levels/settings")))
-}
-
-/// After a curve change, every stored level is recomputed from XP. Roles catch up on the
-/// member's next XP gain.
-fn recompute_levels(ctx: &Ctx, guild: u64, s: &Settings) -> bot_core::anyhow::Result<()> {
-    let mut conn = ctx.db.lock();
-    let tx = conn.transaction()?;
-    let rows: Vec<(i64, i64)> = {
-        let mut st = tx.prepare("SELECT user_id, xp FROM levels WHERE guild_id = ?1")?;
-        st.query_map([guild as i64], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?
-    };
-    for (user, xp) in rows {
-        tx.execute("UPDATE levels SET level = ?3 WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user, s.progress(xp).level as i64])?;
-    }
-    tx.commit()?;
-    Ok(())
 }
 
 /// Why the bot can't give a reward role, or None when it can.
@@ -1364,6 +1355,7 @@ async fn import_local(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         .await
         .map_err(|e| WebError::Internal(e.into()))?
         .map_err(|e| WebError::Bad(format!("Couldn't import: {e}")))?;
+    imported(&ctx, guild, &report);
     let msg = report.summary(&ctx);
     ctx.audit(&page.user, Some(guild), KEY, msg.clone());
     ctx.notify(Some(guild), KEY, msg, Some(page.path("levels/members")));
@@ -1381,6 +1373,7 @@ async fn import_upload(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let res = tokio_blocking(ctx.clone(), body, guild, mode, page.user.admin).await;
     let (ok, message) = match res {
         Ok(report) => {
+            imported(&ctx, guild, &report);
             let m = report.summary(&ctx);
             ctx.audit(&page.user, Some(guild), KEY, m.clone());
             (true, m)
@@ -1388,6 +1381,14 @@ async fn import_upload(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         Err(e) => (false, format!("Couldn't import: {e}")),
     };
     Ok(Json(serde_json::json!({ "ok": ok, "message": message })).into_response())
+}
+
+/// After an import, bring reward roles in line with the levels it wrote, in the background. The
+/// import changes levels without anyone earning XP, so roles wouldn't follow on their own.
+fn imported(ctx: &Ctx, guild: u64, report: &import::Report) {
+    if report.imported.iter().any(|(g, _)| *g == guild) || report.rewards > 0 || report.settings > 0 {
+        crate::resync_rewards(ctx, guild, 0, None);
+    }
 }
 
 async fn tokio_blocking(ctx: Ctx, body: Bytes, guild: u64, mode: import::Mode, admin: bool) -> bot_core::anyhow::Result<import::Report> {

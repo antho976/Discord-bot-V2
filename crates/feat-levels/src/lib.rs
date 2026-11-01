@@ -17,7 +17,7 @@ use bot_core::rusqlite::{OptionalExtension, params};
 use bot_core::twilight_model::application::command::{Command, CommandType};
 use bot_core::twilight_model::channel::message::component::ButtonStyle;
 use bot_core::twilight_model::channel::message::component::Component;
-use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
+use bot_core::twilight_model::channel::message::{AllowedMentions, Embed, MessageType};
 use bot_core::twilight_model::http::attachment::Attachment;
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::guild::Permissions;
@@ -185,7 +185,7 @@ fn boosted(amount: i64, pct: i64) -> i64 {
     if pct <= 0 || amount <= 0 {
         return amount;
     }
-    amount.saturating_mul(100 + pct).saturating_add(50) / 100
+    amount.saturating_mul(pct.saturating_add(100)).saturating_add(50) / 100
 }
 
 #[derive(Debug, Clone)]
@@ -315,7 +315,8 @@ impl Feature for Levels {
         match event {
             Event::MessageCreate(m) => {
                 let Some(guild) = m.guild_id.map(|g| g.get()) else { return Ok(()) };
-                if m.author.bot {
+                // Joins, boosts, pins and thread notices are messages too, but nobody wrote them.
+                if m.author.bot || !matches!(m.kind, MessageType::Regular | MessageType::Reply) {
                     return Ok(());
                 }
                 let s = ctx.settings::<Settings>(guild, KEY)?;
@@ -354,16 +355,28 @@ impl Feature for Levels {
         Ok(())
     }
 
+    /// The tick is shared by every feature, so it only writes to the database here. Posts and role
+    /// changes run in the background, and a server that fails is logged and skipped, not the rest.
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
         for guild in ctx.enabled_guilds(KEY) {
-            let winners = roll_week(ctx, guild)?;
-            if !winners.is_empty() {
-                post_winners(ctx, guild, &winners).await;
+            match roll_week(ctx, guild) {
+                Ok(winners) if !winners.is_empty() => {
+                    let ctx = ctx.clone();
+                    bot_core::tokio::spawn(async move { post_winners(&ctx, guild, &winners).await });
+                }
+                Ok(_) => {}
+                Err(e) => bot_core::tracing::warn!(guild, error = %e, "couldn't roll the week over"),
             }
         }
         // One minute of voice XP for everyone talking in a channel.
         for guild in ctx.enabled_guilds(KEY) {
-            let s = ctx.settings::<Settings>(guild, KEY)?;
+            let s = match ctx.settings::<Settings>(guild, KEY) {
+                Ok(s) => s,
+                Err(e) => {
+                    bot_core::tracing::warn!(guild, error = %e, "couldn't read the levels settings");
+                    continue;
+                }
+            };
             if s.voice_xp <= 0 {
                 continue;
             }
@@ -383,9 +396,8 @@ impl Feature for Levels {
                 if *bot || Some(*channel) == afk || (s.voice_require_active && *quiet) || no_xp_here(ctx, &s, channel.get()) {
                     continue;
                 }
-                let no_xp_role = ctx
-                    .cache
-                    .member(guild_id, Id::new(*user))
+                let no_xp_role = Id::new_checked(*user)
+                    .and_then(|user_id| ctx.cache.member(guild_id, user_id))
                     .is_some_and(|m| m.roles().iter().any(|r| s.no_xp_roles.contains(&r.get())));
                 if no_xp_role {
                     continue;
@@ -395,7 +407,14 @@ impl Feature for Levels {
                 if humans < 2 {
                     continue;
                 }
-                grant(ctx, guild, *user, s.voice_xp, Earned::Voice, None).await?;
+                match record_xp(ctx, guild, *user, s.voice_xp, Earned::Voice) {
+                    Ok((s, before, level)) if level != before => {
+                        let (ctx, user) = (ctx.clone(), *user);
+                        bot_core::tokio::spawn(async move { level_changed(&ctx, &s, guild, user, before, level, None).await });
+                    }
+                    Ok(_) => {}
+                    Err(e) => bot_core::tracing::warn!(guild, user = *user, error = %e, "couldn't give voice XP"),
+                }
             }
         }
         Ok(())
@@ -455,12 +474,12 @@ impl Feature for Levels {
                 let msg = match sub {
                     "give" => {
                         let n = opts.int("amount").unwrap_or(0);
-                        grant(ctx, guild, user, n, Earned::Manual, None).await?;
+                        grant(ctx, guild, user, n, Earned::Staff, None).await?;
                         format!("Gave {} XP to {name}.", text::num(n))
                     }
                     "take" => {
                         let n = opts.int("amount").unwrap_or(0);
-                        grant(ctx, guild, user, -n, Earned::Manual, None).await?;
+                        grant(ctx, guild, user, -n, Earned::Staff, None).await?;
                         format!("Took {} XP from {name}.", text::num(n))
                     }
                     // "set-level", the only other part the check above lets through.
@@ -514,15 +533,21 @@ impl Feature for Levels {
                 return Ok(());
             }
             let s = ctx.settings::<Settings>(guild, KEY)?;
-            let text = match prestige(ctx, guild, call.user_id(), s.prestige_level)? {
+            let user = call.user_id();
+            let (text, prestiged) = match prestige(ctx, guild, user, s.prestige_level)? {
                 Some(n) => {
-                    sync_rewards(ctx, guild, call.user_id(), 0).await;
                     let bonus = if s.prestige_bonus > 0 { format!(" You earn {}% more XP from here.", s.prestige_pct(n)) } else { String::new() };
-                    format!("You're prestige {n} now, back at level 0.{bonus}")
+                    (format!("You're prestige {n} now, back at level 0.{bonus}"), true)
                 }
-                None => prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()).err().unwrap_or_else(|| "Nothing changed. Try /level prestige again.".into()),
+                None => (prestige_offer(&s, member(ctx, guild, user)?.as_ref()).err().unwrap_or_else(|| "Nothing changed. Try /level prestige again.".into()), false),
             };
+            // Answer first: taking many reward roles away can outlast the 3 seconds Discord waits,
+            // and the prestige is already written.
             ctx.update(&call.interaction, Reply::text(text)).await?;
+            if prestiged {
+                let ctx = ctx.clone();
+                bot_core::tokio::spawn(async move { sync_rewards(&ctx, guild, user, 0).await });
+            }
         }
         Ok(())
     }
@@ -549,7 +574,10 @@ enum Earned {
     Message,
     Voice,
     Reaction,
+    /// Paid by another feature: no boost, but it counts on the weekly board.
     Manual,
+    /// Given or taken by staff with `/xp`: no boost, and kept off the weekly board.
+    Staff,
 }
 
 pub fn member(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<Member>> {
@@ -861,17 +889,20 @@ fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64, you: u64) -> Resu
     Ok(LeaderboardPage { board, faces, embed, buttons })
 }
 
-/// Whether `key` is past its cooldown; if so, the cooldown starts again now. Entries that have
-/// run out are dropped once the map grows, so it stays small.
+/// Whether `key` is past its cooldown; if so, the cooldown starts again now. The map holds when
+/// each cooldown ends, since servers set different ones, and entries that have ended are dropped
+/// once it grows, so it stays small.
 fn cooled_down(map: &Mutex<HashMap<(u64, u64), Instant>>, key: (u64, u64), cooldown_secs: i64) -> bool {
-    let limit = cooldown_secs.max(0) as u64;
+    let now = Instant::now();
     let mut cd = map.lock().unwrap();
-    if cd.get(&key).is_some_and(|t| t.elapsed().as_secs() < limit) {
+    if cd.get(&key).is_some_and(|ends| *ends > now) {
         return false;
     }
-    cd.insert(key, Instant::now());
+    // The settings page allows an hour; a day caps anything a file could hold.
+    let secs = cooldown_secs.clamp(0, 86_400) as u64;
+    cd.insert(key, now.checked_add(std::time::Duration::from_secs(secs)).unwrap_or(now));
     if cd.len() > 5000 {
-        cd.retain(|_, t| t.elapsed().as_secs() < limit);
+        cd.retain(|_, ends| *ends > now);
     }
     true
 }
@@ -900,12 +931,19 @@ pub async fn give_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, channel: Opt
 /// Add XP (or take it, when `amount` is negative) and handle a level change: announcement and
 /// reward roles.
 async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, channel: Option<u64>) -> Result<()> {
+    let (s, before, level) = record_xp(ctx, guild, user, amount, how)?;
+    level_changed(ctx, &s, guild, user, before, level, channel).await;
+    Ok(())
+}
+
+/// The database half of `grant`: write the XP and log a level-up. Returns the settings, the level
+/// before and the level after, for `level_changed`.
+fn record_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned) -> Result<(std::sync::Arc<Settings>, u32, u32)> {
     let (s, before, level) = add_xp(ctx, guild, user, amount, how)?;
     if level > before {
         log_level_up(ctx, guild, user, level)?;
     }
-    level_changed(ctx, &s, guild, user, before, level, channel).await;
-    Ok(())
+    Ok((s, before, level))
 }
 
 /// Write the XP change. Returns the settings, the level before and the level after.
@@ -915,6 +953,9 @@ fn add_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned) -> Result<
     // can land together, and each must add to what the other wrote.
     let now = bot_core::now_ms();
     let (before, level) = ctx.db.with(|c| {
+        // The XP and, for staff changes, the weekly board's start move together.
+        let tx = c.unchecked_transaction()?;
+        let c: &bot_core::rusqlite::Connection = &tx;
         let (xp, level, prestige, streak, day): (i64, u32, i64, i64, i64) = c
             .query_row(
                 "SELECT xp, level, prestige, streak, streak_day FROM levels WHERE guild_id = ?1 AND user_id = ?2",
@@ -926,7 +967,7 @@ fn add_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned) -> Result<
         let before = (xp, level);
         // Earning keeps the streak going, and prestige and the streak boost what members earn;
         // staff giving or taking XP touches neither.
-        let (amount, streak, day) = if how == Earned::Manual {
+        let (amount, streak, day) = if matches!(how, Earned::Manual | Earned::Staff) {
             (amount, streak, day)
         } else {
             let today = day_of(now);
@@ -953,6 +994,10 @@ fn add_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned) -> Result<
                 day
             ],
         )?;
+        if how == Earned::Staff {
+            shift_week(c, guild, user, xp - before.0)?;
+        }
+        tx.commit()?;
         Ok((before, level))
     })?;
     Ok((s, before.1, level))
@@ -1169,6 +1214,7 @@ pub fn resync_rewards(ctx: &Ctx, guild: u64, from_level: u32, dropped: Option<u6
             };
             if let Some(role) = dropped
                 && has.contains(&role)
+                && assignable(&ctx, guild, role)
                 && let Some(role_id) = Id::new_checked(role)
                 && let Err(e) = ctx.http.remove_guild_member_role(guild_id, user_id, role_id).await
             {
@@ -1190,8 +1236,12 @@ async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
     let keep: Vec<u64> = if stack { earned.clone() } else { earned.last().copied().into_iter().collect() };
     let has: Vec<u64> = ctx.cache.member(guild_id, user_id).map(|m| m.roles().iter().map(|r| r.get()).collect()).unwrap_or_default();
     for (_, role) in &list {
-        // A reward stored without a real role (0) gives and takes nothing.
+        // A reward stored without a real role (0) gives and takes nothing, and nor does one the
+        // bot isn't allowed to give: Discord would only refuse it.
         let Some(role_id) = Id::new_checked(*role) else { continue };
+        if !assignable(ctx, guild, *role) {
+            continue;
+        }
         let want = keep.contains(role);
         let have = has.contains(role);
         let res = if want && !have {
@@ -1205,6 +1255,37 @@ async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
             bot_core::tracing::warn!(guild, user, role, error = %e, "couldn't update a level reward role");
         }
     }
+}
+
+/// Whether the bot can give or take `role`: it exists, isn't managed by an integration (bot and
+/// booster roles) or the @everyone role, and sits below the bot's highest role. When the cache
+/// doesn't hold the bot's own member, it's tried anyway.
+fn assignable(ctx: &Ctx, guild: u64, role: u64) -> bool {
+    let Some(r) = Id::new_checked(role).and_then(|id| ctx.cache.role(id)) else { return false };
+    if r.managed || role == guild {
+        return false;
+    }
+    let Some(bot) = ctx.bot_id() else { return true };
+    let (Some(guild_id), Some(bot_id)) = (Id::new_checked(guild), Id::new_checked(bot)) else { return false };
+    let Some(me) = ctx.cache.member(guild_id, bot_id) else { return true };
+    let top = me.roles().iter().filter_map(|id| ctx.cache.role(*id).map(|r| r.position)).max().unwrap_or(0);
+    r.position < top
+}
+
+/// Work every stored level of `guild` out again from XP, after the curve changed. Only rows whose
+/// level moved are written. Roles aren't touched: follow with `resync_rewards`.
+pub(crate) fn recompute_levels(c: &bot_core::rusqlite::Connection, guild: u64, s: &Settings) -> bot_core::rusqlite::Result<()> {
+    let rows: Vec<(i64, i64, i64)> = {
+        let mut st = c.prepare("SELECT user_id, xp, level FROM levels WHERE guild_id = ?1")?;
+        st.query_map([guild as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<bot_core::rusqlite::Result<_>>()?
+    };
+    for (user, xp, level) in rows {
+        let new = s.progress(xp).level as i64;
+        if new != level {
+            c.execute("UPDATE levels SET level = ?3 WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user, new])?;
+        }
+    }
+    Ok(())
 }
 
 /// A level-up message for `user`, with the mentions it may make: only that member, and only when
@@ -1380,6 +1461,17 @@ mod tests {
     }
 
     #[test]
+    fn pruning_keeps_each_servers_own_cooldown() {
+        let map = Mutex::new(HashMap::new());
+        // A server with an hour's cooldown, then a busy one with none fills the map.
+        assert!(cooled_down(&map, (1, 10), 3600));
+        for user in 0..5001 {
+            cooled_down(&map, (2, user), 0);
+        }
+        assert!(!cooled_down(&map, (1, 10), 3600), "the hour-long cooldown survived the prune");
+    }
+
+    #[test]
     fn weeks_follow_iso_numbering() {
         use bot_core::jiff::civil::date;
         assert_eq!(week_key_of(date(2026, 10, 31)), "2026-W44");
@@ -1475,6 +1567,8 @@ mod tests {
         // Taking XP away is never boosted.
         assert_eq!(boosted(-20, 50), -20);
         assert_eq!(boosted(i64::MAX, 50), i64::MAX / 100);
+        // A bonus too large to add to doesn't turn negative.
+        assert_eq!(boosted(20, i64::MAX), i64::MAX / 100);
         let mut s = Settings::default();
         assert_eq!(s.prestige_pct(3), 0, "prestige is off by default");
         s.prestige_level = 30;
@@ -1668,5 +1762,26 @@ mod tests {
         grant(&ctx, 1, 10, -30, Earned::Manual, None).await.unwrap();
         assert_eq!(streak(&ctx), (5, today, 120));
         assert_eq!(member(&ctx, 1, 10).unwrap().unwrap().streak, 5);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn staff_xp_stays_off_the_weekly_board_and_payouts_dont() {
+        let ctx = ctx();
+        ctx.save_settings(1, KEY, &Settings { announce: false, ..Default::default() }).unwrap();
+        set_level(&ctx, 10, 1_000, 5, 0);
+        roll_week_to(&ctx, 1, "2026-W44").unwrap();
+        grant(&ctx, 1, 10, 50, Earned::Message, None).await.unwrap();
+        // /xp give and take, and taking more than they have only counts what was there.
+        grant(&ctx, 1, 10, 5_000, Earned::Staff, None).await.unwrap();
+        grant(&ctx, 1, 11, 700, Earned::Staff, None).await.unwrap();
+        grant(&ctx, 1, 11, -1_000, Earned::Staff, None).await.unwrap();
+        let week = |ctx: &Ctx| crate::week_top(ctx, 1, 0, 10).unwrap().into_iter().map(|(m, g)| (m.user_id, g)).collect::<Vec<_>>();
+        assert_eq!(week(&ctx).len(), 1);
+        assert_eq!(week(&ctx)[0].0, 10);
+        let earned = week(&ctx)[0].1;
+        assert!((50..=60).contains(&earned), "{earned}");
+        // Another feature's payout counts as earned.
+        grant(&ctx, 1, 10, 100, Earned::Manual, None).await.unwrap();
+        assert_eq!(week(&ctx)[0].1, earned + 100);
     }
 }
