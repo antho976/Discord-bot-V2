@@ -115,7 +115,9 @@ async fn wait_and_post(states: States, ctx: Ctx, guild: u64, channel: u64) {
         let next = states.lock().unwrap().entry(channel).or_default().step(now_ms(), quiet_ms);
         match (next, rule) {
             (Next::Wait(ms), _) => bot_core::tokio::time::sleep(Duration::from_millis(ms.max(50) as u64)).await,
-            (Next::Post, Some(r)) => post(&ctx, guild, channel, &r.sticky).await,
+            (Next::Post, Some(r)) => {
+                let _ = post(&ctx, guild, channel, &r.sticky).await;
+            }
             _ => return,
         }
     }
@@ -147,8 +149,8 @@ fn posting(channel: u64) -> Arc<bot_core::tokio::sync::Mutex<()>> {
     all.entry(channel).or_default().clone()
 }
 
-/// Post the sticky message and delete the copy before it.
-pub async fn post(ctx: &Ctx, guild: u64, channel: u64, text: &str) {
+/// Post the sticky message and delete the copy before it. A refusal says why, in a sentence.
+pub async fn post(ctx: &Ctx, guild: u64, channel: u64, text: &str) -> Result<(), String> {
     let turn = posting(channel);
     let _turn = turn.lock().await;
     let old = ctx.db.with(|c| current(c, channel)).ok().flatten();
@@ -161,10 +163,13 @@ pub async fn post(ctx: &Ctx, guild: u64, channel: u64, text: &str) {
             if let Some(old) = old {
                 let _ = ctx.http.delete_message(Id::new(channel), Id::new(old)).await;
             }
+            Ok(())
         }
         Err(e) => {
             bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post a sticky message");
-            ctx.notify_once(guild, KEY, "sticky", format!("A sticky message couldn't be posted. {}", bot_core::discord::why_refused_any(&e)), Some(format!("/g/{guild}/rules")), Duration::from_secs(86_400));
+            let why = bot_core::discord::why_refused_any(&e);
+            ctx.notify_once(guild, KEY, "sticky", format!("A sticky message couldn't be posted. {why}"), Some(format!("/g/{guild}/rules")), Duration::from_secs(86_400));
+            Err(why)
         }
     }
 }

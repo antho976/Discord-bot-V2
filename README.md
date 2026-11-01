@@ -19,7 +19,7 @@ Each feature is switched on per server on the dashboard (Admin, Features). Every
 | Tickets and starboard | Support tickets as private threads; a starboard for popular messages. |
 | Pets | Idleon companion collection with approvals, pet giveaways, public pet pages. |
 | App approvals | Relay, Tally, Avex and your PCs connect after an approver allows them by DM. |
-| AFK and timezones | `/afk`, `/timezone`, `/time`. |
+| AFK and timezones | `/afk`, and `/time now`, `/time set`, `/time clear`. |
 | Embed builder | Write embeds on the dashboard and send or edit them in a channel. |
 
 Later: YouTube upload rewards, prestige and streaks, Twitch clips, modmail, channel rules, custom

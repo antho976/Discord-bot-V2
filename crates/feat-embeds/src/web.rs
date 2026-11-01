@@ -1,7 +1,7 @@
 use bot_core::axum::Router;
 use bot_core::axum::extract::{Path, Query, State};
 use bot_core::axum::http::StatusCode;
-use bot_core::axum::response::IntoResponse;
+use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_http::error::ErrorType;
@@ -19,12 +19,22 @@ use crate::{KEY, Sent};
 pub fn routes() -> Router<Ctx> {
     Router::new()
         .route("/g/{guild}/embeds", get(compose))
-        .route("/g/{guild}/embeds/send", post(send))
-        .route("/g/{guild}/embeds/sent/{id}/update", post(update))
+        .route("/g/{guild}/embeds/send", get(back).post(send))
+        .route("/g/{guild}/embeds/sent/{id}/update", get(back_to_sent).post(update))
         .route("/g/{guild}/embeds/sent/{id}/delete", post(forget))
-        .route("/g/{guild}/embeds/templates", post(save_template))
+        .route("/g/{guild}/embeds/templates", get(back).post(save_template))
         .route("/g/{guild}/embeds/templates/{id}/delete", post(delete_template))
         .route("/g/{guild}/embeds/templates/{id}/duplicate", post(duplicate_template))
+}
+
+/// A refused send or save answers with the composer at its own address. Opened again (a reload,
+/// or Back after leaving), that address goes to the composer instead of a 405.
+async fn back(Path(guild): Path<u64>) -> Redirect {
+    Redirect::to(&format!("/g/{guild}/embeds"))
+}
+
+async fn back_to_sent(Path((guild, id)): Path<(u64, i64)>) -> Redirect {
+    Redirect::to(&format!("/g/{guild}/embeds?sent={id}"))
 }
 
 /// What the composer shows: the embed, where it goes, and what it's replacing.

@@ -36,11 +36,22 @@ fn channel_name(ctx: &Ctx, guild: u64, channel: u64) -> String {
     ctx.text_channels(guild).into_iter().find(|(id, _)| *id == channel).map(|(_, n)| format!("#{n}")).unwrap_or_else(|| "a deleted channel".into())
 }
 
-/// "12 uses · last 3 h ago", or "Not used yet".
-fn use_line(uses: &crate::Uses, kind: Kind, id: u32) -> String {
-    match uses.get(&(kind.key().to_owned(), id)) {
-        Some((n, at)) if *n > 0 => format!("{} {} · last {}", text::num(*n), if *n == 1 { "use" } else { "uses" }, text::ago(*at)),
-        _ => "Not used yet".into(),
+/// How often it ran: "214 uses" and when last, over a bar measured against the busiest one
+/// (`top`). `noun` is the singular and plural ("use", "uses").
+fn usage(uses: &crate::Uses, kind: Kind, id: u32, top: i64, noun: (&str, &str)) -> Markup {
+    let (n, at) = uses.get(&(kind.key().to_owned(), id)).copied().unwrap_or((0, 0));
+    html! {
+        div.cc-use {
+            div.cc-use-line {
+                @if n > 0 {
+                    span { b { (text::num(n)) } " " (if n == 1 { noun.0 } else { noun.1 }) }
+                    span.cc-last { "last " (text::ago(at)) }
+                } @else {
+                    span.cc-last { "Not used yet" }
+                }
+            }
+            span.cc-meter aria-hidden="true" { span style={ "width:" (format!("{:.1}", n as f64 / top.max(1) as f64 * 100.0)) "%" } {} }
+        }
     }
 }
 
@@ -87,22 +98,16 @@ async fn commands_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 div.readings {
                     div.reading { b data-count { (s.commands.len()) " of " (MAX_COMMANDS) } span { "commands" } }
                     div.reading { b data-count { (text::num(total)) } span { "uses, all time" } }
-                    @if let Some(c) = favourite { div.reading { b.cc-fav { "/" (c.name) } span { "used most" } } }
+                    @if let Some(c) = favourite { div.reading { b.cc-fav { span.cc-sigil { "/" } (c.name) } span { "used most" } } }
                 }
                 @if s.commands.is_empty() {
                     (ui::empty(Icon::Slash, "No custom commands yet", "Add one to answer a slash command with your own text, like /links or /rules."))
                 } @else {
                     div.cc-list {
                         @for c in &s.commands {
-                            @let n = count(c.id);
                             article.cc-card {
                                 header.cc-card-head {
-                                    div.cc-triggers {
-                                        span.cc-name { span.cc-sigil { "/" } (c.name) }
-                                        @if s.text_commands { span.cc-alt data-tip="Also answers when typed in chat" { "!" (c.name) } }
-                                    }
-                                    @if c.ephemeral { (ui::badge("Only they see it", Tone::Muted)) }
-                                    @if c.embed.is_some() { (ui::badge("Embed", Tone::Muted)) }
+                                    h3.cc-name { span.cc-sigil { "/" } (c.name) }
                                     @if taken.contains(&c.name) { (ui::badge("Not registered", Tone::Warn)) }
                                     @if page.can_edit() {
                                         div.cc-acts {
@@ -111,16 +116,15 @@ async fn commands_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                         }
                                     }
                                 }
-                                @if taken.contains(&c.name) {
-                                    p.small.cc-warn { "/" (c.name) " is now one of the bot's own commands, so this one isn't registered. Rename it." }
-                                }
                                 div.cc-card-body {
                                     div.cc-meta {
                                         p.cc-about { (crate::description(c)) }
-                                        div.cc-use {
-                                            span.meter aria-hidden="true" { span style={ "width:" (format!("{:.1}", n as f64 / top as f64 * 100.0)) "%" } {} }
-                                            span.muted.small { (use_line(&uses, Kind::Command, c.id)) }
+                                        @if taken.contains(&c.name) {
+                                            p.cc-warn { "/" (c.name) " is now one of the bot's own commands, so this one isn't registered. Rename it." }
+                                        } @else if s.text_commands {
+                                            p.cc-alias { "Also " b { "!" (c.name) } " in chat" }
                                         }
+                                        (usage(&uses, Kind::Command, c.id, top, ("use", "uses")))
                                     }
                                     (reply_bubble(&ctx, &sample, None, &c.reply, c.embed.as_ref(), c.ephemeral))
                                 }
@@ -175,7 +179,7 @@ fn bot_av(ctx: &Ctx, class: &str) -> (String, Markup) {
 
 /// A small copy of the exchange for a list row, in Discord's colours: what the member said (for
 /// a trigger), then the bot's reply with placeholders filled, and the embed under it.
-fn reply_bubble(ctx: &Ctx, sample: &Sample, said: Option<&str>, reply: &str, embed: Option<&CardEmbed>, ephemeral: bool) -> Markup {
+fn reply_bubble(ctx: &Ctx, sample: &Sample, said: Option<Markup>, reply: &str, embed: Option<&CardEmbed>, ephemeral: bool) -> Markup {
     let (name, face) = bot_av(ctx, "cc-bav");
     html! {
         div.cc-bubble {
@@ -262,6 +266,10 @@ fn preview(ctx: &Ctx, page: &Page, sample: &Sample, channel: &str, above: Markup
                             p #cc-p-edesc { (sample.fill(&e.description)) }
                             img #cc-p-eimg src=[img_ok.then_some(e.image.trim())] alt="" hidden[!img_ok];
                         }
+                        div.cc-ghost #cc-p-ghost hidden[!(reply.trim().is_empty() && embed.is_none())] {
+                            span {} span {}
+                            p { "Write the reply and it shows here as members will see it." }
+                        }
                         p.cc-only #cc-p-eph hidden[!ephemeral] { (eye_icon()) "Only you can see this" }
                     }
                 }
@@ -277,6 +285,18 @@ fn eye_icon() -> Markup {
             (PreEscaped(r#"<path d="M1.75 8S4 3.75 8 3.75 14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8Z"/><circle cx="8" cy="8" r="2"/>"#))
         }
     }
+}
+
+/// Under an existing command's or trigger's preview: how often it ran, so an edit is made
+/// knowing who it reaches. Nothing for a new one.
+fn used_line(ctx: &Ctx, guild: u64, kind: Kind, id: Option<u32>, verb: &str) -> bot_core::anyhow::Result<Markup> {
+    let Some(id) = id else { return Ok(html! {}) };
+    let (n, at) = crate::uses(ctx, guild)?.get(&(kind.key().to_owned(), id)).copied().unwrap_or((0, 0));
+    Ok(html! {
+        p.cc-used-note {
+            @if n > 0 { (verb) " " b { (text::num(n)) (if n == 1 { " time" } else { " times" }) } ", last " (text::ago(at)) "." } @else { "Not used yet." }
+        }
+    })
 }
 
 /// "‹ All commands", as a link with the dashboard's chevron.
@@ -326,6 +346,7 @@ async fn command_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             aside.cc-side.compose-preview {
                 (preview(&ctx, &page, &sample, &sample.channel, used, &c.reply, c.embed.as_ref(), c.ephemeral))
                 p.muted.small { "You stand in for the member. Placeholders fill in as they would for you." }
+                (used_line(&ctx, guild, Kind::Command, existing.as_ref().map(|c| c.id), "Used")?)
             }
         }
         script { (PreEscaped(JS)) }
@@ -432,11 +453,12 @@ fn cooldown_line(secs: i64) -> String {
 }
 
 /// What a member might say that a trigger answers: the phrase alone, or with words around it.
-fn said_for(mode: Mode, pattern: &str) -> String {
-    match mode {
-        Mode::Exact => pattern.to_owned(),
-        Mode::StartsWith => format!("{pattern} …"),
-        Mode::Contains => format!("… {pattern} …"),
+/// The phrase is marked, so it shows which part matches.
+fn said(mode: Mode, pattern: &str) -> Markup {
+    html! {
+        @if mode == Mode::Contains { "… " }
+        mark.cc-match { (pattern) }
+        @if mode != Mode::Exact { " …" }
     }
 }
 
@@ -466,13 +488,12 @@ async fn responder_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
                     p.muted.small.cc-order-note { "Checked in number order; the first match answers." }
                     div.cc-list {
                         @for (i, t) in s.triggers.iter().enumerate() {
-                            @let n = count(t.id);
                             article.cc-card {
                                 header.cc-card-head {
                                     span.cc-num data-tip={ "Checked " (ordinal(i + 1)) } { (i + 1) }
-                                    div.cc-triggers {
+                                    h3.cc-phrase {
                                         span.cc-mode { (t.mode.label()) }
-                                        span.cc-phrase { "“" (t.pattern) "”" }
+                                        " “" (t.pattern) "”"
                                     }
                                     @if page.can_edit() {
                                         div.cc-acts {
@@ -483,21 +504,13 @@ async fn responder_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
                                 }
                                 div.cc-card-body {
                                     div.cc-meta {
-                                        div.cc-chips {
-                                            @if t.channels.is_empty() {
-                                                span.cc-chip { (ui::icon(Icon::Hash)) "Everywhere" }
-                                            } @else {
-                                                @for c in t.channels.iter().take(3) { span.cc-chip { (ui::icon(Icon::Hash)) (channel_name(&ctx, guild, *c).trim_start_matches('#')) } }
-                                                @if t.channels.len() > 3 { span.cc-chip { "+" (t.channels.len() - 3) } }
-                                            }
-                                            span.cc-chip.cool { (ui::icon(Icon::Clock)) (cooldown_line(t.cooldown_secs)) }
+                                        ul.cc-facts {
+                                            li { (ui::icon(Icon::Hash)) span { @if t.channels.is_empty() { "Everywhere" } @else { "Only in " (channel_list(&ctx, guild, t)) } } }
+                                            li { (ui::icon(Icon::Clock)) span { (cooldown_line(t.cooldown_secs)) } }
                                         }
-                                        div.cc-use {
-                                            span.meter aria-hidden="true" { span style={ "width:" (format!("{:.1}", n as f64 / top as f64 * 100.0)) "%" } {} }
-                                            span.muted.small { (use_line(&uses, Kind::Trigger, t.id)) }
-                                        }
+                                        (usage(&uses, Kind::Trigger, t.id, top, ("reply", "replies")))
                                     }
-                                    (reply_bubble(&ctx, &sample, Some(&said_for(t.mode, &t.pattern)), &t.reply, None, false))
+                                    (reply_bubble(&ctx, &sample, Some(said(t.mode, &t.pattern)), &t.reply, None, false))
                                 }
                             }
                         }
@@ -552,7 +565,7 @@ fn test_block(ctx: &Ctx, page: &Page, s: &Settings, test: Option<&str>, channel:
                                 span { (t.mode.label()) " “" (t.pattern) "”" }
                             }
                             @if channel.is_none() && !t.channels.is_empty() { p.muted.small { "It answers only in " (channel_list(ctx, guild, t)) ". Pick a channel to check." } }
-                            (reply_bubble(ctx, &sample, Some(said), &t.reply, None, false))
+                            (reply_bubble(ctx, &sample, Some(html! { (said) }), &t.reply, None, false))
                         }
                         None => {
                             div.cc-hit { (ui::badge("No match", Tone::Muted)) span.muted { "No trigger answers this" @if channel.is_some() { " here" } "." } }
@@ -580,7 +593,9 @@ async fn trigger_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             img.cc-av src=(sample.avatar) alt="" width="36" height="36";
             div.cc-msg-main {
                 div.cc-head { b { (sample.user) } span.cc-time { "Today at " (time) } }
-                div.cc-text #cc-p-said { (said_for(t.mode, &t.pattern)) }
+                div.cc-text #cc-p-said {
+                    @if t.pattern.is_empty() { span.cc-wait { "Type a phrase to see a message it answers." } } @else { (said(t.mode, &t.pattern)) }
+                }
             }
         }
     };
@@ -606,6 +621,7 @@ async fn trigger_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             aside.cc-side.compose-preview {
                 (preview(&ctx, &page, &sample, &first_channel, above, &t.reply, None, false))
                 p.muted.small { "You stand in for the member. Placeholders fill in as they would for you." }
+                (used_line(&ctx, guild, Kind::Trigger, existing.as_ref().map(|t| t.id), "Answered")?)
             }
         }
         script { (PreEscaped(JS)) }
@@ -701,69 +717,68 @@ const CSS: &str = r#"
 .cc-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 /* The readings span the column, so their edges meet the cards' below. */
 .cc-main > .readings > .reading { flex: 1 1 140px; }
-.reading b.cc-fav { font: 600 22px/1.3 var(--mono); color: var(--hue); letter-spacing: -0.01em; }
-.cc-order-note { margin-bottom: -8px; }
+.reading b.cc-fav { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-order-note { margin-bottom: -6px; }
 
-/* A command or trigger: its trigger chips, what it's for, its reply as Discord draws it, and how
-   often it runs. Cards sit side by side once the column has room; a lone one fills it. */
-.cc-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 12px; }
-.cc-card { container: cccard / inline-size; display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 14px 16px 16px; border-radius: 16px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
-.cc-card:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.cc-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
-.cc-triggers { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; margin-right: 4px; }
-.cc-name, .cc-phrase { display: inline-flex; align-items: center; min-height: 30px; padding: 3px 12px 3px 10px; border-radius: 9px; color: var(--ink); background: color-mix(in oklab, var(--hue) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 34%, transparent); overflow-wrap: anywhere; }
-.cc-name { font: 600 14px var(--mono); }
-.cc-phrase { padding-left: 12px; font-size: 14px; font-weight: 600; }
+/* A command or trigger. Left, what a member does: the name or phrase, what it's for and how
+   often it ran. Right, what the bot answers, as Discord draws it. Stacked in a narrow card. */
+.cc-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 14px; }
+.cc-card { container: cccard / inline-size; display: flex; flex-direction: column; gap: 14px; min-width: 0; padding: 16px 18px 18px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s; }
+.cc-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2); }
+.cc-card-head { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 30px; }
+.cc-name, .cc-phrase { min-width: 0; font-size: 16px; font-weight: 600; line-height: 1.35; letter-spacing: -0.01em; overflow-wrap: anywhere; }
 .cc-sigil { margin-right: 1px; color: var(--hue); }
-.cc-alt { display: inline-flex; align-items: center; height: 26px; padding: 0 9px; border-radius: 8px; font: 500 12.5px var(--mono); color: var(--ink-2); background: var(--control); }
-.cc-mode { font-size: 12.5px; color: var(--ink-3); }
-.cc-num { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 8px; font: 600 12px var(--mono); color: var(--ink-2); background: var(--control); }
-.cc-acts { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.cc-warn { color: var(--waiting); }
-/* In a card of the grid: what it's for, the reply, then the use count at the foot, so the counts
-   line up across a row. When the cards are one to a row, the reply sits beside the rest. */
+.cc-mode { margin-right: 2px; font-size: 13px; font-weight: 500; letter-spacing: 0; color: var(--ink-2); }
+.cc-num { flex: none; min-width: 14px; font-size: 13px; font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; cursor: default; }
+.cc-acts { display: flex; align-items: center; gap: 6px; margin-left: auto; flex: none; }
 .cc-card-body { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .cc-meta { display: contents; }
 .cc-card-body > .cc-bubble { order: 1; }
 .cc-use { order: 2; margin-top: auto; }
-@container cccard (min-width: 820px) {
-  .cc-card-body { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: 18px; align-items: start; }
-  .cc-meta { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding-top: 2px; }
-  .cc-use { margin-top: 0; }
+@container cccard (min-width: 600px) {
+  .cc-card-body { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 24px; }
+  .cc-meta { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .cc-use { padding-top: 6px; }
 }
-@container col (min-width: 680px) and (max-width: 1051px) {
-  .cc-card-body { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: 18px; align-items: start; }
-  .cc-meta { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding-top: 2px; }
-  .cc-use { margin-top: 0; }
-}
-.cc-about { font-size: 13.5px; color: var(--ink-2); }
-.cc-use { display: flex; flex-direction: column; gap: 6px; max-width: 240px; }
-.cc-use .meter { height: 4px; }
-.cc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.cc-chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px 0 7px; border-radius: 7px; font-size: 12px; color: var(--ink-2); background: var(--control); }
-.cc-chip .icon { width: 12px; height: 12px; color: var(--hue); }
+.cc-about { font-size: 13.5px; line-height: 1.45; color: var(--ink-2); }
+.cc-alias { font-size: 12.5px; color: var(--ink-3); }
+.cc-alias b { font-weight: 500; color: var(--ink-2); }
+.cc-warn { font-size: 12.5px; line-height: 1.45; color: var(--waiting); }
+.cc-facts { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.cc-facts li { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--ink-2); }
+.cc-facts .icon { flex: none; width: 14px; height: 14px; color: var(--ink-3); }
+.cc-facts span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-use { display: flex; flex-direction: column; gap: 7px; width: 100%; max-width: 300px; }
+.cc-use-line { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--ink-2); }
+.cc-use-line b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.cc-last { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.cc-meter { display: block; height: 4px; border-radius: 2px; background: var(--edge-1); overflow: hidden; }
+.cc-meter > span { display: block; height: 100%; border-radius: 2px; background: var(--data); animation: fill 1.1s var(--ease) both 0.25s; }
+html.same .cc-meter > span { animation: none; }
 
 /* Discord's colours for the replies: the subject's own. */
-.cc-bubble { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 11px 12px 12px; border-radius: 12px; background: #313338; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 12px 26px -18px rgba(0, 0, 0, 0.9); color: #dbdee1; font-size: 13px; line-height: 1.4; }
+.cc-bubble { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px 14px 13px; border-radius: 12px; background: #313338; color: #dbdee1; font-size: 13.5px; line-height: 1.4; }
 .cc-dmsg { display: flex; gap: 10px; min-width: 0; }
-.cc-bav { flex: none; width: 26px; height: 26px; border-radius: 50%; object-fit: cover; }
+.cc-bav { flex: none; width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
 .cc-bav.mark, .cc-av.mark { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
-.cc-bav.mark img { width: 15px; height: 15px; }
+.cc-bav.mark img { width: 16px; height: 16px; }
 .cc-bubble-main { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
 .cc-bhead { display: flex; align-items: center; gap: 5px; }
-.cc-bhead b { color: #f2f3f5; font-size: 13px; font-weight: 500; }
+.cc-bhead b { color: #f2f3f5; font-size: 13.5px; font-weight: 500; }
 .cc-tag { height: 14px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font-size: 9.5px; font-weight: 600; line-height: 14px; }
-.cc-btext { white-space: pre-line; overflow-wrap: break-word; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.cc-btext { white-space: pre-line; overflow-wrap: break-word; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .cc-bembed { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; padding: 8px 10px; border-left: 3px solid #f0806a; border-radius: 4px; background: #2b2d31; }
 .cc-bembed strong { color: #f2f3f5; font-weight: 600; }
 .cc-bembed p { white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .cc-bembed img { max-width: 100%; max-height: 90px; margin-top: 4px; border-radius: 4px; object-fit: cover; }
 .cc-only { display: inline-flex; align-items: center; gap: 5px; margin-top: 3px; color: #949ba4; font-size: 11.5px; }
 .cc-only .icon { width: 13px; height: 13px; }
+/* The words that match, in what the member said. */
+mark.cc-match { padding: 0 2px; border-radius: 3px; color: #f2f3f5; background: rgba(88, 101, 242, 0.3); }
 
 /* Placeholders, text commands and the test, in the rail. */
 .cc-ph { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 12px; font-size: 12.5px; color: var(--ink-2); }
-.cc-ph code { justify-self: start; padding: 2px 7px; border-radius: 6px; color: var(--ink); background: color-mix(in oklab, var(--hue) 13%, transparent); }
+.cc-ph code { justify-self: start; padding: 2px 7px; border-radius: 6px; color: var(--ink); background: var(--control); }
 .cc-fs { min-width: 0; margin: 0; padding: 0; border: 0; }
 .cc-test textarea.input { min-height: 72px; }
 .cc-result { display: flex; flex-direction: column; gap: 10px; animation: rise 0.45s var(--ease) both; }
@@ -782,6 +797,8 @@ const CSS: &str = r#"
 .cc-ecard:has(#embed:not(:checked)) .row + .row { display: none; }
 .cc-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .cc-side > p { padding: 0 4px; }
+.cc-used-note { font-size: 12.5px; color: var(--ink-2); }
+.cc-used-note b { font-weight: 600; color: var(--ink); }
 .cc-win { overflow: hidden; border-radius: 16px; background: #313338; box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 .cc-win-bar { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 14px; border-bottom: 1px solid #26272b; color: #80848e; }
 .cc-win-bar .icon { width: 18px; height: 18px; }
@@ -809,9 +826,19 @@ const CSS: &str = r#"
 .cc-embed strong:empty, .cc-embed p:empty { display: none; }
 .cc-embed p { white-space: pre-wrap; overflow-wrap: break-word; }
 .cc-embed img { max-width: 100%; max-height: 200px; margin-top: 4px; border-radius: 4px; object-fit: cover; }
+.cc-wait { color: #949ba4; font-style: italic; }
+/* An empty reply: the outline of a message, and a line on how it fills. */
+.cc-ghost { display: flex; flex-direction: column; gap: 8px; max-width: 360px; margin-top: 6px; }
+.cc-ghost span { height: 9px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); }
+.cc-ghost span:first-child { width: 88%; }
+.cc-ghost span:nth-child(2) { width: 56%; }
+.cc-ghost p { margin-top: 4px; color: #949ba4; font-size: 13px; }
 .cc-bot { animation: cc-arrive 0.7s var(--ease) both 0.35s; }
 @keyframes cc-arrive { from { opacity: 0; transform: translateY(14px); filter: blur(4px); } }
-@media (max-width: 560px) { .cc-card { padding: 12px 12px 14px; } }
+@media (max-width: 560px) {
+  .cc-card { padding: 14px 14px 16px; }
+  .cc-card-head { flex-wrap: wrap; }
+}
 "#;
 
 /// Keeps the preview in step with the form as you type.
@@ -840,9 +867,28 @@ const JS: &str = r#"(() => {
       if (img) { img.hidden = !url.startsWith('https://'); if (!img.hidden) img.src = url; }
     }
     if ($('ephemeral')) show('cc-p-eph', on('ephemeral'));
-    if ($('pattern')) {
-      const pat = val('pattern').trim(), mode = val('mode');
-      set('cc-p-said', mode === 'exact' ? pat : mode === 'starts_with' ? pat + ' …' : '… ' + pat + ' …');
+    // Nothing to say yet: a faint outline of a message instead of an empty one.
+    const embedOn = $('embed') ? on('embed') && !!(val('embed_title').trim() || val('embed_desc').trim() || val('embed_image').trim().startsWith('https://')) : false;
+    show('cc-p-ghost', !val('reply').trim() && !embedOn);
+    const said = $('cc-p-said');
+    if ($('pattern') && said) {
+      // The member's message with the phrase marked, so it shows which part matches.
+      const pat = val('pattern').trim().toLowerCase(), mode = val('mode');
+      const parts = [];
+      if (!pat) {
+        const w = document.createElement('span');
+        w.className = 'cc-wait';
+        w.textContent = 'Type a phrase to see a message it answers.';
+        parts.push(w);
+      } else {
+        const m = document.createElement('mark');
+        m.className = 'cc-match';
+        m.textContent = pat;
+        if (mode === 'contains') parts.push('… ');
+        parts.push(m);
+        if (mode !== 'exact') parts.push(' …');
+      }
+      said.replaceChildren(...parts);
     }
   };
   // Until the page is swapped out (app.js).
