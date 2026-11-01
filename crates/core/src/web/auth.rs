@@ -299,9 +299,16 @@ async fn preview_login(State(ctx): State<Ctx>, Query(q): Query<PreviewQuery>) ->
             params![hash_token(&session), ctx.cfg.owner_id as i64, now, now + 86_400_000],
         )
     })?;
-    // A path on this site only: "//host" and "/\\host" would leave it.
-    let to = q.to.filter(|t| t.starts_with('/') && !t.starts_with("//") && !t.starts_with("/\\")).unwrap_or_else(|| "/".into());
+    // A path on this site only: "//host", "/\\host" and "/<tab>/host" (browsers drop the tab)
+    // would leave it.
+    let to = q.to.filter(|t| local_path(t)).unwrap_or_else(|| "/".into());
     Ok(([(header::SET_COOKIE, set_cookie(&ctx, SESSION_COOKIE, &session, 86_400))], Redirect::to(&to)).into_response())
+}
+
+/// A path on this site: starts with one slash, with no backslash or control character a
+/// browser would read as something else.
+fn local_path(to: &str) -> bool {
+    to.starts_with('/') && !to.starts_with("//") && !to.chars().any(|c| c == '\\' || c.is_control())
 }
 
 /// Preview only: Discord sign-in can't work here, and a restart of the preview forgets every
@@ -467,7 +474,15 @@ async fn logout(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{Level, Levels, decode_tz};
+    use super::{Level, Levels, decode_tz, local_path};
+
+    #[test]
+    fn dev_login_only_goes_to_paths_here() {
+        assert!(local_path("/g/1/alerts?x=1"));
+        for bad in ["//evil.example", "/\\evil.example", "/\t/evil.example", "/\n/evil.example", "https://evil.example", ""] {
+            assert!(!local_path(bad), "{bad:?}");
+        }
+    }
 
     #[test]
     fn kept_pages_need_admin_plus() {

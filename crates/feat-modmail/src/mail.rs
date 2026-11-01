@@ -171,6 +171,11 @@ pub fn record(conn: &Connection, id: i64, author: u64, preview: &str, at: i64) -
     Ok(())
 }
 
+/// Close every open conversation in a server, as when the bot leaves it.
+pub fn close_all_in(conn: &Connection, guild: u64, now: i64) -> bot_core::rusqlite::Result<usize> {
+    conn.execute("UPDATE modmail SET status = 'closed', closed_at = ?2 WHERE guild_id = ?1 AND status = 'open'", params![guild as i64, now])
+}
+
 /// Close a conversation that is still open. False when it already wasn't.
 pub fn mark_closed(conn: &Connection, id: i64, by: Option<u64>, now: i64) -> bot_core::rusqlite::Result<bool> {
     let n = conn.execute(
@@ -342,6 +347,41 @@ pub(crate) struct Held {
 
 // ---- where a DM goes ----
 
+/// When the bot last got its server list from Discord. A server missing from the cache is only
+/// "not loaded yet" for a while after that; later the bot isn't in it any more.
+static READY_AT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+const LOAD_GRACE: Duration = Duration::from_secs(15 * 60);
+
+pub fn note_ready() {
+    *READY_AT.lock().unwrap() = Some(Instant::now());
+}
+
+fn still_loading() -> bool {
+    READY_AT.lock().unwrap().is_none_or(|t| t.elapsed() < LOAD_GRACE)
+}
+
+/// What a member's open conversation in a server can do with a DM now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConvState {
+    /// The server is there and modmail is on.
+    Open,
+    /// The server isn't loaded yet after a (re)connect: wait for it.
+    Stuck,
+    /// Modmail is off there: not a place to send to, but kept for when it's back on.
+    Off,
+    /// The bot isn't in the server any more: the conversation is over.
+    Gone,
+}
+
+fn conv_state(enabled: bool, in_cache: bool, loading: bool) -> ConvState {
+    match (enabled, in_cache, loading) {
+        (false, _, _) => ConvState::Off,
+        (true, true, _) => ConvState::Open,
+        (true, false, true) => ConvState::Stuck,
+        (true, false, false) => ConvState::Gone,
+    }
+}
+
 /// Modmail is on in this server and the bot can reach it.
 fn reachable(ctx: &Ctx, guild: u64) -> bool {
     ctx.enabled(guild, KEY) && Id::new_checked(guild).is_some_and(|g| ctx.cache.guild(g).is_some())
@@ -404,7 +444,19 @@ pub async fn on_dm(f: &Modmail, ctx: &Ctx, m: &Message) -> Result<()> {
     let _turn = turn.lock().await;
     // Open conversations keep both directions even after the staff channel is cleared: staff
     // still answer in their threads, so the member's answers still reach them there.
-    let (open, stuck): (Vec<u64>, Vec<u64>) = ctx.db.with(|c| open_for_user(c, user))?.into_iter().map(|c| c.guild_id).partition(|g| reachable(ctx, *g));
+    let (mut open, mut stuck) = (Vec::new(), Vec::new());
+    let loading = still_loading();
+    for c in ctx.db.with(|c| open_for_user(c, user))? {
+        let in_cache = Id::new_checked(c.guild_id).is_some_and(|g| ctx.cache.guild(g).is_some());
+        match conv_state(ctx.enabled(c.guild_id, KEY), in_cache, loading) {
+            ConvState::Open => open.push(c.guild_id),
+            ConvState::Stuck => stuck.push(c.guild_id),
+            ConvState::Off => {}
+            ConvState::Gone => {
+                ctx.db.with(|conn| close_all_in(conn, c.guild_id, now_ms()))?;
+            }
+        }
+    }
     let shared = shared_servers(ctx, user);
     match route(&open, &stuck, &shared) {
         Route::To(guild) => deliver(f, ctx, guild, user, &name, &avatar, &[incoming]).await,
@@ -900,6 +952,20 @@ pub fn seed(ctx: &Ctx, guild: u64) -> anyhow::Result<()> {
     }
     tx.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod conv_state_tests {
+    use super::*;
+
+    #[test]
+    fn a_server_the_bot_left_ends_the_conversation() {
+        assert_eq!(conv_state(true, true, false), ConvState::Open);
+        assert_eq!(conv_state(true, false, true), ConvState::Stuck);
+        assert_eq!(conv_state(true, false, false), ConvState::Gone);
+        assert_eq!(conv_state(false, true, false), ConvState::Off);
+        assert_eq!(conv_state(false, false, false), ConvState::Off);
+    }
 }
 
 #[cfg(test)]

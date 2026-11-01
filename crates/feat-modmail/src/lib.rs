@@ -182,6 +182,12 @@ impl Feature for Modmail {
                 Some(guild) => mail::on_staff_message(self, ctx, guild.get(), m).await?,
             },
             Event::ThreadDelete(t) => mail::on_thread_gone(self, ctx, t.guild_id.get(), t.id.get()).await?,
+            Event::Ready(_) => mail::note_ready(),
+            // Removed from the server (an outage says unavailable): its conversations are over.
+            Event::GuildDelete(g) if g.unavailable != Some(true) => {
+                let guild = g.id.get();
+                ctx.db.with(|c| mail::close_all_in(c, guild, now_ms()))?;
+            }
             Event::ThreadUpdate(t) => {
                 if let (Some(guild), Some(meta)) = (t.guild_id, &t.thread_metadata)
                     && meta.archived

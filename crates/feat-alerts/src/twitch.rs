@@ -811,11 +811,13 @@ async fn channel_info(ctx: &Ctx, bid: &str) -> Result<(String, String)> {
     Ok(list.and_then(|l| l.data.into_iter().next()).map(|c| (c.title, c.game_name)).unwrap_or_default())
 }
 
-/// `sent` is when Twitch sent the event. An offline sent before the stream last came back is
-/// about the drop, arriving late or retried, and mustn't end the stream that's on now.
+/// `sent` is when Twitch sent the event. An offline sent before the stream started, or before
+/// it last came back, is about an earlier stream or the drop, arriving late or retried, and
+/// mustn't end the stream that's on now.
 pub async fn on_offline(ctx: &Ctx, bid: &str, ended: i64, sent: i64) -> Result<()> {
     let Some(row) = open_streams(ctx)?.into_iter().find(|r| r.broadcaster_id == bid) else { return Ok(()) };
-    if row.resumed_at.is_some_and(|at| sent < at) {
+    // Before the stream (re)started is stale: about the drop, or about the last stream.
+    if sent < row.resumed_at.unwrap_or(row.started_at) {
         tracing::info!(broadcaster = bid, "ignored an offline sent before the stream came back");
         return Ok(());
     }
@@ -839,7 +841,9 @@ async fn finish(ctx: &Ctx, row: StreamRow, ended: i64) -> Result<()> {
     let (vod_url, thumbnail) = vod.map(|v| (Some(v.url), v.thumbnail_url)).unwrap_or_default();
     // Only worth asking when the start was read, since the post shows the difference.
     let clips = clips_during(ctx, &StreamRow { ended_at: Some(ended), ..row.clone() }).unwrap_or(0);
-    let followers_end = match row.followers_start {
+    // Only near the real end, like the start: read hours later (the bot was down) it would
+    // count follows from after the stream.
+    let followers_end = match row.followers_start.filter(|_| now_ms() - ended <= FOLLOWERS_START_WINDOW_MS) {
         Some(_) => match broadcasters(ctx).into_iter().find(|b| b.user_id == row.broadcaster_id) {
             Some(b) => follower_total(ctx, &b).await,
             None => None,
@@ -1114,10 +1118,18 @@ async fn followers(ctx: &Ctx, guilds: &[(u64, std::sync::Arc<Settings>)]) {
             totals.insert(b.login.clone(), total);
         }
     }
+    for (login, total) in &totals {
+        state_set(ctx, &format!("followers:{login}"), &total.to_string());
+    }
     for (guild, s) in guilds {
-        // All or nothing: a channel missing one day would read as followers lost, then gained.
-        let found: Vec<i64> = s.twitch_logins.iter().filter_map(|l| totals.get(l).copied()).collect();
-        if !found.is_empty() && found.len() == s.twitch_logins.len()
+        // A channel not read today counts with its last total, so a missed day doesn't read as
+        // followers lost, then gained. One never read counts as nothing, every day alike.
+        let found: Vec<i64> = s
+            .twitch_logins
+            .iter()
+            .filter_map(|l| totals.get(l).copied().or_else(|| state_get(ctx, &format!("followers:{l}")).and_then(|v| v.parse().ok())))
+            .collect();
+        if !found.is_empty()
             && let Err(e) = ctx.record_stat(*guild, "followers", found.iter().sum())
         {
             tracing::warn!(guild, error = %e, "couldn't store the follower total");
