@@ -684,34 +684,37 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         }
                     }
                 }
-                section.block {
-                    div.sa-sechead {
-                        div {
-                            h2 { "What members see when you go live" }
-                            p.muted { "The post appears the moment Twitch says you're live, with your stream's picture." }
-                        }
-                        @if page.can_edit() { (ui::action_button(&page.path("alerts/test"), "Send a test alert", Tone::Muted, false)) }
-                    }
-                    (discord(channel_name(&ctx, guild, s.live_channel), "No channel picked", live_post(&ctx, &page, role, &line, &sample, &preview)))
-                    p.sa-foot-note {
-                        @if page.can_edit() {
-                            @match channel_name(&ctx, guild, s.live_channel) {
-                                Some(c) => { "The test posts a sample in " (c) " without pinging anyone. " }
-                                None => { "Pick a channel below and save first. " }
+                // The settings and what they produce, side by side on a wide screen.
+                div.compose {
+                    section.block.compose-preview {
+                        div.sa-sechead {
+                            div {
+                                h2 { "What members see when you go live" }
+                                p.muted { "The post appears the moment Twitch says you're live, with your stream's picture." }
                             }
+                            @if page.can_edit() { (ui::action_button(&page.path("alerts/test"), "Send a test alert", Tone::Muted, false)) }
                         }
-                        (mode_line(mode))
+                        (discord(channel_name(&ctx, guild, s.live_channel), "No channel picked", live_post(&ctx, &page, role, &line, &sample, &preview)))
+                        p.sa-foot-note {
+                            @if page.can_edit() {
+                                @match channel_name(&ctx, guild, s.live_channel) {
+                                    Some(c) => { "The test posts a sample in " (c) " without pinging anyone. " }
+                                    None => { "Pick a channel below and save first. " }
+                                }
+                            }
+                            (mode_line(mode))
+                        }
+                        @if mode != Mode::Off && !missing.is_empty() {
+                            p.small { (ui::badge("Not found", Tone::Warn)) " Twitch hasn't confirmed " (missing.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(", ")) " yet. Check the spelling." }
+                        }
                     }
-                    @if mode != Mode::Off && !missing.is_empty() {
-                        p.small { (ui::badge("Not found", Tone::Warn)) " Twitch hasn't confirmed " (missing.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(", ")) " yet. Check the spelling." }
-                    }
+                    (ui::settings_form(&page, &page.path("alerts"), ui::section("Settings", None, ui::card(html! {
+                        (ui::field_text("twitch_logins", "Twitch channel", Some("The name in twitch.tv/name. Separate several with commas."), &s.twitch_logins.join(", "), "yourname"))
+                        (ui::field_channel(&ctx, guild, "live_channel", "Post in", None, s.live_channel))
+                        (ui::field_role(&ctx, guild, "live_role", "Ping", Some("Only this role is pinged."), s.live_role))
+                        (ui::field_text("live_message", "Message", Some("{streamer}, {title}, {game} and {url} are filled in."), &s.live_message, crate::DEFAULT_LIVE_MESSAGE))
+                    }))))
                 }
-                (ui::settings_form(&page, &page.path("alerts"), ui::section("Settings", None, ui::card(html! {
-                    (ui::field_text("twitch_logins", "Twitch channel", Some("The name in twitch.tv/name. Separate several with commas."), &s.twitch_logins.join(", "), "yourname"))
-                    (ui::field_channel(&ctx, guild, "live_channel", "Post in", None, s.live_channel))
-                    (ui::field_role(&ctx, guild, "live_role", "Ping", Some("Only this role is pinged."), s.live_role))
-                    (ui::field_text("live_message", "Message", Some("{streamer}, {title}, {game} and {url} are filled in."), &s.live_message, crate::DEFAULT_LIVE_MESSAGE))
-                }))))
             }
             aside.rail {
                 (week_block(&tz, !bs.is_empty(), &week, &s, now))
@@ -885,31 +888,6 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         }
         div.with-rail {
             div.stack.sa-main {
-                section.block {
-                    div.sa-sechead {
-                        div {
-                            h2 { "What members see before a stream" }
-                            p.muted { "The closest reminder. Discord shows each reader the time in their own zone." }
-                        }
-                    }
-                    (discord(channel_name(&ctx, guild, s.reminder_channel), "No channel picked", reminder_post(&ctx, &page, &tz, role, &sample, next, closest)))
-                    p.sa-foot-note { (reminder_line(&s)) }
-                }
-                @if !bs.is_empty() {
-                    section.block {
-                        div.sa-sechead {
-                            div {
-                                h2 { "What /schedule posts" }
-                                p.muted { @if weekly { "The same picture goes up every Monday." } @else { "Members can ask for it any time. The Monday post is off." } }
-                            }
-                        }
-                        (discord(if weekly { channel_name(&ctx, guild, s.weekly_channel) } else { None }, "Wherever someone uses it", bot_message(&ctx, &page, (!weekly).then_some("/schedule"), html! {
-                            div.sa-media.sheet {
-                                img src=(page.path("alerts/schedule.png")) alt="This week's stream schedule" width="960" height="884" loading="lazy";
-                            }
-                        })))
-                    }
-                }
                 (ui::section("Coming up", Some("The next two weeks."), html! {
                     @if upcoming.is_empty() {
                         (ui::empty(Icon::Calendar, "Nothing scheduled", if mode == Mode::Off { "Segments come from your Twitch schedule once Twitch is connected." } else { "Add segments to your schedule on Twitch. They show up here within 30 minutes." }))
@@ -938,18 +916,48 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     }
                 }))
                 (ui::settings_form(&page, &page.path("alerts/schedule"), html! {
-                    (ui::section("Reminders", None, ui::card(html! {
-                        (ui::field_toggle("reminders", "Post reminders", Some("Skipped when you're already live."), s.reminders))
-                        (ui::field_channel(&ctx, guild, "reminder_channel", "Post in", None, s.reminder_channel))
-                        (ui::field_role(&ctx, guild, "reminder_role", "Role to ping", None, s.reminder_role))
-                        (ui::field_text("reminder_minutes", "When", Some("Minutes before a stream starts, separated by commas."), &minutes.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(", "), "60, 10"))
-                    })))
-                    (ui::section("Weekly image", None, ui::card(html! {
-                        (ui::field_toggle("weekly_post", "Post every Monday", None, s.weekly_post))
-                        (ui::field_channel(&ctx, guild, "weekly_channel", "Post in", None, s.weekly_channel))
-                        (ui::field_select("weekly_hour", "At", None, &hours, &s.weekly_hour.to_string()))
-                        (ui::field_text("timezone", "Time zone", Some("For the image, the Monday post and this page. A name like America/Toronto."), &s.timezone, crate::DEFAULT_TIMEZONE))
-                    })))
+                    // Each group of settings beside the post it shapes.
+                    div.compose {
+                        (ui::section("Reminders", None, ui::card(html! {
+                            (ui::field_toggle("reminders", "Post reminders", Some("Skipped when you're already live."), s.reminders))
+                            (ui::field_channel(&ctx, guild, "reminder_channel", "Post in", None, s.reminder_channel))
+                            (ui::field_role(&ctx, guild, "reminder_role", "Role to ping", None, s.reminder_role))
+                            (ui::field_text("reminder_minutes", "When", Some("Minutes before a stream starts, separated by commas."), &minutes.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(", "), "60, 10"))
+                        })))
+                        section.block.compose-preview {
+                            div.sa-sechead {
+                                div {
+                                    h2 { "What members see before a stream" }
+                                    p.muted { "The closest reminder. Discord shows each reader the time in their own zone." }
+                                }
+                            }
+                            (discord(channel_name(&ctx, guild, s.reminder_channel), "No channel picked", reminder_post(&ctx, &page, &tz, role, &sample, next, closest)))
+                            p.sa-foot-note { (reminder_line(&s)) }
+                        }
+                    }
+                    div.compose {
+                        (ui::section("Weekly image", None, ui::card(html! {
+                            (ui::field_toggle("weekly_post", "Post every Monday", None, s.weekly_post))
+                            (ui::field_channel(&ctx, guild, "weekly_channel", "Post in", None, s.weekly_channel))
+                            (ui::field_select("weekly_hour", "At", None, &hours, &s.weekly_hour.to_string()))
+                            (ui::field_text("timezone", "Time zone", Some("For the image, the Monday post and this page. A name like America/Toronto."), &s.timezone, crate::DEFAULT_TIMEZONE))
+                        })))
+                        @if !bs.is_empty() {
+                            section.block.compose-preview {
+                                div.sa-sechead {
+                                    div {
+                                        h2 { "What /schedule posts" }
+                                        p.muted { @if weekly { "The same picture goes up every Monday." } @else { "Members can ask for it any time. The Monday post is off." } }
+                                    }
+                                }
+                                (discord(if weekly { channel_name(&ctx, guild, s.weekly_channel) } else { None }, "Wherever someone uses it", bot_message(&ctx, &page, (!weekly).then_some("/schedule"), html! {
+                                    div.sa-media.sheet {
+                                        img src=(page.path("alerts/schedule.png")) alt="This week's stream schedule" width="960" height="884" loading="lazy";
+                                    }
+                                })))
+                            }
+                        }
+                    }
                 }))
             }
             aside.rail {
@@ -1166,28 +1174,30 @@ async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
         }
         div.with-rail {
             div.stack.sa-main {
-                section.block {
-                    div.sa-sechead {
-                        div {
-                            h2 { "What members see for a new clip" }
-                            p.muted { "Discord turns the link into a player members can watch in the channel." }
+                div.compose {
+                    section.block.compose-preview {
+                        div.sa-sechead {
+                            div {
+                                h2 { "What members see for a new clip" }
+                                p.muted { "Discord turns the link into a player members can watch in the channel." }
+                            }
+                        }
+                        (discord(channel_name(&ctx, guild, s.clips_channel), "No channel picked", clip_post(&ctx, &page, &b, &sample)))
+                        p.sa-foot-note {
+                            @match (posting, channel_name(&ctx, guild, s.clips_channel)) {
+                                (true, Some(c)) => { "Posted in " (c) " within 15 minutes of Twitch listing the clip. Nobody is pinged." }
+                                (false, Some(_)) if !s.clips => { "Clip posts are off." }
+                                _ => { "Pick a channel below and save to start posting." }
+                            }
                         }
                     }
-                    (discord(channel_name(&ctx, guild, s.clips_channel), "No channel picked", clip_post(&ctx, &page, &b, &sample)))
-                    p.sa-foot-note {
-                        @match (posting, channel_name(&ctx, guild, s.clips_channel)) {
-                            (true, Some(c)) => { "Posted in " (c) " within 15 minutes of Twitch listing the clip. Nobody is pinged." }
-                            (false, Some(_)) if !s.clips => { "Clip posts are off." }
-                            _ => { "Pick a channel below and save to start posting." }
-                        }
-                    }
+                    (ui::settings_form(&page, &page.path("alerts/clips"), html! {
+                        (ui::section("Settings", None, ui::card(html! {
+                            (ui::field_toggle("clips", "Post new clips", Some("Clips of the channels on the Twitch tab, made by anyone."), s.clips))
+                            (ui::field_channel(&ctx, guild, "clips_channel", "Post in", None, s.clips_channel))
+                        })))
+                    }))
                 }
-                (ui::settings_form(&page, &page.path("alerts/clips"), html! {
-                    (ui::section("Settings", None, ui::card(html! {
-                        (ui::field_toggle("clips", "Post new clips", Some("Clips of the channels on the Twitch tab, made by anyone."), s.clips))
-                        (ui::field_channel(&ctx, guild, "clips_channel", "Post in", None, s.clips_channel))
-                    })))
-                }))
             }
             aside.rail {
                 div.rail-block {
@@ -1294,44 +1304,46 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         }
         div.with-rail {
             div.stack.sa-main {
-                section.block {
-                    div.sa-sechead {
-                        div {
-                            h2 { "What members see when you upload" }
-                            p.muted { "Discord turns the link into the video's card." }
-                        }
-                        @if page.can_edit() && !videos.is_empty() { (ui::action_button(&page.path("alerts/youtube/test"), "Send a test post", Tone::Muted, false)) }
-                    }
-                    (discord(channel_name(&ctx, guild, s.youtube_channel), "No channel picked", video_post(&ctx, &page, role, &s.youtube_message, &sample, rewards.then(|| format!("Claim {} XP", text::num(s.reward_xp))))))
-                    p.sa-foot-note {
-                        @match channel_name(&ctx, guild, s.youtube_channel) {
-                            Some(c) => {
-                                "Posted in " (c) " within 5 minutes of the upload."
-                                @if page.can_edit() && !videos.is_empty() { " The test posts your newest video there without pinging anyone." }
+                div.compose {
+                    section.block.compose-preview {
+                        div.sa-sechead {
+                            div {
+                                h2 { "What members see when you upload" }
+                                p.muted { "Discord turns the link into the video's card." }
                             }
-                            None => { "Pick a channel below and save to start posting." }
+                            @if page.can_edit() && !videos.is_empty() { (ui::action_button(&page.path("alerts/youtube/test"), "Send a test post", Tone::Muted, false)) }
                         }
-                        @if rewards {
-                            " Each member can claim " (text::num(s.reward_xp)) " XP once per video, for " (plural(s.reward_hours as usize, "hour", "hours")) " after the post."
+                        (discord(channel_name(&ctx, guild, s.youtube_channel), "No channel picked", video_post(&ctx, &page, role, &s.youtube_message, &sample, rewards.then(|| format!("Claim {} XP", text::num(s.reward_xp))))))
+                        p.sa-foot-note {
+                            @match channel_name(&ctx, guild, s.youtube_channel) {
+                                Some(c) => {
+                                    "Posted in " (c) " within 5 minutes of the upload."
+                                    @if page.can_edit() && !videos.is_empty() { " The test posts your newest video there without pinging anyone." }
+                                }
+                                None => { "Pick a channel below and save to start posting." }
+                            }
+                            @if rewards {
+                                " Each member can claim " (text::num(s.reward_xp)) " XP once per video, for " (plural(s.reward_hours as usize, "hour", "hours")) " after the post."
+                            }
+                        }
+                        @if s.reward && !levels_on {
+                            p.small { (ui::badge("Not added", Tone::Warn)) " XP and levels is off on this server, so posts don't carry the claim button." }
                         }
                     }
-                    @if s.reward && !levels_on {
-                        p.small { (ui::badge("Not added", Tone::Warn)) " XP and levels is off on this server, so posts don't carry the claim button." }
-                    }
+                    (ui::settings_form(&page, &page.path("alerts/youtube"), html! {
+                        (ui::section("Settings", None, ui::card(html! {
+                            (ui::field_text("youtube_ids", "YouTube channels", Some("A channel link, @handle or ID (starts with UC). Separate several with commas."), &s.youtube_ids.join(", "), "@yourchannel"))
+                            (ui::field_channel(&ctx, guild, "youtube_channel", "Post in", None, s.youtube_channel))
+                            (ui::field_role(&ctx, guild, "youtube_role", "Role to ping", Some("Only this role is pinged."), s.youtube_role))
+                            (ui::field_textarea("youtube_message", "Message", Some("{channel}, {title} and {url} are filled in. Keep {url} so Discord shows the video."), &s.youtube_message, crate::DEFAULT_VIDEO_MESSAGE))
+                        })))
+                        (ui::section("Upload rewards", Some("A button on each new video post that gives XP through XP and levels."), ui::card(html! {
+                            (ui::field_toggle("reward", "Add a claim button", Some("Once per member per video."), s.reward))
+                            (ui::field_number("reward_xp", "XP", None, s.reward_xp, 1, 10_000, Some("XP")))
+                            (ui::field_number("reward_hours", "Claim window", Some("How long after the post the button pays out."), s.reward_hours, 1, 168, Some("hours")))
+                        })))
+                    }))
                 }
-                (ui::settings_form(&page, &page.path("alerts/youtube"), html! {
-                    (ui::section("Settings", None, ui::card(html! {
-                        (ui::field_text("youtube_ids", "YouTube channels", Some("A channel link, @handle or ID (starts with UC). Separate several with commas."), &s.youtube_ids.join(", "), "@yourchannel"))
-                        (ui::field_channel(&ctx, guild, "youtube_channel", "Post in", None, s.youtube_channel))
-                        (ui::field_role(&ctx, guild, "youtube_role", "Role to ping", Some("Only this role is pinged."), s.youtube_role))
-                        (ui::field_textarea("youtube_message", "Message", Some("{channel}, {title} and {url} are filled in. Keep {url} so Discord shows the video."), &s.youtube_message, crate::DEFAULT_VIDEO_MESSAGE))
-                    })))
-                    (ui::section("Upload rewards", Some("A button on each new video post that gives XP through XP and levels."), ui::card(html! {
-                        (ui::field_toggle("reward", "Add a claim button", Some("Once per member per video."), s.reward))
-                        (ui::field_number("reward_xp", "XP", None, s.reward_xp, 1, 10_000, Some("XP")))
-                        (ui::field_number("reward_hours", "Claim window", Some("How long after the post the button pays out."), s.reward_hours, 1, 168, Some("hours")))
-                    })))
-                }))
             }
             aside.rail {
                 div.rail-block {
@@ -1597,31 +1609,34 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                     ("average viewers", avg_viewers(month.iter().copied()).map(text::num).unwrap_or_else(|| "none yet".into())),
                     followers_value,
                 ]))
-                section.block.sa-chart {
-                    div.sa-sechead {
-                        div {
-                            h2 { "Average viewers" }
-                            p.muted { "Each week, from counts read every few minutes while you're live." }
-                        }
-                    }
-                    @if viewers.iter().all(|(_, v)| v.is_none()) {
-                        (ui::empty(Icon::Chart, "No viewer counts yet", "The bot reads viewers every few minutes while you're live, and the chart fills in week by week."))
-                    } @else {
-                        (ui::column_bars(&viewers, "average viewers", &format!("Average viewers in each of the last {} weeks", viewers.len())))
-                    }
-                }
-                @if gains.len() >= 2 {
-                    section.block {
+                // The two charts side by side once there's room (style.css, .sa-pair).
+                div.sa-pair {
+                    section.block.sa-chart {
                         div.sa-sechead {
                             div {
-                                h2 { "Followers gained" }
-                                p.muted { "Each day, from the total Twitch reports once a day." }
+                                h2 { "Average viewers" }
+                                p.muted { "Each week, from counts read every few minutes while you're live." }
                             }
                         }
-                        @if gains_end_today {
-                            (ui::area_chart(&gains, "followers"))
+                        @if viewers.iter().all(|(_, v)| v.is_none()) {
+                            (ui::empty(Icon::Chart, "No viewer counts yet", "The bot reads viewers every few minutes while you're live, and the chart fills in week by week."))
                         } @else {
-                            (ui::column_bars(&gains.iter().map(|(l, v)| (l.clone(), Some(*v))).collect::<Vec<_>>(), "followers", "Followers gained each day"))
+                            (ui::column_bars(&viewers, "average viewers", &format!("Average viewers in each of the last {} weeks", viewers.len())))
+                        }
+                    }
+                    @if gains.len() >= 2 {
+                        section.block {
+                            div.sa-sechead {
+                                div {
+                                    h2 { "Followers gained" }
+                                    p.muted { "Each day, from the total Twitch reports once a day." }
+                                }
+                            }
+                            @if gains_end_today {
+                                (ui::area_chart(&gains, "followers"))
+                            } @else {
+                                (ui::column_bars(&gains.iter().map(|(l, v)| (l.clone(), Some(*v))).collect::<Vec<_>>(), "followers", "Followers gained each day"))
+                            }
                         }
                     }
                 }
@@ -1635,7 +1650,7 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                     @if table.is_empty() {
                         (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: date, length, categories, peak and average viewers."))
                     } @else {
-                        div.sa-rows {
+                        div.sa-rows.sa-streams {
                             @for r in &table {
                                 @let live = r.ended_at.is_none();
                                 @let games = r.games_line();

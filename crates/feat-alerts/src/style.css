@@ -7,34 +7,36 @@
 .sa-sechead h2 { font-size: 15px; }
 .sa-sechead p { font-size: 12.5px; margin-top: 3px; }
 .sa-foot-note { font-size: 12.5px; color: var(--ink-3); max-width: 72ch; }
+/* Beside the settings the Discord window takes its column; the post inside keeps Discord's width. */
+.compose-preview .sa-dc { max-width: none; }
 .sa-linked a { color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
 .sa-readings .reading { flex: 1 1 150px; }
 
 /* ---- setup notes: what's missing and how to fix it ---- */
-.sa-note { display: flex; gap: 14px; align-items: flex-start; padding: 14px 18px 14px 14px; border-radius: 16px; background: radial-gradient(120% 180% at 0% 0%, color-mix(in oklab, var(--hue) 11%, transparent), transparent 62%); box-shadow: inset 0 0 0 1px var(--edge-1); font-size: 13px; color: var(--ink-2); }
+.sa-note { display: flex; gap: 14px; align-items: flex-start; padding: 14px 18px 14px 14px; border-radius: 16px; background: radial-gradient(120% 180% at 0% 0%, color-mix(in oklab, var(--hue) 6%, transparent), transparent 62%); box-shadow: inset 0 0 0 1px var(--edge-1); font-size: 13px; color: var(--ink-2); }
 .sa-note .need-icon { width: 36px; height: 36px; border-radius: 12px; }
 .sa-note strong { display: block; color: var(--ink); font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
 .sa-note p { max-width: 74ch; }
 .sa-note p + p { margin-top: 5px; }
 .sa-note code { color: var(--ink); background: var(--control); padding: 1px 5px; border-radius: 5px; font-size: 11.5px; overflow-wrap: anywhere; }
-.sa-note.warn { background: radial-gradient(120% 180% at 0% 0%, color-mix(in oklab, var(--waiting) 13%, transparent), transparent 62%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 30%, transparent); }
+.sa-note.warn { background: radial-gradient(120% 180% at 0% 0%, color-mix(in oklab, var(--waiting) 7%, transparent), transparent 62%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 30%, transparent); }
 .sa-note.warn .need-icon { background: color-mix(in oklab, var(--waiting) 18%, transparent); color: var(--waiting); }
 
 /* ---- small tags: where a post goes and who it pings ---- */
 .sa-route { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .sa-tag { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 4px 10px; border-radius: 9px; background: var(--control); color: var(--ink-2); font-size: 12.5px; line-height: 1.35; max-width: 100%; overflow-wrap: anywhere; }
 .sa-tag .icon { width: 13px; height: 13px; color: var(--ink-3); }
-.sa-tag .dot { width: 8px; height: 8px; background: var(--role, var(--ink-3)); box-shadow: 0 0 8px color-mix(in oklab, var(--role, transparent) 70%, transparent); }
+.sa-tag .dot { width: 8px; height: 8px; background: var(--role, var(--ink-3)); box-shadow: none; }
 .sa-tag.none { background: transparent; box-shadow: inset 0 0 0 1px var(--edge-2); color: var(--ink-3); }
 
 /* ---- the channel, at the top of the Twitch tab ---- */
-.sa-chan { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 24px; align-items: center; padding: 14px 22px 14px 14px; border-radius: 20px; background: radial-gradient(70% 140% at 0% 0%, color-mix(in oklab, var(--hue) 13%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1), inset 0 1px 0 rgba(255, 255, 255, 0.04); }
+.sa-chan { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 24px; align-items: center; padding: 14px 22px 14px 14px; border-radius: 20px; background: radial-gradient(70% 140% at 0% 0%, color-mix(in oklab, var(--hue) 7%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1), inset 0 1px 0 rgba(255, 255, 255, 0.04); }
 .sa-chan .stream-card { border-radius: 13px; }
-.sa-chan.live .stream-card { box-shadow: inset 0 0 0 1px rgba(235, 4, 0, 0.5), 0 20px 44px -18px rgba(235, 4, 0, 0.55); }
+.sa-chan.live .stream-card { box-shadow: inset 0 0 0 1px rgba(235, 4, 0, 0.5); }
 .sa-chan-text { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .sa-who { display: flex; align-items: center; gap: 13px; min-width: 0; }
 .sa-who .avatar, .sa-who .sa-letter { width: 50px; height: 50px; box-shadow: 0 0 0 2px var(--page), 0 0 0 4px color-mix(in oklab, var(--hue) 75%, transparent); }
-.sa-chan.live .sa-who .avatar, .sa-chan.live .sa-who .sa-letter { box-shadow: 0 0 0 2px var(--page), 0 0 0 4px #eb0400, 0 0 22px -2px rgba(235, 4, 0, 0.6); }
+.sa-chan.live .sa-who .avatar, .sa-chan.live .sa-who .sa-letter { box-shadow: 0 0 0 2px var(--page), 0 0 0 4px #eb0400; }
 .sa-who > div { min-width: 0; }
 .sa-who strong { display: block; font-size: 19px; font-weight: 650; letter-spacing: -0.025em; line-height: 1.2; }
 .sa-who a { color: var(--ink-3); font-size: 12.5px; }
@@ -99,13 +101,13 @@
 .sa-watch:hover { background: #6d6f78; }
 .sa-claim { background: #248046; }
 .sa-claim:hover { background: #1a6334; }
-.sa-play { position: absolute; inset: 0; margin: auto; display: grid; place-items: center; width: 56px; height: 40px; border-radius: 12px; background: #ff0033; color: #fff; box-shadow: 0 10px 24px -8px rgba(255, 0, 51, 0.7); transition: transform 0.3s var(--spring); }
+.sa-play { position: absolute; inset: 0; margin: auto; display: grid; place-items: center; width: 56px; height: 40px; border-radius: 12px; background: #ff0033; color: #fff; box-shadow: none; transition: transform 0.3s var(--spring); }
 .sa-play.glass { width: 50px; height: 50px; border-radius: 50%; background: rgba(7, 7, 11, 0.55); backdrop-filter: blur(8px); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2); }
 .sa-play svg { width: 22px; height: 22px; }
 .sa-media:hover .sa-play { transform: scale(1.08); }
 
 /* ---- the week: a day per column, today ringed, the next stream lit ---- */
-.sa-next { display: flex; align-items: center; gap: 22px; padding: 18px 26px 18px 18px; border-radius: 20px; background: radial-gradient(70% 200% at 0% 0%, color-mix(in oklab, var(--hue) 20%, transparent), transparent 65%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 24%, transparent), 0 24px 46px -30px var(--hue); }
+.sa-next { display: flex; align-items: center; gap: 22px; padding: 18px 26px 18px 18px; border-radius: 20px; background: radial-gradient(70% 200% at 0% 0%, color-mix(in oklab, var(--hue) 11%, transparent), transparent 65%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 24%, transparent); }
 .sa-cal { flex: none; width: 78px; display: flex; flex-direction: column; align-items: center; border-radius: 17px; overflow: hidden; background: var(--solid); box-shadow: inset 0 0 0 1px var(--edge-2), 0 14px 28px -12px rgba(0, 0, 0, 0.85); animation: pop-in 0.6s var(--spring) both 0.15s; }
 .sa-cal .m { align-self: stretch; text-align: center; padding: 4px 0 3px; background: var(--hue); color: #0b0b10; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .sa-cal b { font-size: 31px; font-weight: 650; line-height: 1.15; padding-top: 3px; letter-spacing: -0.035em; font-variant-numeric: tabular-nums; }
@@ -129,7 +131,7 @@
 .sa-slot .t { font: 600 11.5px var(--mono); color: var(--hue); }
 .sa-slot .w { color: var(--ink); line-height: 1.3; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .sa-slot .g { color: var(--ink-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sa-slot.next { background: linear-gradient(160deg, color-mix(in oklab, var(--hue) 42%, transparent), color-mix(in oklab, var(--hue) 14%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 60%, transparent), 0 12px 26px -12px var(--hue); }
+.sa-slot.next { background: linear-gradient(160deg, color-mix(in oklab, var(--hue) 42%, transparent), color-mix(in oklab, var(--hue) 14%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 60%, transparent); }
 .sa-slot.next .t { color: var(--ink); }
 .sa-slot.next .g { color: var(--ink-2); }
 .sa-slot.past { background: var(--control); box-shadow: none; }
@@ -142,6 +144,15 @@
 
 /* ---- rows: coming up, and streams on the Stats tab ---- */
 .sa-rows { display: flex; flex-direction: column; gap: 8px; }
+/* Wide columns: the stats charts pair up, the stream list goes two across, the channel card's
+   picture grows. */
+.sa-pair { display: grid; gap: 30px; }
+.sa-pair > * { min-width: 0; }
+@container col (min-width: 1150px) { .sa-pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; } }
+@container col (min-width: 1300px) {
+  .sa-rows.sa-streams { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; }
+  .sa-chan { grid-template-columns: minmax(0, 400px) minmax(0, 1fr); }
+}
 .sa-row { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 9px 14px 9px 9px; border-radius: 14px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s, background 0.25s; }
 .sa-row:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); background: linear-gradient(90deg, rgba(243, 242, 248, 0.06), rgba(243, 242, 248, 0.02)); }
 .sa-row .grow { display: flex; flex-direction: column; gap: 1px; }
@@ -208,11 +219,11 @@
 .sa-seg.on .when { color: var(--ink); }
 .sa-seg.off .what { text-decoration: line-through; color: var(--ink-3); }
 .sa-seg.off .when { font-family: var(--sans); color: var(--ink-3); }
-.sa-bad { background: var(--held); box-shadow: 0 0 10px var(--held); }
+.sa-bad { background: var(--held); box-shadow: none; }
 .sa-who-rail { font-weight: 500; margin-top: 4px; }
 .sa-chip-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; flex: none; }
 .sa-chip-icon .icon { width: 15px; height: 15px; }
-.sa-chip-icon.yt { background: #ff0033; color: #fff; box-shadow: 0 8px 18px -8px rgba(255, 0, 51, 0.7); }
+.sa-chip-icon.yt { background: #ff0033; color: #fff; box-shadow: none; }
 .sa-chip-icon.hue { background: color-mix(in oklab, var(--hue) 16%, transparent); color: var(--hue); }
 .sa-cat { display: flex; flex-direction: column; gap: 6px; }
 .sa-cat + .sa-cat { margin-top: 4px; }
@@ -220,7 +231,7 @@
 .sa-cat > div span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sa-cat .mono { color: var(--ink-3); }
 .sa-cat .meter > span { animation-delay: calc(var(--i, 0) * 80ms + 300ms); }
-.sa-more { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 120px; padding: 18px; border-radius: 14px; text-align: center; background: radial-gradient(90% 120% at 50% 0%, color-mix(in oklab, var(--hue) 13%, transparent), transparent 70%), var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); animation: sa-tile-in 0.65s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 140ms); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
+.sa-more { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 120px; padding: 18px; border-radius: 14px; text-align: center; background: radial-gradient(90% 120% at 50% 0%, color-mix(in oklab, var(--hue) 7%, transparent), transparent 70%), var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); animation: sa-tile-in 0.65s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 140ms); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
 .sa-more:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .sa-more .need-icon { width: 38px; height: 38px; margin-bottom: 4px; transition: transform 0.35s var(--spring); }
 .sa-more:hover .need-icon { transform: scale(1.08) rotate(-6deg); }
