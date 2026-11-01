@@ -5,6 +5,7 @@ use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_model::id::Id;
+use bot_core::web::dc;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
@@ -81,26 +82,6 @@ fn left_since(ctx: &Ctx, guild: u64, start: i64) -> i64 {
         .unwrap_or(0)
 }
 
-/// The bot as members see it in a channel: its name, and its avatar or the dashboard's mark
-/// while the bot isn't connected.
-fn bot_identity(ctx: &Ctx) -> (String, Markup) {
-    let user = ctx.bot_id().and_then(|b| ctx.cache.user(Id::new(b)).map(|u| (b, u)));
-    match user {
-        Some((id, u)) => (
-            u.global_name.clone().unwrap_or_else(|| u.name.clone()),
-            html! { img.wl-dc-av src=(bot_core::discord::avatar_url(id, u.avatar.map(|a| a.to_string()).as_deref())) alt=""; },
-        ),
-        None => ("Bot".into(), html! { span.wl-dc-av.mark { img src="/static/icon.svg" alt=""; } }),
-    }
-}
-
-/// `9:05 PM` in the viewer's timezone.
-fn clock(page: &Page, ms: i64) -> String {
-    let z = page.user.local(ms);
-    let (h, m) = (z.hour() as i64, z.minute() as i64);
-    format!("{}:{m:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" })
-}
-
 /// How many of today's faces a column shows: narrow, wider, widest (CSS, .wl-faces).
 const FACES: [usize; 3] = [5, 8, 11];
 
@@ -141,31 +122,13 @@ fn role_pills(roles: &[(String, String)]) -> Markup {
     html! { span.wl-roles { @for (name, color) in roles { span.wl-role style={ "--c:" (color) } { i {} (name) } } } }
 }
 
-/// A Discord channel's header bar. `id` names the label so the page's script can rename it.
-fn channel_bar(id: &str, name: &str) -> Markup {
-    html! { div.wl-dc-head { (ui::icon(Icon::Hash)) span id=(id) { (name) } } }
-}
-
-/// A message from the bot as Discord draws it: avatar, name with the APP tag, the time, `body`.
-fn bot_message(bot: &(String, Markup), time: &str, id: &str, off: bool, body: Markup) -> Markup {
-    html! {
-        div.wl-dc-msg.off[off] id=(id) {
-            (bot.1)
-            div.wl-dc-main {
-                div.wl-dc-name { strong { (bot.0) } span.wl-dc-app { "APP" } span.wl-dc-time { "Today at " (time) } }
-                (body)
-            }
-        }
-    }
-}
-
 /// A message template as Discord shows it: `{user}` becomes a mention when `mention` is on, the
 /// rest is filled like the bot fills it.
 fn preview_text(template: &str, name: &str, server: &str, count: &str, mention: bool) -> Markup {
     let vars = [("name", name), ("server", server), ("count", count)];
     html! {
         @for (i, part) in template.split("{user}").enumerate() {
-            @if i > 0 { @if mention { span.wl-mention { "@" (name) } } @else { (name) } }
+            @if i > 0 { @if mention { span.dp-ping { "@" (name) } } @else { (name) } }
             (crate::fill(part, &vars))
         }
     }
@@ -225,26 +188,9 @@ const CSS: &str = r#"
 .wl-face.back .wl-when { color: var(--data); }
 .wl-more { display: grid; place-items: center; border-radius: 50%; background: var(--control); color: var(--ink-2); font: 600 15px var(--sans); font-variant-numeric: tabular-nums; }
 
-/* Discord, drawn the way members see it. */
-.wl-dc { border-radius: 14px; overflow: hidden; background: #313338; color: #dbdee1; font-size: 15px; box-shadow: 0 24px 48px -28px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
-.wl-dc-head { display: flex; align-items: center; gap: 7px; height: 46px; padding: 0 16px; color: #f2f3f5; font-weight: 600; font-size: 15px; box-shadow: 0 1px 0 rgba(4, 4, 5, 0.2), 0 1.5px 0 rgba(6, 6, 7, 0.05), 0 2px 0 rgba(4, 4, 5, 0.05); position: relative; z-index: 1; }
-.wl-dc-head .icon { color: #80848e; width: 20px; height: 20px; }
-.wl-dc-body { padding: 10px 0 18px; }
-.wl-dc-day { display: flex; align-items: center; gap: 8px; margin: 6px 16px 10px; color: #949ba4; font-size: 12px; font-weight: 600; }
-.wl-dc-day::before, .wl-dc-day::after { content: ""; flex: 1; height: 1px; background: #3f4147; }
-.wl-dc-msg { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 0 16px; padding: 4px 16px 6px; transition: opacity 0.3s, filter 0.3s, background 0.15s; }
-.wl-dc-msg:hover { background: #2e3035; }
-.wl-dc-msg.off { opacity: 0.35; filter: saturate(0.3); }
-.wl-dc-av { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; margin-top: 2px; }
-span.wl-dc-av { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
-span.wl-dc-av img { width: 22px; height: 22px; }
-.wl-dc-main { min-width: 0; }
-.wl-dc-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.375; }
-.wl-dc-name strong { color: #f2f3f5; font-weight: 600; font-size: 15px; }
-.wl-dc-app { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font: 600 10px/1 var(--sans); }
-.wl-dc-time { color: #949ba4; font-size: 12px; margin-left: 2px; }
-.wl-dc-text { line-height: 1.375; overflow-wrap: anywhere; white-space: pre-wrap; }
-.wl-mention { background: rgba(88, 101, 242, 0.3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; font-weight: 500; }
+/* Discord, drawn the way members see it (bot_core::web::dc), with the line it draws between days. */
+.wl-day { display: flex; align-items: center; gap: 8px; margin: -2px 0; color: #949ba4; font-size: 12px; font-weight: 600; }
+.wl-day::before, .wl-day::after { content: ""; flex: 1; height: 1px; background: #3f4147; }
 /* The card arrives: it rises out of a blur, then a light passes over it once. */
 .wl-card { position: relative; display: block; width: 100%; max-width: 440px; margin-top: 8px; border-radius: 8px; overflow: hidden; aspect-ratio: 3 / 1; background: #2b2d31; animation: wl-arrive 0.9s var(--ease) both 0.5s; }
 .wl-card[hidden] { display: none; }
@@ -367,21 +313,22 @@ const SCRIPT: &str = r##"
     el.textContent = "";
     tpl.split("{user}").forEach((part, i) => {
       if (i > 0) {
-        if (mention) { const s = document.createElement("span"); s.className = "wl-mention"; s.textContent = "@" + v.name; el.append(s); }
+        if (mention) { const s = document.createElement("span"); s.className = "dp-ping"; s.textContent = "@" + v.name; el.append(s); }
         else el.append(v.name);
       }
       el.append(part.replace(/\{(name|server|count)\}/g, (_, k) => v[k]));
     });
   };
-  const chan = (sel, label) => { const o = $(sel).selectedOptions[0]; $(label).textContent = o && o.value ? o.text.replace(/^#/, "") : "pick a channel"; };
+  // The channel's name in the bar above a message.
+  const chan = (sel, msg) => { const o = $(sel).selectedOptions[0]; $(msg).closest(".dp").querySelector(".dp-bar .clip").textContent = o && o.value ? o.text.replace(/^#/, "") : "pick a channel"; };
   const sync = () => {
     draw($("wl-welcome-text"), $("welcome_text").value.trim() || box.dataset.defaultWelcome, true);
     draw($("wl-goodbye-text"), $("goodbye_text").value.trim() || box.dataset.defaultGoodbye, false);
     $("wl-card").hidden = !$("welcome_card").checked;
     $("wl-goodbye").classList.toggle("off", !$("goodbye_on").checked);
     $("wl-welcome").classList.toggle("off", !$("welcome_on").checked);
-    chan("welcome_channel", "wl-chan-welcome");
-    chan("goodbye_channel", "wl-chan-goodbye");
+    chan("welcome_channel", "wl-welcome");
+    chan("goodbye_channel", "wl-goodbye");
   };
   ["welcome_text", "goodbye_text", "welcome_card", "goodbye_on", "welcome_on", "welcome_channel", "goodbye_channel"].forEach((id) => {
     $(id).addEventListener("input", sync);
@@ -409,7 +356,6 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let top: Vec<(u64, i64, i64)> = invites::top_inviters(&ctx, guild, now - 30 * DAY_MS, 6)?.into_iter().filter(|t| t.1 > 0).take(4).collect();
     let back: Vec<roles::Restored> = roles::recently_restored(&ctx, guild, 25)?.into_iter().filter(|r| r.at >= now - 7 * DAY_MS).collect();
     let given = role_list(&ctx, guild, &s.autoroles);
-    let bot = bot_identity(&ctx);
     let max_recent = top.iter().map(|t| t.1).max().unwrap_or(1).max(1);
     let names = invites::names(&ctx, guild)?;
     let server = ctx.guild_name(guild);
@@ -495,32 +441,24 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                         }
                         div #wl-preview data-name=(user.name) data-server=(server) data-members=(count)
                             data-default-welcome=(DEFAULT_WELCOME) data-default-goodbye=(DEFAULT_GOODBYE) {
-                            div.wl-dc {
-                                (channel_bar("wl-chan-welcome", &channel(s.welcome_channel)))
-                                div.wl-dc-body {
-                                    div.wl-dc-day { span { (long_date(&page, now)) } }
-                                    (bot_message(&bot, &clock(&page, now), "wl-welcome", !s.welcome_on, html! {
-                                        div.wl-dc-text #wl-welcome-text { (preview_text(welcome_tpl, &user.name, &server, &count, true)) }
-                                        span.wl-card #wl-card hidden[!s.welcome_card] {
-                                            img src=(page.path("welcome/card.png")) alt="The welcome card, drawn for you" width="960" height="320";
-                                        }
-                                    }))
-                                }
-                            }
+                            (dc::channel(Some(&channel(s.welcome_channel)), "", html! {
+                                div.wl-day { span { (long_date(&page, now)) } }
+                                (dc::message(&ctx, &page).id("wl-welcome").off(!s.welcome_on).render(html! {
+                                    div.dp-line #wl-welcome-text { (preview_text(welcome_tpl, &user.name, &server, &count, true)) }
+                                    span.wl-card #wl-card hidden[!s.welcome_card] {
+                                        img src=(page.path("welcome/card.png")) alt="The welcome card, drawn for you" width="960" height="320";
+                                    }
+                                }))
+                            }))
                             @if page.can_edit() {
                                 form.wl-send method="post" action=(page.path("welcome/test")) {
                                     button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send a test welcome" }
                                     span.muted { "For you, in " (test_channel(&ctx, guild, s.welcome_channel)) ", with the saved settings" }
                                 }
                             }
-                            div.wl-dc {
-                                (channel_bar("wl-chan-goodbye", &channel(s.goodbye_channel)))
-                                div.wl-dc-body {
-                                    (bot_message(&bot, &clock(&page, now), "wl-goodbye", !s.goodbye_on, html! {
-                                        div.wl-dc-text #wl-goodbye-text { (preview_text(goodbye_tpl, &user.name, &server, &count, false)) }
-                                    }))
-                                }
-                            }
+                            (dc::channel(Some(&channel(s.goodbye_channel)), "", dc::message(&ctx, &page).id("wl-goodbye").off(!s.goodbye_on).render(html! {
+                                div.dp-line #wl-goodbye-text { (preview_text(goodbye_tpl, &user.name, &server, &count, false)) }
+                            })))
                             @if page.can_edit() {
                                 form.wl-send method="post" action=(page.path("welcome/test-goodbye")) {
                                     button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send a test goodbye" }

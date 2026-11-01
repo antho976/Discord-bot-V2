@@ -17,7 +17,7 @@ use crate::{Ctx, now_ms};
 /// bot has connected (the preview), when the bot's mark is drawn instead.
 pub fn bot_identity(ctx: &Ctx) -> (String, Option<String>) {
     match ctx.cache.current_user() {
-        Some(u) => (u.name.clone(), Some(crate::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref()))),
+        Some(u) => (u.global_name.clone().unwrap_or_else(|| u.name.clone()), Some(crate::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref()))),
         None => ("Bot".into(), None),
     }
 }

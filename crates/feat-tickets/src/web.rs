@@ -5,6 +5,7 @@ use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::rusqlite::params;
 use bot_core::twilight_model::id::Id;
+use bot_core::web::dc;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
@@ -70,33 +71,12 @@ fn out_link(href: &str, label: &str) -> Markup {
 
 // ---- Discord, as members see it ----
 
-/// The bot's name and avatar. Before the bot has connected (and in the preview) the avatar is
-/// `None` and the dashboard's mark stands in.
-fn bot_identity(ctx: &Ctx) -> (String, Option<String>) {
-    match ctx.cache.current_user() {
-        Some(u) => (u.global_name.clone().unwrap_or_else(|| u.name.clone()), Some(bot_core::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref()))),
-        None => ("Bot".into(), None),
-    }
-}
-
-/// A message from the bot as Discord draws it: avatar, name with its APP tag and the time,
-/// then `body`.
+/// A message from the bot as Discord draws it, sent at `at`, alone on Discord's grey (no channel
+/// around it: the rail's heading names the channel).
 fn discord_message(ctx: &Ctx, page: &Page, at: i64, body: Markup) -> Markup {
-    let (name, avatar) = bot_identity(ctx);
     let today = page.user.local(now_ms()).date() == page.user.local(at).date();
     let time = page.user.local(at).strftime(if today { "Today at %-I:%M %p" } else { "%m/%d/%Y %-I:%M %p" }).to_string();
-    html! {
-        div.tk-dc {
-            @match &avatar {
-                Some(url) => img.tk-dc-av src=(url) alt="" width="36" height="36" loading="lazy";,
-                None => span.tk-dc-av.mark { (ui::mark()) },
-            }
-            div.tk-dc-main {
-                div.tk-dc-head { b.tk-dc-name { (name) } span.tk-dc-app { "APP" } span.tk-dc-time { (time) } }
-                (body)
-            }
-        }
-    }
+    html! { div.tk-dc { (dc::message(ctx, page).time_text(time).render(body)) } }
 }
 
 // ---- tickets ----
@@ -227,11 +207,11 @@ async fn tickets_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                         @let title = if s.panel_title.trim().is_empty() { DEFAULT_PANEL_TITLE } else { s.panel_title.trim() };
                         @let blurb = if s.panel_text.trim().is_empty() { DEFAULT_PANEL_TEXT } else { s.panel_text.trim() };
                         (discord_message(&ctx, &page, now, html! {
-                            div.tk-dc-embed style={ "--embed:" (EMBED_CORAL) } {
-                                div.tk-dc-title { (title) }
-                                div.tk-dc-desc { (blurb) }
-                            }
-                            div.tk-dc-btns { span.tk-dc-btn.blurple { "Open a ticket" } }
+                            (dc::embed(EMBED_CORAL, html! {
+                                div.dp-title { (title) }
+                                div.dp-desc { (blurb) }
+                            }))
+                            (dc::buttons(dc::button("Open a ticket", dc::Style::Primary)))
                         }))
                         p.muted.small { "Save the settings first. Sending a new panel removes the previous one." }
                         @if page.can_edit() {
@@ -637,16 +617,16 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
 /// words, the picture and the link back.
 fn repost_preview(ctx: &Ctx, guild: u64, p: &starboard::Post, image: Option<&str>, glyph: &str) -> Markup {
     html! {
-        div.tk-dc-line { (glyph) " " (p.stars) " in " span.tk-dc-ping { (channel_name(ctx, guild, p.channel_id)) } }
-        div.tk-dc-embed style={ "--embed:" (EMBED_CORAL) } {
-            div.tk-dc-author {
-                img src=(ctx.member_avatar(guild, p.author_id)) alt="" width="22" height="22" loading="lazy";
+        (dc::line(html! { (glyph) " " (p.stars) " in " span.dp-ping { (channel_name(ctx, guild, p.channel_id)) } }))
+        (dc::embed(EMBED_CORAL, html! {
+            div.dp-author {
+                img src=(ctx.member_avatar(guild, p.author_id)) alt="" width="24" height="24" loading="lazy";
                 (ctx.display_name(guild, p.author_id))
             }
-            @if !p.preview.is_empty() && p.preview != "Attachment" { div.tk-dc-desc { (p.preview) } }
-            @if let Some(src) = image { img.tk-dc-img src=(src) alt="" loading="lazy"; }
-            div.tk-dc-fields { div { b { "Source" } span.tk-dc-link { "Jump to message" } } }
-        }
+            @if !p.preview.is_empty() && p.preview != "Attachment" { div.dp-desc { (p.preview) } }
+            @if let Some(src) = image { img.tk-star-img src=(src) alt="" loading="lazy"; }
+            (dc::fields([("Source", html! { span.tk-jump { "Jump to message" } })]))
+        }))
     }
 }
 
@@ -741,28 +721,9 @@ const CSS: &str = r#"
 .tk-who-one span { font-size: 11.5px; color: var(--ink-3); }
 
 /* ---- a message as Discord draws it. Discord's own greys, since this is Discord. ---- */
-.tk-dc { display: flex; gap: 12px; padding: 14px 14px 16px; border-radius: 14px; background: #313338; color: #dbdee1; font: 14px/1.375 var(--sans); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 18px 40px -24px rgba(0, 0, 0, 0.9); animation: tk-arrive 0.8s var(--ease) both 0.35s; }
-.tk-dc-av { width: 36px; height: 36px; border-radius: 50%; flex: none; object-fit: cover; }
-.tk-dc-av.mark { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); color: #fff; }
-.tk-dc-av.mark .icon { width: 20px; height: 20px; }
-.tk-dc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.tk-dc-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.tk-dc-name { color: #f2f3f5; font-weight: 500; }
-.tk-dc-app { display: inline-grid; place-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; }
-.tk-dc-time { color: #949ba4; font-size: 11.5px; }
-.tk-dc-line { font-size: 14px; }
-.tk-dc-ping { padding: 0 2px; border-radius: 3px; background: rgba(88, 101, 242, 0.3); color: #c9cdfb; font-weight: 500; }
-.tk-dc-embed { align-self: stretch; display: flex; flex-direction: column; gap: 8px; max-width: 520px; padding: 10px 12px 12px; border-left: 4px solid var(--embed, #1e1f22); border-radius: 4px; background: #2b2d31; font-size: 13px; min-width: 0; }
-.tk-dc-author { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: #f2f3f5; }
-.tk-dc-author img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
-.tk-dc-title { color: #f2f3f5; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
-.tk-dc-desc { white-space: pre-wrap; overflow-wrap: anywhere; }
-.tk-dc-img { display: block; width: 100%; max-height: 200px; object-fit: cover; border-radius: 4px; }
-.tk-dc-fields b { display: block; color: #f2f3f5; font-weight: 600; font-size: 12.5px; }
-.tk-dc-link { color: #00a8fc; }
-.tk-dc-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
-.tk-dc-btn { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border-radius: 8px; background: #4e5058; color: #fff; font-size: 13.5px; font-weight: 500; }
-.tk-dc-btn.blurple { background: #5865f2; }
+.tk-dc { padding: 14px 14px 16px; border-radius: 14px; background: #313338; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 18px 40px -24px rgba(0, 0, 0, 0.9); animation: tk-arrive 0.8s var(--ease) both 0.35s; }
+.tk-star-img { display: block; width: 100%; max-height: 200px; object-fit: cover; border-radius: 4px; }
+.tk-jump { color: #00a8fc; }
 .tk-rail .tk-dc + p { margin-top: -2px; }
 
 /* ---- starboard: the posts as pictures and quotes ---- */

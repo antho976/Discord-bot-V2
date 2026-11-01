@@ -8,6 +8,7 @@ use bot_core::axum::Router;
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::rusqlite::params;
 use bot_core::twilight_model::id::Id;
+use bot_core::web::dc;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, serde_json, text};
@@ -67,9 +68,6 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         .and_then(|c| ctx.text_channels(guild).into_iter().find(|x| x.0 == c))
         .map(|(_, n)| n)
         .unwrap_or_else(|| "general".into());
-    let (bot_name, bot_avatar) = bot_face(&ctx);
-    let now = page.user.local(bot_core::now_ms());
-    let clock = format!("{}:{:02} {}", if now.hour() % 12 == 0 { 12 } else { now.hour() % 12 }, now.minute(), if now.hour() < 12 { "AM" } else { "PM" });
 
     let form = ui::settings_form(&page, &page.path("levels/settings"), html! {
         // Two columns of sections once the column is wide enough (CSS, .lv-cols).
@@ -128,23 +126,16 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let rail = html! {
         div.rail-block {
             h2 { "What members see" }
-            div.lv-dc {
-                div.lv-dc-head { (ui::icon(Icon::Hash)) span #lv-chan { (channel) } }
-                div.lv-dc-msg.off[!s.announce] #lv-msg data-who=(who) data-level=(who_level) {
-                    (bot_avatar)
-                    div {
-                        div.lv-dc-name { strong { (bot_name) } span.lv-dc-app { "APP" } span.lv-dc-time { "Today at " (clock) } }
-                        div.lv-dc-text #lv-say {
-                            @let template = if s.message.trim().is_empty() { crate::DEFAULT_MESSAGE } else { s.message.as_str() };
-                            @for (i, part) in template.split("{user}").enumerate() {
-                                @if i > 0 { @if s.announce_ping { span.lv-dc-mention { "@" (who) } } @else { (who) } }
-                                (part.replace("{level}", &who_level.to_string()))
-                            }
-                        }
+            (dc::channel(Some(&channel), "", dc::message(&ctx, &page).id("lv-msg").off(!s.announce).render(html! {
+                div.dp-line #lv-say data-who=(who) data-level=(who_level) {
+                    @let template = if s.message.trim().is_empty() { crate::DEFAULT_MESSAGE } else { s.message.as_str() };
+                    @for (i, part) in template.split("{user}").enumerate() {
+                        @if i > 0 { @if s.announce_ping { span.dp-ping { "@" (who) } } @else { (who) } }
+                        (part.replace("{level}", &who_level.to_string()))
                     }
                 }
-            }
-            p.muted.lv-dc-note #lv-note {
+            })))
+            p.muted.lv-note #lv-note {
                 @if s.announce { "Posted when a member reaches a new level" @if s.announce_min_level > 1 { ", from level " (s.announce_min_level) } "." }
                 @else { "Level-ups aren't posted. Members still see their level with /level rank." }
             }
@@ -234,20 +225,20 @@ const SETTINGS_JS: &str = r##"
   const msg = $("lv-msg"), say = $("lv-say");
   if (!msg) return;
   const text = $("message"), ping = $("announce_ping"), on = $("announce"), chan = $("announce_channel"), min = $("announce_min_level");
-  const who = msg.dataset.who, level = msg.dataset.level;
+  const who = say.dataset.who, level = say.dataset.level, chanName = msg.closest(".dp").querySelector(".dp-bar .clip");
   const drawMsg = () => {
     say.textContent = "";
     const tpl = text.value.trim() || text.placeholder;
     tpl.split("{user}").forEach((part, i) => {
       if (i > 0) {
-        if (ping.checked) { const m = document.createElement("span"); m.className = "lv-dc-mention"; m.textContent = "@" + who; say.append(m); }
+        if (ping.checked) { const m = document.createElement("span"); m.className = "dp-ping"; m.textContent = "@" + who; say.append(m); }
         else say.append(who);
       }
       say.append(part.split("{level}").join(level));
     });
     msg.classList.toggle("off", !on.checked);
     const c = chan.selectedOptions[0];
-    $("lv-chan").textContent = c && c.value ? c.text.replace(/^#/, "") : "general";
+    chanName.textContent = c && c.value ? c.text.replace(/^#/, "") : "general";
     const from = Number(min.value) || 0;
     $("lv-note").textContent = on.checked ? "Posted when a member reaches a new level" + (from > 1 ? ", from level " + from : "") + "." : "Level-ups aren't posted. Members still see their level with /level rank.";
   };
@@ -410,21 +401,12 @@ html.same .lv-place, html.same .lv-step { animation: none; }
 .lv-near .mini .lv-gap { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* Settings: the rail shows what members will see and how the curve climbs. */
-.lv-dc { border-radius: 12px; overflow: hidden; background: #313338; color: #dbdee1; font-size: 14px; box-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
-.lv-dc-head { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; border-bottom: 1px solid #26272b; color: #f2f3f5; font-weight: 600; font-size: 13.5px; }
-.lv-dc-head .icon { color: #80848e; width: 16px; height: 16px; }
-.lv-dc-msg { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; padding: 12px 14px 16px; transition: opacity 0.3s, filter 0.3s; }
-.lv-dc-msg.off { opacity: 0.4; filter: saturate(0.4); }
-.lv-dc-av { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
-span.lv-dc-av { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
-span.lv-dc-av img { width: 22px; height: 22px; }
-.lv-dc-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.3; }
-.lv-dc-name strong { color: #f2f3f5; font-weight: 600; font-size: 14.5px; }
-.lv-dc-app { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font: 600 10px/1 var(--sans); }
-.lv-dc-time { color: #949ba4; font-size: 11.5px; }
-.lv-dc-text { margin-top: 3px; line-height: 1.4; overflow-wrap: anywhere; }
-.lv-dc-mention { background: rgba(88, 101, 242, 0.3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; font-weight: 500; }
-.lv-dc-note { font-size: 12px; }
+/* The shared Discord preview, at the rail's tighter size. */
+.rail .dp-bar { gap: 6px; height: 38px; padding: 0 12px; font-size: 13.5px; }
+.rail .dp-bar .icon { width: 16px; height: 16px; }
+.rail .dp-body { padding: 12px 14px 16px; }
+.rail .dp-post { gap: 12px; font-size: 14px; }
+.lv-note { font-size: 12px; }
 .lv-send { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .lv-send .muted { font-size: 12px; }
 .lv-curve .mini-bars svg { height: 92px; }
@@ -498,19 +480,6 @@ fn compact(n: i64) -> String {
         10_000..100_000 => format!("{:.1}k", n as f64 / 1000.0),
         100_000..1_000_000 => format!("{}k", n / 1000),
         _ => format!("{:.1}M", n as f64 / 1_000_000.0),
-    }
-}
-
-/// The bot as members see it in a channel: its name, and its avatar or the dashboard's mark
-/// when the bot isn't connected.
-fn bot_face(ctx: &Ctx) -> (String, Markup) {
-    let user = ctx.bot_id().and_then(|b| ctx.cache.user(Id::new(b)).map(|u| (b, u)));
-    match user {
-        Some((id, u)) => (
-            u.global_name.clone().unwrap_or_else(|| u.name.clone()),
-            html! { img.lv-dc-av src=(bot_core::discord::avatar_url(id, u.avatar.map(|a| a.to_string()).as_deref())) alt=""; },
-        ),
-        None => ("Bot".into(), html! { span.lv-dc-av { img src="/static/icon.svg" alt=""; } }),
     }
 }
 
