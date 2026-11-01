@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod banner;
+pub mod dc;
 pub mod form;
 pub mod pages;
 pub mod ui;
