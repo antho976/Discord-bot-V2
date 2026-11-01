@@ -90,7 +90,8 @@ async fn enroll(State(ctx): State<Ctx>, headers: HeaderMap, bytes: Bytes) -> Res
     // Several X-Forwarded-For headers read as one list, in order.
     let forwarded: Vec<&str> = headers.get_all("x-forwarded-for").iter().filter_map(|v| v.to_str().ok()).collect();
     let ip = domain::client_ip((!forwarded.is_empty()).then(|| forwarded.join(",")).as_deref());
-    respond(enroll_answer(&ctx, &bytes, ip.as_deref()).await)
+    let key = domain::limit_key(ip.as_deref());
+    respond(enroll_answer(&ctx, &bytes, Some(&key)).await)
 }
 
 /// A device asks to connect. Public by design: the device has no account here. What lets it in
@@ -148,6 +149,10 @@ async fn claim(State(ctx): State<Ctx>, bytes: Bytes) -> Response {
 pub async fn claim_answer(ctx: &Ctx, bytes: &[u8]) -> Answer {
     let Some(o) = body(bytes) else { return bad_request() };
     let (Some(id), Some(verifier)) = (hex_field(&o, "id", 32), hex_field(&o, "verifier", 64)) else { return bad_request() };
+    // Switched off everywhere: nothing more goes out, including requests allowed before.
+    if !store::enabled_anywhere(ctx) {
+        return (StatusCode::NOT_FOUND, json!({ "error": "off" }));
+    }
     let status = |s: ClaimState| (StatusCode::OK, json!({ "status": s.as_str() }));
 
     let row = match store::get(ctx, id) {
@@ -249,6 +254,10 @@ async fn phones(State(ctx): State<Ctx>, bytes: Bytes) -> Response {
 pub fn phones_answer(ctx: &Ctx, bytes: &[u8]) -> Answer {
     let Some(o) = body(bytes) else { return bad_request() };
     let Some(token) = hex_field(&o, "token", 64) else { return bad_request() };
+    // Switched off everywhere: nothing more goes out, including requests allowed before.
+    if !store::enabled_anywhere(ctx) {
+        return (StatusCode::NOT_FOUND, json!({ "error": "off" }));
+    }
     let now = now_ms();
     let host = domain::host_token_hash(token).and_then(|h| store::host_by_token(ctx, &h, now).ok().flatten());
     if host.is_none() {
@@ -273,6 +282,10 @@ pub fn answer_answer(ctx: &Ctx, bytes: &[u8]) -> Answer {
     let Some(link) = o.get("link").and_then(Value::as_str).filter(|l| (1..=2048).contains(&domain::js_len(l))) else {
         return bad_request();
     };
+    // Switched off everywhere: nothing more goes out, including requests allowed before.
+    if !store::enabled_anywhere(ctx) {
+        return (StatusCode::NOT_FOUND, json!({ "error": "off" }));
+    }
     let now = now_ms();
     let err = |status: StatusCode, e: &str| (status, json!({ "error": e }));
     let Some(host) = domain::host_token_hash(token).and_then(|h| store::host_by_token(ctx, &h, now).ok().flatten()) else {
@@ -439,12 +452,23 @@ mod tests {
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn switching_off_stops_allowed_requests_too() {
+        let ctx = testing::ctx();
+        let challenge = domain::sha256_hex(&verifier(1));
+        let req = store::create(&ctx, &NewRequest { kind: "pc", device: "desk", challenge: &challenge, ip: None }, now_ms()).unwrap().unwrap();
+        crate::decide(&ctx, &req.id, true, 1, crate::Via::Discord("Antho".into())).await.unwrap().unwrap();
+        ctx.set_enabled(42, crate::KEY, false).unwrap();
+        assert_eq!(claim_answer(&ctx, &claim_body(&req.id, 1)).await.0, StatusCode::NOT_FOUND);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
     async fn a_forgotten_pc_cant_claim_its_way_back() {
         let fake = fake_relay();
         let mut cfg = bot_core::Config::preview(0);
         cfg.relay_bin = fake.to_str().unwrap().into();
         let ctx = Ctx::new(cfg, bot_core::Db::memory().unwrap()).unwrap();
         ctx.install_features(vec![std::sync::Arc::new(crate::Connect)]).unwrap();
+        ctx.set_enabled(42, crate::KEY, true).unwrap();
         let challenge = domain::sha256_hex(&verifier(1));
         let req = store::create(&ctx, &NewRequest { kind: "pc", device: "desk", challenge: &challenge, ip: None }, now_ms()).unwrap().unwrap();
         crate::decide(&ctx, &req.id, true, 1, crate::Via::Discord("Antho".into())).await.unwrap().unwrap();

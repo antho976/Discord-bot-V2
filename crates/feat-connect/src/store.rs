@@ -116,9 +116,10 @@ pub fn create(ctx: &Ctx, new: &NewRequest, now: i64) -> Result<Result<Request, R
 }
 
 fn create_on(c: &Connection, new: &NewRequest, now: i64) -> Result<Result<Request, Refusal>> {
+    // Counted per app, so requests for one app can't shut the others out.
     let pending: i64 = c.query_row(
-        "SELECT COUNT(*) FROM connect_requests WHERE status = 'pending' AND expires_at > ?1",
-        [now],
+        "SELECT COUNT(*) FROM connect_requests WHERE status = 'pending' AND expires_at > ?1 AND kind = ?2",
+        params![now, new.kind],
         |r| r.get(0),
     )?;
     if pending >= MAX_PENDING {

@@ -104,6 +104,10 @@ impl Feature for Connect {
             ctx.reply(&call.interaction, Reply::text("You're not an approver for app connections.").ephemeral()).await?;
             return Ok(());
         }
+        if !store::enabled_anywhere(ctx) {
+            ctx.reply(&call.interaction, Reply::text("App approvals are switched off on the dashboard, so nothing can be allowed.").ephemeral()).await?;
+            return Ok(());
+        }
         // Ack inside Discord's three seconds; deciding edits every approver's DM with the outcome.
         ctx.defer_update(&call.interaction).await?;
         let name = call
