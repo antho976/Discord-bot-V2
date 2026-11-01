@@ -123,6 +123,8 @@ struct Sample<'a> {
     started: String,
     /// A real picture of the stream when one is stored, else a placeholder is drawn.
     thumb: Option<String>,
+    /// The viewer field as the post shows it, or `None` when the post leaves it out.
+    viewers: Option<String>,
 }
 
 /// Readings whose numbers count up as they come into view.
@@ -262,6 +264,7 @@ fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broad
             div.sa-fields {
                 @if !sample.game.is_empty() { div { b { "Playing" } span { (sample.game) } } }
                 div { b { "Started" } span { span.sa-ts { (sample.started) } } }
+                @if let Some(v) = &sample.viewers { div { b { "Viewers" } span { (v) } } }
             }
             div.sa-media {
                 @match &sample.thumb {
@@ -269,9 +272,29 @@ fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broad
                     None => { div.sa-thumb { (ui::icon(Icon::Live)) span { "The stream's picture" } } }
                 }
             }
-            div.sa-foot { "Twitch" }
+            div.sa-foot { @if sample.viewers.is_some() { "Twitch · updated • Today at " (page.user.local(now_ms()).strftime("%-I:%M %p")) } @else { "Twitch" } }
         }
         div.sa-buttons { a.sa-watch href=(b.url()) target="_blank" rel="noopener" { "Watch on Twitch" (ui::icon(Icon::External)) } }
+    })
+}
+
+/// The post a live post becomes when the stream ends, drawn from the post the bot would send so
+/// the two can't drift apart.
+fn ended_preview(ctx: &Ctx, page: &Page, b: &Broadcaster, row: &StreamRow) -> Markup {
+    let p = twitch::ended_post(b, row);
+    let link = row.vod_url.clone().unwrap_or_else(|| b.url());
+    bot_message(ctx, page, None, html! {
+        div.sa-line { (p.content) }
+        div.sa-embed style="--embed:#3a3a3a" {
+            div.sa-author { (b.name) }
+            a.sa-title href=(link) target="_blank" rel="noopener" { (p.embed.title.unwrap_or_default()) }
+            div { "Ended " span.sa-ts { (text::ago(row.ended_at.unwrap_or_else(now_ms))) } "." }
+            div.sa-fields { @for f in &p.embed.fields { div { b { (f.name) } span { (f.value) } } } }
+            div.sa-foot { "Twitch" }
+        }
+        div.sa-buttons {
+            a.sa-watch href=(link) target="_blank" rel="noopener" { (if row.vod_url.is_some() { "Watch the VOD" } else { "Twitch channel" }) (ui::icon(Icon::External)) }
+        }
     })
 }
 
@@ -370,6 +393,25 @@ fn weekly_hours(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Vec<(String, i64
             (start.strftime("%b %-d").to_string(), (secs + 1800) / 3600)
         })
         .collect()
+}
+
+/// The small line under a stream in the list: viewers now while live; hours watched, followers
+/// gained and clips once it's over.
+fn stream_numbers(r: &StreamRow, live: bool) -> Vec<String> {
+    if live {
+        return if r.samples > 0 { vec![format!("{} watching now", text::num(r.viewers))] } else { Vec::new() };
+    }
+    let mut out = Vec::new();
+    if let Some(h) = r.hours_watched() {
+        out.push(format!("{} hours watched", text::num(h)));
+    }
+    if let Some(g) = r.followers_gained() {
+        out.push(format!("{}{} followers", if g > 0 { "+" } else { "" }, text::num(g)));
+    }
+    if r.clips > 0 {
+        out.push(if r.clips == 1 { "1 clip".into() } else { format!("{} clips", text::num(r.clips)) });
+    }
+    out
 }
 
 /// The average of the peak viewer counts that were read, or `None` when none were.
@@ -565,8 +607,30 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         game: shown.map(|r| r.game.as_str()).unwrap_or("Just Chatting"),
         started: live.as_ref().map(|r| text::ago(r.started_at)).unwrap_or_else(|| "just now".into()),
         thumb: shown.and_then(StreamRow::thumb_640),
+        // The stream that's on, else a made-up count so the setting shows what it does.
+        viewers: s.live_viewers.then(|| match &live {
+            Some(r) if r.samples > 0 => twitch::viewers_line(r),
+            _ => "24 (peak 31)".into(),
+        }),
     };
     let line = twitch::fill_live(&s.live_message, &sample, preview.title, preview.game);
+    // The last stream as its post shows it now, else made-up numbers.
+    let ended = match last {
+        Some(r) => r.clone(),
+        None => StreamRow {
+                title: "Your stream title".into(),
+                game: "Just Chatting".into(),
+                duration_secs: 3 * 3600 + 12 * 60,
+                peak: 31,
+                average: 24,
+                samples: 38,
+                followers_start: Some(100),
+                followers_end: Some(106),
+                clips: 2,
+                ended_at: Some(now - 20 * 60_000),
+                ..Default::default()
+            },
+    };
     // Push mode with nothing arriving looks like it works. One Helix call says whether Twitch
     // has a stream the bot never heard about.
     let missed = match (mode, bs.first()) {
@@ -662,7 +726,7 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                                 (Some(r), _) => {
                                     span.dot.live {}
                                     "Live now, started " (text::ago(r.started_at))
-                                    @if r.samples > 0 { " · peak " (text::num(r.peak)) " viewers" }
+                                    @if r.samples > 0 { " · " (text::num(r.viewers)) " watching, peak " (text::num(r.peak)) }
                                 }
                                 (None, Some(r)) => { span.dot {} "Offline · last streamed " (text::ago(r.started_at)) " for " (text::duration(r.duration_secs)) }
                                 _ => { span.dot {} "Offline · no stream recorded yet" }
@@ -700,12 +764,20 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         @if mode != Mode::Off && !missing.is_empty() {
                             p.small { (ui::badge("Not found", Tone::Warn)) " Twitch hasn't confirmed " (missing.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(", ")) " yet. Check the spelling." }
                         }
+                        div.sa-sechead.sa-after {
+                            div {
+                                h2 { "When the stream ends" }
+                                p.muted { "The same post is edited to this, with the VOD once Twitch has it." }
+                            }
+                        }
+                        (discord(channel_name(&ctx, guild, s.live_channel), "No channel picked", ended_preview(&ctx, &page, &sample, &ended)))
                     }
                     (ui::settings_form(&page, &page.path("alerts"), ui::section("Settings", None, ui::card(html! {
                         (ui::field_text("twitch_logins", "Twitch channel", Some("The name in twitch.tv/name. Separate several with commas."), &s.twitch_logins.join(", "), "yourname"))
                         (ui::field_channel(&ctx, guild, "live_channel", "Post in", None, s.live_channel))
                         (ui::field_role(&ctx, guild, "live_role", "Ping", Some("Only this role is pinged."), s.live_role))
                         (ui::field_text("live_message", "Message", Some("{streamer}, {title}, {game} and {url} are filled in."), &s.live_message, crate::DEFAULT_LIVE_MESSAGE))
+                        (ui::field_toggle("live_viewers", "Show viewers", Some("The live post shows the viewer count and peak, edited in every 5 minutes. The post after the stream always has its numbers."), s.live_viewers))
                     }))))
                 }
             }
@@ -756,6 +828,7 @@ async fn save_twitch(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         live_channel: form.channel(&ctx, guild, "live_channel"),
         live_role: form.role(&ctx, guild, "live_role"),
         live_message: if message.is_empty() { crate::DEFAULT_LIVE_MESSAGE.into() } else { message },
+        live_viewers: form.bool("live_viewers"),
         ..(*old).clone()
     };
     ctx.save_settings(guild, KEY, &s)?;
@@ -1695,7 +1768,7 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                         }
                     }
                     @if table.is_empty() {
-                        (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: date, length, categories, peak and average viewers."))
+                        (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: date, length, categories, viewers, hours watched and followers gained."))
                     } @else {
                         div.sa-rows.sa-streams {
                             @for r in &table {
@@ -1716,6 +1789,8 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                                             " · " @if live { "live for " (text::duration((now - r.started_at) / 1000)) } @else { (text::duration(r.duration_secs)) }
                                             @if !games.is_empty() { " · " (games) }
                                         }
+                                        @let parts = stream_numbers(r, live);
+                                        @if !parts.is_empty() { span.small.muted { (parts.join(" · ")) } }
                                     }
                                     div.sa-peak.wide-only {
                                         @if r.samples > 0 {

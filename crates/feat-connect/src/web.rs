@@ -2,8 +2,8 @@
 //! recent decisions. Everything here is global; the server in the path only decides who may look.
 
 use bot_core::axum::Router;
-use bot_core::axum::body::Bytes;
-use bot_core::axum::extract::{DefaultBodyLimit, Path, Query, State};
+use bot_core::axum::body::Body;
+use bot_core::axum::extract::{Path, Query, State};
 use bot_core::axum::response::{IntoResponse, Json, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
@@ -23,7 +23,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/connect/approvers/{user}/remove", post(remove_approver))
         .route("/g/{guild}/connect/test-dm", post(test_dm))
         .route("/g/{guild}/connect/hosts/{id}/forget", post(forget_host))
-        .route("/g/{guild}/connect/import", post(import).layer(DefaultBodyLimit::max(64 * 1024 * 1024)))
+        .route("/g/{guild}/connect/import", post(import))
 }
 
 /// A name in this server when the member is cached, otherwise their name anywhere.
@@ -477,8 +477,16 @@ async fn forget_host(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path
     Ok(saved(&page.path(KEY)))
 }
 
-async fn import(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, body: Bytes) -> WebResult {
+/// The largest antho-s-bot database the import reads.
+const MAX_IMPORT: usize = 64 * 1024 * 1024;
+
+/// The body is read only after the access check, so someone without access can't make the bot
+/// buffer 64 MB uploads.
+async fn import(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, body: Body) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let Ok(body) = bot_core::axum::body::to_bytes(body, MAX_IMPORT).await else {
+        return Err(WebError::Bad("That file is too large for an antho-s-bot database (64 MB at most).".into()));
+    };
     let c = ctx.clone();
     let res = bot_core::tokio::task::spawn_blocking(move || crate::import::import_bytes(&c, &body)).await?;
     let (ok, message) = match res {

@@ -201,13 +201,23 @@ impl Feature for Guard {
 
     async fn on_event(&self, ctx: &Ctx, event: &Event) -> Result<()> {
         match event {
-            Event::MessageCreate(m) => self.on_message(ctx, m).await?,
-            // A moderator lifted the timeout in Discord itself: count it as released.
+            Event::MessageCreate(m) => self.on_message(ctx, m, false).await?,
+            // An edit can turn a harmless message into a scam.
+            Event::MessageUpdate(m) => {
+                let before = ctx.before_message(m.id.get());
+                let edited_ms = m.edited_timestamp.map(|t| t.as_micros() / 1000);
+                if edit_changed(before.as_ref().map(|b| b.content.as_str()), &m.content, edited_ms, now_ms()) {
+                    self.on_message(ctx, m, true).await?;
+                }
+            }
+            // A moderator lifted the timeout in Discord itself: count it as released. The bot's
+            // own release, from a catch's button or the dashboard, decided that catch already
+            // and leaves the member's other catches to staff.
             Event::MemberUpdate(u) if u.communication_disabled_until.is_none() => {
-                let guild = u.guild_id.get();
-                let had = ctx.before_member(guild, u.user.id.get()).and_then(|b| b.timed_out_until_ms).is_some_and(|t| t > now_ms());
-                if had {
-                    close_open(ctx, guild, u.user.id.get(), Outcome::Released, None).await?;
+                let (guild, user) = (u.guild_id.get(), u.user.id.get());
+                let had = ctx.before_member(guild, user).and_then(|b| b.timed_out_until_ms).is_some_and(|t| t > now_ms());
+                if had && !own_release(guild, user, now_ms()) {
+                    close_open(ctx, guild, user, Outcome::Released, None).await?;
                 }
             }
             Event::BanAdd(b) => close_open(ctx, b.guild_id.get(), b.user.id.get(), Outcome::Banned, None).await?,
@@ -241,6 +251,15 @@ impl Feature for Guard {
             let need = if outcome == Outcome::Banned { "Ban Members" } else { "Moderate Members" };
             ctx.reply(&call.interaction, Reply::text(format!("You need the {need} permission for this.")).ephemeral()).await?;
             return Ok(());
+        }
+        if outcome == Outcome::Banned
+            && let Some(c) = catch(ctx, guild, id)?
+        {
+            let by_roles: Vec<u64> = call.interaction.member.as_ref().map(|m| m.roles.iter().map(|r| r.get()).collect()).unwrap_or_default();
+            if !may_ban(ctx, guild, call.user_id(), &by_roles, c.user_id) {
+                ctx.reply(&call.interaction, Reply::text("Their highest role is level with or above yours, so you can't ban them.").ephemeral()).await?;
+                return Ok(());
+            }
         }
         ctx.defer_update(&call.interaction).await?;
         let by = ctx.display_name(guild, call.user_id());
@@ -304,7 +323,9 @@ struct Found {
 }
 
 impl Guard {
-    async fn on_message(&self, ctx: &Ctx, m: &Message) -> Result<()> {
+    /// Score a new message, or an edited one (`edit`). An edit doesn't count toward the same
+    /// message in several channels, and one of a message already caught is left alone.
+    async fn on_message(&self, ctx: &Ctx, m: &Message, edit: bool) -> Result<()> {
         let Some(guild) = m.guild_id.map(|g| g.get()) else { return Ok(()) };
         if m.author.bot || m.webhook_id.is_some() || m.author.system == Some(true) {
             return Ok(());
@@ -314,7 +335,7 @@ impl Guard {
         }
         let s = ctx.settings::<Settings>(guild, KEY)?;
         let (user, channel) = (m.author.id.get(), m.channel_id.get());
-        let honeypot = s.honeypot_channel == Some(channel);
+        let honeypot = in_channel(ctx, channel, s.honeypot_channel);
         if !honeypot && !s.scam_detection {
             return Ok(());
         }
@@ -329,7 +350,9 @@ impl Guard {
         let text = full_text(m);
         let attachments: Vec<(String, u64)> = m.attachments.iter().map(|a| (a.filename.clone(), a.size)).collect();
         let now = now_ms();
-        let repeat = {
+        let repeat = if edit {
+            1
+        } else {
             let print = recent::fingerprint(&text, &attachments);
             self.recent.lock().unwrap().record(guild, user, channel, m.id.get(), print, now)
         };
@@ -354,11 +377,18 @@ impl Guard {
         let Some(found) = found else { return Ok(()) };
 
         // A burst from one account raises one alert; later messages are only deleted.
-        let (repeat_catch, ids) = {
+        let (repeat_catch, mut ids) = {
             let mut r = self.recent.lock().unwrap();
-            (r.already_caught(guild, user, now), r.take(guild, user, now))
+            if edit && r.was_caught(m.id.get()) {
+                return Ok(());
+            }
+            let repeat_catch = r.already_caught(guild, user, now);
+            let mut ids = r.take(guild, user, now);
+            // An edited message can be older than the ten minutes kept.
+            ids.push((channel, m.id.get()));
+            r.mark_caught(ids.iter().map(|(_, id)| *id), now);
+            (repeat_catch, ids)
         };
-        let mut ids = ids;
         if repeat_catch {
             delete_all(ctx, &[(channel, m.id.get())]).await;
             return Ok(());
@@ -417,6 +447,22 @@ fn is_staff(ctx: &Ctx, guild: u64, user: u64, roles: &[u64]) -> bool {
         }
     }
     perms.intersects(Permissions::ADMINISTRATOR | Permissions::MANAGE_MESSAGES | Permissions::MODERATE_MEMBERS)
+}
+
+/// Whether a message update is a real edit. Discord also sends one when a link unfurls; that
+/// carries the same text. With no copy of the old message, an edit stamped in the last few
+/// seconds counts, so an unfurl on a message edited long ago doesn't.
+fn edit_changed(before: Option<&str>, after: &str, edited_ms: Option<i64>, now: i64) -> bool {
+    match before {
+        Some(b) => b != after,
+        None => edited_ms.is_some_and(|t| now - t < 15_000),
+    }
+}
+
+/// The message is in `target`, or in a thread or forum post inside it.
+fn in_channel(ctx: &Ctx, channel: u64, target: Option<u64>) -> bool {
+    let Some(target) = target else { return false };
+    channel == target || Id::new_checked(channel).and_then(|c| ctx.cache.channel(c)).and_then(|c| c.parent_id).is_some_and(|p| p.get() == target)
 }
 
 /// The channel, or the channel a thread is in, is on the exempt list.
@@ -574,6 +620,9 @@ pub async fn resolve(
         return Err(already(&c));
     }
     let reason = reason.map(str::trim).filter(|r| !r.is_empty()).map(|r| text::clip(r, 300));
+    if outcome == Outcome::Released {
+        note_own_release(guild, c.user_id, now_ms());
+    }
     // Claim the catch before acting: of two moderators clicking at once only one acts, and the
     // ban or lifted timeout Discord reports back finds the catch already decided.
     let claimed = ctx
@@ -620,6 +669,46 @@ pub async fn resolve(
 /// timed out, so a failed release is never taken for a done one.
 fn timed_out_now(ctx: &Ctx, guild: u64, user: u64) -> bool {
     ctx.cache.member(Id::new(guild), Id::new(user)).is_none_or(|m| m.communication_disabled_until().is_some_and(|t| t.as_micros() / 1000 > now_ms()))
+}
+
+/// Members the bot itself just released, as (guild, user, when). The member update Discord sends
+/// back for it must not close the member's other catches as mistakes.
+static OWN_RELEASES: Mutex<Vec<(u64, u64, i64)>> = Mutex::new(Vec::new());
+/// Long enough for Discord's member update to arrive.
+const OWN_RELEASE_MS: i64 = 60_000;
+
+fn note_own_release(guild: u64, user: u64, now: i64) {
+    let mut own = OWN_RELEASES.lock().unwrap();
+    own.retain(|(_, _, at)| now - at < OWN_RELEASE_MS);
+    own.push((guild, user, now));
+}
+
+/// Whether the bot released this member in the last minute.
+fn own_release(guild: u64, user: u64, now: i64) -> bool {
+    let mut own = OWN_RELEASES.lock().unwrap();
+    own.retain(|(_, _, at)| now - at < OWN_RELEASE_MS);
+    own.iter().any(|(g, u, _)| *g == guild && *u == user)
+}
+
+/// Whether `by` (with `by_roles`) may ban `target` by Discord's role order, from the cache.
+fn may_ban(ctx: &Ctx, guild: u64, by: u64, by_roles: &[u64], target: u64) -> bool {
+    let top = |roles: &mut dyn Iterator<Item = u64>| roles.filter_map(|r| Id::new_checked(r).and_then(|r| ctx.cache.role(r)).map(|r| r.position)).max().unwrap_or(0);
+    let g = Id::new_checked(guild);
+    let owner = g.and_then(|g| ctx.cache.guild(g)).map(|g| g.owner_id().get());
+    let target_top = g.zip(Id::new_checked(target)).and_then(|(g, t)| ctx.cache.member(g, t)).map(|m| top(&mut m.roles().iter().map(|r| r.get())));
+    outranks(owner, by, top(&mut by_roles.iter().copied()), target, target_top)
+}
+
+/// The server owner may ban anyone and nobody may ban the owner; otherwise `by`'s highest role
+/// must be above the target's. A target who isn't a member (`None`) has no roles to compare.
+fn outranks(owner: Option<u64>, by: u64, by_top: i64, target: u64, target_top: Option<i64>) -> bool {
+    if owner == Some(by) {
+        return true;
+    }
+    if owner == Some(target) {
+        return false;
+    }
+    target_top.is_none_or(|t| by_top > t)
 }
 
 /// "Already banned by Mira."
@@ -1145,6 +1234,38 @@ mod tests {
         ctx.db.with(|c| c.execute("UPDATE guard_catches SET outcome = 'timed_out', at = ?1", [now_ms() - 30 * DAY_MS])).unwrap();
         close_open(&ctx, G, U, Outcome::Banned, None).await.unwrap();
         assert!(catch(&ctx, G, id).unwrap().unwrap().outcome.open());
+    }
+
+    #[test]
+    fn real_edits_change_the_text() {
+        assert!(edit_changed(Some("hi"), "hi https://scam.x", None, 0));
+        assert!(!edit_changed(Some("hi"), "hi", Some(0), 0), "an unfurl");
+        assert!(edit_changed(None, "x", Some(10_000), 12_000));
+        assert!(!edit_changed(None, "x", Some(0), 60_000));
+        assert!(!edit_changed(None, "x", None, 0));
+    }
+
+    #[test]
+    fn bans_follow_the_role_order() {
+        const OWNER: u64 = 1;
+        assert!(outranks(Some(OWNER), OWNER, 0, U, Some(9)));
+        assert!(!outranks(Some(OWNER), MOD, 99, OWNER, Some(0)));
+        assert!(outranks(Some(OWNER), MOD, 5, U, Some(4)));
+        assert!(!outranks(Some(OWNER), MOD, 5, U, Some(5)));
+        assert!(!outranks(None, MOD, 5, U, Some(6)));
+        // Someone who already left has no roles in the way.
+        assert!(outranks(None, MOD, 0, U, None));
+    }
+
+    #[test]
+    fn the_bots_own_release_is_remembered_briefly() {
+        // Ids of their own, as the list is shared by every test.
+        let (g, u, t) = (9001, 9002, now_ms());
+        assert!(!own_release(g, u, t));
+        note_own_release(g, u, t);
+        assert!(own_release(g, u, t + 30_000));
+        assert!(!own_release(g, 9003, t + 30_000));
+        assert!(!own_release(g, u, t + OWN_RELEASE_MS));
     }
 
     #[test]

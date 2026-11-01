@@ -146,6 +146,16 @@ pub fn open_threads(conn: &Connection) -> bot_core::rusqlite::Result<HashSet<u64
     stmt.query_map([], |r| r.get::<_, i64>(0).map(|t| t as u64))?.collect()
 }
 
+/// The latest closed conversation whose staff thread this was.
+pub fn closed_by_thread(conn: &Connection, guild: u64, thread: u64) -> bot_core::rusqlite::Result<Option<Conv>> {
+    conn.query_row(
+        &format!("SELECT {COLUMNS} FROM modmail WHERE guild_id = ?1 AND thread_id = ?2 AND status != 'open' ORDER BY closed_at DESC LIMIT 1"),
+        params![guild as i64, thread as i64],
+        from_row,
+    )
+    .optional()
+}
+
 /// A member's open conversations in every server.
 pub fn open_for_user(conn: &Connection, user: u64) -> bot_core::rusqlite::Result<Vec<Conv>> {
     let mut stmt = conn.prepare(&format!("SELECT {COLUMNS} FROM modmail WHERE user_id = ?1 AND status = 'open' AND thread_id != 0"))?;
@@ -159,6 +169,11 @@ pub fn record(conn: &Connection, id: i64, author: u64, preview: &str, at: i64) -
         params![id, author as i64, at, preview],
     )?;
     Ok(())
+}
+
+/// Close every open conversation in a server, as when the bot leaves it.
+pub fn close_all_in(conn: &Connection, guild: u64, now: i64) -> bot_core::rusqlite::Result<usize> {
+    conn.execute("UPDATE modmail SET status = 'closed', closed_at = ?2 WHERE guild_id = ?1 AND status = 'open'", params![guild as i64, now])
 }
 
 /// Close a conversation that is still open. False when it already wasn't.
@@ -222,9 +237,11 @@ const MAX_BODY: usize = 4096;
 const MORE_ROOM: usize = 48;
 
 /// A message as it reaches the other side: its text, then its attachments as links, within
-/// [`MAX_BODY`]. Links that don't fit are counted on a last line instead.
+/// [`MAX_BODY`]. With attachments, the text keeps some room for their links. Links that don't
+/// fit are counted on a last line instead.
 pub fn body(content: &str, files: &[(String, String)]) -> String {
-    let mut out = text::clip(content.trim(), 3500);
+    let room = if files.is_empty() { MAX_BODY } else { 3500 };
+    let mut out = text::clip(content.trim(), room);
     let mut len = out.chars().count();
     let mut shown = 0;
     for (name, url) in files {
@@ -250,6 +267,36 @@ pub fn body(content: &str, files: &[(String, String)]) -> String {
         out = "Sent something the bot can't show here, like a sticker.".into();
     }
     out
+}
+
+/// A message's own text, then the text of each message it forwards, under a "Forwarded:" line
+/// and quoted.
+fn with_forwards(content: &str, forwards: &[&str]) -> String {
+    let mut out = content.to_owned();
+    for fwd in forwards {
+        if !out.trim().is_empty() {
+            out.push('\n');
+        }
+        out.push_str("Forwarded:");
+        for line in fwd.trim().lines() {
+            out.push_str("\n> ");
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+/// What a message carries to the other side: its text and attachments, then those of any
+/// message it forwards.
+fn carried(m: &Message) -> (String, Vec<(String, String)>) {
+    let forwards: Vec<&str> = m.message_snapshots.iter().map(|s| s.message.content.as_str()).collect();
+    let files = m
+        .attachments
+        .iter()
+        .chain(m.message_snapshots.iter().flat_map(|s| &s.message.attachments))
+        .map(|a| (a.filename.clone(), a.url.clone()))
+        .collect();
+    (with_forwards(&m.content, &forwards), files)
 }
 
 /// How a message starts, on one line, for the dashboard.
@@ -285,13 +332,8 @@ pub(crate) struct Incoming {
 
 impl Incoming {
     fn of(m: &Message) -> Self {
-        Self {
-            channel: m.channel_id.get(),
-            message: m.id.get(),
-            content: m.content.clone(),
-            files: m.attachments.iter().map(|a| (a.filename.clone(), a.url.clone())).collect(),
-            at: m.timestamp.as_micros() / 1000,
-        }
+        let (content, files) = carried(m);
+        Self { channel: m.channel_id.get(), message: m.id.get(), content, files, at: m.timestamp.as_micros() / 1000 }
     }
 }
 
@@ -305,9 +347,44 @@ pub(crate) struct Held {
 
 // ---- where a DM goes ----
 
+/// When the bot last got its server list from Discord. A server missing from the cache is only
+/// "not loaded yet" for a while after that; later the bot isn't in it any more.
+static READY_AT: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+const LOAD_GRACE: Duration = Duration::from_secs(15 * 60);
+
+pub fn note_ready() {
+    *READY_AT.lock().unwrap() = Some(Instant::now());
+}
+
+fn still_loading() -> bool {
+    READY_AT.lock().unwrap().is_none_or(|t| t.elapsed() < LOAD_GRACE)
+}
+
+/// What a member's open conversation in a server can do with a DM now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConvState {
+    /// The server is there and modmail is on.
+    Open,
+    /// The server isn't loaded yet after a (re)connect: wait for it.
+    Stuck,
+    /// Modmail is off there: not a place to send to, but kept for when it's back on.
+    Off,
+    /// The bot isn't in the server any more: the conversation is over.
+    Gone,
+}
+
+fn conv_state(enabled: bool, in_cache: bool, loading: bool) -> ConvState {
+    match (enabled, in_cache, loading) {
+        (false, _, _) => ConvState::Off,
+        (true, true, _) => ConvState::Open,
+        (true, false, true) => ConvState::Stuck,
+        (true, false, false) => ConvState::Gone,
+    }
+}
+
 /// Modmail is on in this server and the bot can reach it.
 fn reachable(ctx: &Ctx, guild: u64) -> bool {
-    ctx.enabled(guild, KEY) && ctx.cache.guild(Id::new(guild)).is_some()
+    ctx.enabled(guild, KEY) && Id::new_checked(guild).is_some_and(|g| ctx.cache.guild(g).is_some())
 }
 
 /// Modmail is on in this server and has somewhere to put new conversations.
@@ -320,15 +397,23 @@ fn shared_servers(ctx: &Ctx, user: u64) -> Vec<u64> {
     ctx.enabled_guilds(KEY).into_iter().filter(|g| takes_mail(ctx, *g) && ctx.cache.member(Id::new(*g), Id::new(user)).is_some()).collect()
 }
 
-/// Where a member's DM goes: their one open conversation, else the one server they share. None
-/// means they have to pick from the list.
-fn route(open: &[u64], shared: &[u64]) -> Route {
-    match (open, shared) {
-        ([one], _) => Route::To(*one),
-        ([], []) => Route::Nowhere,
-        ([], [one]) => Route::To(*one),
-        ([], many) => Route::Pick(many.to_vec()),
-        (many, _) => Route::Pick(many.to_vec()),
+/// Where a member's DM goes. `open` are the servers where they have an open conversation that
+/// can take it, `stuck` those where they have one that can't right now (modmail switched off,
+/// or the server not loaded yet), and `shared` the servers that take new conversations.
+///
+/// With one place to go, it goes there. With several, the member picks, their open
+/// conversations first. With a conversation stuck it never goes elsewhere unasked: the member
+/// picks among the others, or hears it can't be delivered.
+fn route(open: &[u64], stuck: &[u64], shared: &[u64]) -> Route {
+    let mut places = open.to_vec();
+    places.extend(shared.iter().filter(|g| !open.contains(g) && !stuck.contains(g)));
+    if !stuck.is_empty() {
+        return if places.is_empty() { Route::Stuck(stuck.to_vec()) } else { Route::Pick(places) };
+    }
+    match places.as_slice() {
+        [] => Route::Nowhere,
+        [one] => Route::To(*one),
+        _ => Route::Pick(places),
     }
 }
 
@@ -336,7 +421,14 @@ fn route(open: &[u64], shared: &[u64]) -> Route {
 enum Route {
     To(u64),
     Pick(Vec<u64>),
+    /// Only conversations that can't take messages right now.
+    Stuck(Vec<u64>),
     Nowhere,
+}
+
+/// Server names for a sentence: "A", "A, B".
+fn names(ctx: &Ctx, guilds: &[u64]) -> String {
+    guilds.iter().map(|g| ctx.guild_name(*g)).collect::<Vec<_>>().join(", ")
 }
 
 pub async fn on_dm(f: &Modmail, ctx: &Ctx, m: &Message) -> Result<()> {
@@ -350,23 +442,51 @@ pub async fn on_dm(f: &Modmail, ctx: &Ctx, m: &Message) -> Result<()> {
     let incoming = Incoming::of(m);
     let turn = f.turn(user);
     let _turn = turn.lock().await;
-    let open: Vec<u64> = ctx.db.with(|c| open_for_user(c, user))?.into_iter().map(|c| c.guild_id).filter(|g| reachable(ctx, *g)).collect();
     // Open conversations keep both directions even after the staff channel is cleared: staff
     // still answer in their threads, so the member's answers still reach them there.
-    let shared = if open.is_empty() { shared_servers(ctx, user) } else { Vec::new() };
-    match route(&open, &shared) {
+    let (mut open, mut stuck) = (Vec::new(), Vec::new());
+    let loading = still_loading();
+    for c in ctx.db.with(|c| open_for_user(c, user))? {
+        let in_cache = Id::new_checked(c.guild_id).is_some_and(|g| ctx.cache.guild(g).is_some());
+        match conv_state(ctx.enabled(c.guild_id, KEY), in_cache, loading) {
+            ConvState::Open => open.push(c.guild_id),
+            ConvState::Stuck => stuck.push(c.guild_id),
+            ConvState::Off => {}
+            ConvState::Gone => {
+                ctx.db.with(|conn| close_all_in(conn, c.guild_id, now_ms()))?;
+            }
+        }
+    }
+    let shared = shared_servers(ctx, user);
+    match route(&open, &stuck, &shared) {
         Route::To(guild) => deliver(f, ctx, guild, user, &name, &avatar, &[incoming]).await,
         Route::Pick(guilds) => match f.last_pick(user).filter(|g| guilds.contains(g)) {
             Some(guild) => deliver(f, ctx, guild, user, &name, &avatar, &[incoming]).await,
-            None => hold(f, ctx, user, name, avatar, incoming, &guilds).await,
+            None => hold(f, ctx, user, name, avatar, incoming, Places { all: &guilds, open: &open, stuck: &stuck }).await,
         },
+        Route::Stuck(guilds) => {
+            if f.tell_stuck(user) {
+                let text = format!("Your conversation with the staff of {} can't take messages right now, so this wasn't passed on. Try again in a while.", names(ctx, &guilds));
+                ctx.dm(user, &text, &[], &[]).await?;
+            }
+            Ok(())
+        }
         // Nobody to pass it to: the bot also gets DMs that aren't meant for staff.
         Route::Nowhere => Ok(()),
     }
 }
 
-/// Keep the message and, the first time, ask which server it's for.
-async fn hold(f: &Modmail, ctx: &Ctx, user: u64, name: String, avatar: String, msg: Incoming, guilds: &[u64]) -> Result<()> {
+/// The servers a member picks from: all of them, then which have their open conversations and
+/// which have one that can't take messages right now.
+struct Places<'a> {
+    all: &'a [u64],
+    open: &'a [u64],
+    stuck: &'a [u64],
+}
+
+/// Keep the message and, the first time, ask which server it's for. Open conversations are
+/// marked in the list; a stuck one is named in the question.
+async fn hold(f: &Modmail, ctx: &Ctx, user: u64, name: String, avatar: String, msg: Incoming, places: Places<'_>) -> Result<()> {
     let ask = {
         let mut held = f.held.lock().unwrap();
         held.retain(|_, h| h.since.elapsed() < HOLD);
@@ -386,10 +506,17 @@ async fn hold(f: &Modmail, ctx: &Ctx, user: u64, name: String, avatar: String, m
     if !ask {
         return Ok(());
     }
-    let options = guilds
+    let options = places
+        .all
         .iter()
         .take(25)
-        .map(|g| SelectMenuOption { default: false, description: None, emoji: None, label: text::clip(&ctx.guild_name(*g), 100), value: g.to_string() })
+        .map(|g| SelectMenuOption {
+            default: false,
+            description: places.open.contains(g).then(|| "Your open conversation".to_owned()),
+            emoji: None,
+            label: text::clip(&ctx.guild_name(*g), 100),
+            value: g.to_string(),
+        })
         .collect();
     let menu = Component::ActionRow(ActionRow {
         id: None,
@@ -407,7 +534,15 @@ async fn hold(f: &Modmail, ctx: &Ctx, user: u64, name: String, avatar: String, m
             required: None,
         })],
     });
-    let asked = ctx.dm(user, "Which server's staff is this for? Pick one and your messages go to them.", &[], &[menu]).await?;
+    let question = if places.stuck.is_empty() {
+        "Which server's staff is this for? Pick one and your messages go to them.".to_owned()
+    } else {
+        format!(
+            "Your conversation with the staff of {} can't take messages right now. Pick another server to send this to, or send it again later.",
+            names(ctx, places.stuck)
+        )
+    };
+    let asked = ctx.dm(user, &question, &[], &[menu]).await?;
     if asked.is_none() {
         f.held.lock().unwrap().remove(&user);
     }
@@ -538,14 +673,24 @@ async fn make_thread(ctx: &Ctx, channel: u64, s: &Settings, id: i64, user: u64, 
 /// Every message in a server where modmail is on comes through here, so the channel is checked
 /// against the open conversations' threads, held in memory, before anything else. That set, not
 /// the current staff channel, decides: conversations opened before the channel changed keep
-/// working in their old threads.
+/// working in their old threads. Staff writing in a closed conversation's thread are told once
+/// that the member doesn't get it.
 pub async fn on_staff_message(f: &Modmail, ctx: &Ctx, guild: u64, m: &Message) -> Result<()> {
-    if !matches!(m.kind, MessageType::Regular | MessageType::Reply) || m.content.trim_start().starts_with("//") || !f.is_staff_thread(ctx, m.channel_id.get())? {
+    if !matches!(m.kind, MessageType::Regular | MessageType::Reply) || m.content.trim_start().starts_with("//") {
         return Ok(());
     }
-    let Some(conv) = ctx.db.with(|c| by_thread(c, guild, m.channel_id.get()))? else {
-        f.drop_thread(m.channel_id.get());
+    let channel = m.channel_id.get();
+    if !f.is_staff_thread(ctx, channel)? {
+        // A thread of the staff channel may be a closed conversation's (from before a restart).
+        let parent = ctx.cache.channel(m.channel_id).filter(|c| c.kind.is_thread()).and_then(|c| c.parent_id).map(|p| p.get());
+        if parent.is_some() && parent == ctx.settings::<Settings>(guild, KEY)?.channel {
+            note_closed(f, ctx, guild, channel).await?;
+        }
         return Ok(());
+    }
+    let Some(conv) = ctx.db.with(|c| by_thread(c, guild, channel))? else {
+        f.drop_thread(channel);
+        return note_closed(f, ctx, guild, channel).await;
     };
     let staff = m.author.id.get();
     let staff_name = m
@@ -554,18 +699,30 @@ pub async fn on_staff_message(f: &Modmail, ctx: &Ctx, guild: u64, m: &Message) -
         .and_then(|p| p.nick.clone())
         .or_else(|| m.author.global_name.clone())
         .unwrap_or_else(|| m.author.name.clone());
-    let files: Vec<(String, String)> = m.attachments.iter().map(|a| (a.filename.clone(), a.url.clone())).collect();
+    let (content, files) = carried(m);
     let avatar = ctx.member_avatar(guild, staff);
-    let reply = embed(&staff_name, &avatar, &body(&m.content, &files), Some(&ctx.guild_name(guild)));
+    let reply = embed(&staff_name, &avatar, &body(&content, &files), Some(&ctx.guild_name(guild)));
     match dm_embed(ctx, conv.user_id, reply).await {
         Ok(()) => {
             let _ = ctx.http.create_reaction(m.channel_id, m.id, &RequestReactionType::Unicode { name: "✅" }).await;
-            ctx.db.with(|c| record(c, conv.id, staff, &preview(&m.content, files.len()), m.timestamp.as_micros() / 1000))?;
+            ctx.db.with(|c| record(c, conv.id, staff, &preview(&content, files.len()), m.timestamp.as_micros() / 1000))?;
         }
         Err(why) => {
             ctx.say(m.channel_id.get(), &format!("Couldn't DM {}. {why}", conv.name(ctx, guild))).await?;
         }
     }
+    Ok(())
+}
+
+/// Staff wrote in the thread of a closed conversation: say once, per thread while the bot runs,
+/// that the member doesn't get it. Each thread is looked up once, so later messages cost no query.
+async fn note_closed(f: &Modmail, ctx: &Ctx, guild: u64, thread: u64) -> Result<()> {
+    if !f.first_look(thread) {
+        return Ok(());
+    }
+    let Some(conv) = ctx.db.with(|c| closed_by_thread(c, guild, thread))? else { return Ok(()) };
+    let text = format!("This conversation is closed, so {} doesn't get messages sent here. A new one opens when they DM the bot again.", conv.name(ctx, guild));
+    ctx.say(thread, &text).await?;
     Ok(())
 }
 
@@ -639,8 +796,11 @@ async fn send_closing(ctx: &Ctx, guild: u64, user: u64) {
     }
 }
 
+/// Archive and lock a closed conversation's thread. A conversation closed before its thread was
+/// made has none (0).
 async fn archive(ctx: &Ctx, thread: u64) {
-    if let Err(e) = ctx.http.update_thread(Id::new(thread)).archived(true).locked(true).await {
+    let Some(id) = Id::new_checked(thread) else { return };
+    if let Err(e) = ctx.http.update_thread(id).archived(true).locked(true).await {
         bot_core::tracing::warn!(thread, error = %e, "couldn't archive a closed modmail thread");
     }
 }
@@ -795,6 +955,20 @@ pub fn seed(ctx: &Ctx, guild: u64) -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
+mod conv_state_tests {
+    use super::*;
+
+    #[test]
+    fn a_server_the_bot_left_ends_the_conversation() {
+        assert_eq!(conv_state(true, true, false), ConvState::Open);
+        assert_eq!(conv_state(true, false, true), ConvState::Stuck);
+        assert_eq!(conv_state(true, false, false), ConvState::Gone);
+        assert_eq!(conv_state(false, true, false), ConvState::Off);
+        assert_eq!(conv_state(false, false, false), ConvState::Off);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use bot_core::Db;
@@ -872,11 +1046,45 @@ mod tests {
 
     #[test]
     fn dms_go_to_the_one_place_or_ask() {
-        assert_eq!(route(&[1], &[]), Route::To(1));
-        assert_eq!(route(&[], &[2]), Route::To(2));
-        assert_eq!(route(&[], &[]), Route::Nowhere);
-        assert_eq!(route(&[], &[2, 3]), Route::Pick(vec![2, 3]));
-        assert_eq!(route(&[1, 4], &[]), Route::Pick(vec![1, 4]));
+        assert_eq!(route(&[1], &[], &[]), Route::To(1));
+        assert_eq!(route(&[1], &[], &[1]), Route::To(1));
+        assert_eq!(route(&[], &[], &[2]), Route::To(2));
+        assert_eq!(route(&[], &[], &[]), Route::Nowhere);
+        assert_eq!(route(&[], &[], &[2, 3]), Route::Pick(vec![2, 3]));
+        assert_eq!(route(&[1, 4], &[], &[]), Route::Pick(vec![1, 4]));
+        // An open conversation doesn't take every DM when other servers take modmail too; it
+        // comes first in the list.
+        assert_eq!(route(&[1], &[], &[2, 1]), Route::Pick(vec![1, 2]));
+    }
+
+    #[test]
+    fn a_stuck_conversation_never_passes_dms_elsewhere_unasked() {
+        // The one other server is offered, not sent to.
+        assert_eq!(route(&[], &[5], &[2]), Route::Pick(vec![2]));
+        assert_eq!(route(&[1], &[5], &[]), Route::Pick(vec![1]));
+        assert_eq!(route(&[], &[5], &[]), Route::Stuck(vec![5]));
+    }
+
+    #[test]
+    fn closed_threads_are_found_by_thread() {
+        let db = db();
+        let c = db.lock();
+        let a = insert(&c, 1, 10, "Mira", 1000).unwrap().unwrap();
+        set_thread(&c, a, 500).unwrap();
+        assert_eq!(closed_by_thread(&c, 1, 500).unwrap(), None);
+        mark_closed(&c, a, Some(99), 2000).unwrap();
+        assert_eq!(closed_by_thread(&c, 1, 500).unwrap().map(|c| c.id), Some(a));
+        assert_eq!(closed_by_thread(&c, 2, 500).unwrap(), None);
+        assert_eq!(by_thread(&c, 1, 500).unwrap(), None);
+    }
+
+    #[test]
+    fn forwarded_text_follows_the_message() {
+        assert_eq!(with_forwards("see this", &["two\nlines"]), "see this\nForwarded:\n> two\n> lines");
+        assert_eq!(with_forwards("", &["scam link"]), "Forwarded:\n> scam link");
+        // A forward of only a picture still says it was one; its file comes as a link.
+        assert_eq!(with_forwards("", &[""]), "Forwarded:");
+        assert_eq!(with_forwards("plain", &[]), "plain");
     }
 
     #[test]
@@ -891,6 +1099,8 @@ mod tests {
         assert!(full.chars().count() <= MAX_BODY);
         assert!(full.ends_with("9 more attachments didn't fit here."), "{full}");
         assert_eq!(body("", &long[..1]).lines().count(), 1);
+        // With nothing attached, the text gets the whole embed.
+        assert_eq!(body(&"x".repeat(5000), &[]).chars().count(), MAX_BODY);
         assert_eq!(preview("two\nlines", 0), "two lines");
         assert_eq!(preview("", 1), "An attachment");
         assert_eq!(preview("", 3), "3 attachments");

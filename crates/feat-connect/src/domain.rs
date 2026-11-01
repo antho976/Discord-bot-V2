@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 /// A request is good for 15 minutes.
 pub const TTL_MS: i64 = 15 * 60_000;
-/// Open requests at once, across every device: past this, a new one waits for one to settle.
+/// Open requests at once for one app: past this, a new one waits for one to settle.
 pub const MAX_PENDING: i64 = 3;
 /// One request per address in this window, so a loop cannot fire DMs back to back.
 pub const IP_COOLDOWN_MS: i64 = 5_000;
@@ -221,6 +221,20 @@ pub fn client_ip(forwarded_for: Option<&str>) -> Option<String> {
     Some(pick.to_string())
 }
 
+/// What the per-address limits count by. An IPv6 client usually holds a whole /64, so the
+/// limits count the /64, not each address in it. A request with no forwarded address (no proxy
+/// in front) shares one key, so it can't skip the limits.
+pub fn limit_key(ip: Option<&str>) -> String {
+    match ip.and_then(|i| i.parse::<IpAddr>().ok()) {
+        Some(IpAddr::V6(v6)) if v6.to_ipv4_mapped().is_none() => {
+            let s = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
+        }
+        Some(ip) => ip.to_string(),
+        None => "unknown".into(),
+    }
+}
+
 /// An address as a proxy writes it: bare, with a port, or in brackets.
 fn parse_ip(entry: &str) -> Option<IpAddr> {
     let e = entry.trim();
@@ -361,6 +375,10 @@ mod tests {
         assert_eq!(client_ip(Some("garbage, , ")), None);
         assert_eq!(client_ip(Some(" ")), None);
         assert_eq!(client_ip(None), None);
+        assert_eq!(limit_key(Some("2001:db8:1:2:aaaa::1")), "2001:db8:1:2::/64");
+        assert_eq!(limit_key(Some("2001:db8:1:2:bbbb::9")), "2001:db8:1:2::/64");
+        assert_eq!(limit_key(Some("203.0.113.9")), "203.0.113.9");
+        assert_eq!(limit_key(None), "unknown");
     }
 
     #[test]

@@ -287,3 +287,4 @@
   .sa-used { margin-left: 52px; }
   .sa-used::before { left: -36px; width: 30px; }
 }
+.sa-after { margin-top: 12px; }

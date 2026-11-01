@@ -10,6 +10,8 @@ pub const KEEP_MS: i64 = 10 * 60 * 1000;
 /// The window for "same message in several channels".
 pub const REPEAT_MS: i64 = 30 * 1000;
 const PER_USER: usize = 60;
+/// How long the messages of a catch are remembered, so an edit of one isn't caught again.
+const CAUGHT_KEEP_MS: i64 = 24 * 60 * 60 * 1000;
 
 #[derive(Debug, Clone, Copy)]
 struct Seen {
@@ -24,6 +26,9 @@ pub struct Recent {
     users: HashMap<(u64, u64), VecDeque<Seen>>,
     /// When each member was last caught, so a burst only raises one alert.
     caught: HashMap<(u64, u64), i64>,
+    /// Messages that were part of a catch, and when, so an edit of one (its delete failed)
+    /// doesn't make a second catch.
+    caught_messages: HashMap<u64, i64>,
 }
 
 /// What makes two messages "the same": the text with case and spacing evened out, plus the
@@ -84,6 +89,16 @@ impl Recent {
         false
     }
 
+    /// Note the messages of a catch.
+    pub fn mark_caught(&mut self, messages: impl IntoIterator<Item = u64>, now: i64) {
+        self.caught_messages.extend(messages.into_iter().map(|m| (m, now)));
+    }
+
+    /// Whether this message was part of a catch.
+    pub fn was_caught(&self, message: u64) -> bool {
+        self.caught_messages.contains_key(&message)
+    }
+
     /// Drop everything older than the window. Called once a minute.
     pub fn prune(&mut self, now: i64) {
         self.users.retain(|_, list| {
@@ -91,6 +106,7 @@ impl Recent {
             !list.is_empty()
         });
         self.caught.retain(|_, t| now - *t < 120_000);
+        self.caught_messages.retain(|_, t| now - *t < CAUGHT_KEEP_MS);
     }
 
     #[cfg(test)]
@@ -148,6 +164,17 @@ mod tests {
         assert!(r.take(G, U, KEEP_MS + 1_000).is_empty());
         r.prune(60_000 + KEEP_MS + 1);
         assert_eq!(r.tracked(), 0);
+    }
+
+    #[test]
+    fn caught_messages_are_remembered_for_a_day() {
+        let mut r = Recent::default();
+        r.mark_caught([100, 101], 0);
+        assert!(r.was_caught(100) && r.was_caught(101) && !r.was_caught(102));
+        r.prune(KEEP_MS + 1);
+        assert!(r.was_caught(100), "kept past the ten-minute window");
+        r.prune(CAUGHT_KEEP_MS);
+        assert!(!r.was_caught(100));
     }
 
     #[test]

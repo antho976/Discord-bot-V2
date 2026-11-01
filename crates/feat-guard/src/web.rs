@@ -3,6 +3,7 @@ use bot_core::axum::extract::{Path, Query, State};
 use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
+use bot_core::twilight_model::channel::ChannelType;
 use bot_core::twilight_model::id::Id;
 use bot_core::web::ui;
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
@@ -677,6 +678,11 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     };
     if s.honeypot_channel.is_some() && s.honeypot_channel == s.log_channel {
         return Err(WebError::Bad("The honeypot and the alert channel can't be the same channel.".into()));
+    }
+    // A forum takes posts, not messages, so an alert can't be sent there.
+    let forum = s.log_channel.and_then(Id::new_checked).and_then(|c| ctx.cache.channel(c)).is_some_and(|c| matches!(c.kind, ChannelType::GuildForum | ChannelType::GuildMedia));
+    if forum {
+        return Err(WebError::Bad("The alert channel can't be a forum. Pick a text channel.".into()));
     }
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed scam protection settings");

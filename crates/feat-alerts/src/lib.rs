@@ -37,6 +37,8 @@ pub struct Settings {
     pub live_channel: Option<u64>,
     pub live_role: Option<u64>,
     pub live_message: String,
+    /// Viewers on the live post, edited in every 5 minutes.
+    pub live_viewers: bool,
 
     pub reminders: bool,
     pub reminder_channel: Option<u64>,
@@ -72,6 +74,7 @@ impl Default for Settings {
             live_channel: None,
             live_role: None,
             live_message: DEFAULT_LIVE_MESSAGE.into(),
+            live_viewers: true,
             reminders: true,
             reminder_channel: None,
             reminder_role: None,
@@ -154,6 +157,18 @@ const MIGRATIONS: &[Migration] = &[Migration {
             xp INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (guild_id, video_id, user_id));
         CREATE INDEX alerts_video_claims_by_time ON alerts_video_claims(guild_id, at);
     ",
+}, Migration {
+    // The last viewer count read, for the live post; the follower total when the stream
+    // started and ended, for the gain on the ended post (NULL when Twitch wouldn't say); clips
+    // made during it; and when it last came back after a drop.
+    name: "005_alerts_live_numbers",
+    sql: "
+        ALTER TABLE alerts_streams ADD COLUMN viewers INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE alerts_streams ADD COLUMN followers_start INTEGER;
+        ALTER TABLE alerts_streams ADD COLUMN followers_end INTEGER;
+        ALTER TABLE alerts_streams ADD COLUMN clips INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE alerts_streams ADD COLUMN resumed_at INTEGER;
+    ",
 }];
 
 #[derive(Default)]
@@ -220,10 +235,14 @@ impl Feature for Alerts {
             {
                 bot_core::tracing::warn!(error = %e, "schedule refresh failed");
             }
-            if due(ctx, "thumbs", 15 * 60_000)
-                && let Err(e) = twitch::fill_thumbnails(ctx).await
-            {
-                bot_core::tracing::warn!(error = %e, "couldn't fill VOD pictures");
+            if due(ctx, "thumbs", 15 * 60_000) {
+                if let Err(e) = twitch::fill_thumbnails(ctx).await {
+                    bot_core::tracing::warn!(error = %e, "couldn't fill VOD pictures");
+                }
+                // Clips from a stream's last minutes are listed after it ends.
+                if let Err(e) = twitch::recount_clips(ctx).await {
+                    bot_core::tracing::warn!(error = %e, "couldn't recount clips");
+                }
             }
             clips::check(ctx, &guilds, last_tick).await;
         }
@@ -371,8 +390,8 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         let all_games = if i % 3 == 0 && game != "Just Chatting" { format!("{game}\nJust Chatting") } else { game.to_owned() };
         let samples = secs / 300;
         tx.execute(
-            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, vod_url, viewer_sum, games, thumbnail)
-             VALUES ('41234567', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, vod_url, viewer_sum, games, thumbnail, viewers, followers_start, followers_end)
+             VALUES ('41234567', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?8, ?14, ?15)",
             params![
                 format!("4{i:010}"),
                 started,
@@ -387,13 +406,16 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
                 peak * 2 / 3 * samples,
                 all_games,
                 pictures[i as usize % pictures.len()],
+                // Follower gains on the recent ones, as when the broadcaster signed in.
+                (i < 8).then_some(1_240 - i * 6),
+                (i < 8).then_some(1_240 - i * 6 + (peak % 9) + 2),
             ],
         )?;
     }
     // On air now, 52 minutes in, so the pages show a live stream.
     tx.execute(
-        "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, peak, average, samples, last_sample, viewer_sum, games, thumbnail)
-         VALUES ('41234567', '40000000099', ?1, 'Idleon: world 6 push', 'Legends of Idleon', 61, 48, 10, ?2, 480, 'Legends of Idleon', ?3)",
+        "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, peak, average, samples, last_sample, viewer_sum, games, thumbnail, viewers, followers_start)
+         VALUES ('41234567', '40000000099', ?1, 'Idleon: world 6 push', 'Legends of Idleon', 61, 48, 10, ?2, 480, 'Legends of Idleon', ?3, 54, 1250)",
         params![now - 52 * 60_000, now - 2 * 60_000, pictures[0]],
     )?;
     // A follower total for each of the last 30 days, as the daily check stores them.

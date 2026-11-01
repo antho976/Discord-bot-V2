@@ -78,7 +78,7 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
                         continue;
                     }
                 };
-                snapshot_before(&ctx, &event);
+                let before = snapshot_before(&ctx, &event);
                 ctx.cache.update(&event);
                 track_member_count(&ctx, &event);
                 match &event {
@@ -96,9 +96,12 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
                         let id = g.id().get();
                         if registered.lock().unwrap().insert(id) {
                             let ctx = ctx.clone();
+                            let registered = registered.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = register_commands(&ctx, id).await {
                                     tracing::warn!(guild = id, error = %e, "couldn't register commands");
+                                    // The next GuildCreate (a reconnect) tries again.
+                                    registered.lock().unwrap().remove(&id);
                                 }
                             });
                         }
@@ -106,7 +109,7 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
                     _ => {}
                 }
                 let ctx = ctx.clone();
-                tokio::spawn(async move { dispatch(ctx, event).await });
+                tokio::spawn(BEFORE.scope(before, async move { dispatch(ctx, event).await }));
             }
         }
     }
@@ -160,6 +163,20 @@ pub struct MemberSnapshot {
     pub timed_out_until_ms: Option<i64>,
 }
 
+/// What one event's snapshots were, handed to that event's own dispatch so a later event for
+/// the same message or member (an edit then a delete, back to back) can't overwrite them first.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Before {
+    messages: Vec<MessageSnapshot>,
+    member: Option<MemberSnapshot>,
+    /// (guild, user, the channel they were in).
+    voice: Option<(u64, u64, Option<u64>)>,
+}
+
+tokio::task_local! {
+    static BEFORE: Before;
+}
+
 #[derive(Default)]
 pub(crate) struct Snapshots {
     messages: std::collections::HashMap<u64, (std::time::Instant, MessageSnapshot)>,
@@ -192,7 +209,8 @@ impl Snapshots {
     }
 }
 
-fn snapshot_before(ctx: &Ctx, event: &Event) {
+fn snapshot_before(ctx: &Ctx, event: &Event) -> Before {
+    let mut out = Before::default();
     use twilight_model::id::marker::MessageMarker;
     let now = std::time::Instant::now();
     let message = |id: Id<MessageMarker>| {
@@ -219,15 +237,18 @@ fn snapshot_before(ctx: &Ctx, event: &Event) {
     // The message before this event: the cache's copy, or once the cache has dropped it (25 per
     // channel), what its last edit left. Never an older snapshot: after "A" was edited to "B",
     // a delete must not quote "A".
-    let before = |snaps: &mut Snapshots, id: Id<MessageMarker>| {
+    let before = |snaps: &mut Snapshots, out: &mut Before, id: Id<MessageMarker>| {
         match message(id).or_else(|| snaps.edited.get(&id.get()).map(|(_, s)| s.clone())) {
-            Some(s) => snaps.messages.insert(id.get(), (now, s)),
+            Some(s) => {
+                out.messages.push(s.clone());
+                snaps.messages.insert(id.get(), (now, s))
+            }
             None => snaps.messages.remove(&id.get()),
         };
     };
     match event {
         Event::MessageUpdate(m) => {
-            before(&mut snaps, m.id);
+            before(&mut snaps, &mut out, m.id);
             // Updates carry the whole message: keep what this edit leaves. Without content or
             // files (an embed-only message, or no message content intent) there's nothing to
             // keep, and an older copy would be wrong.
@@ -246,50 +267,65 @@ fn snapshot_before(ctx: &Ctx, event: &Event) {
             }
         }
         Event::MessageDelete(m) => {
-            before(&mut snaps, m.id);
+            before(&mut snaps, &mut out, m.id);
             snaps.edited.remove(&m.id.get());
         }
         Event::MessageDeleteBulk(m) => {
             for id in &m.ids {
-                before(&mut snaps, *id);
+                before(&mut snaps, &mut out, *id);
                 snaps.edited.remove(&id.get());
             }
         }
         Event::MemberUpdate(m) => {
             if let Some(s) = member(m.guild_id, m.user.id) {
+                out.member = Some(s.clone());
                 snaps.members.insert((m.guild_id.get(), m.user.id.get()), (now, s));
             }
         }
         Event::MemberRemove(m) => {
             if let Some(s) = member(m.guild_id, m.user.id) {
+                out.member = Some(s.clone());
                 snaps.members.insert((m.guild_id.get(), m.user.id.get()), (now, s));
             }
         }
         Event::VoiceStateUpdate(v) => {
             if let Some(g) = v.guild_id {
                 let before = ctx.cache.voice_state(v.user_id, g).map(|s| s.channel_id().get());
+                out.voice = Some((g.get(), v.user_id.get(), before));
                 snaps.voice.insert((g.get(), v.user_id.get()), (now, before));
             }
         }
         _ => {}
     }
     snaps.prune();
+    out
 }
 
 impl Ctx {
     /// The message as it was before the edit or delete event being handled. Only messages the
     /// cache had (the last 25 per channel since the bot connected) have one.
     pub fn before_message(&self, message_id: u64) -> Option<MessageSnapshot> {
+        // Inside the event's own dispatch, its own snapshot; the shared map only as a fallback
+        // (a task a handler spawned), where a later event may have replaced it.
+        if let Ok(found) = BEFORE.try_with(|b| b.messages.iter().find(|m| m.id == message_id).cloned()) {
+            return found;
+        }
         self.snapshots.lock().unwrap().messages.get(&message_id).map(|(_, s)| s.clone())
     }
 
     /// The member as they were before the update or leave event being handled.
     pub fn before_member(&self, guild_id: u64, user_id: u64) -> Option<MemberSnapshot> {
+        if let Ok(found) = BEFORE.try_with(|b| b.member.clone().filter(|m| m.guild_id == guild_id && m.user_id == user_id)) {
+            return found;
+        }
         self.snapshots.lock().unwrap().members.get(&(guild_id, user_id)).map(|(_, s)| s.clone())
     }
 
     /// The voice channel a member was in before the voice update being handled.
     pub fn before_voice(&self, guild_id: u64, user_id: u64) -> Option<u64> {
+        if let Ok(found) = BEFORE.try_with(|b| b.voice.filter(|v| v.0 == guild_id && v.1 == user_id).and_then(|v| v.2)) {
+            return found;
+        }
         self.snapshots.lock().unwrap().voice.get(&(guild_id, user_id)).and_then(|(_, c)| *c)
     }
 
@@ -1240,6 +1276,29 @@ mod tests {
         };
         super::snapshot_before(ctx, &event);
         ctx.cache.update(&event);
+    }
+
+    #[tokio::test]
+    async fn an_edit_then_a_delete_each_keep_their_own_before() {
+        use twilight_model::gateway::payload::incoming::{MessageDelete, MessageUpdate};
+        let ctx = crate::Ctx::new(crate::Config::preview(0), crate::Db::memory().unwrap()).unwrap();
+        feed(&ctx, "create", 100, "A");
+        let update = super::Event::MessageUpdate(Box::new(MessageUpdate(serde_json::from_value(serde_json::json!({
+            "id": "100", "channel_id": "7", "guild_id": "1", "content": "B",
+            "author": {"id": "42", "username": "alice", "discriminator": "0", "avatar": null},
+            "timestamp": "2026-11-01T10:00:00+00:00", "edited_timestamp": null, "tts": false,
+            "mention_everyone": false, "mentions": [], "mention_roles": [], "attachments": [],
+            "embeds": [], "pinned": false, "type": 0,
+        })).unwrap())));
+        let delete = super::Event::MessageDelete(serde_json::from_value::<MessageDelete>(serde_json::json!({"id": "100", "channel_id": "7", "guild_id": "1"})).unwrap());
+        // Both arrive before either handler runs, as when the gateway delivers them together.
+        let edit_before = super::snapshot_before(&ctx, &update);
+        ctx.cache.update(&update);
+        let delete_before = super::snapshot_before(&ctx, &delete);
+        ctx.cache.update(&delete);
+        let read = |b: super::Before| super::BEFORE.scope(b, async { ctx.before_message(100).map(|m| m.content) });
+        assert_eq!(read(edit_before).await.as_deref(), Some("A"));
+        assert_eq!(read(delete_before).await.as_deref(), Some("B"));
     }
 
     #[tokio::test]
