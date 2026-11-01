@@ -289,7 +289,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                                 div.pop-body.account-menu {
                                     div.account-who {
                                         img src=(me) alt="";
-                                        div { strong { (page.user.name) } span.muted.small { @if page.user.admin_plus { "Admin+" } @else if page.user.admin { "Admin" } @else { "Member of the team" } } }
+                                        div { strong { (page.user.name) } span.muted.small { @if page.user.id == ctx.cfg.owner_id { "Owner" } @else if page.user.admin_plus { "Admin+" } @else if page.user.admin { "Admin" } @else { "Member of the team" } } }
                                     }
                                     @if page.user.admin {
                                         a.menu-item.on[key == "features"] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
