@@ -107,7 +107,8 @@ fn sticky_times(conn: &Connection, guild: u64) -> bot_core::rusqlite::Result<Has
     stmt.query_map([guild as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
 }
 
-/// The four things a channel can do, in the order the cards show them.
+/// The four things a channel can do, in the order the cards and the edit form show them: the
+/// three switches, then the sticky message.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Media,
@@ -117,7 +118,7 @@ enum Kind {
 }
 
 impl Kind {
-    const ALL: [Kind; 4] = [Kind::Media, Kind::Purge, Kind::Sticky, Kind::Thread];
+    const ALL: [Kind; 4] = [Kind::Media, Kind::Purge, Kind::Thread, Kind::Sticky];
 
     fn key(self) -> &'static str {
         match self {
@@ -398,18 +399,18 @@ async fn edit_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
                         (ui::field_text("purge", "Delete messages older than", Some("Like 30m, 12h or 7d, up to 90 days. Pinned messages and the sticky message stay. Empty leaves messages alone."), &limit_input(r.purge_after_mins), "Off"))
                     }
                 }
+                div.card.ru-sec data-rule="thread" {
+                    (sec_head(rule_icon(Kind::Thread), "Auto-thread", "Starts a thread on each new message, for replies.", Some(("thread", "Thread on every message", r.thread))))
+                    div.ru-sec-body {
+                        (ui::field_text("thread_name", "Thread name", Some("{user}, {date} and {text}, the start of the message, are filled in."), &r.thread_name, DEFAULT_THREAD_NAME))
+                    }
+                }
                 div.card.ru-sec data-rule="sticky" {
                     (sec_head(rule_icon(Kind::Sticky), "Sticky message", "Keeps one message from the bot at the bottom of the channel.", None))
                     div.ru-sec-body {
                         (ui::field_textarea("sticky", "Message", Some("Posted again at the bottom of the channel, and the previous copy deleted. Empty turns it off."), &r.sticky, "Read the pinned rules before posting."))
                         (ui::field_number("sticky_every", "Repost after", Some("New messages since the last copy. The bot waits for a 3 second pause, or 30 seconds at most."), r.sticky_every, 1, 100, Some("messages")))
                         (ui::field_number("sticky_quiet_mins", "Or after a quiet spell of", Some("Reposts once the channel has been quiet this long after any new message. 0 waits for the count."), r.sticky_quiet_mins, 0, 120, Some("min")))
-                    }
-                }
-                div.card.ru-sec data-rule="thread" {
-                    (sec_head(rule_icon(Kind::Thread), "Auto-thread", "Starts a thread on each new message, for replies.", Some(("thread", "Thread on every message", r.thread))))
-                    div.ru-sec-body {
-                        (ui::field_text("thread_name", "Thread name", Some("{user}, {date} and {text}, the start of the message, are filled in."), &r.thread_name, DEFAULT_THREAD_NAME))
                     }
                 }
             }))
@@ -562,7 +563,7 @@ const CSS: &str = r#"
 .ru-card { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 18px; border-radius: var(--r-card); background: linear-gradient(180deg, var(--veil), var(--well)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
 .ru-card:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .ru-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.ru-hash { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 12px; color: var(--ground); background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 25%)); box-shadow: 0 10px 22px -12px var(--hue), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+.ru-hash { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 12px; color: var(--ground); background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 25%)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
 .ru-hash .icon { width: 19px; height: 19px; stroke-width: 1.6; }
 .ru-name { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .ru-name strong { font-size: 16px; font-weight: 600; letter-spacing: -0.015em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -575,7 +576,7 @@ const CSS: &str = r#"
 .ru-tile.on { background: color-mix(in oklab, var(--hue) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 32%, transparent); }
 .ru-ti { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: var(--ink-3); background: var(--control); transition: background 0.3s, color 0.3s, box-shadow 0.3s; }
 .ru-ti .icon { width: 16px; height: 16px; }
-.ru-tile.on .ru-ti { color: var(--ground); background: var(--hue); box-shadow: 0 6px 16px -6px var(--hue); }
+.ru-tile.on .ru-ti { color: var(--ground); background: var(--hue); box-shadow: none; }
 .ru-tt { display: flex; flex-direction: column; min-width: 0; }
 .ru-tl, .ru-tv { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ru-tl { font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
@@ -620,12 +621,26 @@ span.ru-msg-av img { width: 20px; height: 20px; }
 .ru-sec[data-rule="channel"] .ru-sec-ic,
 .ru-sec:has(.ru-sec-ctl input:checked) .ru-sec-ic,
 .ru-sec:has(#purge:not(:placeholder-shown)) .ru-sec-ic,
-.ru-sec:has(#sticky:not(:placeholder-shown)) .ru-sec-ic { color: var(--ground); background: var(--hue); box-shadow: 0 8px 18px -8px var(--hue); transform: none; }
+.ru-sec:has(#sticky:not(:placeholder-shown)) .ru-sec-ic { color: var(--ground); background: var(--hue); box-shadow: none; transform: none; }
 .ru-sec-ctl, .ru-sec-pick { flex: none; }
 .ru-sec-pick { width: min(280px, 40%); }
 .ru-sec-body { border-top: 1px solid var(--edge-1); transition: opacity 0.3s var(--ease); }
 .ru-sec:has(.ru-sec-ctl input:not(:checked)) .ru-sec-body { opacity: 0.55; }
 .ru-sec:has(.ru-sec-ctl input:not(:checked)) .ru-sec-body:hover, .ru-sec:has(.ru-sec-ctl input:not(:checked)) .ru-sec-body:focus-within { opacity: 1; }
+/* A wide form puts the three switches side by side, each card's field under its label, and the
+   sticky message across the full width with the message beside its two repost settings. */
+@container col (min-width: 1000px) {
+  .ru-sec[data-rule="sticky"] .ru-sec-body { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); column-gap: 36px; align-items: start; }
+  .ru-sec[data-rule="sticky"] .row.wide { grid-row: span 2; }
+  .ru-sec[data-rule="sticky"] .row:not(.wide) { grid-template-columns: minmax(0, 1fr); }
+  .ru-sec[data-rule="sticky"] .row.wide + .row { border-top: 0; }
+}
+@container col (min-width: 1080px) {
+  .ru-edit .settings fieldset { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+  .ru-edit .ru-sec:is([data-rule="channel"], [data-rule="sticky"]) { grid-column: 1 / -1; }
+  .ru-edit .ru-sec:is([data-rule="media"], [data-rule="purge"], [data-rule="thread"]) .row { grid-template-columns: minmax(0, 1fr); }
+  .ru-edit .ru-sec:is([data-rule="media"], [data-rule="purge"], [data-rule="thread"]) .row:has(.switch) { grid-template-columns: minmax(0, 1fr) auto; }
+}
 .ru-side .ru-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .ru-side .rail-block { gap: 14px; }
 .ru-side [hidden] { display: none !important; }

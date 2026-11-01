@@ -305,7 +305,7 @@ async fn command_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let body = html! {
         style { (PreEscaped(CSS)) }
         (back(&page.path("commands"), "All commands"))
-        div.with-rail.cc-edit {
+        div.compose.cc-edit {
             (ui::settings_form(&page, &page.path("commands/edit"), html! {
                 @if let Some(c) = &existing { input type="hidden" name="id" value=(c.id); }
                 (ui::section("Command", None, ui::card(html! {
@@ -323,7 +323,7 @@ async fn command_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     (ui::field_text("embed_image", "Picture", Some("An https link to an image."), &e.image, "https://"))
                 })) } }))
             }))
-            aside.cc-side {
+            aside.cc-side.compose-preview {
                 (preview(&ctx, &page, &sample, &sample.channel, used, &c.reply, c.embed.as_ref(), c.ephemeral))
                 p.muted.small { "You stand in for the member. Placeholders fill in as they would for you." }
             }
@@ -463,7 +463,7 @@ async fn responder_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
                 @if s.triggers.is_empty() {
                     (ui::empty(Icon::Slash, "No triggers yet", "Add a phrase, like \"when is stream\", and the reply the bot posts when a message has it."))
                 } @else {
-                    p.muted.small.cc-order-note { "Checked top to bottom; the first match answers." }
+                    p.muted.small.cc-order-note { "Checked in number order; the first match answers." }
                     div.cc-list {
                         @for (i, t) in s.triggers.iter().enumerate() {
                             @let n = count(t.id);
@@ -590,7 +590,7 @@ async fn trigger_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let body = html! {
         style { (PreEscaped(CSS)) }
         (back(&page.path("commands/responder"), "All triggers"))
-        div.with-rail.cc-edit {
+        div.compose.cc-edit {
             (ui::settings_form(&page, &page.path("commands/responder/edit"), html! {
                 @if let Some(t) = &existing { input type="hidden" name="id" value=(t.id); }
                 (ui::section("When a message", None, ui::card(html! {
@@ -603,7 +603,7 @@ async fn trigger_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     (ui::field_channels(&ctx, guild, "channels", "Only in", Some("None picked answers everywhere. Threads in these channels count too."), &t.channels))
                 })))
             }))
-            aside.cc-side {
+            aside.cc-side.compose-preview {
                 (preview(&ctx, &page, &sample, &first_channel, above, &t.reply, None, false))
                 p.muted.small { "You stand in for the member. Placeholders fill in as they would for you." }
             }
@@ -699,13 +699,15 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
 
 const CSS: &str = r#"
 .cc-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+/* The readings span the column, so their edges meet the cards' below. */
+.cc-main > .readings > .reading { flex: 1 1 140px; }
 .reading b.cc-fav { font: 600 22px/1.3 var(--mono); color: var(--hue); letter-spacing: -0.01em; }
 .cc-order-note { margin-bottom: -8px; }
 
-/* A command or trigger: its trigger chips, what it's for, how often it runs, and its reply as
-   Discord draws it. */
-.cc-list { display: flex; flex-direction: column; gap: 10px; }
-.cc-card { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 16px; border-radius: 16px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
+/* A command or trigger: its trigger chips, what it's for, its reply as Discord draws it, and how
+   often it runs. Cards sit side by side once the column has room; a lone one fills it. */
+.cc-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 12px; }
+.cc-card { container: cccard / inline-size; display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 14px 16px 16px; border-radius: 16px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
 .cc-card:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .cc-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .cc-triggers { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; margin-right: 4px; }
@@ -718,8 +720,22 @@ const CSS: &str = r#"
 .cc-num { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 8px; font: 600 12px var(--mono); color: var(--ink-2); background: var(--control); }
 .cc-acts { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .cc-warn { color: var(--waiting); }
-.cc-card-body { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: 18px; align-items: start; }
-.cc-meta { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding-top: 2px; }
+/* In a card of the grid: what it's for, the reply, then the use count at the foot, so the counts
+   line up across a row. When the cards are one to a row, the reply sits beside the rest. */
+.cc-card-body { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cc-meta { display: contents; }
+.cc-card-body > .cc-bubble { order: 1; }
+.cc-use { order: 2; margin-top: auto; }
+@container cccard (min-width: 820px) {
+  .cc-card-body { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: 18px; align-items: start; }
+  .cc-meta { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding-top: 2px; }
+  .cc-use { margin-top: 0; }
+}
+@container col (min-width: 680px) and (max-width: 1051px) {
+  .cc-card-body { display: grid; grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); gap: 18px; align-items: start; }
+  .cc-meta { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding-top: 2px; }
+  .cc-use { margin-top: 0; }
+}
 .cc-about { font-size: 13.5px; color: var(--ink-2); }
 .cc-use { display: flex; flex-direction: column; gap: 6px; max-width: 240px; }
 .cc-use .meter { height: 4px; }
@@ -758,9 +774,13 @@ const CSS: &str = r#"
 .cc-back:hover { color: var(--ink); }
 .cc-back .icon { width: 14px; height: 14px; transform: rotate(90deg); transition: transform 0.25s var(--ease); }
 .cc-back:hover .icon { transform: rotate(90deg) translateY(2px); }
-.with-rail.cc-edit { grid-template-columns: minmax(0, 1fr) 380px; }
+/* The form, and the channel beside it from a medium width (it stacks under the form on a phone). */
+@container col (min-width: 760px) {
+  .compose.cc-edit { grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr); }
+  .compose.cc-edit > .compose-preview { grid-column: 2; grid-row: 1; position: sticky; top: 16px; }
+}
 .cc-ecard:has(#embed:not(:checked)) .row + .row { display: none; }
-.cc-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.cc-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .cc-side > p { padding: 0 4px; }
 .cc-win { overflow: hidden; border-radius: 16px; background: #313338; box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 .cc-win-bar { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 14px; border-bottom: 1px solid #26272b; color: #80848e; }
@@ -784,19 +804,13 @@ const CSS: &str = r#"
 .cc-time { color: #949ba4; font-size: 11.5px; }
 .cc-text { font-size: 14.5px; line-height: 1.375; white-space: pre-wrap; overflow-wrap: break-word; }
 .cc-text:empty { display: none; }
-.cc-embed { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 10px 14px 12px 12px; border-left: 4px solid #f0806a; border-radius: 4px; background: #2b2d31; font-size: 13.5px; }
+.cc-embed { display: flex; flex-direction: column; gap: 6px; max-width: 516px; margin-top: 4px; padding: 10px 14px 12px 12px; border-left: 4px solid #f0806a; border-radius: 4px; background: #2b2d31; font-size: 13.5px; }
 .cc-embed strong { color: #f2f3f5; font-size: 15px; font-weight: 600; }
 .cc-embed strong:empty, .cc-embed p:empty { display: none; }
 .cc-embed p { white-space: pre-wrap; overflow-wrap: break-word; }
 .cc-embed img { max-width: 100%; max-height: 200px; margin-top: 4px; border-radius: 4px; object-fit: cover; }
 .cc-bot { animation: cc-arrive 0.7s var(--ease) both 0.35s; }
 @keyframes cc-arrive { from { opacity: 0; transform: translateY(14px); filter: blur(4px); } }
-@media (max-width: 1180px) { .with-rail.cc-edit { grid-template-columns: minmax(0, 1fr) 320px; } }
-@media (max-width: 920px) {
-  .with-rail.cc-edit { grid-template-columns: minmax(0, 1fr); }
-  .cc-side { position: static; }
-}
-@media (max-width: 760px) { .cc-card-body { grid-template-columns: minmax(0, 1fr); gap: 12px; } }
 @media (max-width: 560px) { .cc-card { padding: 12px 12px 14px; } }
 "#;
 

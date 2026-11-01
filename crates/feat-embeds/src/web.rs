@@ -122,7 +122,7 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
         style { (PreEscaped(CSS)) }
         (strip)
         form #eb-form method="post" action=(page.path("embeds/send")) data-max-fields=(FORM_FIELDS) {
-            fieldset.eb disabled[!can_edit] {
+            fieldset.eb.compose disabled[!can_edit] {
                 div.eb-edit {
                     @if let Some(s) = v.editing {
                         div.eb-note {
@@ -138,52 +138,56 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                         div.eb-error role="alert" { (ui::icon(Icon::Close)) span { (e) } }
                     }
                     div.eb-card {
-                        section.eb-grp {
-                            (group_head(chat_icon(), "Message text", None))
-                            (text_field("content", "Text above the embed", "Optional. Mentions of members and roles ping them; @everyone and @here don't.", &d.content, true, Some(model::MAX_CONTENT), 2, "content", ""))
-                        }
-                        section.eb-grp {
-                            (group_head(ui::icon(Icon::Brush), "Embed", None))
-                            div.eb-f data-part="bar" {
-                                div.eb-lab { label for="color" { "Colour" } }
-                                div.eb-colours {
-                                    @for c in SWATCHES {
-                                        button.eb-sw type="button" data-swatch=(c) style={ "--c:" (c) } aria-label={ "Colour " (c) } aria-pressed="false" {}
+                        div.eb-col {
+                            section.eb-grp {
+                                (group_head(chat_icon(), "Message text", None))
+                                (text_field("content", "Text above the embed", "Optional. Mentions of members and roles ping them; @everyone and @here don't.", &d.content, true, Some(model::MAX_CONTENT), 2, "content", ""))
+                            }
+                            section.eb-grp {
+                                (group_head(ui::icon(Icon::Brush), "Embed", None))
+                                div.eb-f data-part="bar" {
+                                    div.eb-lab { label for="color" { "Colour" } }
+                                    div.eb-colours {
+                                        @for c in SWATCHES {
+                                            button.eb-sw type="button" data-swatch=(c) style={ "--c:" (c) } aria-label={ "Colour " (c) } aria-pressed="false" {}
+                                        }
+                                        label.eb-pick title="Pick any colour" {
+                                            input.eb-swatch #eb-swatch type="color" value=(color_ok.as_deref().unwrap_or("#2b2d31")) aria-label="Pick any colour";
+                                            (ui::icon(Icon::Plus))
+                                        }
+                                        input.input.num.eb-hex #color type="text" name="color" value=(d.color) placeholder="No colour" autocomplete="off" maxlength="7" aria-label="Colour as hex";
                                     }
-                                    label.eb-pick title="Pick any colour" {
-                                        input.eb-swatch #eb-swatch type="color" value=(color_ok.as_deref().unwrap_or("#2b2d31")) aria-label="Pick any colour";
-                                        (ui::icon(Icon::Plus))
-                                    }
-                                    input.input.num.eb-hex #color type="text" name="color" value=(d.color) placeholder="No colour" autocomplete="off" maxlength="7" aria-label="Colour as hex";
                                 }
+                                (text_field("author", "Author", "", &d.author, false, Some(model::MAX_AUTHOR), 1, "author", "A name over the title"))
+                                div.eb-2 {
+                                    (text_field("title", "Title", "", &d.title, false, Some(model::MAX_TITLE), 1, "title", ""))
+                                    (text_field("url", "Title link", "", &d.url, false, None, 1, "title", "https://"))
+                                }
+                                (text_field("description", "Description", "Supports **bold**, *italic*, `code`, ~~strike~~, ||spoilers|| and [links](https://example.com).", &d.description, true, Some(model::MAX_DESCRIPTION), 6, "desc", ""))
                             }
-                            (text_field("author", "Author", "", &d.author, false, Some(model::MAX_AUTHOR), 1, "author", "A name over the title"))
-                            div.eb-2 {
-                                (text_field("title", "Title", "", &d.title, false, Some(model::MAX_TITLE), 1, "title", ""))
-                                (text_field("url", "Title link", "", &d.url, false, None, 1, "title", "https://"))
-                            }
-                            (text_field("description", "Description", "Supports **bold**, *italic*, `code`, ~~strike~~, ||spoilers|| and [links](https://example.com).", &d.description, true, Some(model::MAX_DESCRIPTION), 6, "desc", ""))
                         }
-                        section.eb-grp.eb-fblock {
-                            (group_head(fields_icon(), "Fields", Some(html! { span.muted.small #eb-fcount {} })))
-                            div #eb-rows {
-                                @for (i, f) in rows.iter().enumerate() { (field_row(&i.to_string(), f)) }
+                        div.eb-col {
+                            section.eb-grp.eb-fblock {
+                                (group_head(fields_icon(), "Fields", Some(html! { span.muted.small #eb-fcount {} })))
+                                div #eb-rows {
+                                    @for (i, f) in rows.iter().enumerate() { (field_row(&i.to_string(), f)) }
+                                }
+                                div { button.btn.small.outline #eb-add type="button" { (ui::icon(Icon::Plus)) "Add a field" } }
+                                template #eb-ftpl { (field_row("__I__", &Field::default())) }
                             }
-                            div { button.btn.small.outline #eb-add type="button" { (ui::icon(Icon::Plus)) "Add a field" } }
-                            template #eb-ftpl { (field_row("__I__", &Field::default())) }
-                        }
-                        section.eb-grp {
-                            (group_head(ui::icon(Icon::Image), "Pictures and footer", None))
-                            div.eb-2 {
-                                (text_field("image", "Image", "Large, under the fields.", &d.image, false, None, 1, "img", "https://cdn.discordapp.com/.../banner.png"))
-                                (text_field("thumbnail", "Thumbnail", "Small, at the top right.", &d.thumbnail, false, None, 1, "th", "https://"))
+                            section.eb-grp {
+                                (group_head(ui::icon(Icon::Image), "Pictures and footer", None))
+                                div.eb-2 {
+                                    (text_field("image", "Image", "Large, under the fields.", &d.image, false, None, 1, "img", "https://cdn.discordapp.com/.../banner.png"))
+                                    (text_field("thumbnail", "Thumbnail", "Small, at the top right.", &d.thumbnail, false, None, 1, "th", "https://"))
+                                }
+                                (text_field("footer", "Footer", "", &d.footer, false, Some(model::MAX_FOOTER), 1, "foot", "Small print at the bottom"))
                             }
-                            (text_field("footer", "Footer", "", &d.footer, false, Some(model::MAX_FOOTER), 1, "foot", "Small print at the bottom"))
                         }
                     }
                     div.eb-error #eb-limit role="alert" hidden {}
                 }
-                aside.eb-side {
+                aside.eb-side.compose-preview {
                     div.eb-win {
                         div.eb-win-bar {
                             (ui::icon(Icon::Hash))
@@ -536,8 +540,6 @@ async fn delete_template(State(ctx): State<Ctx>, user: User, Path((guild, id)): 
 
 
 const CSS: &str = r##"
-.page-body:has(#eb-form) { max-width: 1280px; }
-
 /* Saved embeds: a chip each, with the embed's own colour. */
 .eb-tpls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .eb-tpl-wrap { position: relative; display: inline-flex; min-width: 0; max-width: 100%; }
@@ -547,7 +549,7 @@ const CSS: &str = r##"
 .eb-tpl-name { overflow: hidden; text-overflow: ellipsis; max-width: 24ch; }
 .eb-tpl-wrap:has(form) .eb-tpl { padding-right: 32px; }
 .eb-tpl.on { background: color-mix(in oklab, var(--hue) 16%, transparent); color: var(--ink); font-weight: 500; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 50%, transparent); }
-.eb-dot { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25), 0 0 10px -1px var(--c); }
+.eb-dot { width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25); }
 .eb-tpl-wrap > form { position: absolute; right: 4px; top: 4px; }
 .eb-x { display: inline-grid; place-items: center; height: 24px; min-width: 24px; padding: 0 5px; border: 0; border-radius: 12px; background: transparent; color: var(--ink-3); font: 600 11px var(--sans); cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s, color 0.15s; }
 .eb-x .icon { width: 12px; height: 12px; }
@@ -560,10 +562,22 @@ const CSS: &str = r##"
 .eb-tpl.new .icon { width: 14px; height: 14px; }
 .eb-saved { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; }
 
-/* The editor on the left, Discord on the right. */
-fieldset.eb { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 28px; align-items: start; min-width: 0; margin: 0; padding: 0; border: 0; }
-.eb-edit { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+/* The editor on the left, Discord on the right (`.compose`). Once the page is wide, the preview
+   keeps Discord's own width (its embeds stop at 516 px) and the editor takes the rest, splitting
+   into two columns: the text and embed, then the fields and pictures. */
+fieldset.eb { min-width: 0; margin: 0; padding: 0; border: 0; }
+/* One block on the left, so the preview needs one row; a taller span leaves empty gaps below. */
+@container col (min-width: 1000px) { fieldset.eb.compose > .compose-preview { grid-row: 1; } }
+@container col (min-width: 1400px) { fieldset.eb.compose { grid-template-columns: minmax(0, 1fr) 640px; } }
+.eb-edit { container: ebedit / inline-size; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .eb-card { display: flex; flex-direction: column; padding: 2px 22px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02)); border: 1px solid var(--edge-1); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04); }
+.eb-col { display: flex; flex-direction: column; min-width: 0; }
+.eb-col + .eb-col { border-top: 1px solid var(--edge-1); }
+@container ebedit (min-width: 780px) {
+  .eb-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); padding: 2px 0; }
+  .eb-col { padding: 0 24px; }
+  .eb-col + .eb-col { border-top: 0; border-left: 1px solid var(--edge-1); }
+}
 .eb-grp { display: flex; flex-direction: column; gap: 14px; padding: 18px 0 20px; }
 .eb-grp + .eb-grp { border-top: 1px solid var(--edge-1); }
 .eb-grp-head { display: flex; align-items: center; gap: 10px; }
@@ -580,7 +594,7 @@ fieldset.eb { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.0
 .eb-colours { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
 .eb-sw { width: 28px; height: 28px; flex: none; padding: 0; border: 0; border-radius: 50%; background: var(--c); cursor: pointer; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); transition: transform 0.3s var(--spring), box-shadow 0.25s; }
 .eb-sw:hover { transform: scale(1.12); }
-.eb-sw[aria-pressed="true"] { transform: scale(1.06); box-shadow: 0 0 0 2px var(--page), 0 0 0 4px var(--c), 0 6px 16px -4px var(--c); }
+.eb-sw[aria-pressed="true"] { transform: scale(1.06); box-shadow: 0 0 0 2px var(--page), 0 0 0 4px var(--c); }
 .eb-pick { position: relative; display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 50%; color: var(--ink); cursor: pointer; background: conic-gradient(#ff6b6b, #ffd93d, #6bff95, #6bd5ff, #9d7bff, #ff6bd5, #ff6b6b); transition: transform 0.3s var(--spring); }
 .eb-pick:hover { transform: scale(1.12) rotate(30deg); }
 .eb-pick::before { content: ""; position: absolute; inset: 3px; border-radius: 50%; background: var(--page); }
@@ -602,21 +616,21 @@ fieldset.eb { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.0
 .eb-note { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 14px; font-size: 13px; background: color-mix(in oklab, var(--hue) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 28%, transparent); }
 .eb-note p { flex: 1; min-width: 0; color: var(--ink-2); }
 .eb-note strong { color: var(--ink); font-weight: 600; }
-.eb-note-ic { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: 10px; color: #0b0b10; background: var(--hue); box-shadow: 0 8px 18px -8px var(--hue); }
+.eb-note-ic { display: grid; place-items: center; width: 32px; height: 32px; flex: none; border-radius: 10px; color: #0b0b10; background: var(--hue); box-shadow: none; }
 .eb-note-ic .icon { width: 16px; height: 16px; }
 .eb-error { display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; border-radius: 12px; font-size: 13px; color: var(--ink); background: color-mix(in oklab, var(--held) 11%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--held) 35%, transparent); animation: shake 0.4s var(--ease); }
 .eb-error .icon { flex: none; margin-top: 2px; color: var(--held); }
 .eb-error[hidden] { display: none; }
 
 /* The preview: a Discord channel with the bot's message in it, in Discord's own colours. */
-.eb-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.eb-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .eb-win { overflow: hidden; border-radius: 16px; background: #313338; box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 .eb-win-bar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 16px; border-bottom: 1px solid #26272b; color: #80848e; }
 .eb-win-bar .icon { width: 20px; height: 20px; }
 .eb-win-bar strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f2f3f5; font-size: 15px; font-weight: 600; }
 .eb-win-bar strong.none { color: #80848e; font-weight: 500; }
 .eb-win-tag { padding: 3px 8px; border-radius: 6px; font-size: 11.5px; color: #b5bac1; background: rgba(255, 255, 255, 0.06); }
-.eb-win-body { display: flex; flex-direction: column; min-height: 240px; max-height: calc(100vh - 250px); overflow-y: auto; padding: 18px 12px 22px; scrollbar-color: #1a1b1e transparent; }
+.eb-win-body { display: flex; flex-direction: column; min-height: 240px; max-height: calc(100vh / var(--z, 1) - 250px); overflow-y: auto; padding: 18px 12px 22px; scrollbar-color: #1a1b1e transparent; }
 .dc { display: flex; gap: 16px; min-width: 0; margin-top: auto; padding: 4px 8px; border-radius: 6px; color: #dbdee1; font: 15px/1.375 var(--sans); animation: dc-arrive 0.7s var(--ease) both 0.3s; }
 @keyframes dc-arrive { from { opacity: 0; transform: translateY(16px); filter: blur(4px); } }
 .dc-av { flex: none; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
@@ -631,7 +645,7 @@ fieldset.eb { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.0
 @property --eb-c { syntax: "<color>"; inherits: true; initial-value: #1e1f22; }
 .dc-slot { --eb-c: #1e1f22; transition: --eb-c 0.5s var(--ease); }
 .dc-embed { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; max-width: 516px; margin-top: 4px; padding: 2px 16px 16px 12px; border-left: 4px solid var(--eb-c); border-radius: 4px; background: #2b2d31; font-size: 14px; line-height: 1.375; transition: box-shadow 0.3s var(--ease); }
-.dc-embed.hl-bar, .dc-ghost.hl-bar { box-shadow: -8px 0 22px -10px var(--eb-c); }
+.dc-embed.hl-bar, .dc-ghost.hl-bar { box-shadow: none; }
 .dc-embed > * { grid-column: 1; min-width: 0; margin-top: 8px; overflow-wrap: break-word; }
 .dc-embed > .dc-th { grid-column: 2; grid-row: 1 / span 6; width: 80px; height: 80px; margin-top: 8px; border-radius: 4px; object-fit: cover; }
 .dc-author { color: #f2f3f5; font-weight: 600; }
@@ -678,41 +692,36 @@ fieldset.eb { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.0
 .eb-savetpl .pop-body { width: 290px; }
 .eb-savetpl .pop-body .eb-btns { justify-content: flex-end; }
 
-/* Sent from here: each as a small copy of its embed. */
-.eb-sent { display: flex; flex-direction: column; gap: 8px; }
-.eb-srow { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 10px 12px 10px 10px; border-radius: 14px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
-.eb-srow:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
+/* Sent from here: a card each, a small copy of its embed on top, where and who under it, and
+   its actions in its own footer. More cards to a row as the page widens. */
+.eb-sent { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap: 12px; }
+.eb-srow { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 12px; border-radius: 16px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
+.eb-srow:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .eb-srow.cur { background: color-mix(in oklab, var(--hue) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 45%, transparent); }
 .eb-mini { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 8px 10px 8px 12px; border-left: 3px solid var(--c); border-radius: 5px; background: #2b2d31; }
 .eb-mini-text { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
 .eb-mini-text strong { color: #f2f3f5; font-size: 13px; font-weight: 600; }
 .eb-mini-text span { color: #b5bac1; font-size: 12px; }
 .eb-mini-pic { width: 56px; height: 36px; flex: none; border-radius: 4px; object-fit: cover; }
-.eb-smeta { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: 12.5px; color: var(--ink-2); }
-.eb-chan-chip { align-self: flex-start; display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 8px 0 6px; border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--ink); background: color-mix(in oklab, var(--hue) 13%, transparent); }
+.eb-smeta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; padding: 0 2px; font-size: 12.5px; color: var(--ink-2); }
+.eb-chan-chip { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 8px 0 6px; border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--ink); background: color-mix(in oklab, var(--hue) 13%, transparent); }
 .eb-chan-chip .icon { width: 12px; height: 12px; color: var(--hue); }
 .eb-by { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .eb-by .avatar { width: 20px; height: 20px; }
-.eb-sacts { display: flex; align-items: center; gap: 6px; }
-@media (max-width: 1180px) {
-  fieldset.eb { grid-template-columns: minmax(0, 1fr); }
-  .eb-side { position: static; }
-  .eb-win-body { max-height: none; }
-}
+.eb-sacts { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--edge-1); }
+/* Stacked under the editor, the preview grows with its post instead of scrolling. */
+@container col (max-width: 999px) { .eb-win-body { max-height: none; } }
 @media (max-width: 560px) {
   .eb-2 { grid-template-columns: minmax(0, 1fr); }
   .eb-card { padding: 2px 16px; }
   .eb-saved { margin-left: 0; }
   .eb-send { flex-direction: column; align-items: stretch; }
-  .eb-btns .btn, .eb-savetpl { flex: 1; }
+  .eb-btns .btn, .eb-savetpl { flex: 1 1 auto; }
   .eb-savetpl > summary { width: 100%; }
   .eb-win-body { padding: 14px 6px 18px; }
   .dc { gap: 12px; }
   .dc-av { width: 36px; height: 36px; }
   .dc-embed > .dc-th { width: 64px; height: 64px; }
-  .eb-srow { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .eb-smeta { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-  .eb-sacts { justify-content: flex-end; }
   .eb-sacts .m-hide { display: none; }
 }
 "##;

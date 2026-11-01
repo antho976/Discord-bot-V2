@@ -474,12 +474,13 @@ const CSS: &str = r#"
 
 /* A request: the device on the left, the code it shows on the right, as keys that drop in one
    after another. The first is lit in the page's hue: it's the next to answer. */
-.cn-reqs { display: flex; flex-direction: column; gap: 12px; }
-.cn-req { position: relative; display: flex; flex-direction: column; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; isolation: isolate; }
-.cn-req.first { background: radial-gradient(70% 160% at 100% 0%, color-mix(in oklab, var(--hue) 17%, transparent), transparent 62%), linear-gradient(180deg, rgba(243, 242, 248, 0.055), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 40%, transparent), 0 22px 50px -30px var(--hue); }
+/* Requests side by side once the column has room for two; a lone one fills the column. */
+.cn-reqs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); gap: 12px; }
+.cn-req { container: cnreq / inline-size; position: relative; display: flex; flex-direction: column; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; isolation: isolate; }
+.cn-req.first { background: radial-gradient(70% 160% at 100% 0%, color-mix(in oklab, var(--hue) 9%, transparent), transparent 62%), linear-gradient(180deg, rgba(243, 242, 248, 0.055), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 40%, transparent); }
 .cn-req-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 20px 22px 18px; }
 .cn-tile { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 17px; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 24%, transparent); }
-.cn-req.first .cn-tile { color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 22%)); box-shadow: 0 12px 26px -12px var(--hue), inset 0 1px 0 rgba(255, 255, 255, 0.35); animation: pop-in 0.6s var(--spring) both 0.15s; }
+.cn-req.first .cn-tile { color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 22%)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); animation: pop-in 0.6s var(--spring) both 0.15s; }
 .cn-tile .icon { width: 28px; height: 28px; }
 .cn-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cn-kind { align-self: flex-start; display: inline-flex; align-items: center; height: 20px; padding: 0 8px; margin-bottom: 4px; border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); }
@@ -489,11 +490,11 @@ const CSS: &str = r#"
 .cn-lbl { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
 .cn-code { display: flex; gap: 6px; perspective: 420px; }
 .cn-key { display: grid; place-items: center; width: 44px; height: 54px; border-radius: 12px; font: 600 27px/1 var(--mono); color: var(--ink); background: linear-gradient(180deg, rgba(243, 242, 248, 0.1), rgba(243, 242, 248, 0.035)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -2px 0 rgba(0, 0, 0, 0.35), inset 0 0 0 1px var(--edge-2), 0 8px 18px -10px rgba(0, 0, 0, 0.8); transform-origin: 50% 0; animation: cn-key 0.75s var(--spring) both; animation-delay: calc(var(--i, 0) * 150ms + var(--k) * 80ms + 300ms); }
-.cn-req.first .cn-key { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -2px 0 rgba(0, 0, 0, 0.35), inset 0 0 0 1px color-mix(in oklab, var(--hue) 50%, transparent), 0 10px 24px -12px var(--hue); }
+.cn-req.first .cn-key { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -2px 0 rgba(0, 0, 0, 0.35), inset 0 0 0 1px color-mix(in oklab, var(--hue) 50%, transparent); }
 @keyframes cn-key { from { opacity: 0; transform: translateY(-12px) rotateX(80deg); filter: blur(3px); } }
 .cn-stuck { display: flex; align-items: center; gap: 9px; margin: -4px 22px 16px; padding: 9px 12px; border-radius: 11px; font-size: 12.5px; color: var(--waiting); background: color-mix(in oklab, var(--waiting) 10%, transparent); }
 .cn-stuck .icon { width: 15px; height: 15px; }
-.cn-req-foot { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 215px) auto; align-items: center; gap: 12px 22px; padding: 12px 22px; border-top: 1px solid var(--edge-1); background: rgba(7, 7, 11, 0.24); }
+.cn-req-foot { margin-top: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 215px) auto; align-items: center; gap: 12px 22px; padding: 12px 22px; border-top: 1px solid var(--edge-1); background: rgba(7, 7, 11, 0.24); }
 .cn-dm { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 12.5px; color: var(--ink-2); }
 .cn-dm .avatars .avatar { width: 24px; height: 24px; }
 .cn-nodm { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 8px; color: var(--waiting); background: color-mix(in oklab, var(--waiting) 15%, transparent); }
@@ -508,13 +509,13 @@ const CSS: &str = r#"
 .cn-acts .btn { height: 36px; padding: 0 16px; }
 
 /* Connected PCs. */
-.cn-pcs { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+.cn-pcs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap: 12px; }
 .cn-pc { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 14px 16px; border-radius: 16px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
 .cn-pc:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .cn-pc-tile { position: relative; display: grid; place-items: center; width: 46px; height: 46px; flex: none; border-radius: 14px; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); }
 .cn-pc-tile .icon { width: 24px; height: 24px; }
 .cn-pc-tile .dot { position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; box-shadow: 0 0 0 3px var(--page); }
-.cn-pc-tile .dot.live { box-shadow: 0 0 0 3px var(--page), 0 0 10px var(--live); }
+.cn-pc-tile .dot.live { box-shadow: 0 0 0 3px var(--page); }
 .cn-pc .grow { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .cn-pc strong { font-size: 14px; font-weight: 600; }
 .cn-seen { font-size: 12.5px; color: var(--ink-2); }
@@ -553,7 +554,13 @@ const CSS: &str = r#"
 .cn-dec p { color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
 .cn-dec p strong { color: var(--ink); font-weight: 600; }
 .cn-dec p strong.cn-dev { font-weight: 500; }
-@media (max-width: 640px) {
+/* A request card lays itself out for its own width: the who and when on one line, then the
+   time left beside the answer, then everything stacked on a phone. */
+@container cnreq (max-width: 759px) {
+  .cn-req-foot { grid-template-columns: minmax(0, 1fr) auto; }
+  .cn-dm { grid-column: 1 / -1; }
+}
+@container cnreq (max-width: 540px) {
   .cn-req-top { grid-template-columns: auto minmax(0, 1fr); gap: 14px; padding: 16px; }
   .cn-tile { width: 48px; height: 48px; border-radius: 15px; }
   .cn-tile .icon { width: 24px; height: 24px; }

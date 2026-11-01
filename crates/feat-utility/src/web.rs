@@ -427,14 +427,14 @@ const CSS: &str = r#"
 .au-track { position: absolute; inset: 0; pointer-events: none; transform: translateX(calc(var(--x) * 1%)); transition: transform 1.2s var(--ease); animation: au-glide 1.5s var(--ease) backwards; animation-delay: calc(var(--i) * 90ms + 260ms); }
 .au-pin { position: absolute; left: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; transform: translateX(-50%); pointer-events: auto; cursor: default; }
 .au-pin-faces { display: flex; align-items: center; padding: 3px; border-radius: 20px; background: var(--solid); box-shadow: inset 0 0 0 1px var(--edge-2), 0 12px 26px -12px rgba(0, 0, 0, 0.85); transition: transform 0.35s var(--spring), box-shadow 0.25s; }
-.au-pin:hover .au-pin-faces { transform: translateY(-3px) scale(1.07); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 55%, transparent), 0 14px 30px -12px var(--hue); }
+.au-pin:hover .au-pin-faces { transform: translateY(-3px) scale(1.07); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 55%, transparent); }
 .au-pin-faces .avatar { width: 30px; height: 30px; box-shadow: 0 0 0 2px var(--solid); }
 .au-pin-faces .avatar + .avatar, .au-pin-faces .au-more { margin-left: -9px; }
 .au-more { display: grid; place-items: center; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 14px; background: var(--control); box-shadow: 0 0 0 2px var(--solid); font: 600 11px var(--mono); color: var(--ink-2); }
 .au-pin .au-clock { margin-top: 5px; padding: 2px 6px; border-radius: 6px; background: color-mix(in oklab, var(--page) 70%, transparent); font: 600 11px/1.3 var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
 .au-stem { width: 1px; height: calc(var(--row) * 58px + 7px); background: linear-gradient(180deg, var(--edge-3), color-mix(in oklab, var(--ink) 55%, transparent)); }
-.au-pin::after { content: ""; width: 9px; height: 9px; margin-bottom: -10px; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 2.5px var(--page), 0 0 12px rgba(255, 255, 255, 0.45); }
-.au-band { position: relative; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #121633 0%, #1b2250 18%, #8a5a8c 22.5%, #e98c72 25.5%, #f2c585 29%, #8fc1ec 37%, #9cc9f0 50%, #8fc1ec 63%, #f2bd7c 70.5%, #e5826c 74.5%, #7f4a82 78%, #242456 83%, #121633 100%); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 10px 30px -12px rgba(143, 193, 236, 0.45); }
+.au-pin::after { content: ""; width: 9px; height: 9px; margin-bottom: -10px; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 2.5px var(--page); }
+.au-band { position: relative; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #121633 0%, #1b2250 18%, #8a5a8c 22.5%, #e98c72 25.5%, #f2c585 29%, #8fc1ec 37%, #9cc9f0 50%, #8fc1ec 63%, #f2bd7c 70.5%, #e5826c 74.5%, #7f4a82 78%, #242456 83%, #121633 100%); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
 .au-ticks { position: relative; height: 26px; margin-top: 6px; }
 .au-ticks span { position: absolute; top: 6px; transform: translateX(-50%); font: 11px var(--mono); color: var(--ink-3); }
 .au-ticks span::before { content: ""; position: absolute; left: 50%; top: -9px; width: 1px; height: 5px; background: var(--edge-3); }
@@ -442,7 +442,7 @@ const CSS: &str = r#"
 
 /* One card per zone: a clock face, the time, the place and the people there. */
 .au-zones { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-.au-zone { --tint: var(--hue); position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px 16px 15px; border-radius: var(--r-card); background: radial-gradient(130% 120% at 100% 0%, color-mix(in oklab, var(--tint) 14%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
+.au-zone { --tint: var(--hue); position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px 16px 15px; border-radius: var(--r-card); background: radial-gradient(130% 120% at 100% 0%, color-mix(in oklab, var(--tint) 8%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
 .au-zone.is-day { --tint: var(--waiting); }
 .au-zone:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .au-zone-top { display: flex; align-items: center; gap: 14px; }
@@ -452,7 +452,7 @@ const CSS: &str = r#"
 .au-dial .tk.q { stroke: var(--ink-2); stroke-width: 1.5; }
 .au-dial .hh, .au-dial .mh { stroke-linecap: round; transform-box: view-box; transform-origin: 50% 50%; animation: au-swing 1.5s var(--spring) backwards; animation-delay: calc(var(--i) * 70ms + 520ms); }
 .au-dial .hh { stroke: var(--ink); stroke-width: 2.6; transform: rotate(var(--h)); }
-.au-dial .mh { stroke: var(--tint); stroke-width: 1.7; transform: rotate(var(--m)); filter: drop-shadow(0 0 3px color-mix(in oklab, var(--tint) 60%, transparent)); }
+.au-dial .mh { stroke: var(--tint); stroke-width: 1.7; transform: rotate(var(--m)); }
 .au-dial .pivot { fill: var(--tint); stroke: var(--raised); stroke-width: 1; }
 @keyframes au-swing { from { transform: rotate(0deg); } }
 .au-zone-time { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
