@@ -260,7 +260,8 @@ fn set_cookie(ctx: &Ctx, name: &str, value: &str, max_age_secs: i64) -> String {
 pub(super) fn routes(preview: bool) -> Router<Ctx> {
     let r = Router::new();
     let r = if preview {
-        r.route("/dev/login", get(preview_login)).route("/login", get(preview_login_page))
+        // /dev/sign-in still shows the real sign-in page, for screenshots.
+        r.route("/dev/login", get(preview_login)).route("/login", get(preview_login_page)).route("/dev/sign-in", get(login_page))
     } else {
         r.route("/login", get(login_page))
     };
