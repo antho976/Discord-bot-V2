@@ -555,7 +555,11 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 @container col (min-width: 1000px) {
   .compose:has(> .compose-preview) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   /* The preview takes the right column whichever comes first in the markup. */
+  /* The preview spans the left side's rows; with no row gap an unused row takes no space, so the
+     left blocks are spaced by margin instead. */
+  .compose:has(> .compose-preview) { row-gap: 0; }
   .compose > :not(.compose-preview) { grid-column: 1; }
+  .compose > :not(.compose-preview) + :not(.compose-preview) { margin-top: 24px; }
   .compose > .compose-preview { grid-column: 2; grid-row: 1 / span 4; position: sticky; top: 16px; }
 }
 /* Cards that should multiply on a wider screen rather than stretch. */
