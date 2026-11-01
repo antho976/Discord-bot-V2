@@ -642,7 +642,10 @@
         location.href = res.url;
         return;
       }
-      const to = new URL(res.url);
+      // A post answered with a page of its own (not a redirect) keeps the current address: the
+      // post's address can't be loaded again with a reload.
+      const stay = (opts.method || "GET") !== "GET" && !res.redirected;
+      const to = stay ? new URL(location.href) : new URL(res.url);
       const same = to.pathname === location.pathname;
       const swap = () => {
         closeRefusal();

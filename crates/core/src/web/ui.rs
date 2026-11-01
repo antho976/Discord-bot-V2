@@ -847,17 +847,11 @@ fn bars_svg(series: &[(String, Option<i64>)], unit: &str, about: &str) -> Markup
     let n = series.len();
     html! {
         svg viewBox={ "0 0 " ((n * 10).saturating_sub(4)) " 48" } preserveAspectRatio="none" role="img" aria-label=(about) {
-            defs {
-                linearGradient id="bars-hi" x1="0" y1="0" x2="0" y2="1" {
-                    stop offset="0" stop-color="var(--data)" {}
-                    stop offset="1" stop-color="var(--data-2)" {}
-                }
-            }
             @for (i, (label, v)) in series.iter().enumerate() {
                 @let v = *v;
                 @let h = v.map_or(0.0, |v| (v as f64 / max * 46.0).max(if v > 0 { 2.0 } else { 0.0 }));
                 @let tip = match v { Some(v) => format!("{label}: {} {unit}", crate::text::num(v)), None => format!("{label}: nothing read") };
-                rect.bar x=(i * 10) y=(48.0 - h) width="6" height=(h) rx="1.2" style={ "--i:" (i) } fill=(if i + 1 == n { "url(#bars-hi)" } else { "var(--data-dim)" }) data-tip=(tip) {}
+                rect.bar x=(i * 10) y=(48.0 - h) width="6" height=(h) rx="1.2" style={ "--i:" (i) } fill=(if i + 1 == n { "var(--data)" } else { "var(--data-dim)" }) data-tip=(tip) {}
             }
         }
     }
@@ -932,22 +926,17 @@ pub fn area_chart(series: &[(String, i64)], unit: &str) -> Markup {
             div.area-plot {
                 svg viewBox={ "0 0 " (w) " " (h) } preserveAspectRatio="none" role="img" aria-label={ (crate::text::num(total)) " " (unit) " in " (n) " days" } {
                     defs {
+                        // One colour: the line solid lilac, the area under it fading out.
                         linearGradient id="area-fill" x1="0" y1="0" x2="0" y2="1" {
-                            stop offset="0" stop-color="var(--data)" stop-opacity="0.42" {}
-                            stop offset="0.6" stop-color="var(--data-2)" stop-opacity="0.1" {}
-                            stop offset="1" stop-color="var(--data-2)" stop-opacity="0" {}
-                        }
-                        linearGradient id="area-line" x1="0" y1="0" x2="1" y2="0" {
-                            stop offset="0" stop-color="var(--data-2)" {}
-                            stop offset="0.7" stop-color="var(--data)" {}
-                            stop offset="1" stop-color="#e9ddff" {}
+                            stop offset="0" stop-color="var(--data)" stop-opacity="0.24" {}
+                            stop offset="1" stop-color="var(--data)" stop-opacity="0" {}
                         }
                     }
                     @for f in [0.25, 0.5, 0.75] {
                         line.grid x1="0" x2=(w) y1=(h * f) y2=(h * f) vector-effect="non-scaling-stroke" {}
                     }
                     path.fill d=(area) fill="url(#area-fill)" {}
-                    path.line d=(line) fill="none" stroke="url(#area-line)" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" {}
+                    path.line d=(line) fill="none" stroke="var(--data)" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" {}
                 }
                 span.area-cursor {}
                 span.area-dot {}
