@@ -541,12 +541,15 @@ impl Feature for Levels {
                 }
                 None => (prestige_offer(&s, member(ctx, guild, user)?.as_ref()).err().unwrap_or_else(|| "Nothing changed. Try /level prestige again.".into()), false),
             };
-            // Answer first: taking many reward roles away can outlast the 3 seconds Discord waits,
-            // and the prestige is already written.
-            ctx.update(&call.interaction, Reply::text(text)).await?;
+            // Answer first: taking many reward roles away can outlast the 3 seconds Discord waits.
+            // The prestige is already written, so the roles follow even when the answer fails.
+            let answered = ctx.update(&call.interaction, Reply::text(text)).await;
             if prestiged {
                 let ctx = ctx.clone();
                 bot_core::tokio::spawn(async move { sync_rewards(&ctx, guild, user, 0).await });
+            }
+            if let Err(e) = answered {
+                bot_core::tracing::warn!(guild, user, error = %e, "couldn't answer the prestige button");
             }
         }
         Ok(())
@@ -889,20 +892,28 @@ fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64, you: u64) -> Resu
     Ok(LeaderboardPage { board, faces, embed, buttons })
 }
 
+/// The longest message cooldown: what the settings page and the import allow. A longer one in an
+/// old settings file is held to it.
+const MAX_COOLDOWN_SECS: u64 = 3600;
+
 /// Whether `key` is past its cooldown; if so, the cooldown starts again now. The map holds when
-/// each cooldown ends, since servers set different ones, and entries that have ended are dropped
-/// once it grows, so it stays small.
+/// each cooldown started, so a server that lowers its cooldown sees it at once. Entries older
+/// than the longest cooldown are dropped once it grows, so it stays small.
 fn cooled_down(map: &Mutex<HashMap<(u64, u64), Instant>>, key: (u64, u64), cooldown_secs: i64) -> bool {
-    let now = Instant::now();
+    cooled_down_at(map, key, cooldown_secs, Instant::now())
+}
+
+/// `cooled_down` as of `now`.
+fn cooled_down_at(map: &Mutex<HashMap<(u64, u64), Instant>>, key: (u64, u64), cooldown_secs: i64, now: Instant) -> bool {
+    let cooldown = std::time::Duration::from_secs((cooldown_secs.max(0) as u64).min(MAX_COOLDOWN_SECS));
     let mut cd = map.lock().unwrap();
-    if cd.get(&key).is_some_and(|ends| *ends > now) {
+    if cd.get(&key).is_some_and(|started| now.saturating_duration_since(*started) < cooldown) {
         return false;
     }
-    // The settings page allows an hour; a day caps anything a file could hold.
-    let secs = cooldown_secs.clamp(0, 86_400) as u64;
-    cd.insert(key, now.checked_add(std::time::Duration::from_secs(secs)).unwrap_or(now));
+    cd.insert(key, now);
     if cd.len() > 5000 {
-        cd.retain(|_, ends| *ends > now);
+        let longest = std::time::Duration::from_secs(MAX_COOLDOWN_SECS);
+        cd.retain(|_, started| now.saturating_duration_since(*started) < longest);
     }
     true
 }
@@ -1194,41 +1205,106 @@ pub fn rewards(ctx: &Ctx, guild: u64) -> Result<Vec<(u32, u64)>> {
 /// qualify for, and lose `dropped` (the role the reward gave before) unless another reward still
 /// gives it. Only members the cache holds are touched, since only their roles are known; the rest
 /// catch up when their level next changes. Runs in the background, paced by Discord's limits.
+///
+/// A sweep started while another runs in the same server takes over from it: it covers the
+/// older one's levels and dropped roles too, and the older one stops at its next member, so two
+/// saves in a row don't fight over the same roles.
 pub fn resync_rewards(ctx: &Ctx, guild: u64, from_level: u32, dropped: Option<u64>) {
+    let sweep = start_sweep(&mut SWEEPS.lock().unwrap(), guild, from_level, dropped);
     let ctx = ctx.clone();
     bot_core::tokio::spawn(async move {
-        let members: Vec<(u64, u32)> = ctx
-            .db
-            .with(|c| {
-                let mut s = c.prepare("SELECT user_id, level FROM levels WHERE guild_id = ?1 AND level >= ?2")?;
-                s.query_map(params![guild as i64, from_level as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u32)))?.collect()
-            })
-            .unwrap_or_default();
-        let still_given = rewards(&ctx, guild).unwrap_or_default();
-        let dropped = dropped.filter(|r| !still_given.iter().any(|(_, x)| x == r));
-        let Some(guild_id) = Id::new_checked(guild) else { return };
-        for (user, level) in members {
-            let Some(user_id) = Id::new_checked(user) else { continue };
-            let Some(has) = ctx.cache.member(guild_id, user_id).map(|m| m.roles().iter().map(|r| r.get()).collect::<Vec<_>>()) else {
-                continue;
-            };
-            if let Some(role) = dropped
-                && has.contains(&role)
-                && assignable(&ctx, guild, role)
+        run_sweep(&ctx, guild, &sweep).await;
+        let mut sweeps = SWEEPS.lock().unwrap();
+        if sweeps.get(&guild).is_some_and(|s| s.generation == sweep.generation) {
+            sweeps.remove(&guild);
+        }
+    });
+}
+
+/// The reward sweep running in each server.
+static SWEEPS: std::sync::LazyLock<Mutex<HashMap<u64, Sweep>>> = std::sync::LazyLock::new(Default::default);
+
+/// A reward sweep: which one it is in its server, the lowest level it covers, and the roles that
+/// rewards gave before they changed.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Sweep {
+    generation: u64,
+    from_level: u32,
+    dropped: Vec<u64>,
+}
+
+/// Record a new sweep in `guild` and return it. One still running there is replaced, and the new
+/// one takes on its levels and dropped roles, since it stops before it's done.
+fn start_sweep(sweeps: &mut HashMap<u64, Sweep>, guild: u64, from_level: u32, dropped: Option<u64>) -> Sweep {
+    let mut sweep = match sweeps.get(&guild) {
+        Some(old) => Sweep { generation: old.generation.wrapping_add(1), from_level: old.from_level.min(from_level), dropped: old.dropped.clone() },
+        None => Sweep { generation: 0, from_level, dropped: Vec::new() },
+    };
+    if let Some(role) = dropped
+        && !sweep.dropped.contains(&role)
+    {
+        sweep.dropped.push(role);
+    }
+    sweeps.insert(guild, sweep.clone());
+    sweep
+}
+
+/// Whether `generation` is still the newest sweep in `guild`.
+fn sweep_current(sweeps: &HashMap<u64, Sweep>, guild: u64, generation: u64) -> bool {
+    sweeps.get(&guild).is_some_and(|s| s.generation == generation)
+}
+
+async fn run_sweep(ctx: &Ctx, guild: u64, sweep: &Sweep) {
+    let Some(guild_id) = Id::new_checked(guild) else { return };
+    // Checked once for the server: without Manage Roles every member's change would be refused.
+    if !can_manage_roles(ctx, guild) {
+        return;
+    }
+    let users: Vec<u64> = ctx
+        .db
+        .with(|c| {
+            let mut s = c.prepare("SELECT user_id FROM levels WHERE guild_id = ?1 AND level >= ?2")?;
+            s.query_map(params![guild as i64, sweep.from_level as i64], |r| Ok(r.get::<_, i64>(0)? as u64))?.collect()
+        })
+        .unwrap_or_default();
+    let still_given = rewards(ctx, guild).unwrap_or_default();
+    let dropped: Vec<u64> = sweep.dropped.iter().copied().filter(|r| !still_given.iter().any(|(_, x)| x == r)).collect();
+    for user in users {
+        if !sweep_current(&SWEEPS.lock().unwrap(), guild, sweep.generation) {
+            return;
+        }
+        let Some(user_id) = Id::new_checked(user) else { continue };
+        let Some(has) = ctx.cache.member(guild_id, user_id).map(|m| m.roles().iter().map(|r| r.get()).collect::<Vec<_>>()) else {
+            continue;
+        };
+        for &role in &dropped {
+            if has.contains(&role)
+                && assignable(ctx, guild, role)
                 && let Some(role_id) = Id::new_checked(role)
                 && let Err(e) = ctx.http.remove_guild_member_role(guild_id, user_id, role_id).await
             {
                 bot_core::tracing::warn!(guild, user, role, error = %e, "couldn't take back a changed reward role");
             }
-            sync_rewards(&ctx, guild, user, level).await;
         }
-    });
+        // The level as it is now, not when the sweep started: role changes for the members before
+        // are paced by Discord's limits, and this one may have levelled up or prestiged (back to
+        // level 0) since.
+        let level = ctx.db.with(|c| {
+            c.query_row("SELECT level FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| r.get::<_, i64>(0))
+                .optional()
+        });
+        match level {
+            Ok(Some(level)) => sync_rewards(ctx, guild, user, level.clamp(0, u32::MAX as i64) as u32).await,
+            Ok(None) => {}
+            Err(e) => bot_core::tracing::warn!(guild, user, error = %e, "couldn't read a level for the reward sweep"),
+        }
+    }
 }
 
 async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
     let (Some(guild_id), Some(user_id)) = (Id::new_checked(guild), Id::new_checked(user)) else { return };
     let Ok(list) = rewards(ctx, guild) else { return };
-    if list.is_empty() {
+    if list.is_empty() || !can_manage_roles(ctx, guild) {
         return;
     }
     let stack = ctx.settings::<Settings>(guild, KEY).map(|s| s.stack_rewards).unwrap_or(true);
@@ -1257,19 +1333,48 @@ async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
     }
 }
 
-/// Whether the bot can give or take `role`: it exists, isn't managed by an integration (bot and
-/// booster roles) or the @everyone role, and sits below the bot's highest role. When the cache
-/// doesn't hold the bot's own member, it's tried anyway.
+/// Whether the bot can give or take `role`: it's a role of this server, isn't managed by an
+/// integration (bot and booster roles) or the @everyone role, and sits below the bot's highest
+/// role. When the cache doesn't hold the bot's own member, it's tried anyway. Whether the bot
+/// has Manage Roles at all is `can_manage_roles`.
 fn assignable(ctx: &Ctx, guild: u64, role: u64) -> bool {
-    let Some(r) = Id::new_checked(role).and_then(|id| ctx.cache.role(id)) else { return false };
-    if r.managed || role == guild {
+    let (Some(guild_id), Some(role_id)) = (Id::new_checked(guild), Id::new_checked(role)) else { return false };
+    if role == guild || !ctx.cache.guild_roles(guild_id).is_some_and(|set| set.contains(&role_id)) {
         return false;
     }
-    let Some(bot) = ctx.bot_id() else { return true };
-    let (Some(guild_id), Some(bot_id)) = (Id::new_checked(guild), Id::new_checked(bot)) else { return false };
+    let Some(r) = ctx.cache.role(role_id) else { return false };
+    if r.managed {
+        return false;
+    }
+    let Some(bot_id) = ctx.bot_id().and_then(Id::new_checked) else { return true };
     let Some(me) = ctx.cache.member(guild_id, bot_id) else { return true };
     let top = me.roles().iter().filter_map(|id| ctx.cache.role(*id).map(|r| r.position)).max().unwrap_or(0);
     r.position < top
+}
+
+/// Whether the bot has Manage Roles (or Administrator, or owns the server) in `guild`, from its
+/// cached roles and @everyone. Without it Discord refuses every role change, so callers skip the
+/// role work. When the cache doesn't hold the bot's own member, it's tried anyway.
+fn can_manage_roles(ctx: &Ctx, guild: u64) -> bool {
+    manages_roles(ctx, guild, ctx.bot_id())
+}
+
+/// `can_manage_roles` for the bot user `bot`, when it's known.
+fn manages_roles(ctx: &Ctx, guild: u64, bot: Option<u64>) -> bool {
+    let Some(guild_id) = Id::new_checked(guild) else { return false };
+    let Some(bot_id) = bot.and_then(Id::new_checked) else { return true };
+    let Some(me) = ctx.cache.member(guild_id, bot_id) else { return true };
+    if ctx.cache.guild(guild_id).is_some_and(|g| g.owner_id() == bot_id) {
+        return true;
+    }
+    let perms = me
+        .roles()
+        .iter()
+        .copied()
+        .chain(std::iter::once(guild_id.cast()))
+        .filter_map(|id| ctx.cache.role(id).map(|r| r.permissions))
+        .fold(Permissions::empty(), |all, p| all | p);
+    perms.intersects(Permissions::MANAGE_ROLES | Permissions::ADMINISTRATOR)
 }
 
 /// Work every stored level of `guild` out again from XP, after the curve changed. Only rows whose
@@ -1453,11 +1558,29 @@ mod tests {
         // No cooldown: every message counts.
         assert!(cooled_down(&map, (3, 10), 0));
         assert!(cooled_down(&map, (3, 10), 0));
-        // Past the size limit, finished cooldowns are dropped.
+        // Past the size limit, entries older than the longest cooldown are dropped.
+        let start = Instant::now();
         for user in 0..5001 {
-            cooled_down(&map, (4, user), 0);
+            cooled_down_at(&map, (4, user), 0, start);
         }
+        let later = start + std::time::Duration::from_secs(MAX_COOLDOWN_SECS + 1);
+        assert!(cooled_down_at(&map, (5, 10), 60, later));
         assert!(map.lock().unwrap().len() < 10);
+    }
+
+    #[test]
+    fn a_lowered_cooldown_counts_at_once() {
+        let map = Mutex::new(HashMap::new());
+        let start = Instant::now();
+        let at = |secs| start + std::time::Duration::from_secs(secs);
+        assert!(cooled_down_at(&map, (1, 10), 3600, start));
+        assert!(!cooled_down_at(&map, (1, 10), 3600, at(61)));
+        // The server drops its cooldown to a minute: the hour started before no longer holds.
+        assert!(cooled_down_at(&map, (1, 10), 60, at(61)));
+        assert!(!cooled_down_at(&map, (1, 10), 60, at(100)));
+        // A cooldown above the settings page's hour is held to the hour.
+        assert!(cooled_down_at(&map, (1, 11), i64::MAX, start));
+        assert!(cooled_down_at(&map, (1, 11), i64::MAX, at(MAX_COOLDOWN_SECS)));
     }
 
     #[test]
@@ -1469,6 +1592,27 @@ mod tests {
             cooled_down(&map, (2, user), 0);
         }
         assert!(!cooled_down(&map, (1, 10), 3600), "the hour-long cooldown survived the prune");
+    }
+
+    #[test]
+    fn a_newer_sweep_takes_over_from_an_older_one() {
+        let mut sweeps = HashMap::new();
+        let first = start_sweep(&mut sweeps, 1, 5, Some(70));
+        assert_eq!(first, Sweep { generation: 0, from_level: 5, dropped: vec![70] });
+        assert!(sweep_current(&sweeps, 1, first.generation));
+        // A second save while it runs: the first stops, and the second covers its levels and role.
+        let second = start_sweep(&mut sweeps, 1, 20, None);
+        assert_eq!(second, Sweep { generation: 1, from_level: 5, dropped: vec![70] });
+        assert!(!sweep_current(&sweeps, 1, first.generation));
+        assert!(sweep_current(&sweeps, 1, second.generation));
+        let third = start_sweep(&mut sweeps, 1, 0, Some(70));
+        assert_eq!((third.from_level, third.dropped), (0, vec![70]));
+        let third = start_sweep(&mut sweeps, 1, 3, Some(71));
+        assert_eq!((third.from_level, third.dropped), (0, vec![70, 71]));
+        // Another server's sweep is its own.
+        let other = start_sweep(&mut sweeps, 2, 8, None);
+        assert_eq!(other, Sweep { generation: 0, from_level: 8, dropped: vec![] });
+        assert!(sweep_current(&sweeps, 1, third.generation));
     }
 
     #[test]

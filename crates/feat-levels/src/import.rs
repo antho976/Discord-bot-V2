@@ -282,11 +282,17 @@ fn targets(ctx: &Ctx, rows: &[Row], only: Option<u64>, report: &mut Report) -> V
 /// anything) and what the file has. Keep the higher keeps whichever of the two ranks higher, as a
 /// whole: a member who prestiged here keeps their prestige and the XP they've earned since,
 /// rather than getting their old XP back on top of it.
+///
+/// A file that doesn't say (`prestige` None) leaves the prestige stored here. Its XP is then
+/// XP before any prestige, so for Keep the higher it ranks at prestige 0. Only the file's own
+/// prestige is held to `MAX_PRESTIGE`; one stored here was already allowed.
 fn merged(mode: Mode, existing: Option<(i64, i64)>, xp: i64, prestige: Option<i64>) -> (i64, i64) {
-    let file = (xp.clamp(0, crate::curve::MAX_XP), prestige.or(existing.map(|e| e.1)).unwrap_or(0).clamp(0, MAX_PRESTIGE));
+    let xp = xp.clamp(0, crate::curve::MAX_XP);
+    let prestige = prestige.map(|p| p.clamp(0, MAX_PRESTIGE));
+    let stored_prestige = existing.map(|e| e.1).unwrap_or(0);
     match (mode, existing) {
-        (Mode::KeepHigher, Some((cur_xp, cur_prestige))) if (cur_prestige, cur_xp) >= (file.1, file.0) => (cur_xp, cur_prestige),
-        _ => file,
+        (Mode::KeepHigher, Some((cur_xp, cur_prestige))) if (cur_prestige, cur_xp) >= (prestige.unwrap_or(0), xp) => (cur_xp, cur_prestige),
+        _ => (xp, prestige.unwrap_or(stored_prestige)),
     }
 }
 
@@ -498,14 +504,25 @@ mod tests {
         // The file ranks higher: its XP and prestige both come over.
         assert_eq!(merged(Mode::KeepHigher, Some((300, 1)), 100, Some(2)), (100, 2));
         assert_eq!(merged(Mode::KeepHigher, Some((300, 1)), 900, Some(1)), (900, 1));
-        // A file without prestige leaves it as it is here, in both modes.
-        assert_eq!(merged(Mode::KeepHigher, Some((300, 2)), 900, None), (900, 2));
+        // A file without prestige has XP from before any prestige: against a prestige here the
+        // stored row wins, however much XP the file has. Imported 9,000, prestiged, earned 300.
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 1)), 9_000, None), (300, 1));
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 2)), 900, None), (300, 2));
         assert_eq!(merged(Mode::KeepHigher, Some((300, 2)), 100, None), (300, 2));
+        // At prestige 0 here, the higher XP wins.
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 0)), 900, None), (900, 0));
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 0)), 100, None), (300, 0));
+        assert_eq!(merged(Mode::KeepHigher, None, 100, None), (100, 0));
+        // Replace takes the file's XP and keeps the prestige here.
         assert_eq!(merged(Mode::Replace, Some((300, 2)), 100, None), (100, 2));
         assert_eq!(merged(Mode::Replace, None, 100, None), (100, 0));
-        // Held to what the dashboard allows.
+        // The file's values are held to what the dashboard allows.
         assert_eq!(merged(Mode::Replace, None, -5, Some(i64::MAX)), (0, MAX_PRESTIGE));
         assert_eq!(merged(Mode::Replace, None, 5, Some(-3)), (5, 0));
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 1_500)), 100, Some(2_000)), (300, 1_500));
+        // A prestige stored here is left alone, even above that limit.
+        assert_eq!(merged(Mode::Replace, Some((300, 1_500)), 100, None), (100, 1_500));
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 1_500)), 9_000, None), (300, 1_500));
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
@@ -556,5 +573,31 @@ mod tests {
         assert!(!crate::assignable(&ctx, 1, 999));
         assert!(!crate::assignable(&ctx, 1, 1));
         assert!(!crate::assignable(&ctx, 1, 0));
+        // Server 2's role, which the cache holds too.
+        assert!(!crate::assignable(&ctx, 1, 200));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn role_work_needs_manage_roles() {
+        use bot_core::twilight_model::guild::Permissions as P;
+        let ctx = ctx();
+        guild_create(&ctx, 1, &[], &[(100, 0)]);
+        guild_create(&ctx, 2, &[], &[(200, P::MANAGE_ROLES.bits())]);
+        guild_create(&ctx, 3, &[], &[(300, P::ADMINISTRATOR.bits())]);
+        // The bot, user 50, has the one role of each server.
+        for (guild, role) in [(1, 100), (2, 200), (3, 300)] {
+            let add = serde_json::json!({
+                "guild_id": guild.to_string(), "roles": [role.to_string()], "joined_at": "2025-03-01T00:00:00.000000+00:00", "deaf": false, "mute": false, "flags": 0,
+                "user": {"id": "50", "username": "bot", "discriminator": "0", "avatar": null, "bot": true}
+            });
+            ctx.cache.update(&Event::MemberAdd(Box::new(serde_json::from_value(add).unwrap())));
+        }
+        assert!(!crate::manages_roles(&ctx, 1, Some(50)));
+        assert!(crate::manages_roles(&ctx, 2, Some(50)));
+        assert!(crate::manages_roles(&ctx, 3, Some(50)));
+        // Not connected yet, or the bot's member isn't cached: it's tried.
+        assert!(crate::manages_roles(&ctx, 1, None));
+        assert!(crate::manages_roles(&ctx, 1, Some(51)));
+        assert!(!crate::manages_roles(&ctx, 0, Some(50)));
     }
 }
