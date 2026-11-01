@@ -12,9 +12,10 @@ use bot_core::discord::{CommandCall, Reply};
 use bot_core::rusqlite::params;
 use bot_core::twilight_model::application::command::{Command, CommandType};
 use bot_core::twilight_model::channel::Message;
-use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
+use bot_core::twilight_model::channel::message::{AllowedMentions, Embed, MessageType};
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::id::Id;
+use bot_core::twilight_model::util::Timestamp;
 use bot_core::twilight_util::builder::command::CommandBuilder;
 use bot_core::twilight_util::builder::embed::{EmbedBuilder, ImageSource};
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, text};
@@ -377,6 +378,8 @@ impl Feature for Commands {
             && let Some(guild) = m.guild_id
             && !m.author.bot
             && m.webhook_id.is_none()
+            && written(m.kind)
+            && !timed_out(ctx, m)
         {
             self.on_message(ctx, guild.get(), m).await?;
         }
@@ -390,6 +393,24 @@ impl Feature for Commands {
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         web::seed(ctx, guild)
     }
+}
+
+/// Whether a member wrote the message. "Started a thread", pins and channel renames carry the
+/// member as author but are posted by Discord, and shouldn't get a reply.
+fn written(kind: MessageType) -> bool {
+    matches!(kind, MessageType::Regular | MessageType::Reply)
+}
+
+/// The author is timed out, for example by scam protection a moment ago, so nothing answers
+/// (or pings) them.
+fn timed_out(ctx: &Ctx, m: &Message) -> bool {
+    let cached = || m.guild_id.and_then(|g| ctx.cache.member(g, m.author.id)).and_then(|mm| mm.communication_disabled_until());
+    let until = m.member.as_ref().and_then(|p| p.communication_disabled_until).or_else(cached);
+    until_in_future(until, now_ms())
+}
+
+fn until_in_future(until: Option<Timestamp>, now: i64) -> bool {
+    until.is_some_and(|t| t.as_micros() / 1000 > now)
 }
 
 impl Commands {
@@ -511,6 +532,22 @@ mod tests {
 
     fn trigger(mode: Mode, pattern: &str) -> Trigger {
         Trigger { mode, pattern: pattern.into(), reply: "r".into(), ..Trigger::default() }
+    }
+
+    #[test]
+    fn only_member_messages_get_answers() {
+        assert!(written(MessageType::Regular) && written(MessageType::Reply));
+        for notice in [MessageType::ThreadCreated, MessageType::ChannelNameChange, MessageType::ChannelMessagePinned, MessageType::UserJoin] {
+            assert!(!written(notice), "{notice:?}");
+        }
+    }
+
+    #[test]
+    fn a_timeout_counts_until_it_ends() {
+        let at = |secs| Timestamp::from_secs(secs).ok();
+        assert!(until_in_future(at(2_000), 1_000_000));
+        assert!(!until_in_future(at(500), 1_000_000));
+        assert!(!until_in_future(None, 0));
     }
 
     #[test]
