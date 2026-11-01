@@ -58,35 +58,25 @@ fn channel_select(ctx: &Ctx, guild: u64, name: &str, label: &str, help: Option<&
     ui::field_select(name, label, help, &opts, &first)
 }
 
-/// Sub-page tabs. Each item is `(label, href, count)`; `active` is the label of the open one.
-fn tabs(items: &[(&str, String, Option<i64>)], active: &str) -> Markup {
-    html! {
-        nav.tabs {
-            @for (label, href, count) in items {
-                a.tab.on[*label == active] href=(href) {
-                    (label)
-                    @if let Some(n) = count { span.cm-count { (text::num(*n)) } }
-                }
-            }
-        }
-    }
-}
-
 /// A header button that opens a form in a popover, for editors only.
 fn header_pop(label: &str, body: Markup) -> Markup {
-    html! {
-        details.pop.cm-pop {
-            summary.btn.primary aria-label=(label) { (ui::icon(Icon::Plus)) span.cm-label { (label) } }
-            div.pop-body { (body) }
-        }
-    }
+    ui::pop("cm-pop", label, Some(Icon::Plus), "primary", body)
 }
 
-/// A link to the message in Discord. Nothing is shown when the message isn't known.
-fn open_link(page: &Page, channel: u64, message: Option<u64>, label: &str) -> Markup {
+/// A link to the message in Discord. Nothing is shown when the message isn't known. `compact`
+/// draws the icon alone, named by its tooltip.
+fn open_link(page: &Page, channel: u64, message: Option<u64>, compact: bool) -> Markup {
     html! {
         @if let Some(m) = message {
-            a.cm-link href=(crate::message_url(page.guild_id, channel, m)) target="_blank" rel="noopener" { (label) }
+            @if compact {
+                a.icon-btn.cm-out href=(crate::message_url(page.guild_id, channel, m)) target="_blank" rel="noopener" data-tip="Open in Discord" aria-label="Open in Discord" {
+                    (ui::icon(Icon::External))
+                }
+            } @else {
+                a.btn.small.ghost.cm-out href=(crate::message_url(page.guild_id, channel, m)) target="_blank" rel="noopener" {
+                    (ui::icon(Icon::External)) "Open in Discord"
+                }
+            }
         }
     }
 }
@@ -97,10 +87,35 @@ fn face_row(ctx: &Ctx, guild: u64, users: &[u64], max: usize) -> Markup {
     ui::avatars(&urls, max)
 }
 
+/// "2 days 5 h", "5 h 12 min", "39 min", "42 s": how long is left. The countdown script writes
+/// the same shape, so the text doesn't jump when it takes over.
+fn left(secs: i64) -> String {
+    let (d, h, m) = (secs / 86_400, secs % 86_400 / 3600, secs % 3600 / 60);
+    let days = |d: i64| if d == 1 { "1 day".to_owned() } else { format!("{d} days") };
+    match (d, h, m) {
+        (0, 0, 0) => format!("{secs} s"),
+        (0, 0, m) => format!("{m} min"),
+        (0, h, 0) => format!("{h} h"),
+        (0, h, m) => format!("{h} h {m} min"),
+        (d, 0, _) => days(d),
+        (d, h, _) => format!("{} {h} h", days(d)),
+    }
+}
+
 /// "Ends in 5 h 12 min" for a time still to come, "Ending now" once it has passed.
 fn until(prefix: &str, at: i64) -> String {
     let secs = (at - now_ms()) / 1000;
-    if secs <= 0 { "Ending now".to_owned() } else { format!("{prefix} {}", text::duration(secs)) }
+    if secs <= 0 { "Ending now".to_owned() } else { format!("{prefix} {}", left(secs)) }
+}
+
+/// [`until`] that keeps counting down in the browser.
+fn countdown(prefix: &str, at: i64) -> Markup {
+    html! { span.cm-cd data-ends=(at) data-pre=(prefix) { (until(prefix, at)) } }
+}
+
+/// A moment in the viewer's time: "Fri Oct 31, 3:00 PM".
+fn when(page: &Page, ms: i64) -> String {
+    page.user.local(ms).strftime("%a %b %-d, %-I:%M %p").to_string()
 }
 
 /// Midnight on the first day of this month for the viewer, in epoch milliseconds.
@@ -110,142 +125,440 @@ fn month_start(user: &User, now: i64) -> i64 {
     midnight.to_zoned(local.time_zone().clone()).map(|z| z.timestamp().as_millisecond()).unwrap_or(now)
 }
 
+fn plural(n: i64, one: &'static str, many: &'static str) -> &'static str {
+    if n == 1 { one } else { many }
+}
+
+/// Up to three figures that count up, side by side in a rail block: `(label, value)`.
+fn rail_figures(items: &[(&str, i64)]) -> Markup {
+    html! {
+        div.rail-nums {
+            @for (label, value) in items {
+                div { b.mono data-count { (text::num(*value)) } span { (label) } }
+            }
+        }
+    }
+}
+
+// ---- Discord, as members see it ----
+
+/// The bot's name and avatar. Before the bot has connected (and in the preview) the avatar is
+/// `None` and the dashboard's mark stands in.
+fn bot_identity(ctx: &Ctx) -> (String, Option<String>) {
+    match ctx.cache.current_user() {
+        Some(u) => (u.global_name.clone().unwrap_or_else(|| u.name.clone()), Some(bot_core::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref()))),
+        None => ("Bot".into(), None),
+    }
+}
+
+/// A message from the bot as Discord draws it: avatar, name with its APP tag and the time,
+/// then `body` (embeds, a poll, buttons).
+fn discord_message(ctx: &Ctx, page: &Page, at: i64, body: Markup) -> Markup {
+    let (name, avatar) = bot_identity(ctx);
+    let today = page.user.local(now_ms()).date() == page.user.local(at).date();
+    let time = page.user.local(at).strftime(if today { "Today at %-I:%M %p" } else { "%m/%d/%Y %-I:%M %p" }).to_string();
+    html! {
+        div.cm-dc {
+            @match &avatar {
+                Some(url) => img.cm-dc-av src=(url) alt="" width="36" height="36" loading="lazy";,
+                None => span.cm-dc-av.mark { (ui::mark()) },
+            }
+            div.cm-dc-main {
+                div.cm-dc-head { b.cm-dc-name { (name) } span.cm-dc-app { "APP" } span.cm-dc-time { (time) } }
+                (body)
+            }
+        }
+    }
+}
+
+/// Discord's relative timestamp, as a member sees `<t:…:R>`: "in 39 minutes", "5 hours ago".
+/// The message a hero is about, as members see it, under what it is and where it was posted:
+/// "The post · #announcements". Sits beside the hero's body on a wide page, under it on a narrow one.
+fn post_block(label: &str, channel: &str, message: Markup) -> Markup {
+    html! {
+        div.cm-post {
+            h3.cm-post-h { (label) span.muted { (channel) } }
+            (message)
+        }
+    }
+}
+
+fn discord_relative(at: i64) -> String {
+    let secs = (at - now_ms()) / 1000;
+    let a = secs.abs();
+    let (n, unit) = match a {
+        0..60 => (a, "second"),
+        60..3600 => (a / 60, "minute"),
+        3600..86_400 => (a / 3600, "hour"),
+        86_400..2_592_000 => (a / 86_400, "day"),
+        _ => (a / 2_592_000, "month"),
+    };
+    let unit = if n == 1 { unit.to_owned() } else { format!("{unit}s") };
+    let n = if n == 1 && unit == "hour" { "an".to_owned() } else if n == 1 { "a".to_owned() } else { n.to_string() };
+    if secs >= 0 { format!("in {n} {unit}") } else { format!("{n} {unit} ago") }
+}
+
 pub(super) fn style() -> Markup {
     html! { style { (PreEscaped(STYLE)) } }
 }
 
+/// Countdowns: every `[data-ends]` counts down each second. A `[data-clock]` fills its
+/// `[data-u]` cells (days, hours, minutes, seconds) and nudges a cell as it changes.
+pub(super) fn script() -> Markup {
+    html! { script { (PreEscaped(SCRIPT)) } }
+}
+
+const SCRIPT: &str = r#"
+(() => {
+  const els = document.querySelectorAll("[data-ends]");
+  if (!els.length) return;
+  const pad = (n) => String(n).padStart(2, "0");
+  const days = (d) => d === 1 ? "1 day" : d + " days";
+  const left = (s) => {
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+    if (d) return h ? days(d) + " " + h + " h" : days(d);
+    if (h) return m ? h + " h " + m + " min" : h + " h";
+    return m ? m + " min" : s + " s";
+  };
+  const tick = () => {
+    if (document.hidden) return;
+    const now = Date.now();
+    els.forEach((el) => {
+      const s = Math.max(0, Math.floor((Number(el.dataset.ends) - now) / 1000));
+      if (el.hasAttribute("data-clock")) {
+        const v = { d: Math.floor(s / 86400), h: Math.floor(s % 86400 / 3600), m: Math.floor(s % 3600 / 60), s: s % 60 };
+        el.querySelectorAll("[data-u]").forEach((u) => {
+          const t = pad(v[u.dataset.u]);
+          if (u.textContent === t) return;
+          u.textContent = t;
+          u.classList.remove("tick");
+          void u.offsetWidth;
+          u.classList.add("tick");
+        });
+      } else {
+        const t = s ? el.dataset.pre + " " + left(s) : "Ending now";
+        if (el.textContent !== t) el.textContent = t;
+      }
+    });
+  };
+  tick();
+  setInterval(tick, 1000);
+})();
+"#;
+
 const STYLE: &str = r#"
-.cm-count { margin-left: 6px; font: 12px var(--mono); color: var(--ink-3); }
-.cm-pop > summary .cm-label { white-space: nowrap; }
+/* ---- shared ---- */
+.cm-main { min-width: 0; display: flex; flex-direction: column; gap: 30px; }
+/* The phone layout's single column grows to its widest child; long one-line text in the rail
+   mustn't widen the page. */
+.cm-rail { min-width: 0; }
+.cm-block { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.cm-block > h2, .cm-h { display: flex; align-items: baseline; gap: 10px; font-size: 15px; }
+.cm-h .muted { font-size: 12.5px; font-weight: 400; }
 .cm-pop .pop-body { width: min(560px, calc(100vw - 32px)); padding: 16px; }
 .cm-pop .pop-body .card { padding: 0 14px; }
 .cm-pop-foot { display: flex; justify-content: flex-end; }
-.cm-link { display: inline-flex; align-items: center; height: 28px; padding: 0 9px; border-radius: var(--r-key); font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
-.cm-link:hover { color: var(--ink); background: var(--hover); }
 .cm-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.cm-main, .cm-main + .rail { min-width: 0; }
-.cm-recent { max-width: 100%; }
-.cm-tile { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: var(--r-key); background: var(--control); color: var(--ink-2); }
-.cm-tile .icon { width: 20px; height: 20px; }
-.cm-emoji { font-size: 22px; line-height: 1; }
-.cm-tile.big .cm-emoji { font-size: 60px; }
-.cm-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; width: fit-content; padding: 0 10px; border-radius: 12px; font-size: 12px; white-space: nowrap; }
-.cm-chip .icon { width: 14px; height: 14px; }
-.cm-chip { max-width: 100%; min-width: 0; }
-.cm-chip > .cm-chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.cm-chip > .pct { flex: none; }
-.cm-chip.warn { color: var(--waiting); background: rgba(227, 169, 72, 0.14); }
-.cm-chip.data { color: var(--data); background: var(--data-wash); }
-.cm-list { display: flex; flex-direction: column; }
-.cm-row { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid var(--edge-1); min-width: 0; }
-.cm-row:last-child { border-bottom: 1px solid var(--edge-1); }
-.cm-row-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
-.cm-row-main strong { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cm-row-actions { display: flex; align-items: center; gap: 6px; flex: none; }
-.cm-entries { font-size: 12px; color: var(--ink-2); white-space: nowrap; text-align: right; min-width: 84px; }
-.cm-winners { display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 260px; font-size: 12.5px; color: var(--ink-2); }
-.cm-winners > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cm-also { display: flex; flex-direction: column; gap: 6px; margin-top: 26px; }
-.cm-also > h2 { margin-bottom: 4px; }
-.cm-hero { display: flex; align-items: center; gap: 22px; padding: 22px; border-radius: var(--r-card); background: var(--veil); border: 1px solid var(--edge-1); }
-.cm-tile.big { width: 128px; height: 128px; border-radius: var(--r-card); flex: none; color: var(--ink); background: linear-gradient(160deg, var(--data-wash), var(--control)); }
-.cm-tile.big .icon { width: 44px; height: 44px; }
-.cm-hero-body { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; flex: 1; min-width: 0; }
-.cm-hero-title { font-size: 20px; font-weight: 600; letter-spacing: -0.015em; text-wrap: balance; }
-.cm-hero-body .muted { font-size: 12.5px; }
-.cm-faces { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-3); }
-.cm-faces strong { font-weight: 500; color: var(--ink); }
-.cm-hero-body .meter { width: 100%; max-width: 520px; margin-top: 2px; }
-.cm-poll { display: flex; flex-direction: column; gap: 14px; padding: 20px 22px; border-radius: var(--r-card); background: var(--veil); border: 1px solid var(--edge-1); }
-.cm-poll-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-3); }
-.cm-poll-head strong { font-weight: 500; color: var(--ink-2); }
-.cm-poll-head .status { margin-left: auto; }
-.cm-ended { display: flex; flex-direction: column; gap: 12px; }
-.cm-poll.ended { gap: 12px; padding: 18px 22px; }
-.cm-poll.ended .cm-question { font-size: 16px; }
-.cm-question { font-size: 20px; font-weight: 600; letter-spacing: -0.015em; text-wrap: balance; }
-.cm-answers { display: flex; flex-direction: column; gap: 6px; }
-.cm-answer { display: flex; align-items: center; min-height: 40px; padding: 0 14px; border-radius: 10px; background: var(--well); border: 1px solid var(--edge-1); font-size: 13.5px; color: var(--ink-2); }
-.cm-poll-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.cm-poll-foot > p { max-width: 62ch; }
-.cm-bars { display: flex; flex-direction: column; gap: 6px; width: min(460px, 100%); }
-.cm-bar-row { display: flex; align-items: center; gap: 12px; }
-.cm-bar { position: relative; flex: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 36px; padding: 0 12px; border-radius: 10px; background: var(--well); overflow: hidden; font-size: 13px; min-width: 0; }
-.cm-bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--edge-2); }
-.cm-bar.win > i { background: var(--data-dim); }
-.cm-bar > span { position: relative; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.cm-bar .pct { font: 12px var(--mono); color: var(--ink-2); flex: none; }
-.cm-bar.win .pct { color: var(--data); }
-.cm-bar-row .votes { font: 12px var(--mono); color: var(--ink-3); width: 76px; text-align: right; flex: none; }
-.cm-live { width: 100%; }
-.cm-live .cm-bar { flex: 1; }
-.cm-voters { width: 66px; flex: none; display: flex; }
-.cm-voters .avatar { width: 22px; height: 22px; }
-.cm-recent { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: 13px; }
-.cm-recent > strong { font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cm-recent .muted { font-size: 12px; }
-.cm-month { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.cm-month > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.cm-month b { font-size: 24px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.15; }
-.cm-month span { font-size: 12px; color: var(--ink-3); }
-.cm-top { display: flex; justify-content: space-between; gap: 6px; }
-.cm-voter { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; font-size: 12.5px; text-align: center; }
-.cm-voter .avatar { width: 44px; height: 44px; }
-.cm-voter strong { font-weight: 500; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cm-voter span { font-size: 11.5px; color: var(--ink-3); }
-.cm-sg { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 14px 0; border-top: 1px solid var(--edge-1); }
-.cm-sg:first-child { border-top: 0; padding-top: 4px; }
-.cm-sg:last-child { border-bottom: 1px solid var(--edge-1); }
-.cm-vote { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 52px; padding: 8px 0; border-radius: var(--r-key); background: var(--control); font: 13px var(--mono); color: var(--ink); }
-.cm-vote .icon { width: 14px; height: 14px; color: var(--ink-2); }
-.cm-vote.down, .cm-vote.down .icon { color: var(--held); }
-.cm-sg-title { display: block; font-size: 14px; font-weight: 500; line-height: 1.4; text-wrap: pretty; overflow-wrap: anywhere; }
-.cm-sg-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 5px; font-size: 12.5px; color: var(--ink-3); }
-.cm-sg-meta .avatar { width: 20px; height: 20px; }
-.cm-sg-meta strong { font-weight: 500; color: var(--ink-2); }
-.cm-reply { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 0; padding: 2px 0 2px 12px; border-left: 2px solid var(--rule, var(--edge-3)); font-size: 13px; color: var(--ink-2); }
-.cm-reply.ok { --rule: var(--live); }
-.cm-reply.warn { --rule: var(--waiting); }
-.cm-reply.bad { --rule: var(--held); }
-.cm-reply .avatar { width: 20px; height: 20px; margin-top: 2px; }
-.cm-reply strong { font-weight: 500; color: var(--ink); }
-.cm-sg-side { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-.cm-review .pop-body { width: 280px; }
+.cm-out .icon { width: 14px; height: 14px; }
+.cm-cd { font-variant-numeric: tabular-nums; }
+.cm-rail .rail-block > h2 .muted { font-size: 12px; font-weight: 400; }
+.cm-rail .rail-nums b { font-size: 24px; }
 .cm-edit .pop-body { width: min(500px, calc(100vw - 32px)); padding: 16px; }
-.cm-edit.left .pop-body { left: 0; right: auto; }
+.cm-edit.left .pop-body { left: 0; right: auto; transform-origin: top left; }
 .cm-edit .pop-body .card { padding: 0 14px; }
+.cm-review .pop-body { width: 290px; }
 .cm-review .stack { gap: 8px; }
-.cm-sg-side .badge { height: 22px; }
-.cm-sg-side .cm-actions { flex-wrap: nowrap; gap: 2px; }
-
-@media (max-width: 560px) {
-  .cm-pop > summary .cm-label { display: none; }
-  .cm-pop > summary { padding: 0 10px; }
+/* A block with an open form lifts above the blocks after it, so the form isn't painted under them. */
+.gv-hero:has(.pop[open]), .gv-card:has(.pop[open]), .sg-card:has(.pop[open]) { position: relative; z-index: 5; }
+/* Settings beside the post they shape: the preview keeps about Discord's own width, the form
+   takes the rest. */
+@container col (min-width: 1000px) {
+  .compose.cm-compose { grid-template-columns: minmax(0, 1fr) min(600px, 42%); }
 }
+/* The post a hero is about, beside it on a wide page. */
+.cm-post { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.cm-post-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.cm-post-h .muted { font-size: 12px; font-weight: 400; }
+/* A rail line standing on its own as a tile, when the rail's list moves into the main column. */
+.cm-tiles > .mini, .cm-tiles > .pl-recent { padding: 12px 14px; border-radius: 14px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.cm-tiles > .pl-recent + .pl-recent { padding-top: 12px; border-top: 0; }
 
-@media (max-width: 820px) {
-  .cm-hero { flex-direction: column; align-items: flex-start; padding: 16px; gap: 16px; }
-  .cm-tile.big { width: 96px; height: 96px; }
-  .cm-tile.big .cm-emoji { font-size: 46px; }
-  .cm-row { flex-wrap: wrap; gap: 10px 14px; }
-  .cm-row-main { flex-basis: calc(100% - 60px); }
-  .cm-entries { min-width: 0; text-align: left; }
-  .cm-row > .avatars { display: none; }
-  .cm-row > .avatars + .cm-entries, .cm-row-main + .cm-entries, .cm-winners { margin-left: 58px; }
-  .cm-row-actions { margin-left: auto; }
-  .cm-winners { max-width: none; }
-  .cm-poll { padding: 16px; }
-  .cm-poll-head .status { margin-left: 0; }
-  .cm-bars { width: 100%; }
-  .cm-bar-row .votes { width: 60px; }
-  .cm-bar { height: auto; min-height: 36px; padding: 8px 12px; }
-  .cm-bar > span:not(.pct) { white-space: normal; overflow-wrap: anywhere; }
-  .cm-poll.ended { padding: 16px; }
-  .cm-voters { display: none; }
-  .cm-sg { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; }
-  .cm-vote { width: 44px; }
-  .cm-sg-side { grid-column: 2; flex-direction: row; align-items: center; justify-content: space-between; }
-  .cm-pop .pop-body { width: calc(100vw - 32px); }
+/* A message as Discord draws it. Discord's own greys, since this is Discord. */
+.cm-dc { display: flex; gap: 12px; padding: 14px 14px 16px; border-radius: 14px; background: #313338; color: #dbdee1; font: 14px/1.375 var(--sans); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 18px 40px -24px rgba(0, 0, 0, 0.9); animation: cm-arrive 0.8s var(--ease) both 0.35s; }
+.cm-dc-av { width: 36px; height: 36px; border-radius: 50%; flex: none; object-fit: cover; }
+.cm-dc-av.mark { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); color: #fff; }
+.cm-dc-av.mark .icon { width: 20px; height: 20px; }
+.cm-dc-main { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.cm-dc-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.cm-dc-name { color: #f2f3f5; font-weight: 500; }
+.cm-dc-app { display: inline-grid; place-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; }
+.cm-dc-time { color: #949ba4; font-size: 11.5px; }
+.cm-dc-embed { align-self: stretch; display: flex; flex-direction: column; gap: 6px; max-width: 520px; padding: 10px 12px 12px; border-left: 4px solid var(--embed, #1e1f22); border-radius: 4px; background: #2b2d31; font-size: 13px; min-width: 0; }
+.cm-dc-author { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: #f2f3f5; }
+.cm-dc-author img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
+.cm-dc-title { color: #f2f3f5; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.cm-dc-desc { white-space: pre-wrap; overflow-wrap: anywhere; }
+.cm-dc-fields { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.cm-dc-fields > div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cm-dc-fields b { color: #f2f3f5; font-weight: 600; font-size: 12.5px; }
+.cm-dc-foot { color: #b5bac1; font-size: 11.5px; }
+.cm-dc-ts { padding: 0 2px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); }
+.cm-dc-ping { padding: 0 2px; border-radius: 3px; background: rgba(88, 101, 242, 0.3); color: #c9cdfb; font-weight: 500; }
+.cm-dc-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.cm-dc-btn { display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border-radius: 8px; background: #4e5058; color: #fff; font-size: 13.5px; font-weight: 500; white-space: nowrap; }
+.cm-dc-btn.blurple { background: #5865f2; }
+.cm-dc-btn.off { opacity: 0.5; }
+.cm-dc-note { font-size: 12px; color: var(--ink-3); }
+.cm-dc-thread { display: flex; align-items: flex-start; margin: 2px 0 0 -30px; }
+.cm-dc-curve { width: 26px; height: 20px; flex: none; margin-top: -4px; border-left: 2px solid #4e5058; border-bottom: 2px solid #4e5058; border-bottom-left-radius: 8px; }
+.cm-dc-tbox { white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; margin: 8px 0 0 4px; padding: 7px 10px 7px 12px; border-radius: 8px; background: #2b2d31; font-size: 13px; }
+.cm-dc-tbox strong { color: #f2f3f5; font-weight: 600; }
+.cm-dc-tbox span { color: #00a8fc; font-weight: 500; }
+.cm-dc-tbox .icon { width: 12px; height: 12px; color: #949ba4; transform: rotate(-90deg); }
+
+/* ---- giveaways ---- */
+.gv-art { position: relative; display: grid; place-items: center; flex: none; width: 56px; height: 56px; border-radius: 16px; overflow: hidden; isolation: isolate; color: color-mix(in oklab, var(--hue), white 30%);
+  background: radial-gradient(85% 85% at 20% 10%, color-mix(in oklab, var(--hue) 85%, transparent), transparent 66%), radial-gradient(90% 90% at 100% 100%, color-mix(in oklab, var(--accent) 80%, transparent), transparent 64%), radial-gradient(60% 60% at 80% 15%, color-mix(in oklab, var(--data-2) 45%, transparent), transparent 70%), color-mix(in oklab, var(--hue) 22%, var(--raised));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.16); }
+.gv-art .icon { width: 24px; height: 24px; }
+.gv-emoji { font-size: 28px; line-height: 1; filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.45)); }
+.gv-art.ended { filter: saturate(0.6) brightness(0.85); }
+.gv-art.big { width: 188px; height: 188px; border-radius: 30px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2); animation: gv-pop 0.9s var(--spring) both 0.12s; }
+.gv-art.big::before { content: ""; position: absolute; inset: -45%; z-index: -1; background: conic-gradient(from 0deg, transparent 0 18%, rgba(255, 255, 255, 0.13) 24%, transparent 30% 68%, rgba(255, 255, 255, 0.09) 74%, transparent 80%); animation: gv-spin 16s linear 4; }
+.gv-art.big .gv-emoji { font-size: 96px; animation: gv-float 3.2s ease-in-out 0.9s 10 alternate; }
+.gv-art.big .icon { width: 72px; height: 72px; stroke-width: 1.4; }
+
+/* The giveaway ending soonest, across the page: the prize art, the prize with its clock, and
+   the post as members see it. Two columns (art, body; the post under the body) from 600 px,
+   three from 1000. */
+.gv-hero { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px 26px; align-items: center; padding: 18px; border-radius: 24px; isolation: isolate;
+  background: radial-gradient(60% 120% at 0% 0%, color-mix(in oklab, var(--hue) 8%, transparent), transparent 62%), radial-gradient(50% 90% at 100% 100%, color-mix(in oklab, var(--accent) 4%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 22%, var(--edge-1)); }
+.gv-hero-body { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; min-width: 0; }
+.gv-prize { font-size: 27px; line-height: 1.15; letter-spacing: -0.03em; overflow-wrap: anywhere; }
+.gv-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; color: var(--ink-3); margin-top: -6px; }
+.gv-meta strong { color: var(--ink-2); font-weight: 500; }
+.gv-meta .avatar { width: 20px; height: 20px; }
+.gv-by { display: inline-flex; align-items: center; gap: 6px; }
+.gv-role { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 11px; background: color-mix(in oklab, var(--hue) 14%, transparent); color: var(--hue); font-size: 12px; font-weight: 500; }
+.gv-clock { display: flex; gap: 8px; }
+.gv-unit { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 66px; padding: 10px 10px 8px; border-radius: 14px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.07), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; }
+.gv-unit::before { content: ""; position: absolute; inset: 0 15% auto; height: 1px; background: linear-gradient(90deg, transparent, var(--hue), transparent); opacity: 0.8; }
+.gv-unit b { display: inline-block; font: 600 28px/1.1 var(--mono); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.gv-unit b.tick { animation: gv-tick 0.5s var(--ease); }
+.gv-unit span { font-size: 11px; color: var(--ink-3); }
+.gv-time { display: flex; flex-direction: column; gap: 7px; width: 100%; }
+@container col (min-width: 600px) {
+  .gv-hero { grid-template-columns: auto minmax(0, 1fr); padding: 24px; }
+  .gv-hero > .cm-post { grid-column: 2; }
+}
+@container col (min-width: 1000px) {
+  .gv-hero { grid-template-columns: auto minmax(0, 1fr) min(560px, 38%); }
+  .gv-hero > .cm-post { grid-column: 3; grid-row: 1; }
+}
+@container col (min-width: 1500px) {
+  .gv-hero { gap: 18px 36px; padding: 28px; }
+  .gv-prize { font-size: 32px; }
+  .gv-unit { min-width: 80px; padding: 12px 12px 9px; }
+  .gv-unit b { font-size: 34px; }
+}
+.gv-time-cap { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--ink-3); }
+.gv-time-cap strong { color: var(--ink-2); font-weight: 500; }
+.gv-people { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--ink-3); }
+.gv-people .avatars .avatar { width: 32px; height: 32px; }
+.gv-people b { color: var(--ink); font-weight: 600; }
+
+.gv-grid { --tile: 310px; }
+.gv-done-grid { --tile: 340px; }
+.gv-winners { --tile: 280px; }
+.gv-card { display: flex; flex-direction: column; gap: 14px; padding: 16px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s, background 0.25s; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 250ms); }
+.gv-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
+.gv-card-top { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.gv-card-top > .grow { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.gv-card-top > .cm-out { align-self: flex-start; margin: -4px -4px 0 0; }
+.gv-card-top strong { font-size: 14.5px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.gv-card-top .muted { font-size: 12px; }
+.gv-left { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+.gv-left > span:first-child { display: inline-flex; align-items: center; gap: 6px; color: var(--hue); font-weight: 500; }
+.gv-left .icon { width: 14px; height: 14px; }
+.gv-card .meter { height: 4px; }
+.gv-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.gv-card-foot .gv-people { min-width: 0; }
+.gv-card-foot .cm-actions { flex: none; flex-wrap: nowrap; }
+.gv-card-foot .gv-people { font-size: 12.5px; }
+.gv-card-foot .gv-people .avatars .avatar { width: 26px; height: 26px; }
+
+/* An ended giveaway: the same card, with who won in the middle and the totals in the foot. */
+.gv-card.done { gap: 12px; }
+.gv-card.done .gv-card-foot { min-height: 29px; font-size: 12.5px; color: var(--ink-3); }
+.gv-won { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13px; color: var(--ink-2); }
+.gv-won .avatars { flex: none; }
+.gv-won .avatars .avatar { width: 30px; height: 30px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px color-mix(in oklab, var(--hue) 85%, transparent); }
+.gv-won .avatars .avatar + .avatar { margin-left: -6px; }
+.gv-won > span:last-child { min-width: 0; overflow-wrap: anywhere; }
+.gv-won strong { color: var(--ink); font-weight: 600; }
+.gv-won > .icon { width: 16px; height: 16px; color: var(--hue); }
+.gv-nobody { font-size: 12.5px; color: var(--ink-3); }
+
+.cm-winner .avatar { box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px color-mix(in oklab, var(--hue) 80%, transparent); }
+.cm-winner strong { font-weight: 600; }
+
+/* ---- polls ---- */
+/* The newest open poll, across the page: the results, and beside them (under them when narrow)
+   the poll as members see it in Discord. */
+.pl-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px 36px; align-items: start; padding: 22px 24px 20px; border-radius: 24px;
+  background: radial-gradient(60% 100% at 0% 0%, color-mix(in oklab, var(--data) 6%, transparent), transparent 62%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 18%, var(--edge-1)); }
+.pl-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+@container col (min-width: 1000px) {
+  .pl-hero { grid-template-columns: minmax(0, 1fr) min(520px, 36%); padding: 24px 26px 22px; }
+}
+.pl-ask { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-3); }
+.pl-ask .avatar { width: 34px; height: 34px; }
+.pl-ask strong { color: var(--ink-2); font-weight: 600; }
+.pl-ask .status { margin-left: auto; background: var(--control); backdrop-filter: none; }
+.pl-q { font-size: 24px; line-height: 1.2; letter-spacing: -0.03em; overflow-wrap: anywhere; }
+.pl-answers { display: flex; flex-direction: column; gap: 8px; }
+.pl-ans { display: grid; grid-template-columns: minmax(0, 1fr) 70px 64px; align-items: center; gap: 12px; }
+.pl-ans.bare { grid-template-columns: minmax(0, 1fr) 64px; }
+.pl-bar { position: relative; display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 6px 14px; border-radius: 12px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; isolation: isolate; }
+.pl-fill { position: absolute; inset: 0 auto 0 0; z-index: -1; background: color-mix(in oklab, var(--data) 20%, transparent); transform-origin: left; animation: fill 1.2s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 280ms); }
+.pl-ans.lead .pl-fill { background: linear-gradient(90deg, color-mix(in oklab, var(--data-2) 62%, transparent), color-mix(in oklab, var(--data) 50%, transparent)); box-shadow: none; }
+.pl-ans.lead .pl-bar { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 40%, transparent); }
+.pl-label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--ink-2); overflow-wrap: anywhere; }
+.pl-label .icon { width: 15px; height: 15px; flex: none; }
+.pl-ans.lead .pl-label { color: var(--ink); font-weight: 600; }
+.pl-pct { font: 600 13.5px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; flex: none; }
+.pl-ans.lead .pl-pct { color: var(--ink); }
+.pl-voters { display: flex; justify-content: flex-end; }
+.pl-voters .avatar { width: 24px; height: 24px; }
+.pl-n { font: 12px var(--mono); color: var(--ink-3); text-align: right; white-space: nowrap; }
+.pl-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
+.pl-foot b { color: var(--ink-2); font-weight: 600; }
+
+.pl-grid { --tile: 400px; }
+/* Ended polls differ in height (two answers or ten), so they pack into columns. */
+.pl-cols { columns: 420px; column-gap: 12px; }
+.pl-cols > .pl-card { break-inside: avoid; margin-bottom: 12px; }
+.pl-recents { --tile: 300px; }
+.pl-card { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 200ms); }
+.pl-card-top { display: flex; align-items: flex-start; gap: 12px; }
+.pl-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pl-card-top .cm-actions { flex: none; flex-wrap: nowrap; }
+.pl-card-top strong { font-size: 15px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.pl-card-top .muted { font-size: 12.5px; }
+.pl-card-top .avatar { width: 30px; height: 30px; }
+.pl-card.ended .pl-answers { gap: 6px; }
+.pl-card.ended .pl-bar { min-height: 38px; font-size: 13px; }
+.pl-card.ended .pl-label { font-size: 13px; }
+.pl-stack { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--edge-1); animation: cm-wipe 1.2s var(--ease) both 0.35s; }
+.pl-stack > span { min-width: 3px; transition: filter 0.15s; }
+.pl-stack > span:hover { filter: brightness(1.3); }
+.pl-lead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
+.pl-lead strong { color: var(--ink); font-weight: 600; }
+.pl-recent { display: flex; flex-direction: column; gap: 6px; padding: 2px 0; min-width: 0; }
+.pl-recent + .pl-recent { padding-top: 12px; border-top: 1px solid var(--edge-1); }
+.pl-recent > strong { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-recent .pl-stack { height: 6px; }
+.pl-recent .pl-lead { font-size: 12px; }
+.pl-recent .pl-lead > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-busy { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; min-width: 0; }
+.pl-busy + .pl-busy { margin-top: 6px; }
+.pl-busy > div { display: flex; justify-content: space-between; gap: 10px; }
+.pl-busy > div > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.pl-busy .meter { height: 4px; }
+
+/* Discord's own poll. */
+.cm-dc-poll { align-self: stretch; max-width: 520px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 8px; background: #2b2d31; box-shadow: inset 0 0 0 1px #3f4147; }
+.cm-dc-poll > strong { color: #f2f3f5; font-size: 14.5px; font-weight: 600; overflow-wrap: anywhere; }
+.cm-dc-poll > small { color: #949ba4; font-size: 12px; margin-top: -6px; }
+.cm-dc-opt { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 12px; border-radius: 8px; background: #383a40; font-size: 13.5px; color: #dbdee1; }
+.cm-dc-opt > span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cm-dc-radio { width: 18px; height: 18px; border-radius: 50%; flex: none; box-shadow: inset 0 0 0 2px #80848e; }
+.cm-dc-radio.box { border-radius: 4px; }
+.cm-dc-poll-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; color: #949ba4; margin-top: 2px; }
+.cm-dc-poll-foot .cm-dc-btn { height: 30px; padding: 0 12px; }
+
+/* ---- suggestions ---- */
+.sg-list { display: flex; flex-direction: column; gap: 10px; }
+/* One suggestion. Narrow: score and words, the votes and reply under them, status and actions in
+   a foot. From 600 px the status sits at the right. From 1000 px the votes and the reply take a
+   column of their own, so a row reads across: score, suggestion, how it went, status. */
+.sg-card { display: grid; grid-template-columns: 46px minmax(0, 1fr); grid-template-areas: "score body" "score state" "side side"; gap: 10px 14px; align-items: start; padding: 14px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 55ms + 150ms); }
+.sg-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
+.sg-score { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; height: 66px; border-radius: 15px; color: var(--data);
+  background: radial-gradient(100% 100% at 50% 0%, var(--data-wash), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 28%, transparent); }
+.sg-score .icon { width: 15px; height: 15px; }
+.sg-score b { font: 650 20px/1.1 var(--sans); letter-spacing: -0.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.sg-score.down { color: var(--held); background: radial-gradient(100% 100% at 50% 100%, color-mix(in oklab, var(--held) 8%, transparent), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--held) 28%, transparent); }
+.sg-score.flat { color: var(--ink-3); background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.sg-score { grid-area: score; }
+.sg-body { grid-area: body; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.sg-state { grid-area: state; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.sg-text { max-width: 70ch; font-size: 15px; font-weight: 550; line-height: 1.45; text-wrap: pretty; overflow-wrap: anywhere; }
+.sg-by { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12.5px; color: var(--ink-3); }
+.sg-by .avatar { width: 22px; height: 22px; }
+.sg-by strong { color: var(--ink-2); font-weight: 500; }
+.sg-tally { display: flex; align-items: center; gap: 10px; max-width: 380px; font: 11.5px var(--mono); color: var(--ink-3); white-space: nowrap; }
+.sg-split { flex: 1; display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--edge-1); animation: cm-wipe 1.1s var(--ease) both; animation-delay: calc(var(--i, 0) * 55ms + 400ms); }
+.sg-split .up { background: linear-gradient(90deg, var(--data-2), var(--data)); }
+.sg-split .down { background: color-mix(in oklab, var(--held) 70%, transparent); }
+.sg-reply { display: flex; align-items: flex-start; gap: 10px; margin-top: 2px; }
+.sg-reply .avatar { width: 28px; height: 28px; margin-top: 2px; }
+.sg-bubble { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 9px 13px; border-radius: 4px 14px 14px 14px; font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere;
+  background: color-mix(in oklab, var(--tone, var(--ink)) 9%, rgba(243, 242, 248, 0.03)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tone, var(--ink)) 22%, transparent); }
+.sg-bubble strong { color: var(--ink); font-weight: 600; font-size: 12.5px; }
+.sg-bubble strong span { color: var(--tone, var(--ink-3)); font-weight: 500; }
+.sg-reply.ok { --tone: var(--live); }
+.sg-reply.warn { --tone: var(--waiting); }
+.sg-reply.bad { --tone: var(--held); }
+.sg-side { grid-area: side; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
+.sg-side .cm-actions { flex-wrap: nowrap; gap: 4px; }
+@container col (min-width: 600px) {
+  .sg-card { grid-template-columns: 58px minmax(0, 1fr) auto; grid-template-areas: "score body side" "score state side"; gap: 8px 16px; padding: 16px 18px; }
+  .sg-side { flex-direction: column; align-items: flex-end; justify-content: flex-start; }
+}
+@container col (min-width: 1000px) {
+  .sg-card { grid-template-columns: 58px minmax(0, 1.15fr) minmax(0, 1fr) auto; grid-template-areas: "score body state side"; column-gap: 28px; }
+  .sg-state { padding-top: 3px; }
+  .sg-tally { max-width: none; }
+}
+.sg-top { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: end; }
+.sg-voter { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; text-align: center; font-size: 12.5px; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 300ms); }
+.sg-voter .avatar { width: 44px; height: 44px; margin-bottom: 4px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--edge-3); }
+.sg-voter.first .avatar { width: 54px; height: 54px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--data); }
+.sg-voter strong { max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sg-voter span { font-size: 11.5px; color: var(--ink-3); }
+
+@keyframes cm-arrive { from { opacity: 0; transform: translateY(16px) scale(0.97); filter: blur(4px); } }
+@keyframes cm-wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes gv-pop { from { opacity: 0; transform: scale(0.7) rotate(-6deg); } }
+@keyframes gv-spin { to { transform: rotate(360deg); } }
+@keyframes gv-float { to { transform: translateY(-6px) rotate(-3deg); } }
+@keyframes gv-tick { from { transform: translateY(-40%); opacity: 0.15; filter: blur(2px); } }
+
+@media (max-width: 1180px) {
+  .gv-art.big { width: 150px; height: 150px; }
+  .gv-art.big .gv-emoji { font-size: 76px; }
+  .gv-unit { min-width: 58px; }
+  .gv-unit b { font-size: 24px; }
+}
+@media (max-width: 920px) {
+  .gv-art.big { width: 112px; height: 112px; border-radius: 24px; }
+  .gv-art.big .gv-emoji { font-size: 56px; }
+  .gv-art.big .icon { width: 48px; height: 48px; }
+  .gv-prize { font-size: 22px; }
+  .gv-clock { gap: 6px; width: 100%; }
+  .gv-unit { flex: 1; min-width: 0; padding: 8px 4px 7px; }
+  .gv-unit b { font-size: 22px; }
+  .pl-hero { padding: 18px 16px; gap: 16px; }
+  .pl-q { font-size: 20px; }
+  .pl-ask .status { margin-left: 0; }
+  .pl-ans { grid-template-columns: minmax(0, 1fr) 58px; }
+  .pl-voters { display: none; }
+  .pl-card { padding: 14px; }
+  .sg-score { height: 56px; border-radius: 13px; }
+  .sg-score b { font-size: 17px; }
   .cm-edit[open] { flex-basis: 100%; order: 10; }
   .cm-edit .pop-body { position: static; width: 100%; margin-top: 8px; }
 }

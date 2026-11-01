@@ -129,9 +129,9 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let hours = |m: i64| format!("{} h", text::num((m as f64 / 60.0).round() as i64));
     let signed = |n: i64, unit: &str| if n >= 0 { format!("+{} {unit}", text::num(n)) } else { format!("{} {unit}", text::num(n)) };
 
-    struct Stat { key: &'static str, label: &'static str, value: String, note: String, up: bool }
+    struct Stat { key: &'static str, label: &'static str, value: String, note: String, up: bool, down: bool }
     let stats = [
-        Stat { key: "members", label: "Members", value: members.map(text::num).unwrap_or_else(|| "…".into()), note: signed(net, "this week"), up: net > 0 },
+        Stat { key: "members", label: "Members", value: members.map(text::num).unwrap_or_else(|| "…".into()), note: signed(net, "this week"), up: net > 0, down: net < 0 },
         Stat {
             key: "messages",
             label: "Messages today",
@@ -141,6 +141,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                 _ => "Since midnight UTC".into(),
             },
             up: false,
+            down: false,
         },
         Stat {
             key: "active",
@@ -148,6 +149,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             value: text::num(active_today),
             note: members.filter(|m| *m > 0).map(|m| format!("{}% of members", (active_today * 100 / m).min(100))).unwrap_or_default(),
             up: false,
+            down: false,
         },
         Stat {
             key: "voice",
@@ -155,6 +157,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             value: hours(voice_week),
             note: format!("{} on last week", if voice_week >= voice_prev { format!("+{}", hours(voice_week - voice_prev)) } else { format!("-{}", hours(voice_prev - voice_week)) }),
             up: voice_week > voice_prev,
+            down: voice_week < voice_prev,
         },
     ];
     let (series, unit, caption): (Vec<(String, i64)>, &str, &str) = match show {
@@ -179,12 +182,13 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         }
         let fp = super::Page { user: user.clone(), guild_id: guild, key, level };
         let o = f.overview(&ctx, &fp);
-        needs.extend(o.needs);
+        let hue = ui::feature_hue(&ctx, key);
+        needs.extend(o.needs.into_iter().map(|n| (hue, n)));
         feeds.push(o.feed);
         panel.extend(o.panel);
     }
     // Alerts first, then whatever has waited longest.
-    needs.sort_by_key(|n| (!n.alert, n.since));
+    needs.sort_by_key(|(_, n)| (!n.alert, n.since));
     let feed = mix_feed(feeds, 6);
     panel.sort_by_key(|p| p.0);
     let on = ctx.features().iter().filter(|f| ctx.enabled(guild, f.meta().key)).count();
@@ -203,61 +207,70 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let main = html! {
         nav.ov-stats aria-label="Readings" {
             @for st in &stats {
-                a.ov-stat.on[st.key == show] href=(link(st.key, days)) {
+                a.ov-stat.on[st.key == show] href=(link(st.key, days)) aria-current=[(st.key == show).then_some("true")] data-swap="#ov-caption, #ov-plot" {
                     span.muted.small { (st.label) }
-                    b { (st.value) }
-                    span.small.up[st.up] { (st.note) }
+                    b data-count { (st.value) }
+                    span.small.up[st.up].down[st.down] { (st.note) }
+                    @if st.key == show { span.stat-line {} }
                 }
             }
         }
         div.ov-chart {
             div.ov-chart-head {
-                span.muted.small {
-                    (caption) " · " (text::num(avg)) " on average"
-                    @if let Some(t) = &day_starts { " · days start at " (t) " your time" }
+                div #ov-caption {
+                    h2 { (caption) }
+                    p {
+                        (text::num(avg)) " on average over " (days) " days"
+                        @if let Some(t) = &day_starts { " · days start at " (t) " your time" }
+                    }
                 }
                 div.seg {
-                    a.on[days == 7] href=(link(show, 7)) { "7 days" }
-                    a.on[days == 30] href=(link(show, 30)) { "30 days" }
+                    a.on[days == 7] href=(link(show, 7)) data-swap="#ov-caption, #ov-plot" { "7 days" }
+                    a.on[days == 30] href=(link(show, 30)) data-swap="#ov-caption, #ov-plot" { "30 days" }
                 }
             }
-            @if series.iter().all(|d| d.1 == 0) {
-                (ui::empty(Icon::Chart, "Nothing counted in these days", "The bot counts as things happen, and the chart fills in day by day."))
-            } @else {
-                (ui::area_chart(&series, unit))
+            div #ov-plot {
+                @if series.iter().all(|d| d.1 == 0) {
+                    (ui::empty(Icon::Chart, "Nothing counted in these days", "The bot counts as things happen, and the chart fills in day by day."))
+                } @else {
+                    (ui::area_chart(&series, unit))
+                }
             }
         }
-        section.ov-block {
-            h2 { "Needs you" @if !needs.is_empty() { " " span.count-pill { (needs.len()) } } }
-            @if needs.is_empty() {
-                p.muted.small { "Nothing is waiting on you." }
-            } @else {
-                div.ov-rows {
-                    @for n in &needs {
-                        div.need {
-                            @if n.people.is_empty() {
-                                span.need-icon.alert[n.alert] { (ui::icon(n.icon)) }
-                            } @else {
-                                (ui::avatars(&n.people, 2))
+        // Side by side once the column is wide enough (app.css, .ov-pair).
+        div.ov-pair {
+            section.ov-block {
+                h2 { "Needs you" @if !needs.is_empty() { span.count-pill { (needs.len()) } } }
+                @if needs.is_empty() {
+                    (ui::empty(Icon::Check, "Nothing is waiting on you", "Scam catches, pet requests, tickets and app approvals land here when they need someone."))
+                } @else {
+                    div.ov-rows {
+                        @for (hue, n) in &needs {
+                            div.need.alert[n.alert] data-hue=(hue) {
+                                @if n.people.is_empty() {
+                                    span.need-icon.alert[n.alert] { (ui::icon(n.icon)) }
+                                } @else {
+                                    (ui::avatars(&n.people, 2))
+                                }
+                                div.grow { strong { (n.title) } p.muted.small { (n.detail) } }
+                                a class=(if n.alert { "btn small primary" } else { "btn small outline" }) href=(n.href) { (n.action) }
                             }
-                            div.grow { strong { (n.title) } p.muted.small { (n.detail) } }
-                            a.btn.small.outline href=(n.href) { (n.action) }
                         }
                     }
                 }
             }
-        }
-        section.ov-block {
-            h2 { "Around the server" }
-            @if feed.is_empty() {
-                (ui::empty(Icon::Activity, "Quiet so far", "Level-ups, new members, pet additions and suggestion results show up here."))
-            } @else {
-                div.ov-feed {
-                    @for h in &feed {
-                        div.happen {
-                            img.avatar src=(h.avatar) alt="" width="26" height="26" loading="lazy";
-                            span.grow { strong { (h.who) } " " (h.text) }
-                            span.muted.small { (short_ago(h.at)) }
+            section.ov-block {
+                h2 { "Around the server" }
+                @if feed.is_empty() {
+                    (ui::empty(Icon::Activity, "Quiet so far", "Level-ups, new members, pet additions and suggestion results show up here."))
+                } @else {
+                    div.ov-feed {
+                        @for h in &feed {
+                            div.happen {
+                                img.avatar src=(h.avatar) alt="" width="32" height="32" loading="lazy";
+                                span.grow { strong { (h.who) } " " (h.text) }
+                                span.muted.small { (short_ago(h.at)) }
+                            }
                         }
                     }
                 }
@@ -272,12 +285,14 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         }
     };
 
+    let uploaded = super::banner::uploaded_at(&ctx, guild).is_some();
     let body = html! {
         header.ov-hero data-local {
-            @match (&banner, &icon_large) {
-                (Some(b), _) => div.ov-bg style={ "background-image:url(" (b) ")" } {},
-                (None, Some(i)) => div.ov-bg.wash style={ "background-image:url(" (i) ")" } {},
-                (None, None) => {},
+            div.ov-bg {
+                @match (&banner, &icon_large) {
+                    (Some(b), _) => img src=(b) alt="" fetchpriority="high";,
+                    (None, i) => (ui::art(i.as_deref(), false)),
+                }
             }
             div.ov-top {
                 @if ctx.cfg.preview {
@@ -287,19 +302,40 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                 } @else {
                     (ui::status(ui::Dot::Waiting, "Connecting"))
                 }
-                (ui::bell(&ctx, &page))
+                @if user.admin {
+                    details.pop.banner-pop {
+                        summary.btn.small aria-label="Change the banner" { (ui::icon(Icon::Image)) span.pop-label { "Banner" } }
+                        div.pop-body {
+                            strong { "The picture behind this header" }
+                            p.muted.small {
+                                @if uploaded { "You uploaded this one. It also heads the sidebar." }
+                                @else if banner.is_some() { "This is the banner from Discord's server settings. An upload replaces it here." }
+                                @else { "No banner yet, so this is drawn from the server icon. Upload a wide picture, at least 1600 px across." }
+                            }
+                            div.inline-form {
+                                button.btn.small.primary type="button" data-banner-pick { (ui::icon(Icon::Image)) "Upload a picture" }
+                                @if uploaded {
+                                    form.inline method="post" action={ "/g/" (guild) "/banner/remove" } {
+                                        button.btn.small.ghost type="submit" { "Remove upload" }
+                                    }
+                                }
+                            }
+                            input #banner-file type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-action={ "/g/" (guild) "/banner" };
+                        }
+                    }
+                }
             }
             div.ov-hello {
                 @match &icon_large {
-                    Some(i) => img.ov-icon src=(i) alt="" width="56" height="56";,
+                    Some(i) => img.ov-icon src=(i) alt="" width="84" height="84";,
                     None => span.ov-icon.letter { (name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default()) },
                 }
                 div {
                     h1 { (greeting) ", " (user.name) }
                     p {
-                        (name)
-                        @if let Some(m) = members { " · " (text::num(m)) " members" }
-                        @if active_today > 0 { " · " (text::num(active_today)) " here today" }
+                        span { strong { (name) } }
+                        @if let Some(m) = members { span { (ui::icon(Icon::Member)) (text::num(m)) " members" } }
+                        @if active_today > 0 { span { span.dot.live {} (text::num(active_today)) " here today" } }
                     }
                 }
             }
@@ -406,8 +442,8 @@ fn notification_row(ctx: &Ctx, user: &User, n: &Note, new: bool) -> Markup {
     };
     html! {
         @match &n.link {
-            Some(l) => a.note.new[new] href=(l) { (inner) },
-            None => div.note.new[new] { (inner) },
+            Some(l) => a.note.new[new] href=(l) data-hue=(ui::feature_hue(ctx, &n.feature)) { (inner) },
+            None => div.note.new[new] data-hue=(ui::feature_hue(ctx, &n.feature)) { (inner) },
         }
     }
 }
@@ -422,17 +458,47 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let notes = recent_notifications(&ctx, &user, guild, 100);
     let is_new = |n: &Note| n.at > if n.global { global_seen } else { seen };
     let fresh = notes.iter().filter(|n| is_new(n)).count();
+    // Which features the notices came from, busiest first: (feature, notices, new).
+    let mut from: Vec<(&str, usize, usize)> = Vec::new();
+    for n in &notes {
+        match from.iter_mut().find(|f| f.0 == n.feature) {
+            Some(f) => {
+                f.1 += 1;
+                f.2 += usize::from(is_new(n));
+            }
+            None => from.push((n.feature.as_str(), 1, usize::from(is_new(n)))),
+        }
+    }
+    from.sort_by_key(|f| std::cmp::Reverse(f.1));
     let body = html! {
         @if notes.is_empty() {
             (ui::empty(Icon::Bell, "No notifications", "Features post here when something needs you: a caught scam, a new ticket, a pet request."))
         } @else {
-            // No data-local: its one-time reload for the timezone would count as a second visit
-            // and clear the new marks. The overview, where everyone lands, sets the timezone.
-            div.timeline.notes {
-                @for (i, n) in notes.iter().enumerate() {
-                    @let label = day_label(&user, n.at);
-                    @if i == 0 || day_label(&user, notes[i - 1].at) != label { h2.day { (label) } }
-                    (notification_row(&ctx, &user, n, is_new(n)))
+            div.with-rail {
+                // No data-local: its one-time reload for the timezone would count as a second
+                // visit and clear the new marks. The overview, where everyone lands, sets it.
+                div.timeline.notes {
+                    @for (i, n) in notes.iter().enumerate() {
+                        @let label = day_label(&user, n.at);
+                        @if i == 0 || day_label(&user, notes[i - 1].at) != label { h2.day { (label) } }
+                        (notification_row(&ctx, &user, n, is_new(n)))
+                    }
+                }
+                aside.rail {
+                    div.rail-block {
+                        h2 { "Where they came from" span.muted.small { (notes.len()) } }
+                        @for (key, total, new) in &from {
+                            @let f = ctx.feature(key);
+                            div.mini data-hue=(ui::feature_hue(&ctx, key)) {
+                                span.nav-ic { (ui::icon(f.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Bell))) }
+                                span.grow {
+                                    span { (f.map(|f| f.meta().name).unwrap_or("Dashboard")) }
+                                    span.muted { @if *new > 0 { (new) " new" } @else { "Nothing new" } }
+                                }
+                                span.mono { (total) }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -489,7 +555,7 @@ async fn features_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         }
         div.fgroups {
             @for (group, list) in &groups {
-                section.card.fgroup {
+                section.card.fgroup data-hue=(group.hue()) {
                     h2.fgroup-label { (group.label()) }
                     @for m in list {
                         @let on = ctx.enabled(guild, m.key);
@@ -579,7 +645,27 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
         }
         p.muted.small { "In Discord: Settings, Advanced, turn on Developer Mode, then right-click their name and Copy User ID. People who try to sign in see their ID too. Until you give them pages, they see nothing." }
     });
+    // Which pages each person holds, across servers: (page key, edit?) by person.
+    let mut access: HashMap<u64, Vec<(String, bool)>> = HashMap::new();
+    let rows: Vec<(i64, String, i64)> = ctx
+        .db
+        .with(|c| {
+            let mut s = c.prepare("SELECT user_id, page, MAX(level) FROM dash_perms WHERE level > 0 GROUP BY user_id, page ORDER BY page")?;
+            let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .unwrap_or_default();
+    for (uid, key, level) in rows {
+        access.entry(uid as u64).or_default().push((key, level >= 2));
+    }
+    let admins = list.iter().filter(|p| p.admin || p.id == owner).count();
+    let today = list.iter().filter(|p| p.signed_in.is_some_and(|at| crate::now_ms() - at < 86_400_000)).count();
     let body = html! {
+        div.readings {
+            div.reading { b data-count { (list.len()) } span { "people can sign in" } }
+            div.reading { b data-count { (admins) } span { "see everything" } }
+            div.reading { b data-count { (today) } span { "signed in today" } }
+        }
         div.people {
             @for p in &list {
                 @let seen = match p.signed_in {
@@ -587,16 +673,31 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
                     Some(at) => format!("Signed in {}", text::ago(at)),
                     None => format!("Added {} · hasn't signed in yet", text::ago(p.created_at)),
                 };
+                @let online = p.signed_in.is_some_and(|at| crate::now_ms() - at < 3_600_000);
+                @let pages = access.get(&p.id).map(Vec::as_slice).unwrap_or_default();
                 div.prow {
-                    img.avatar src=(crate::discord::avatar_url(p.id, p.avatar.as_deref())) alt="" width="36" height="36" loading="lazy";
+                    span.prow-face {
+                        img.avatar src=(crate::discord::avatar_url(p.id, p.avatar.as_deref())) alt="" width="40" height="40" loading="lazy";
+                        @if online { span.dot.live title="Signed in within the hour" {} }
+                    }
                     div.grow {
                         strong { (name_or_id(p)) }
                         p.muted.small { (seen) @if let Some(by) = p.added_by.as_ref().filter(|_| p.id != owner) { " · added by " (by) } }
                     }
                     @if p.id == owner { (ui::badge("Owner", Tone::Accent)) }
-                    @else if p.admin { (ui::badge("Admin", Tone::Muted)) }
-                    @else if p.grants == 0 { (ui::badge("No pages yet", Tone::Warn)) }
-                    @else { (ui::badge(&format!("{} {}", p.grants, if p.grants == 1 { "page" } else { "pages" }), Tone::Muted)) }
+                    @else if p.admin { (ui::badge("Admin, every page", Tone::Muted)) }
+                    @else if pages.is_empty() { (ui::badge("No pages yet", Tone::Warn)) }
+                    @else {
+                        span.access-tiles {
+                            @for (key, edit) in pages.iter().take(7) {
+                                @let f = ctx.feature(key);
+                                @let label = f.and_then(|f| f.meta().nav.first().map(|n| n.label)).unwrap_or(key.as_str());
+                                @let ic = f.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Toggle);
+                                span.nav-ic.edit[*edit] data-hue=(ui::feature_hue(&ctx, key)) data-tip={ (label) ": " (if *edit { "can edit" } else { "can view" }) } { (ui::icon(ic)) }
+                            }
+                            @if pages.len() > 7 { span.more { "+" (pages.len() - 7) } }
+                        }
+                    }
                     @if p.id != owner { a.btn.small.outline href={ "/users/" (p.id) } { "Edit access" } }
                 }
             }
@@ -654,7 +755,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
         .collect();
 
     let body = html! {
-        form.settings.narrow method="post" action={ "/users/" (id) } {
+        form.settings method="post" action={ "/users/" (id) } {
             (ui::card(html! {
                 @if is_owner {
                     (ui::field_custom("Admin", Some("The owner is always an admin."), ui::badge("Owner", Tone::Accent)))
@@ -664,6 +765,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
             }))
             @if !person.admin && !is_owner {
                 p.muted.small { "Per server: None hides a page, View shows it read-only, Edit lets them change it." }
+                div.access-grid {
                 @for g in ctx.guild_ids() {
                     @let feats = grantable(g);
                     @let given = feats.iter().filter(|f| level_of(g, f.meta().key) > 0).count();
@@ -694,6 +796,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                         }
                         }))
                     }
+                }
                 }
             }
             div.save-bar { button.btn.primary type="submit" { "Save" } }

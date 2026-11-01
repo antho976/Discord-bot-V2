@@ -96,6 +96,18 @@ pub fn waiting_count(ctx: &Ctx, guild: u64, days: i64) -> Result<i64> {
     })
 }
 
+/// Departed members with roles saved and waiting, `(user, left at)`, most recent first.
+pub fn waiting_members(ctx: &Ctx, guild: u64, days: i64, limit: i64) -> Result<Vec<(u64, i64)>> {
+    let cutoff = bot_core::now_ms() - days * 86_400_000;
+    ctx.db.with(|c| {
+        let mut s = c.prepare_cached(
+            "SELECT user_id, left_at FROM welcome_saved_roles WHERE guild_id = ?1 AND restored_at IS NULL AND left_at >= ?2
+             ORDER BY left_at DESC LIMIT ?3",
+        )?;
+        s.query_map(params![guild as i64, cutoff, limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
+    })
+}
+
 /// Can the bot give this role? It must exist, not be managed (integration or booster roles)
 /// and sit below the bot's own highest role. Without a cached bot member we let it try.
 pub fn assignable(ctx: &Ctx, guild: u64, role: u64) -> bool {

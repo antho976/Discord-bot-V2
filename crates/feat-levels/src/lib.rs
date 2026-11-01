@@ -1149,6 +1149,9 @@ pub(crate) fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
             c.execute("INSERT OR REPLACE INTO level_rewards (guild_id, level, role_id) VALUES (?1, 25, ?2)", params![guild as i64, b.0 as i64])
         })?;
     }
+    if let Some(idleon) = roles.iter().find(|r| r.1 == "Idleon") {
+        ctx.db.with(|c| c.execute("INSERT OR REPLACE INTO level_rewards (guild_id, level, role_id) VALUES (?1, 18, ?2)", params![guild as i64, idleon.0 as i64]))?;
+    }
     Ok(())
 }
 

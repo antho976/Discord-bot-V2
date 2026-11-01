@@ -350,6 +350,24 @@ pub fn today(ctx: &Ctx, guild: u64, since: i64) -> Result<Today> {
     })
 }
 
+/// Entries in each of the last `days` rolling days before `now`, oldest first, for the rail's chart.
+pub fn daily(ctx: &Ctx, guild: u64, now: i64, days: usize) -> Result<Vec<i64>> {
+    const DAY: i64 = 86_400_000;
+    let mut out = vec![0; days];
+    ctx.db.with(|c| {
+        let mut st = c.prepare_cached("SELECT (?2 - at) / ?3, COUNT(*) FROM audit_events WHERE guild_id = ?1 AND at > ?2 - ?3 * ?4 AND at <= ?2 GROUP BY 1")?;
+        let rows = st.query_map(params![guild as i64, now, DAY, days as i64], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (ago, n) = row?;
+            if let Some(slot) = usize::try_from(ago).ok().filter(|a| *a < days) {
+                out[days - 1 - slot] += n;
+            }
+        }
+        Ok(())
+    })?;
+    Ok(out)
+}
+
 /// Sample settings and a believable fortnight of entries for `bot preview`.
 pub fn seed_preview(ctx: &Ctx, guild: u64) -> Result<()> {
     // Channels in the sample server sit at guild id + 10 * n: welcome 2, general 4, pets 6, suggestions 7, mod-log 8.

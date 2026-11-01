@@ -20,7 +20,9 @@ use bot_core::{Ctx, now_ms, text};
 
 use crate::{KEY, Modmail, Settings};
 
-const COLOR: u32 = 0xf0806a;
+pub const COLOR: u32 = 0xf0806a;
+/// The bot's note to staff at the top of each conversation's thread, under the ping.
+pub const THREAD_INTRO: &str = "Reply in this thread to answer by DM. Start a message with // to keep it among staff.";
 const DAY_MS: i64 = 86_400_000;
 /// How long messages wait for a member to pick a server.
 const HOLD: Duration = Duration::from_secs(600);
@@ -496,7 +498,7 @@ async fn make_thread(ctx: &Ctx, channel: u64, s: &Settings, id: i64, user: u64, 
     let intro = EmbedBuilder::new()
         .color(COLOR)
         .title(text::clip(name, 200))
-        .description("Reply in this thread to answer by DM. Start a message with // to keep it among staff.")
+        .description(THREAD_INTRO)
         .build();
     let close = button_row(&[(&format!("{KEY}:close:{id}"), "Close", ButtonStyle::Secondary)]);
     let (content, mentions) = match s.staff_role {

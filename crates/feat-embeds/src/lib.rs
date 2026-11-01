@@ -86,6 +86,9 @@ impl Feature for Embeds {
             ],
             ..Default::default()
         };
+        // Sample pictures from the preview's own folder, as full addresses so they pass the
+        // same checks a real image link does.
+        let picture = |name: &str| format!("{}{}", ctx.cfg.public_url, bot_core::preview::picture(name));
         let live = EmbedData {
             content: "We're live!".into(),
             title: "Boss rush, then the new update".into(),
@@ -93,10 +96,21 @@ impl Feature for Embeds {
             description: "Come say hi. Today: the new world, a few deaths, and giveaways in the last hour.".into(),
             color: "#9b84ee".into(),
             author: "Antho".into(),
-            thumbnail: "https://cdn.discordapp.com/embed/avatars/2.png".into(),
+            thumbnail: picture("av11.jpg"),
+            image: picture("stream.jpg"),
+            footer: "Twitch · starts at 8 PM".into(),
+            fields: vec![
+                Field { name: "Game".into(), value: "Legends of Idleon".into(), inline: true },
+                Field { name: "Giveaway".into(), value: "2 pets in the last hour".into(), inline: true },
+            ],
+        };
+        let welcome = EmbedData {
+            title: "Welcome".into(),
+            description: "Say hi in #general and pick your roles.".into(),
+            color: "#4fc38a".into(),
+            image: picture("banner.jpg"),
             ..Default::default()
         };
-        let welcome = EmbedData { title: "Welcome".into(), description: "Say hi in #general and pick your roles.".into(), color: "#4fc38a".into(), ..Default::default() };
         let channels = ctx.text_channels(guild);
         let find = |name: &str| channels.iter().find(|(_, n)| n == name).or(channels.first()).map(|(id, _)| *id).unwrap_or_default();
         template_save(ctx, guild, "Server rules", &rules)?;
@@ -105,6 +119,7 @@ impl Feature for Embeds {
             title: "This week's streams".into(),
             description: "Streams run most weeknights at 8 PM. Changes go in #stream-alerts first.".into(),
             color: "#c3a6ff".into(),
+            image: picture("lake.jpg"),
             ..Default::default()
         };
         let giveaway = EmbedData {

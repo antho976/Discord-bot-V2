@@ -416,6 +416,25 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
                 ],
             )?;
         }
+        // Older joins from people who have since left, so the 30-day chart has a shape.
+        let per_day = [2, 1, 3, 0, 2, 4, 1, 2, 0, 1, 3, 2, 1, 5, 2, 1, 0, 2, 3, 1, 2];
+        let mut k = 0u64;
+        for (d, n) in per_day.iter().enumerate() {
+            for _ in 0..*n {
+                k += 1;
+                let (inviter, code) = match k % 4 {
+                    0 => (Some(MEMBERS[0].0), Some("hX9d2Q")),
+                    1 => (Some(MEMBERS[1].0), Some("Lm3vTz")),
+                    2 => (Some(MEMBERS[5].0), Some("q8WnRb")),
+                    _ => (None, None),
+                };
+                let at = now - (d as i64 + 9) * day - ((k * 97) % 600) as i64 * 60_000;
+                c.execute(
+                    "INSERT INTO welcome_joins (guild_id, user_id, inviter_id, code, joined_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![guild as i64, (3_000_000_000_000_000_000 + k) as i64, inviter.map(|u| u as i64), code, at],
+                )?;
+            }
+        }
         for (code, who, uses, max) in [("hX9d2Q", 0usize, 14, 0), ("Lm3vTz", 1, 6, 0), ("q8WnRb", 0, 3, 25)] {
             c.execute(
                 "INSERT INTO welcome_invites (guild_id, code, uses, max_uses, inviter_id) VALUES (?1, ?2, ?3, ?4, ?5)",

@@ -5,7 +5,7 @@ use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 
-use super::{TabQuery, month_start, open_link, style, tabs};
+use super::{TabQuery, discord_message, month_start, open_link, plural, rail_figures, style};
 use crate::suggestions::{self as sg, Status, Suggestion, Tally};
 use crate::{KEY, Settings};
 
@@ -26,7 +26,7 @@ fn state_label(s: Status) -> &'static str {
     }
 }
 
-/// The colour rule beside a staff reply.
+/// The tint of a staff reply.
 fn reply_class(s: Status) -> &'static str {
     match s {
         Status::Open => "",
@@ -44,6 +44,8 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let (mut rows, waiting, month, voters) = ctx.db.with(|c| {
         Ok((sg::list(c, guild, 100)?, sg::open_count(c, guild)?, sg::month_stats(c, guild, since)?, sg::top_voters(c, guild, since, 3)?))
     })?;
+    // The newest one, before the board is sorted: the settings tab shows it as it would post.
+    let newest = rows.first().cloned();
     // The board reads top-first: net votes, then newest.
     rows.sort_by_key(|(r, t)| (std::cmp::Reverse(t.up - t.down), std::cmp::Reverse(r.id)));
     let edit = page.can_edit();
@@ -56,7 +58,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
 
     let main = html! {
         (style())
-        (tabs(
+        (ui::tabs_counted(
             &[
                 ("All", page.path("community/suggestions"), None),
                 ("Waiting for review", page.path("community/suggestions?tab=review"), Some(waiting)),
@@ -65,10 +67,25 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             active,
         ))
         @if tab == "settings" {
-            (ui::settings_form(&page, &page.path("community/suggestions"), ui::card(settings_fields(&ctx, guild, &s))))
+            // The settings beside the post they shape.
+            div.compose.cm-compose {
+                (ui::settings_form(&page, &page.path("community/suggestions"), ui::card(settings_fields(&ctx, guild, &s))))
+                aside.rail.cm-rail.compose-preview {
+                    div.rail-block {
+                        h2 { "How one posts" }
+                        @match &newest {
+                            Some((r, t)) => {
+                                (discord_message(&ctx, &page, r.created_at, post_preview(&ctx, guild, r, t, s.anonymous, s.threads)))
+                                p.cm-dc-note { "The newest suggestion, drawn with the settings as saved." }
+                            },
+                            None => p.muted.small { "Once a member uses /suggest, the post shows here as Discord draws it." },
+                        }
+                    }
+                }
+            }
         } @else {
             div.with-rail {
-                div.stack.cm-main {
+                div.cm-main {
                     @if shown.is_empty() {
                         @if tab == "review" {
                             (ui::empty(Icon::Bulb, "Nothing waiting", "New suggestions wait here until staff review them."))
@@ -78,34 +95,36 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                             (ui::empty(Icon::Bulb, "Suggestions are off", "Pick a channel under Settings and members can use /suggest."))
                         }
                     } @else {
-                        div.cm-list {
-                            @for (r, t) in &shown { (row(&ctx, &page, guild, r, t, edit)) }
+                        div.sg-list {
+                            @for (i, (r, t)) in shown.iter().enumerate() { (card(&ctx, &page, guild, r, t, i, edit)) }
                         }
                     }
                 }
-                aside.rail {
+                aside.rail.cm-rail {
                     div.rail-block {
                         h2 { "This month" }
-                        div.cm-month {
-                            div { b.mono { (text::num(month.0)) } span { "suggested" } }
-                            div { b.mono { (text::num(month.1)) } span { "approved" } }
-                            div { b.mono { (text::num(month.2)) } span { "done" } }
-                        }
+                        (rail_figures(&[("suggested", month.0), ("approved", month.1), ("done", month.2)]))
                     }
                     div.rail-block {
                         h2 { "Most votes this month" }
                         @if voters.is_empty() {
                             (ui::empty(Icon::Bulb, "No votes this month", "Members vote with the buttons on each suggestion."))
                         } @else {
-                            div.cm-top {
-                                @for (u, n) in &voters {
-                                    div.cm-voter {
-                                        img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="44" height="44" loading="lazy";
+                            div.sg-top {
+                                @for (i, (u, n)) in voters.iter().enumerate() {
+                                    div.sg-voter.first[i == 0] style={ "--i:" (i) } {
+                                        img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="54" height="54" loading="lazy";
                                         strong { (ctx.display_name(guild, *u)) }
-                                        span { (text::num(*n)) " " (if *n == 1 { "vote" } else { "votes" }) }
+                                        span { (text::num(*n)) " " (plural(*n, "vote", "votes")) }
                                     }
                                 }
                             }
+                        }
+                    }
+                    @if let Some((r, t)) = shown.first() {
+                        div.rail-block {
+                            h2 { "The top one in Discord" }
+                            (discord_message(&ctx, &page, r.created_at, post_preview(&ctx, guild, r, t, r.anonymous, false)))
                         }
                     }
                 }
@@ -115,41 +134,107 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     Ok(ui::layout(&ctx, &page, "Suggestions", None, main).into_response())
 }
 
-fn row(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, t: &Tally, edit: bool) -> Markup {
+/// One suggestion on the board: its score, the text and who sent it, the split of votes, and
+/// the staff reply once there is one.
+fn card(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, t: &Tally, i: usize, edit: bool) -> Markup {
     let net = t.up - t.down;
-    let decided = r.status != Status::Open;
+    let votes = t.up + t.down;
+    let score = match net {
+        n if n > 0 => "sg-score",
+        0 => "sg-score flat",
+        _ => "sg-score down",
+    };
     html! {
-        div.cm-sg {
-            div class={ "cm-vote" @if net < 0 { " down" } } {
+        article.sg-card style={ "--i:" (i.min(10)) } {
+            div class=(score) aria-label={ "Net votes: " (net) } {
                 (arrow(net >= 0))
-                span { (net) }
+                b { (if net > 0 { format!("+{net}") } else { net.to_string() }) }
             }
-            div.cm-sg-main {
-                strong.cm-sg-title title=(r.content) { (text::clip(&r.content, 160)) }
-                div.cm-sg-meta {
-                    img.avatar src=(ctx.member_avatar(guild, r.author_id)) alt="" loading="lazy";
-                    span { strong { (ctx.display_name(guild, r.author_id)) } " · " (text::ago(r.created_at)) " · " (tally_text(t)) }
+            div.sg-body {
+                p.sg-text title=(r.content) { (text::clip(&r.content, 220)) }
+                div.sg-by {
+                    img.avatar src=(ctx.member_avatar(guild, r.author_id)) alt="" width="22" height="22" loading="lazy";
+                    span { strong { (ctx.display_name(guild, r.author_id)) } " · " (text::ago(r.created_at)) }
                     @if r.anonymous { span { "· posted anonymously" } }
                 }
-                @if decided {
-                    blockquote class={ "cm-reply " (reply_class(r.status)) } {
-                        @if let Some(staff) = r.staff_id {
-                            img.avatar src=(ctx.member_avatar(guild, staff)) alt="" loading="lazy";
+            }
+            // How it's going: the votes, and staff's answer once there is one.
+            div.sg-state {
+                @if votes > 0 {
+                    div.sg-tally style={ "--i:" (i.min(10)) } {
+                        span.sg-split role="img" aria-label=(tally_text(t)) {
+                            @if t.up > 0 { span.up style={ "flex:" (t.up) } {} }
+                            @if t.down > 0 { span.down style={ "flex:" (t.down) } {} }
                         }
-                        span {
-                            @if let Some(staff) = r.staff_id { strong { (ctx.display_name(guild, staff)) } ": " }
-                            @if r.reason.is_empty() { span.muted { "No reason given." } } @else { (r.reason) }
+                        span { (tally_text(t)) }
+                    }
+                } @else {
+                    div.sg-tally { span { "No votes yet" } }
+                }
+                @if r.status != Status::Open {
+                    div class={ "sg-reply " (reply_class(r.status)) } {
+                        @if let Some(staff) = r.staff_id {
+                            img.avatar src=(ctx.member_avatar(guild, staff)) alt="" width="28" height="28" loading="lazy";
+                        }
+                        div.sg-bubble {
+                            strong {
+                                @if let Some(staff) = r.staff_id { (ctx.display_name(guild, staff)) " " }
+                                span { (r.status.label().to_lowercase()) " it" }
+                            }
+                            @if r.reason.is_empty() { span.muted { "No reason given." } } @else { span { (r.reason) } }
                         }
                     }
                 }
             }
-            div.cm-sg-side {
+            div.sg-side {
                 (ui::badge(state_label(r.status), tone(r.status)))
                 div.cm-actions {
-                    (open_link(page, r.channel_id, r.message_id, "Open in Discord"))
+                    (open_link(page, r.channel_id, r.message_id, true))
                     @if edit { (review_pop(page, r)) }
                 }
             }
+        }
+    }
+}
+
+/// The suggestion's post as members see it: the embed in its status colour, the author unless
+/// it's anonymous, staff's answer, and the vote buttons (closed once it's decided).
+fn post_preview(ctx: &Ctx, guild: u64, r: &Suggestion, t: &Tally, anonymous: bool, thread: bool) -> Markup {
+    let closed = r.status.is_decided();
+    html! {
+        div.cm-dc-embed style={ "--embed:#" (format!("{:06x}", r.status.color())) } {
+            @if !anonymous {
+                div.cm-dc-author {
+                    img src=(ctx.member_avatar(guild, r.author_id)) alt="" width="22" height="22" loading="lazy";
+                    (ctx.display_name(guild, r.author_id))
+                }
+            }
+            div.cm-dc-desc { (text::clip(&r.content, 600)) }
+            @if r.status != Status::Open {
+                div.cm-dc-fields {
+                    div {
+                        b { (r.status.label()) @if let Some(u) = r.staff_id { " by " (ctx.display_name(guild, u)) } }
+                        span { @if r.reason.is_empty() { "No reason given." } @else { (r.reason) } }
+                    }
+                }
+            }
+            div.cm-dc-foot { "Suggestion #" (r.id) }
+        }
+        div.cm-dc-btns {
+            span.cm-dc-btn.off[closed] { "Upvote · " (t.up) }
+            span.cm-dc-btn.off[closed] { "Downvote · " (t.down) }
+            span.cm-dc-btn { "Review" }
+        }
+        @if thread { (thread_line(r.id)) }
+    }
+}
+
+/// The thread Discord shows under a suggestion when threads are on.
+fn thread_line(id: i64) -> Markup {
+    html! {
+        div.cm-dc-thread {
+            span.cm-dc-curve {}
+            span.cm-dc-tbox { strong { "Suggestion #" (id) } span { "See thread" } (ui::icon(Icon::Chevron)) }
         }
     }
 }
@@ -178,11 +263,11 @@ fn tally_text(t: &Tally) -> String {
     format!("{}, {}", part(t.up, "up"), part(t.down, "down"))
 }
 
-/// A small chevron, up or down, for the vote tile.
+/// A small chevron, up or down, for the score tile.
 fn arrow(up: bool) -> Markup {
     let d = if up { "M4 9.5 8 5.5l4 4" } else { "M4 6.5 8 10.5l4-4" };
     html! {
-        svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" {
+        svg.icon viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" {
             path d=(d);
         }
     }

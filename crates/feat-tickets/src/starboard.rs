@@ -522,19 +522,19 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
     let general = guild + 40;
     let pets = guild + 60;
     let star = guild + 90;
-    // (channel, author index, stars, hours ago, preview)
-    let rows: &[(u64, usize, i64, i64, &str)] = &[
-        (general, 2, 14, 30, "Finally hit level 100 on the Idleon alt after eight months. The last stretch was just stubbornness."),
-        (pets, 4, 9, 52, "Rolled a shiny on the third egg of the day. Not saying it was luck but I sacrificed three hours to get here."),
-        (general, 0, 7, 8, "Stream tonight is going to be a long one. Bring snacks."),
-        (general, 6, 5, 80, "Attachment"),
-        (pets, 1, 4, 5, "Does anyone else feel like the new pet tiers are a bit too generous? Asking for the economy."),
-        (general, 7, 3, 120, "Welcome to everyone who joined this week. Read the rules, then say hi."),
+    // (channel, author index, stars, hours ago, preview, sample picture)
+    let rows: &[(u64, usize, i64, i64, &str, &str)] = &[
+        (general, 2, 14, 30, "Finally hit level 100 on the Idleon alt after eight months. The last stretch was just stubbornness.", ""),
+        (general, 5, 11, 20, "Took the long way home and found this. Worth the extra hour.", "banner.jpg"),
+        (pets, 4, 9, 52, "Rolled a shiny on the third egg of the day. Not saying it was luck but I sacrificed three hours to get here.", ""),
+        (general, 0, 7, 8, "Stream tonight is going to be a long one. Bring snacks.", "stream.jpg"),
+        (general, 6, 5, 80, "Attachment", "lake.jpg"),
+        (pets, 4, 4, 5, "Does anyone else feel like the new pet tiers are a bit too generous? Asking for the economy.", ""),
+        (general, 0, 3, 120, "Welcome to everyone who joined this week. Read the rules, then say hi.", ""),
     ];
-    for (i, (channel, author, stars, ago, preview)) in rows.iter().enumerate() {
+    for (i, (channel, author, stars, ago, preview, picture)) in rows.iter().enumerate() {
         let n = i as u64 + 1;
-        // The attachment-only post shows a picture: the welcome card, which the preview draws itself.
-        let image = if *preview == "Attachment" { format!("/g/{guild}/welcome/card.png") } else { String::new() };
+        let image = if picture.is_empty() { String::new() } else { bot_core::preview::picture(picture) };
         ctx.db.with(|c| {
             insert(
                 c,

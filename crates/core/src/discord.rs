@@ -969,13 +969,32 @@ impl Ctx {
     }
 
     pub fn guild_icon_url(&self, guild_id: u64) -> Option<String> {
+        if self.cfg.preview {
+            return match guild_id {
+                crate::preview::GUILD_A => Some(crate::preview::picture("icon.png")),
+                crate::preview::GUILD_B => Some(crate::preview::picture("icon-b.jpg")),
+                _ => None,
+            };
+        }
         let g = self.cache.guild(Id::new(guild_id))?;
         let icon = g.icon()?;
         Some(format!("https://cdn.discordapp.com/icons/{guild_id}/{icon}.png?size=64"))
     }
 
-    /// The server's banner, wide enough for the overview's header.
+    /// The server's banner, wide enough for the overview's header: the one uploaded on the
+    /// dashboard, else Discord's. `None` gets generated art from the icon (`ui::art`).
     pub fn guild_banner_url(&self, guild_id: u64) -> Option<String> {
+        if let Some(at) = crate::web::banner::uploaded_at(self, guild_id) {
+            return Some(format!("/g/{guild_id}/banner?v={at}"));
+        }
+        if self.cfg.preview {
+            return (guild_id == crate::preview::GUILD_A).then(|| crate::preview::picture("banner.jpg"));
+        }
+        self.discord_banner_url(guild_id)
+    }
+
+    /// The banner set in Discord's server settings (boost level 2), if any.
+    pub fn discord_banner_url(&self, guild_id: u64) -> Option<String> {
         let g = self.cache.guild(Id::new(guild_id))?;
         let banner = g.banner()?;
         Some(format!("https://cdn.discordapp.com/banners/{guild_id}/{banner}.png?size=1024"))
@@ -1014,6 +1033,9 @@ pub fn snowflake_ms(id: u64) -> i64 {
 
 /// Avatar URL for a user, or Discord's default avatar.
 pub fn avatar_url(user_id: u64, avatar: Option<&str>) -> String {
+    if crate::preview::on() && avatar.is_none() {
+        return crate::preview::avatar(user_id);
+    }
     match avatar {
         Some(hash) => format!("https://cdn.discordapp.com/avatars/{user_id}/{hash}.png?size=128"),
         None => format!("https://cdn.discordapp.com/embed/avatars/{}.png", (user_id >> 22) % 6),

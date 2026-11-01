@@ -132,27 +132,119 @@ struct Sample<'a> {
     thumb: Option<String>,
 }
 
+/// Readings whose numbers count up as they come into view.
+fn readings(items: &[(&str, String)]) -> Markup {
+    html! {
+        div.readings.sa-readings {
+            @for (label, value) in items {
+                div.reading { b data-count { (value) } span { (label) } }
+            }
+        }
+    }
+}
+
+/// A Discord channel as Discord draws it: the channel's name in its bar (or `none` when there
+/// isn't one), then the messages.
+fn discord(name: Option<String>, none: &str, body: Markup) -> Markup {
+    html! {
+        div.sa-dc {
+            div.sa-dc-bar {
+                (ui::icon(Icon::Hash))
+                @match name {
+                    Some(c) => span.clip { (c.trim_start_matches('#')) },
+                    None => span.none { (none) },
+                }
+                span.sa-dc-tag { "Preview" }
+            }
+            div.sa-dc-body { (body) }
+        }
+    }
+}
+
+/// Where posts go and who they ping, as tags: the channel, then the role in its colour.
+fn route(ctx: &Ctx, guild: u64, channel: Option<u64>, role: Option<u64>) -> Markup {
+    let role = role.and_then(|r| ctx.roles(guild).into_iter().find(|(id, _, _)| *id == r));
+    html! {
+        div.sa-route {
+            @match channel_name(ctx, guild, channel) {
+                Some(c) => span.sa-tag { (ui::icon(Icon::Hash)) (c.trim_start_matches('#')) },
+                None => span.sa-tag.none { "No channel yet" },
+            }
+            @if let Some((_, name, color)) = role {
+                span.sa-tag style=[(color != 0).then(|| format!("--role:#{color:06x}"))] { span.dot {} "@" (name) }
+            }
+        }
+    }
+}
+
+/// A broadcaster's Twitch picture, or their initial when Twitch hasn't given one.
+fn face(b: &Broadcaster, size: u32) -> Markup {
+    html! {
+        @if b.avatar.is_empty() {
+            span.sa-letter style={ "width:" (size) "px;height:" (size) "px;font-size:" (size * 2 / 5) "px" } { (b.name.chars().next().unwrap_or('?')) }
+        } @else {
+            img.avatar src=(b.avatar) alt="" width=(size) height=(size) loading="lazy";
+        }
+    }
+}
+
+/// A stream's picture for a card, or the drawn placeholder.
+fn stream_pic(r: Option<&StreamRow>) -> Markup {
+    html! {
+        @match r.and_then(StreamRow::thumb_640) {
+            Some(src) => img src=(src) alt="" loading="lazy";,
+            None => span.stream-ph { (ui::icon(Icon::Live)) },
+        }
+    }
+}
+
+/// The play mark over a video: YouTube's red one, or a glass circle for clips.
+fn play(youtube: bool) -> Markup {
+    html! {
+        span.sa-play.glass[!youtube] aria-hidden="true" {
+            svg viewBox="0 0 24 24" fill="currentColor" { path d="M9 6.8v10.4c0 .6.7 1 1.2.7l8-5.2a.8.8 0 0 0 0-1.4l-8-5.2c-.5-.3-1.2.1-1.2.7z" {} }
+        }
+    }
+}
+
+/// Sample pictures the preview's videos and clips wear, in turn.
+const SAMPLE_PICTURES: &[&str] = &["stream.jpg", "banner.jpg", "lake.jpg"];
+
+/// A video's picture: YouTube's, or a sample picture in the preview, whose videos aren't real.
+fn video_thumb(id: &str) -> String {
+    if bot_core::preview::on() {
+        let n = id.bytes().map(usize::from).sum::<usize>() % SAMPLE_PICTURES.len();
+        return bot_core::preview::picture(SAMPLE_PICTURES[n]);
+    }
+    youtube::thumb(id)
+}
+
 /// A message from the bot as Discord shows it: avatar, name with its APP tag and the time,
-/// then `body`.
-fn bot_message(ctx: &Ctx, page: &Page, body: Markup) -> Markup {
+/// then `body`. `used` is the slash command it answers, shown above it as Discord does.
+fn bot_message(ctx: &Ctx, page: &Page, used: Option<&str>, body: Markup) -> Markup {
     let bot = ctx.cache.current_user();
     let bot_name = bot.as_ref().map(|u| u.name.clone()).unwrap_or_else(|| "Bot".into());
     let bot_avatar = bot.as_ref().map(|u| bot_core::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref()));
     let time = page.user.local(now_ms()).strftime("%-I:%M %p").to_string();
     html! {
-        div.sa-post {
-            @if let Some(url) = &bot_avatar {
-                img.sa-av src=(url) alt="" width="40" height="40" loading="lazy";
-            } @else {
-                span.sa-av.letter { (bot_name.chars().next().unwrap_or('B')) }
+        div.sa-msg {
+            @if let Some(cmd) = used {
+                div.sa-used { img src=(page.user.avatar_url()) alt=""; b { (page.user.name) } " used " span.cmd { (cmd) } }
             }
-            div.sa-post-main {
-                div.sa-head {
-                    b.sa-name { (bot_name) }
-                    span.sa-app { "APP" }
-                    span.sa-time { "Today at " (time) }
+            div.sa-post {
+                @if let Some(url) = &bot_avatar {
+                    img.sa-av src=(url) alt="" width="40" height="40" loading="lazy";
+                } @else {
+                    span.sa-av.mark { img src="/static/icon.svg" alt=""; }
                 }
-                (body)
+                div.sa-post-main {
+                    div.sa-head {
+                        b.sa-name { (bot_name) }
+                        span.sa-app { "APP" }
+                        span.sa-time { "Today at " (time) }
+                    }
+                    (body)
+                }
             }
         }
     }
@@ -166,25 +258,27 @@ fn ping(role: Option<String>) -> Markup {
 /// The live post as Discord shows it: the ping and the message, the embed with its coral edge,
 /// its fields, picture and footer, and the Watch on Twitch button.
 fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broadcaster, sample: &Sample) -> Markup {
-    bot_message(ctx, page, html! {
+    bot_message(ctx, page, None, html! {
         div.sa-line { (ping(role)) (line) }
         div.sa-embed style="--embed:#f0806a" {
             div.sa-author {
                 @if !b.avatar.is_empty() { img src=(b.avatar) alt="" width="24" height="24" loading="lazy"; }
                 (b.name)
             }
-            div.sa-title { @if sample.title.is_empty() { (b.name) " is live" } @else { (sample.title) } }
+            a.sa-title href=(b.url()) target="_blank" rel="noopener" { @if sample.title.is_empty() { (b.name) " is live" } @else { (sample.title) } }
             div.sa-fields {
                 @if !sample.game.is_empty() { div { b { "Playing" } span { (sample.game) } } }
-                div { b { "Started" } span { (sample.started) } }
+                div { b { "Started" } span { span.sa-ts { (sample.started) } } }
             }
-            @match &sample.thumb {
-                Some(src) => { img.sa-thumb src=(src) alt="" width="640" height="360" loading="lazy"; }
-                None => { div.sa-thumb { (ui::icon(Icon::Live)) span { "Stream thumbnail" } } }
+            div.sa-media {
+                @match &sample.thumb {
+                    Some(src) => { img src=(src) alt="" width="640" height="360" loading="lazy"; }
+                    None => { div.sa-thumb { (ui::icon(Icon::Live)) span { "The stream's picture" } } }
+                }
             }
             div.sa-foot { "Twitch" }
         }
-        a.sa-watch href=(b.url()) target="_blank" rel="noopener" { "Watch on Twitch" (ui::icon(Icon::External)) }
+        div.sa-buttons { a.sa-watch href=(b.url()) target="_blank" rel="noopener" { "Watch on Twitch" (ui::icon(Icon::External)) } }
     })
 }
 
@@ -195,7 +289,7 @@ fn reminder_post(ctx: &Ctx, page: &Page, tz: &TimeZone, role: Option<String>, b:
     let at = zoned(start, tz).map(|z| z.strftime("%-I:%M %p").to_string()).unwrap_or_default();
     let (title, game) = seg.map(|g| (g.title.as_str(), g.game.as_str())).unwrap_or(("Your stream title", "Just Chatting"));
     let when = in_minutes(minutes);
-    bot_message(ctx, page, html! {
+    bot_message(ctx, page, None, html! {
         div.sa-line {
             (ping(role))
             (b.name) " streams " span.sa-ts { (when) } " at " span.sa-ts { (at) }
@@ -223,7 +317,7 @@ fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &
     let url = v.url();
     let filled = youtube::fill_video(template, &v.author, &v.title, &url);
     let unfurls = filled.contains(&url);
-    bot_message(ctx, page, html! {
+    bot_message(ctx, page, None, html! {
         div.sa-line.sa-pre {
             (ping(role))
             @for (i, part) in filled.split(url.as_str()).enumerate() {
@@ -236,17 +330,17 @@ fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &
                 div.sa-provider { "YouTube" }
                 div.sa-author { (v.author) }
                 a.sa-title href=(url) target="_blank" rel="noopener" { (v.title) }
-                div.sa-yt {
+                div.sa-media {
                     @if v.id.is_empty() {
-                        div.sa-thumb {}
+                        div.sa-thumb { (ui::icon(Icon::Play)) span { "The video's picture" } }
                     } @else {
-                        img.sa-thumb src=(youtube::thumb(&v.id)) alt="" width="320" height="180" loading="lazy";
+                        img src=(video_thumb(&v.id)) alt="" width="320" height="180" loading="lazy";
                     }
-                    span.sa-play { (ui::icon(Icon::Play)) }
+                    (play(true))
                 }
             }
         }
-        @if let Some(label) = reward { span.sa-claim { (label) } }
+        @if let Some(label) = reward { div.sa-buttons { span.sa-claim { (label) } } }
     })
 }
 
@@ -378,7 +472,7 @@ fn events_block(ctx: &Ctx, mode: Mode, bs: &[Broadcaster]) -> Markup {
             div.rail-block {
                 h2 { "Twitch events" }
                 @for b in bs {
-                    @if bs.len() > 1 { p.small.sa-who { (b.name) } }
+                    @if bs.len() > 1 { p.small.sa-who-rail { (b.name) } }
                     @for (kind, label) in EVENT_KINDS {
                         @let (tone, text) = sub_status(states.get(&b.user_id).and_then(|m| m.get(*kind)).map(String::as_str));
                         div.mini {
@@ -415,97 +509,33 @@ fn events_block(ctx: &Ctx, mode: Mode, bs: &[Broadcaster]) -> Markup {
     }
 }
 
-/// The rail's "Hours streamed": this week's hours, stream count and average peak, then the bars.
-fn hours_block(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Markup {
+/// This week's hours, stream count and average peak: the channel strip's numbers.
+fn week_numbers(rows: &[StreamRow], tz: &TimeZone, now: i64) -> (i64, usize, Option<i64>) {
     let monday = day_ms(this_monday(tz, now), tz);
     let week: Vec<&StreamRow> = rows.iter().filter(|r| r.started_at >= monday).collect();
     let secs: i64 = week.iter().map(|r| stream_secs(r, now)).sum();
-    let peak = avg_peak(&week).map(|p| format!(" · average peak {}", text::num(p))).unwrap_or_default();
+    ((secs + 1800) / 3600, week.len(), avg_peak(&week))
+}
+
+/// The rail's "Hours streamed": the last twelve weeks as bars.
+fn hours_block(rows: &[StreamRow], tz: &TimeZone, now: i64) -> Markup {
     let series = weekly_hours(rows, tz, now);
+    let total: i64 = series.iter().map(|(_, h)| h).sum();
     html! {
         div.rail-block {
-            h2 { "Hours streamed" }
-            span.big-num { ((secs + 1800) / 3600) " h" }
-            p.muted.small { "This week · " (plural(week.len(), "stream", "streams")) (peak) }
+            h2 { "Hours streamed" span.muted.small { "12 weeks" } }
             @if rows.is_empty() {
                 p.muted.small { "Streams show up here once they end." }
             } @else {
+                span.sa-big { b data-count { (text::num(total)) " h" } }
                 (week_bars(&series))
-                span.muted.small { "Last 12 weeks" }
+                span.muted.small { "Each bar is a week, this one lit." }
             }
         }
     }
 }
 
-const CSS: &str = r#"
-.sa-main { min-width: 0; }
-.sa-linked a { color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
-.sa-sechead { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.sa-sechead h2 { font-size: 14px; }
-.sa-post { display: flex; align-items: flex-start; gap: 14px; min-width: 0; color: #dbdee1; font: 15px/1.4 var(--sans); }
-.sa-av { flex: none; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
-.sa-av.letter { display: grid; place-items: center; background: var(--signal); color: var(--signal-ink); font-weight: 600; font-size: 17px; text-transform: uppercase; }
-.sa-post-main { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; flex: 1; }
-.sa-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.sa-name { color: #f2f3f5; font-weight: 500; }
-.sa-app { background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; border-radius: 3px; padding: 1px 4px; line-height: 12px; }
-.sa-time { color: #949ba4; font-size: 12px; }
-.sa-line { overflow-wrap: anywhere; max-width: 100%; }
-.sa-line a, a.sa-title { color: #00a8fc; }
-.sa-pre { white-space: pre-wrap; }
-.sa-ts { background: rgba(255, 255, 255, 0.06); border-radius: 3px; padding: 0 2px; }
-.sa-provider { font-size: 12px; color: #b5bac1; }
-.sa-yt { position: relative; }
-.sa-play { position: absolute; inset: 0; margin: auto; width: 48px; height: 48px; border-radius: 50%; background: rgba(0, 0, 0, 0.6); color: #fff; display: grid; place-items: center; }
-.sa-play .icon { width: 20px; height: 20px; }
-.sa-ping { background: rgba(88, 101, 242, 0.3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; }
-.sa-embed { align-self: stretch; max-width: 480px; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 12px 16px 16px 14px; background: #2b2d31; border-left: 4px solid var(--embed, #1e1f22); border-radius: 4px; }
-.sa-author { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #f2f3f5; }
-.sa-author img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
-.sa-title { font-size: 15px; font-weight: 600; color: #00a8fc; overflow-wrap: anywhere; }
-.sa-fields { display: flex; flex-wrap: wrap; gap: 8px 32px; font-size: 13.5px; }
-.sa-fields div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.sa-fields b { color: #f2f3f5; font-weight: 600; }
-.sa-fields span { overflow-wrap: anywhere; }
-.sa-thumb { width: 100%; height: auto; margin-top: 4px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 4px; background: linear-gradient(160deg, #3a3d44, #1e1f22); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #80848e; font-size: 12px; }
-.sa-thumb .icon { width: 26px; height: 26px; }
-.sa-foot { font-size: 12px; color: #b5bac1; }
-.sa-watch { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 16px; border-radius: 4px; background: #4e5058; color: #fff; font-size: 14px; font-weight: 500; }
-.sa-watch .icon { width: 14px; height: 14px; }
-.sa-watch:hover { background: #6d6f78; }
-.sa-claim { display: inline-flex; align-items: center; height: 32px; padding: 0 16px; margin-top: 4px; border-radius: 4px; background: #248046; color: #fff; font-size: 14px; font-weight: 500; }
-.sa-claims { display: flex; align-items: center; gap: 8px; flex: none; }
-.sa-claims .mono { font-size: 12px; color: var(--ink-2); }
-.sa-note { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: var(--ink-3); max-width: 72ch; }
-.sa-note > .icon { margin-top: 3px; flex: none; }
-.sa-note p + p { margin-top: 4px; }
-.sa-note code { color: var(--ink-2); }
-.sa-live { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; color: var(--ink-2); }
-.sa-live strong { font-weight: 500; color: var(--ink); }
-.sa-live .muted { font-size: 12px; }
-.sa-week { display: flex; flex-direction: column; gap: 2px; margin: 0 -8px; }
-.sa-seg { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 8px; border-radius: var(--r-key); font-size: 13px; color: var(--ink-2); }
-.sa-seg .day { font: 12px var(--mono); color: var(--ink-3); }
-.sa-seg .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sa-seg .when { font: 12px var(--mono); white-space: nowrap; }
-.sa-seg.past { color: var(--ink-3); }
-.sa-seg.on { background: var(--selected); color: var(--ink); }
-.sa-seg.on .day, .sa-seg.on .when { color: var(--ink); }
-.sa-seg.off .what { text-decoration: line-through; color: var(--ink-3); }
-.sa-seg.off .when { font-family: var(--sans); color: var(--ink-3); }
-.sa-stream { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.sa-vt { flex: none; width: 64px; height: 36px; border-radius: 4px; object-fit: cover; background: var(--well); display: grid; place-items: center; color: var(--ink-3); }
-.sa-vt .icon { width: 16px; height: 16px; }
-.sa-bad { background: var(--held); }
-.sa-who { font-weight: 500; margin-top: 4px; }
-.sa-note.sa-warn { color: var(--ink-2); }
-.sa-note.sa-warn > .icon { color: var(--waiting); }
-"#;
-
-/// Columns marked `.wide-only` drop on a phone so tables fit without scrolling sideways.
-fn narrow_css() -> Markup {
-    html! { style { "@media (max-width: 820px) { .wide-only { display: none; } }" } }
-}
+const CSS: &str = include_str!("style.css");
 
 // ---- Twitch ----
 
@@ -557,6 +587,10 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         _ => None,
     };
     let role = role_name(&ctx, guild, s.live_role);
+    let (week_h, week_n, week_peak) = week_numbers(&rows, &tz, now);
+    // The channel at the top: the one that's live, else the first the server follows.
+    let top = live.as_ref().and_then(|r| bs.iter().find(|b| b.user_id == r.broadcaster_id)).or(bs.first());
+    let others: Vec<String> = bs.iter().filter(|b| Some(b.login.as_str()) != top.map(|t| t.login.as_str())).map(|b| b.name.clone()).collect();
 
     let body = html! {
         style { (PreEscaped(CSS)) }
@@ -566,17 +600,19 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
             div.stack.sa-main {
                 @if mode == Mode::Off {
                     div.sa-note {
-                        (ui::icon(Icon::Plug))
+                        span.need-icon { (ui::icon(Icon::Plug)) }
                         div {
-                            p { "Twitch isn't connected. Set " code { "TWITCH_CLIENT_ID" } " and " code { "TWITCH_CLIENT_SECRET" } " in the bot's environment and restart it. Live alerts, viewer counts and the schedule all need them." }
+                            strong { "Twitch isn't connected" }
+                            p { "Set " code { "TWITCH_CLIENT_ID" } " and " code { "TWITCH_CLIENT_SECRET" } " in the bot's environment and restart it. Live alerts, viewer counts and the schedule all need them." }
                             p { "Add " code { "TWITCH_EVENTSUB_SECRET" } " and an https " code { "PUBLIC_URL" } " to get alerts the moment you go live instead of within 2 minutes." }
                         }
                     }
                 }
                 @if let Some((start, last)) = missed {
-                    div.sa-note.sa-warn role="status" {
-                        (ui::icon(Icon::Plug))
+                    div.sa-note.warn role="status" {
+                        span.need-icon { (ui::icon(Icon::Plug)) }
                         div {
+                            strong { "A stream went without an alert" }
                             p {
                                 "Twitch shows a stream that started " (text::ago(start)) ", but no event about it reached the bot"
                                 @match last { Some(at) => { " (the last one came " (text::ago(at)) ")" } None => {} }
@@ -586,38 +622,99 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         }
                     }
                 }
-                @if let Some(r) = &live {
-                    div.sa-live {
-                        span.dot.live {}
-                        span { "Live now · " strong { (r.title) } }
-                        span.muted { "started " (text::ago(r.started_at)) @if r.samples > 0 { " · peak " (text::num(r.peak)) } }
-                    }
-                }
-                section.block {
-                    div.sa-sechead {
-                        h2 { "What members see when you go live" }
-                        @if page.can_edit() { (ui::action_button(&page.path("alerts/test"), "Send a test alert", Tone::Muted, false)) }
-                    }
-                    (live_post(&ctx, &page, role, &line, &sample, &preview))
-                    p.muted.small {
-                        @if page.can_edit() {
-                            @match channel_name(&ctx, guild, s.live_channel) {
-                                Some(c) => { "Posts a sample in " (c) " without pinging anyone. " }
-                                None => { "Pick a channel below and save first. " }
+                section.sa-chan.live[live.is_some()] {
+                    a.stream-card href=[top.map(Broadcaster::url)] target="_blank" rel="noopener" aria-label=[top.map(|b| format!("{} on Twitch", b.name))] {
+                        (stream_pic(shown))
+                        @if live.is_some() { span.live-tag { "LIVE" } }
+                        div.stream-cap {
+                            @match (&live, last) {
+                                (Some(r), _) => {
+                                    span { @if r.game.is_empty() { "Live now" } @else { (r.game) } }
+                                    strong { @if r.title.is_empty() { "Untitled stream" } @else { (r.title) } }
+                                }
+                                (None, Some(r)) => {
+                                    span { "Last stream · " (zoned(r.started_at, &tz).map(|z| z.strftime("%b %-d").to_string()).unwrap_or_default()) @if !r.game.is_empty() { " · " (r.game) } }
+                                    strong { @if r.title.is_empty() { "Untitled stream" } @else { (r.title) } }
+                                }
+                                _ => {
+                                    span { "No streams yet" }
+                                    strong { "Each one is recorded when it ends" }
+                                }
                             }
                         }
-                        (mode_line(mode))
                     }
-                    @if mode != Mode::Off && !missing.is_empty() {
-                        p.small { (ui::badge("Not found", Tone::Warn)) " Twitch hasn't confirmed " (missing.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(", ")) " yet. Check the spelling." }
+                    div.sa-chan-text {
+                        @match top {
+                            Some(b) => {
+                                div.sa-who {
+                                    (face(b, 50))
+                                    div {
+                                        strong { (b.name) }
+                                        a href=(b.url()) target="_blank" rel="noopener" { "twitch.tv/" (b.login) }
+                                    }
+                                }
+                            }
+                            None => {
+                                div.sa-who {
+                                    span.sa-letter style="width:50px;height:50px" { (ui::icon(Icon::Live)) }
+                                    div {
+                                        strong { "No Twitch channel yet" }
+                                        span.muted.small { "Add yours below. The bot looks it up on Twitch when you save." }
+                                    }
+                                }
+                            }
+                        }
+                        p.sa-state {
+                            @match (&live, last) {
+                                (Some(r), _) => {
+                                    span.dot.live {}
+                                    "Live now, started " (text::ago(r.started_at))
+                                    @if r.samples > 0 { " · peak " (text::num(r.peak)) " viewers" }
+                                }
+                                (None, Some(r)) => { span.dot {} "Offline · last streamed " (text::ago(r.started_at)) " for " (text::duration(r.duration_secs)) }
+                                _ => { span.dot {} "Offline · no stream recorded yet" }
+                            }
+                        }
+                        @if !others.is_empty() { p.sa-others { "Also follows " (join_and(&others)) "." } }
+                        (route(&ctx, guild, s.live_channel, s.live_role))
+                        div.sa-nums {
+                            div { b data-count { (week_h) " h" } span { "this week" } }
+                            div { b data-count { (week_n) } span { (if week_n == 1 { "stream" } else { "streams" }) } }
+                            div { b data-count { (week_peak.map(text::num).unwrap_or_else(|| "none yet".into())) } span { "average peak" } }
+                        }
                     }
                 }
-                (ui::settings_form(&page, &page.path("alerts"), ui::card(html! {
-                    (ui::field_text("twitch_logins", "Twitch channel", Some("The name in twitch.tv/name. Separate several with commas."), &s.twitch_logins.join(", "), "yourname"))
-                    (ui::field_channel(&ctx, guild, "live_channel", "Post in", None, s.live_channel))
-                    (ui::field_role(&ctx, guild, "live_role", "Ping", Some("Only this role is pinged."), s.live_role))
-                    (ui::field_text("live_message", "Message", Some("{streamer}, {title}, {game} and {url} are filled in."), &s.live_message, crate::DEFAULT_LIVE_MESSAGE))
-                })))
+                // The settings and what they produce, side by side on a wide screen.
+                div.compose {
+                    section.block.compose-preview {
+                        div.sa-sechead {
+                            div {
+                                h2 { "What members see when you go live" }
+                                p.muted { "The post appears the moment Twitch says you're live, with your stream's picture." }
+                            }
+                            @if page.can_edit() { (ui::action_button(&page.path("alerts/test"), "Send a test alert", Tone::Muted, false)) }
+                        }
+                        (discord(channel_name(&ctx, guild, s.live_channel), "No channel picked", live_post(&ctx, &page, role, &line, &sample, &preview)))
+                        p.sa-foot-note {
+                            @if page.can_edit() {
+                                @match channel_name(&ctx, guild, s.live_channel) {
+                                    Some(c) => { "The test posts a sample in " (c) " without pinging anyone. " }
+                                    None => { "Pick a channel below and save first. " }
+                                }
+                            }
+                            (mode_line(mode))
+                        }
+                        @if mode != Mode::Off && !missing.is_empty() {
+                            p.small { (ui::badge("Not found", Tone::Warn)) " Twitch hasn't confirmed " (missing.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(", ")) " yet. Check the spelling." }
+                        }
+                    }
+                    (ui::settings_form(&page, &page.path("alerts"), ui::section("Settings", None, ui::card(html! {
+                        (ui::field_text("twitch_logins", "Twitch channel", Some("The name in twitch.tv/name. Separate several with commas."), &s.twitch_logins.join(", "), "yourname"))
+                        (ui::field_channel(&ctx, guild, "live_channel", "Post in", None, s.live_channel))
+                        (ui::field_role(&ctx, guild, "live_role", "Ping", Some("Only this role is pinged."), s.live_role))
+                        (ui::field_text("live_message", "Message", Some("{streamer}, {title}, {game} and {url} are filled in."), &s.live_message, crate::DEFAULT_LIVE_MESSAGE))
+                    }))))
+                }
             }
             aside.rail {
                 (week_block(&tz, !bs.is_empty(), &week, &s, now))
@@ -702,7 +799,7 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let tz = s.tz();
     let mode = twitch::mode(&ctx);
-    let (bs, _, week) = schedule::week(&ctx, &s);
+    let (bs, monday, week) = schedule::week(&ctx, &s);
     let ids: Vec<String> = bs.iter().map(|b| b.user_id.clone()).collect();
     let now = now_ms();
     let upcoming = schedule::segments(&ctx, &ids, now, now + 14 * 86_400_000);
@@ -714,78 +811,174 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let sample = sample_broadcaster(&bs, &s);
     let role = role_name(&ctx, guild, s.reminder_role);
     let hours: Vec<(String, String)> = (0..24).map(|h| (h.to_string(), format!("{h:02}:00"))).collect();
+    let today_d = today(now, &tz);
+    let next_id = next.map(|g| g.id.as_str());
+    // This week a day at a time, Monday first, with what's on each.
+    let days: Vec<(Date, Vec<&schedule::Segment>)> = (0..7)
+        .map(|d| {
+            let date = monday.checked_add(Span::new().days(d)).unwrap_or(monday);
+            (date, week.iter().filter(|g| zoned(g.starts_at, &tz).map(|z| z.date()) == Some(date)).collect())
+        })
+        .collect();
+    let remind_at = |start: i64| -> Vec<String> { minutes.iter().filter_map(|m| zoned(start - m * 60_000, &tz)).map(|z| z.strftime("%-I:%M %p").to_string()).collect() };
+    let reminders_ready = s.reminders && s.reminder_channel.is_some() && !minutes.is_empty();
+    let weekly = s.weekly_post && s.weekly_channel.is_some();
 
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Schedule"))
-        div.with-rail {
-            div.stack.sa-main {
-                (ui::section("This week", Some("What /schedule posts. The bot reads your Twitch schedule every 30 minutes."), html! {
-                    @if bs.is_empty() {
-                        (ui::empty(Icon::Calendar, "No Twitch channel yet", "Add your channel on the Twitch tab and its schedule shows up here."))
-                    } @else {
-                        img src=(page.path("alerts/schedule.png")) alt="This week's stream schedule" width="960" height="884" loading="lazy"
-                            style="width:100%;max-width:720px;height:auto;border-radius:10px;border:1px solid var(--edge-1);display:block";
-                    }
-                }))
-                section.block {
-                    div.sa-sechead { h2 { "What members see before a stream" } }
-                    (reminder_post(&ctx, &page, &tz, role, &sample, next, closest))
-                    p.muted.small {
-                        (reminder_line(&s))
-                        @if let Some(c) = channel_name(&ctx, guild, s.reminder_channel).filter(|_| s.reminders) { " Posted in " (c) "." }
+        @if bs.is_empty() {
+            (ui::empty(Icon::Calendar, "No Twitch channel yet", "Add your channel on the Twitch tab and its schedule shows up here."))
+        } @else if let Some(g) = next {
+            @let z = zoned(g.starts_at, &tz);
+            @let left = until(g.starts_at, now);
+            section.sa-next {
+                div.sa-cal aria-hidden="true" {
+                    span.m { (z.as_ref().map(|z| z.strftime("%b").to_string()).unwrap_or_default()) }
+                    b { (z.as_ref().map(|z| z.day().to_string()).unwrap_or_default()) }
+                    span.d { (z.as_ref().map(|z| z.strftime("%a").to_string()).unwrap_or_default()) }
+                }
+                div.grow {
+                    h2 { @if g.title.is_empty() { "Untitled stream" } @else { (g.title) } }
+                    p { "Next stream · " (when(g.starts_at, &tz)) @if !g.game.is_empty() { " · " (g.game) } }
+                    div.sa-route {
+                        @if reminders_ready {
+                            span.sa-tag { (ui::icon(Icon::Bell)) "Reminders at " (join_and(&remind_at(g.starts_at))) }
+                        } @else {
+                            span.sa-tag.none { "No reminders" }
+                        }
                     }
                 }
-                (narrow_css())
-                (ui::section("Coming up", None, html! {
+                div.sa-left {
+                    @if left == "now" { b { "Now" } span { "starting" } } @else { b data-count { (left.trim_start_matches("in ")) } span { "to go" } }
+                }
+            }
+        } @else {
+            (ui::empty(Icon::Calendar, "Nothing scheduled", if mode == Mode::Off { "Segments come from your Twitch schedule once Twitch is connected." } else { "Add segments to your schedule on Twitch. They show up here within 30 minutes." }))
+        }
+        @if !bs.is_empty() {
+            section.block {
+                div.sa-sechead {
+                    div {
+                        h2 { "This week" }
+                        p.muted { "From your Twitch schedule, read every 30 minutes. Times in " (s.timezone) "." }
+                    }
+                }
+                div.sa-days {
+                    @for (i, (date, segs)) in days.iter().enumerate() {
+                        @let is_today = *date == today_d;
+                        div.sa-day.today[is_today] style={ "--i:" (i) } {
+                            div.sa-day-h {
+                                span { (date.strftime("%a")) @if is_today { " · " span.today-tag { "today" } } }
+                                b { (date.day()) }
+                            }
+                            @for g in segs {
+                                @let what = if g.title.is_empty() { g.game.as_str() } else { g.title.as_str() };
+                                div.sa-slot.next[next_id == Some(g.id.as_str())].past[!g.canceled && g.starts_at < now].off[g.canceled] {
+                                    span.t { @if g.canceled { "Cancelled" } @else { (clock(g.starts_at, &tz)) } }
+                                    span.w { (what) }
+                                    @if !g.title.is_empty() && !g.game.is_empty() { span.g { (g.game) } }
+                                }
+                            }
+                            @if segs.is_empty() { span.sa-none { "No stream" } }
+                        }
+                    }
+                }
+            }
+        }
+        div.with-rail {
+            div.stack.sa-main {
+                (ui::section("Coming up", Some("The next two weeks."), html! {
                     @if upcoming.is_empty() {
                         (ui::empty(Icon::Calendar, "Nothing scheduled", if mode == Mode::Off { "Segments come from your Twitch schedule once Twitch is connected." } else { "Add segments to your schedule on Twitch. They show up here within 30 minutes." }))
                     } @else {
-                        div.table-wrap { table.table {
-                            thead { tr { th { "When" } th { "Title" } th.wide-only { "Category" } th {} } }
-                            tbody { @for g in &upcoming {
-                                tr {
-                                    td style="white-space:nowrap" { (when(g.starts_at, &tz)) }
-                                    td { @if g.title.is_empty() { span.muted { "Untitled" } } @else { (g.title) } }
-                                    td.muted.wide-only { (g.game) }
-                                    td.actions { @if g.canceled { (ui::badge("Cancelled", Tone::Muted)) } }
+                        div.sa-rows { @for g in &upcoming {
+                            @let z = zoned(g.starts_at, &tz);
+                            div.sa-row.off[g.canceled] {
+                                div.sa-date {
+                                    span { (z.as_ref().map(|z| z.strftime("%b").to_string()).unwrap_or_default()) }
+                                    b { (z.as_ref().map(|z| z.day().to_string()).unwrap_or_default()) }
                                 }
-                            } }
+                                div.grow {
+                                    strong { @if g.title.is_empty() { "Untitled" } @else { (g.title) } }
+                                    span { @if g.game.is_empty() { "No category" } @else { (g.game) } }
+                                }
+                                @if g.canceled {
+                                    (ui::badge("Cancelled", Tone::Muted))
+                                } @else {
+                                    div.sa-at {
+                                        b { (clock(g.starts_at, &tz)) }
+                                        span { (z.as_ref().map(|z| z.strftime("%a").to_string()).unwrap_or_default()) " · " (until(g.starts_at, now)) }
+                                    }
+                                }
+                            }
                         } }
                     }
                 }))
                 (ui::settings_form(&page, &page.path("alerts/schedule"), html! {
-                    (ui::section("Reminders", None, ui::card(html! {
-                        (ui::field_toggle("reminders", "Post reminders", Some("Skipped when you're already live."), s.reminders))
-                        (ui::field_channel(&ctx, guild, "reminder_channel", "Post in", None, s.reminder_channel))
-                        (ui::field_role(&ctx, guild, "reminder_role", "Role to ping", None, s.reminder_role))
-                        (ui::field_text("reminder_minutes", "When", Some("Minutes before a stream starts, separated by commas."), &minutes.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(", "), "60, 10"))
-                    })))
-                    (ui::section("Weekly image", None, ui::card(html! {
-                        (ui::field_toggle("weekly_post", "Post every Monday", None, s.weekly_post))
-                        (ui::field_channel(&ctx, guild, "weekly_channel", "Post in", None, s.weekly_channel))
-                        (ui::field_select("weekly_hour", "At", None, &hours, &s.weekly_hour.to_string()))
-                        (ui::field_text("timezone", "Time zone", Some("For the image, the Monday post and this page. A name like America/Toronto."), &s.timezone, crate::DEFAULT_TIMEZONE))
-                    })))
+                    // Each group of settings beside the post it shapes.
+                    div.compose {
+                        (ui::section("Reminders", None, ui::card(html! {
+                            (ui::field_toggle("reminders", "Post reminders", Some("Skipped when you're already live."), s.reminders))
+                            (ui::field_channel(&ctx, guild, "reminder_channel", "Post in", None, s.reminder_channel))
+                            (ui::field_role(&ctx, guild, "reminder_role", "Role to ping", None, s.reminder_role))
+                            (ui::field_text("reminder_minutes", "When", Some("Minutes before a stream starts, separated by commas."), &minutes.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(", "), "60, 10"))
+                        })))
+                        section.block.compose-preview {
+                            div.sa-sechead {
+                                div {
+                                    h2 { "What members see before a stream" }
+                                    p.muted { "The closest reminder. Discord shows each reader the time in their own zone." }
+                                }
+                            }
+                            (discord(channel_name(&ctx, guild, s.reminder_channel), "No channel picked", reminder_post(&ctx, &page, &tz, role, &sample, next, closest)))
+                            p.sa-foot-note { (reminder_line(&s)) }
+                        }
+                    }
+                    div.compose {
+                        (ui::section("Weekly image", None, ui::card(html! {
+                            (ui::field_toggle("weekly_post", "Post every Monday", None, s.weekly_post))
+                            (ui::field_channel(&ctx, guild, "weekly_channel", "Post in", None, s.weekly_channel))
+                            (ui::field_select("weekly_hour", "At", None, &hours, &s.weekly_hour.to_string()))
+                            (ui::field_text("timezone", "Time zone", Some("For the image, the Monday post and this page. A name like America/Toronto."), &s.timezone, crate::DEFAULT_TIMEZONE))
+                        })))
+                        @if !bs.is_empty() {
+                            section.block.compose-preview {
+                                div.sa-sechead {
+                                    div {
+                                        h2 { "What /schedule posts" }
+                                        p.muted { @if weekly { "The same picture goes up every Monday." } @else { "Members can ask for it any time. The Monday post is off." } }
+                                    }
+                                }
+                                (discord(if weekly { channel_name(&ctx, guild, s.weekly_channel) } else { None }, "Wherever someone uses it", bot_message(&ctx, &page, (!weekly).then_some("/schedule"), html! {
+                                    div.sa-media.sheet {
+                                        img src=(page.path("alerts/schedule.png")) alt="This week's stream schedule" width="960" height="884" loading="lazy";
+                                    }
+                                })))
+                            }
+                        }
+                    }
                 }))
             }
             aside.rail {
                 div.rail-block {
-                    h2 { "Next stream" }
-                    @if let Some(g) = next {
-                        div.next-stream {
-                            strong { (when(g.starts_at, &tz)) }
-                            span { (until(g.starts_at, now)) }
-                            @if !g.title.is_empty() { span.muted { (g.title) } }
-                        }
-                    } @else {
-                        p.muted.small { (if mode == Mode::Off { "Segments come from your Twitch schedule once Twitch is connected." } else { "Nothing on the schedule yet." }) }
-                    }
+                    h2 { "Left this week" }
+                    span.sa-big { b data-count { (week_left) } }
+                    p.muted.small { (if week_left == 1 { "stream still to come" } else { "streams still to come" }) }
                 }
                 div.rail-block {
-                    h2 { "Left this week" }
-                    span.big-num { (week_left) }
-                    p.muted.small { (reminder_line(&s)) }
+                    h2 { "Reminders" (ui::status(if reminders_ready { ui::Dot::Live } else { ui::Dot::Off }, if reminders_ready { "On" } else { "Off" })) }
+                    @if !minutes.is_empty() && s.reminders {
+                        div.sa-route { @for m in &minutes { span.sa-tag { (ui::icon(Icon::Clock)) (m) " min before" } } }
+                    }
+                    (route(&ctx, guild, s.reminder_channel, s.reminder_role))
+                }
+                div.rail-block {
+                    h2 { "Monday post" (ui::status(if weekly { ui::Dot::Live } else { ui::Dot::Off }, if weekly { "On" } else { "Off" })) }
+                    p.muted.small {
+                        @if weekly { "Mondays at " (format!("{:02}:00", s.weekly_hour)) " in " (channel_name(&ctx, guild, s.weekly_channel).unwrap_or_default()) ", if anything is scheduled." }
+                        @else { "Turn it on below to post the week's picture every Monday." }
+                    }
                 }
             }
         }
@@ -857,21 +1050,69 @@ async fn schedule_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 /// A clip post as Discord shows it: the line with the link, then the card Discord draws for it.
 fn clip_post(ctx: &Ctx, page: &Page, b: &Broadcaster, c: &clips::Clip) -> Markup {
     let text = clips::headline(c);
-    bot_message(ctx, page, html! {
+    bot_message(ctx, page, None, html! {
         div.sa-line { (text) br; a href=(c.url) target="_blank" rel="noopener" { (c.url) } }
         div.sa-embed style="--embed:#9146ff" {
             div.sa-provider { "Twitch" }
             a.sa-title href=(c.url) target="_blank" rel="noopener" { (c.title) " - " (b.name) }
-            div.sa-yt {
+            div.sa-media {
                 @if c.thumbnail.is_empty() {
-                    div.sa-thumb {}
+                    div.sa-thumb { (ui::icon(Icon::Play)) span { "The clip's picture" } }
                 } @else {
-                    img.sa-thumb src=(c.thumbnail) alt="" width="480" height="272" loading="lazy";
+                    img src=(c.thumbnail) alt="" width="480" height="272" loading="lazy";
                 }
-                span.sa-play { (ui::icon(Icon::Play)) }
+                (play(false))
             }
         }
     })
+}
+
+/// How many cells are left empty in the gallery's last row of three, with the first tile
+/// taking four when there are at least three.
+fn gallery_gap(n: usize) -> usize {
+    let cells = if n >= 3 { n + 3 } else { n };
+    (3 - cells % 3) % 3
+}
+
+/// The tile that fills the rest of the gallery's last row: a link to everything on the site.
+fn more_tile(n: usize, href: &str, label: &str, host: &str) -> Markup {
+    let gap = gallery_gap(n);
+    html! {
+        @if gap > 0 {
+            a.sa-more href=(href) target="_blank" rel="noopener" style={ "grid-column:span " (gap) ";--i:" (n) } {
+                span.need-icon { (ui::icon(Icon::External)) }
+                strong { (label) }
+                span { (host) }
+            }
+        }
+    }
+}
+
+/// Clips as a gallery: the newest large when there are enough to fill around it.
+fn clip_gallery(list: &[clips::Clip], channel: Option<&Broadcaster>) -> Markup {
+    let big = list.len() >= 3;
+    html! {
+        div.sa-gallery {
+            @for (i, c) in list.iter().enumerate() {
+                a.stream-card.sa-tile.big[big && i == 0] href=(c.url) target="_blank" rel="noopener" style={ "--i:" (i) } {
+                    @if c.thumbnail.is_empty() {
+                        span.stream-ph { (ui::icon(Icon::Play)) }
+                    } @else {
+                        img src=(c.thumbnail) alt="" loading="lazy";
+                    }
+                    span.sa-glass.l { (text::num(c.views)) (if c.views == 1 { " view" } else { " views" }) }
+                    (play(false))
+                    div.stream-cap {
+                        span { @if !c.creator.is_empty() { "Clipped by " (c.creator) " · " } (text::ago(c.created_at)) }
+                        strong { (if c.title.is_empty() { "Untitled clip" } else { c.title.as_str() }) }
+                    }
+                }
+            }
+            @if let Some(b) = channel {
+                (more_tile(list.len(), &format!("{}/clips", b.url()), "Every clip on Twitch", &format!("twitch.tv/{}/clips", b.login)))
+            }
+        }
+    }
 }
 
 async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
@@ -895,68 +1136,92 @@ async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
         created_at: now,
     });
     let posting = s.clips && s.clips_channel.is_some();
+    // Who made the recent clips, most first.
+    let mut clippers: Vec<(String, usize)> = Vec::new();
+    for c in list.iter().filter(|c| !c.creator.is_empty()) {
+        match clippers.iter_mut().find(|(n, _)| *n == c.creator) {
+            Some((_, n)) => *n += 1,
+            None => clippers.push((c.creator.clone(), 1)),
+        }
+    }
+    clippers.sort_by_key(|c| std::cmp::Reverse(c.1));
+    let views: i64 = list.iter().map(|c| c.views).sum();
 
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Clips"))
+        @if mode == Mode::Off {
+            div.sa-note {
+                span.need-icon { (ui::icon(Icon::Plug)) }
+                div {
+                    strong { "Twitch isn't connected" }
+                    p { "Clips can't be read until it is. Set " code { "TWITCH_CLIENT_ID" } " and " code { "TWITCH_CLIENT_SECRET" } " in the bot's environment and restart it." }
+                }
+            }
+        }
+        section.block {
+            div.sa-sechead {
+                div {
+                    h2 { "Recent clips" }
+                    p.muted { "Clips made after posting was turned on. Older ones are never posted." }
+                }
+            }
+            @if list.is_empty() {
+                (ui::empty(Icon::Play, "No clips yet", if bs.is_empty() { "Add your Twitch channel on the Twitch tab, then turn clips on below." } else if !posting { "Turn clips on below. New clips show up here and in the channel you pick." } else { "New clips show up here within 15 minutes." }))
+            } @else {
+                (clip_gallery(&list, bs.first()))
+            }
+        }
         div.with-rail {
             div.stack.sa-main {
-                @if mode == Mode::Off {
-                    div.sa-note {
-                        (ui::icon(Icon::Plug))
-                        div { p { "Twitch isn't connected, so clips can't be read. Set " code { "TWITCH_CLIENT_ID" } " and " code { "TWITCH_CLIENT_SECRET" } " in the bot's environment and restart it." } }
-                    }
-                }
-                section.block {
-                    div.sa-sechead { h2 { "What members see for a new clip" } }
-                    (clip_post(&ctx, &page, &b, &sample))
-                    p.muted.small {
-                        @match (posting, channel_name(&ctx, guild, s.clips_channel)) {
-                            (true, Some(c)) => { "Posted in " (c) " within 15 minutes of Twitch listing the clip. Nobody is pinged." }
-                            (false, Some(_)) if !s.clips => { "Clip posts are off." }
-                            _ => { "Pick a channel below and save to start posting." }
+                div.compose {
+                    section.block.compose-preview {
+                        div.sa-sechead {
+                            div {
+                                h2 { "What members see for a new clip" }
+                                p.muted { "Discord turns the link into a player members can watch in the channel." }
+                            }
+                        }
+                        (discord(channel_name(&ctx, guild, s.clips_channel), "No channel picked", clip_post(&ctx, &page, &b, &sample)))
+                        p.sa-foot-note {
+                            @match (posting, channel_name(&ctx, guild, s.clips_channel)) {
+                                (true, Some(c)) => { "Posted in " (c) " within 15 minutes of Twitch listing the clip. Nobody is pinged." }
+                                (false, Some(_)) if !s.clips => { "Clip posts are off." }
+                                _ => { "Pick a channel below and save to start posting." }
+                            }
                         }
                     }
+                    (ui::settings_form(&page, &page.path("alerts/clips"), html! {
+                        (ui::section("Settings", None, ui::card(html! {
+                            (ui::field_toggle("clips", "Post new clips", Some("Clips of the channels on the Twitch tab, made by anyone."), s.clips))
+                            (ui::field_channel(&ctx, guild, "clips_channel", "Post in", None, s.clips_channel))
+                        })))
+                    }))
                 }
-                (ui::section("Recent clips", Some("Clips made after posting was turned on. Older ones are never posted."), html! {
-                    @if list.is_empty() {
-                        (ui::empty(Icon::Play, "No clips yet", if bs.is_empty() { "Add your Twitch channel on the Twitch tab, then turn clips on below." } else if !posting { "Turn clips on below. New clips show up here and in the channel you pick." } else { "New clips show up here within 15 minutes." }))
-                    } @else {
-                        div.list { @for c in &list {
-                            div.list-item {
-                                @if c.thumbnail.is_empty() {
-                                    span.sa-vt { (ui::icon(Icon::Play)) }
-                                } @else {
-                                    img.sa-vt src=(c.thumbnail) alt="" width="64" height="36" loading="lazy";
-                                }
-                                div.grow style="min-width:0" {
-                                    a.clip style="display:block" href=(c.url) target="_blank" rel="noopener" { (if c.title.is_empty() { "Untitled clip" } else { c.title.as_str() }) }
-                                    p.muted.small {
-                                        @if !c.creator.is_empty() { "Clipped by " (c.creator) " · " }
-                                        (text::num(c.views)) (if c.views == 1 { " view" } else { " views" })
-                                    }
-                                }
-                                span.meta { (text::ago(c.created_at)) }
-                            }
-                        } }
-                    }
-                }))
-                (ui::settings_form(&page, &page.path("alerts/clips"), html! {
-                    (ui::section("Settings", None, ui::card(html! {
-                        (ui::field_toggle("clips", "Post new clips", Some("Clips of the channels on the Twitch tab, made by anyone."), s.clips))
-                        (ui::field_channel(&ctx, guild, "clips_channel", "Post in", None, s.clips_channel))
-                    })))
-                }))
             }
             aside.rail {
                 div.rail-block {
-                    h2 { "Clips" }
-                    (ui::rail_numbers(&[("in 30 days", month.to_string())]))
+                    h2 { "Clips" (ui::status(if posting { ui::Dot::Live } else { ui::Dot::Off }, if posting { "Posting" } else { "Off" })) }
+                    div.rail-nums {
+                        div { b data-count { (text::num(month)) } span { "in 30 days" } }
+                        div { b data-count { (text::num(views)) } span { "views on recent clips" } }
+                    }
                     p.muted.small {
                         @if !posting { "Twitch is checked every 15 minutes while posting is on." }
                         @else {
                             "Checked every 15 minutes."
                             @match checked { Some(at) => { " Last check " (text::ago(at)) "." } None => { " The first check marks where posting starts." } }
+                        }
+                    }
+                }
+                @if !clippers.is_empty() {
+                    div.rail-block {
+                        h2 { "Who clips" }
+                        @for (name, n) in clippers.iter().take(5) {
+                            div.mini {
+                                span.sa-letter style="width:30px;height:30px;font-size:12px" { (name.chars().next().unwrap_or('?')) }
+                                span.grow { span { (name) } span.muted { (plural(*n, "clip", "clips")) } }
+                            }
                         }
                     }
                 }
@@ -996,70 +1261,89 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let rewards = youtube::rewards_on(&ctx, guild, &s);
     let claims = youtube::claims(&ctx, guild, &videos.iter().map(|v| v.id.clone()).collect::<Vec<_>>());
     let (claimed, xp_given) = youtube::claim_totals(&ctx, guild, now_ms() - 30 * 86_400_000);
+    let big = videos.len() >= 3;
+    // The newest upload's claimers, for the rail.
+    let newest_claims: Vec<u64> = videos.first().and_then(|v| claims.get(&v.id)).cloned().unwrap_or_default();
     let body = html! {
         style { (PreEscaped(CSS)) }
-        (narrow_css())
         (tabs(&page, "YouTube"))
         (toast_if(&q, "sent", "Test post sent"))
-        div.with-rail {
-            div.stack.sa-main {
-                section.block {
-                    div.sa-sechead {
-                        h2 { "What members see when you upload" }
-                        @if page.can_edit() && !videos.is_empty() { (ui::action_button(&page.path("alerts/youtube/test"), "Send a test post", Tone::Muted, false)) }
-                    }
-                    (video_post(&ctx, &page, role, &s.youtube_message, &sample, rewards.then(|| format!("Claim {} XP", text::num(s.reward_xp)))))
-                    p.muted.small {
-                        @match channel_name(&ctx, guild, s.youtube_channel) {
-                            Some(c) => {
-                                "Posted in " (c) " within 5 minutes of the upload."
-                                @if page.can_edit() && !videos.is_empty() { " The test posts your newest video there without pinging anyone." }
+        section.block {
+            div.sa-sechead {
+                div {
+                    h2 { "Recent uploads" }
+                    p.muted { "A channel's first check only records what's there, so old videos aren't posted." }
+                }
+            }
+            @if videos.is_empty() {
+                (ui::empty(Icon::Play, "No videos yet", if s.youtube_ids.is_empty() { "Add a YouTube channel below and its uploads show up here." } else { "Videos show up here after the next check." }))
+            } @else {
+                div.sa-gallery {
+                    @for (i, v) in videos.iter().enumerate() {
+                        @let who = claims.get(&v.id).map(Vec::as_slice).unwrap_or_default();
+                        a.stream-card.sa-tile.big[big && i == 0] href=(v.url()) target="_blank" rel="noopener" style={ "--i:" (i) } {
+                            img src=(video_thumb(&v.id)) alt="" loading="lazy";
+                            @if !who.is_empty() {
+                                span.sa-glass.r data-tip={ "Claimed the reward: " (who.len()) } {
+                                    (ui::avatars(&who.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), if big && i == 0 { 5 } else { 3 }))
+                                    (who.len()) " claimed"
+                                }
                             }
-                            None => { "Pick a channel below and save to start posting." }
-                        }
-                        @if rewards {
-                            " Each member can claim " (text::num(s.reward_xp)) " XP once per video, for " (plural(s.reward_hours as usize, "hour", "hours")) " after the post."
+                            (play(true))
+                            div.stream-cap {
+                                span { (v.author) " · " (text::ago(v.published_ms)) }
+                                strong { (v.title) }
+                            }
                         }
                     }
-                    @if s.reward && !levels_on {
-                        p.small { (ui::badge("Not added", Tone::Warn)) " XP and levels is off on this server, so posts don't carry the claim button." }
+                    @if let Some(id) = s.youtube_ids.first().filter(|id| youtube::is_channel_id(id)) {
+                        (more_tile(videos.len(), &format!("https://www.youtube.com/channel/{id}/videos"), "Every upload on YouTube", "youtube.com"))
                     }
                 }
-                (ui::section("Recent videos", Some("A channel's first check only records what's there, so old videos aren't posted."), html! {
-                    @if videos.is_empty() {
-                        (ui::empty(Icon::Play, "No videos yet", if s.youtube_ids.is_empty() { "Add a YouTube channel below and its uploads show up here." } else { "Videos show up here after the next check." }))
-                    } @else {
-                        div.list { @for v in &videos {
-                            div.list-item {
-                                img.sa-vt src=(youtube::thumb(&v.id)) alt="" width="64" height="36" loading="lazy";
-                                @let who = claims.get(&v.id).map(Vec::as_slice).unwrap_or_default();
-                                div.grow style="min-width:0" {
-                                    a.clip style="display:block" href=(v.url()) target="_blank" rel="noopener" { (v.title) }
-                                    p.muted.small { (v.author) " · " (text::ago(v.published_ms)) }
-                                }
-                                @if !who.is_empty() {
-                                    span.sa-claims title={ (who.len()) " claimed the reward" } {
-                                        span.wide-only { (ui::avatars(&who.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), 4)) }
-                                        span.mono { (who.len()) " claimed" }
-                                    }
-                                }
+            }
+        }
+        div.with-rail {
+            div.stack.sa-main {
+                div.compose {
+                    section.block.compose-preview {
+                        div.sa-sechead {
+                            div {
+                                h2 { "What members see when you upload" }
+                                p.muted { "Discord turns the link into the video's card." }
                             }
-                        } }
+                            @if page.can_edit() && !videos.is_empty() { (ui::action_button(&page.path("alerts/youtube/test"), "Send a test post", Tone::Muted, false)) }
+                        }
+                        (discord(channel_name(&ctx, guild, s.youtube_channel), "No channel picked", video_post(&ctx, &page, role, &s.youtube_message, &sample, rewards.then(|| format!("Claim {} XP", text::num(s.reward_xp))))))
+                        p.sa-foot-note {
+                            @match channel_name(&ctx, guild, s.youtube_channel) {
+                                Some(c) => {
+                                    "Posted in " (c) " within 5 minutes of the upload."
+                                    @if page.can_edit() && !videos.is_empty() { " The test posts your newest video there without pinging anyone." }
+                                }
+                                None => { "Pick a channel below and save to start posting." }
+                            }
+                            @if rewards {
+                                " Each member can claim " (text::num(s.reward_xp)) " XP once per video, for " (plural(s.reward_hours as usize, "hour", "hours")) " after the post."
+                            }
+                        }
+                        @if s.reward && !levels_on {
+                            p.small { (ui::badge("Not added", Tone::Warn)) " XP and levels is off on this server, so posts don't carry the claim button." }
+                        }
                     }
-                }))
-                (ui::settings_form(&page, &page.path("alerts/youtube"), html! {
-                    (ui::section("Settings", None, ui::card(html! {
-                        (ui::field_text("youtube_ids", "YouTube channels", Some("A channel link, @handle or ID (starts with UC). Separate several with commas."), &s.youtube_ids.join(", "), "@yourchannel"))
-                        (ui::field_channel(&ctx, guild, "youtube_channel", "Post in", None, s.youtube_channel))
-                        (ui::field_role(&ctx, guild, "youtube_role", "Role to ping", Some("Only this role is pinged."), s.youtube_role))
-                        (ui::field_textarea("youtube_message", "Message", Some("{channel}, {title} and {url} are filled in. Keep {url} so Discord shows the video."), &s.youtube_message, crate::DEFAULT_VIDEO_MESSAGE))
-                    })))
-                    (ui::section("Upload rewards", Some("A button on each new video post that gives XP through XP and levels."), ui::card(html! {
-                        (ui::field_toggle("reward", "Add a claim button", Some("Once per member per video."), s.reward))
-                        (ui::field_number("reward_xp", "XP", None, s.reward_xp, 1, 10_000, Some("XP")))
-                        (ui::field_number("reward_hours", "Claim window", Some("How long after the post the button pays out."), s.reward_hours, 1, 168, Some("hours")))
-                    })))
-                }))
+                    (ui::settings_form(&page, &page.path("alerts/youtube"), html! {
+                        (ui::section("Settings", None, ui::card(html! {
+                            (ui::field_text("youtube_ids", "YouTube channels", Some("A channel link, @handle or ID (starts with UC). Separate several with commas."), &s.youtube_ids.join(", "), "@yourchannel"))
+                            (ui::field_channel(&ctx, guild, "youtube_channel", "Post in", None, s.youtube_channel))
+                            (ui::field_role(&ctx, guild, "youtube_role", "Role to ping", Some("Only this role is pinged."), s.youtube_role))
+                            (ui::field_textarea("youtube_message", "Message", Some("{channel}, {title} and {url} are filled in. Keep {url} so Discord shows the video."), &s.youtube_message, crate::DEFAULT_VIDEO_MESSAGE))
+                        })))
+                        (ui::section("Upload rewards", Some("A button on each new video post that gives XP through XP and levels."), ui::card(html! {
+                            (ui::field_toggle("reward", "Add a claim button", Some("Once per member per video."), s.reward))
+                            (ui::field_number("reward_xp", "XP", None, s.reward_xp, 1, 10_000, Some("XP")))
+                            (ui::field_number("reward_hours", "Claim window", Some("How long after the post the button pays out."), s.reward_hours, 1, 168, Some("hours")))
+                        })))
+                    }))
+                }
             }
             aside.rail {
                 div.rail-block {
@@ -1069,7 +1353,7 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     } @else {
                         @for (n, (_, latest)) in feeds.iter().enumerate() {
                             div.mini {
-                                (ui::icon(Icon::Play))
+                                span.sa-chip-icon.yt { (ui::icon(Icon::Play)) }
                                 span.grow {
                                     @match latest {
                                         Some(v) => { span { (v.author) } span.muted { "Last upload " (text::ago(v.published_ms)) } }
@@ -1078,12 +1362,30 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                 }
                             }
                         }
+                        (route(&ctx, guild, s.youtube_channel, s.youtube_role))
                     }
                 }
                 @if s.reward || claimed > 0 {
                     div.rail-block {
-                        h2 { "Rewards" }
-                        (ui::rail_numbers(&[("claims in 30 days", text::num(claimed)), ("XP given", text::num(xp_given))]))
+                        h2 { "Rewards" (ui::status(if rewards { ui::Dot::Live } else { ui::Dot::Off }, if rewards { "On" } else { "Off" })) }
+                        div.rail-nums {
+                            div { b data-count { (text::num(claimed)) } span { "claims in 30 days" } }
+                            div { b data-count { (text::num(xp_given)) } span { "XP given" } }
+                        }
+                    }
+                }
+                @if !newest_claims.is_empty() {
+                    div.rail-block {
+                        h2 { "Claimed the newest" span.muted.small { (newest_claims.len()) } }
+                        div.sa-claimers {
+                            @for u in newest_claims.iter().take(6) {
+                                div.mini {
+                                    img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="30" height="30" loading="lazy";
+                                    span.grow { span { (ctx.display_name(guild, *u)) } span.muted { "+" (text::num(s.reward_xp)) " XP" } }
+                                }
+                            }
+                        }
+                        @if newest_claims.len() > 6 { p.muted.small { "and " (newest_claims.len() - 6) " more" } }
                     }
                 }
             }
@@ -1221,7 +1523,7 @@ fn followers_block(days: &[(String, i64)], why: NoFollowers, reviews_link: Optio
         div.rail-block {
             h2 { "Followers" }
             @if let Some((day, total)) = days.last() {
-                span.big-num { (text::num(*total)) }
+                span.sa-big { b data-count { (text::num(*total)) } }
                 p.muted.small { "Read once a day. Last read " (day.parse::<Date>().map(|d| d.strftime("%b %-d").to_string()).unwrap_or_default()) "." }
             } @else {
                 @match why {
@@ -1236,6 +1538,25 @@ fn followers_block(days: &[(String, i64)], why: NoFollowers, reviews_link: Optio
             }
         }
     }
+}
+
+/// Streams per category, most first. A stream that changed category counts for each.
+fn top_categories(rows: &[StreamRow]) -> Vec<(String, usize)> {
+    let mut out: Vec<(String, usize)> = Vec::new();
+    for r in rows {
+        let mut games: Vec<&str> = r.games.lines().filter(|g| !g.is_empty()).collect();
+        if games.is_empty() && !r.game.is_empty() {
+            games.push(&r.game);
+        }
+        for g in games {
+            match out.iter_mut().find(|(n, _)| n == g) {
+                Some((_, n)) => *n += 1,
+                None => out.push((g.to_owned(), 1)),
+            }
+        }
+    }
+    out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    out
 }
 
 async fn streams_redirect(Path(guild): Path<u64>) -> bot_core::axum::response::Redirect {
@@ -1264,75 +1585,122 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
     };
     let reviews_link = (ctx.enabled(guild, feat_reviews::KEY) && ctx.level(&page.user, guild, feat_reviews::KEY) >= Level::View).then(|| page.path("reviews/settings"));
     let viewers = weekly_viewers(&all, &tz, now);
-    let hours = weekly_hours(&all, &tz, now);
     let table = twitch::streams_since(&ctx, &ids, 0, 30)?;
+    let top_peak = table.iter().filter(|r| r.samples > 0).map(|r| r.peak).max().unwrap_or(0).max(1);
+    // Followers gained each day, from the daily totals. Drawn as an area ending today when the
+    // last total was read today.
+    let gains: Vec<(String, i64)> = followers
+        .windows(2)
+        .map(|w| (w[1].0.parse::<Date>().map(|d| d.strftime("%b %-d").to_string()).unwrap_or_default(), w[1].1 - w[0].1))
+        .collect();
+    let today_utc = Timestamp::from_millisecond(now).map(|t| t.to_zoned(TimeZone::UTC).date().to_string()).unwrap_or_default();
+    let gains_end_today = followers.last().is_some_and(|(d, _)| *d == today_utc);
+    let categories = top_categories(&all);
+    let cat_max = categories.first().map(|c| c.1).unwrap_or(1).max(1);
 
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Stats"))
         div.with-rail {
             div.stack.sa-main {
-                (ui::readings(&[
+                (readings(&[
                     ("streams this month", month.len().to_string()),
-                    ("hours this month", if month_secs == 0 { "0 h".to_owned() } else { text::duration(month_secs) }),
+                    ("hours this month", format!("{} h", (month_secs + 1800) / 3600)),
                     ("average viewers", avg_viewers(month.iter().copied()).map(text::num).unwrap_or_else(|| "none yet".into())),
                     followers_value,
                 ]))
-                section.block {
-                    div.sa-sechead {
-                        h2 { "Average viewers" }
-                        span.muted.small { "Each week, from counts read while you're live" }
+                // The two charts side by side once there's room (style.css, .sa-pair).
+                div.sa-pair {
+                    section.block.sa-chart {
+                        div.sa-sechead {
+                            div {
+                                h2 { "Average viewers" }
+                                p.muted { "Each week, from counts read every few minutes while you're live." }
+                            }
+                        }
+                        @if viewers.iter().all(|(_, v)| v.is_none()) {
+                            (ui::empty(Icon::Chart, "No viewer counts yet", "The bot reads viewers every few minutes while you're live, and the chart fills in week by week."))
+                        } @else {
+                            (ui::column_bars(&viewers, "average viewers", &format!("Average viewers in each of the last {} weeks", viewers.len())))
+                        }
                     }
-                    @if viewers.iter().all(|(_, v)| v.is_none()) {
-                        (ui::empty(Icon::Chart, "No viewer counts yet", "The bot reads viewers every few minutes while you're live, and the chart fills in week by week."))
-                    } @else {
-                        (ui::column_bars(&viewers, "average viewers", &format!("Average viewers in each of the last {} weeks", viewers.len())))
+                    @if gains.len() >= 2 {
+                        section.block {
+                            div.sa-sechead {
+                                div {
+                                    h2 { "Followers gained" }
+                                    p.muted { "Each day, from the total Twitch reports once a day." }
+                                }
+                            }
+                            @if gains_end_today {
+                                (ui::area_chart(&gains, "followers"))
+                            } @else {
+                                (ui::column_bars(&gains.iter().map(|(l, v)| (l.clone(), Some(*v))).collect::<Vec<_>>(), "followers", "Followers gained each day"))
+                            }
+                        }
                     }
                 }
-                @if table.is_empty() {
-                    (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: date, length, categories, peak and average viewers."))
-                } @else {
-                    (narrow_css())
-                    (ui::section("Streams", Some("Your latest 30."), html! {
-                        div.table-wrap { table.table {
-                            thead { tr { th { "Date" } th { "Stream" } th.num { "Length" } th.num { "Peak" } th.num.wide-only { "Average" } th.wide-only {} } }
-                            tbody { @for r in &table {
+                section.block {
+                    div.sa-sechead {
+                        div {
+                            h2 { "Streams" }
+                            p.muted { "Your latest 30, each recorded when it ends." }
+                        }
+                    }
+                    @if table.is_empty() {
+                        (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: date, length, categories, peak and average viewers."))
+                    } @else {
+                        div.sa-rows.sa-streams {
+                            @for r in &table {
+                                @let live = r.ended_at.is_none();
                                 @let games = r.games_line();
-                                tr {
-                                    td style="white-space:nowrap" { (zoned(r.started_at, &tz).map(|z| z.strftime("%b %-d").to_string()).unwrap_or_default()) }
-                                    td {
-                                        div.sa-stream {
-                                            @match r.thumbnail.is_empty() {
-                                                false => { img.sa-vt.wide-only src=(twitch::sized(&r.thumbnail, 320, 180)) alt="" width="64" height="36" loading="lazy"; }
-                                                true => { span.sa-vt.wide-only { (ui::icon(Icon::Live)) } }
-                                            }
-                                            div style="min-width:0" {
-                                                div { @if r.title.is_empty() { "Untitled stream" } @else { (r.title) } }
-                                                @if !games.is_empty() { div.muted.small { (games) } }
-                                            }
+                                div.sa-row {
+                                    div.sa-vt {
+                                        @match r.thumbnail.is_empty() {
+                                            false => { img src=(twitch::sized(&r.thumbnail, 320, 180)) alt="" width="112" height="63" loading="lazy"; }
+                                            true => { (ui::icon(Icon::Live)) }
+                                        }
+                                        @if live { span.live-tag { "LIVE" } }
+                                    }
+                                    div.grow {
+                                        strong { @if r.title.is_empty() { "Untitled stream" } @else { (r.title) } }
+                                        span {
+                                            (zoned(r.started_at, &tz).map(|z| z.strftime("%b %-d").to_string()).unwrap_or_default())
+                                            " · " @if live { "live for " (text::duration((now - r.started_at) / 1000)) } @else { (text::duration(r.duration_secs)) }
+                                            @if !games.is_empty() { " · " (games) }
                                         }
                                     }
-                                    td.num style="white-space:nowrap" { @if r.ended_at.is_some() { (text::duration(r.duration_secs)) } @else { (ui::badge("Live", Tone::Ok)) } }
-                                    td.num { @if r.samples > 0 { (text::num(r.peak)) } }
-                                    td.num.wide-only { @if r.samples > 0 { (text::num(r.average)) } }
-                                    td.actions.wide-only { @if let Some(v) = &r.vod_url { a.btn.small href=(v) target="_blank" rel="noopener" { "VOD" } } }
+                                    div.sa-peak.wide-only {
+                                        @if r.samples > 0 {
+                                            div { span { "peak " b { (text::num(r.peak)) } } span { "avg " (text::num(r.average)) } }
+                                            span.meter { span style={ "width:" (r.peak * 100 / top_peak) "%" } {} }
+                                        } @else {
+                                            div { span { "No viewer counts" } }
+                                        }
+                                    }
+                                    div.sa-vod {
+                                        @if let Some(v) = &r.vod_url { a.btn.small href=(v) target="_blank" rel="noopener" { "VOD" } }
+                                    }
                                 }
-                            } }
-                        } }
-                    }))
+                            }
+                        }
+                    }
                 }
             }
             aside.rail {
-                div.rail-block {
-                    h2 { "Hours streamed" }
-                    @if all.is_empty() {
-                        p.muted.small { "Hours show up here once a stream ends." }
-                    } @else {
-                        (week_bars(&hours))
-                        span.muted.small { "Last 12 weeks" }
+                (hours_block(&all, &tz, now))
+                (followers_block(&followers, no_followers, reviews_link.as_deref()))
+                @if !categories.is_empty() {
+                    div.rail-block {
+                        h2 { "Categories" span.muted.small { "12 weeks" } }
+                        @for (i, (game, n)) in categories.iter().take(5).enumerate() {
+                            div.sa-cat style={ "--i:" (i) } {
+                                div { span { (game) } span.mono { (plural(*n, "stream", "streams")) } }
+                                span.meter { span style={ "width:" (n * 100 / cat_max) "%" } {} }
+                            }
+                        }
                     }
                 }
-                (followers_block(&followers, no_followers, reviews_link.as_deref()))
             }
         }
     };
@@ -1390,6 +1758,7 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
                 } @else {
                     img src=(twitch::sized(thumb, 640, 360)) alt="" loading="lazy";
                 }
+                @if live { span.live-tag { "LIVE" } }
                 div.stream-cap {
                     span { (if live { "Live now" } else { "Last stream" }) }
                     strong {
@@ -1549,6 +1918,25 @@ mod tests {
         // A stream with counts that were all zero is a real zero.
         let series = weekly_viewers(&[row("2026-11-02T19:00:00", 0)], &tz, now);
         assert_eq!(series[11], ("Nov 2".to_owned(), Some(0)));
+    }
+
+    #[test]
+    fn gallery_rows_fill() {
+        // The first tile takes four cells from three tiles on; the filler takes what's left.
+        assert_eq!(gallery_gap(1), 2);
+        assert_eq!(gallery_gap(2), 1);
+        assert_eq!(gallery_gap(3), 0);
+        assert_eq!(gallery_gap(4), 2);
+        assert_eq!(gallery_gap(5), 1);
+        assert_eq!(gallery_gap(6), 0);
+        assert_eq!(gallery_gap(12), 0);
+    }
+
+    #[test]
+    fn categories_count_each_stream_once_per_category() {
+        let row = |game: &str, games: &str| StreamRow { game: game.into(), games: games.into(), ..Default::default() };
+        let rows = [row("Hades II", "Hades II\nJust Chatting"), row("Hades II", "Hades II"), row("Balatro", "")];
+        assert_eq!(top_categories(&rows), vec![("Hades II".to_owned(), 2), ("Balatro".to_owned(), 1), ("Just Chatting".to_owned(), 1)]);
     }
 
     #[test]

@@ -46,23 +46,50 @@ fn open(ctx: &Ctx, user: &User, guild: u64, need: Level) -> WebResult<Page> {
 
 /// The five tabs, with the number of submissions waiting on Approvals.
 fn tabs(page: &Page, active: &str, waiting: i64) -> Markup {
-    let items = [
-        ("Collection", page.path("pets"), 0),
-        ("Approvals", page.path("pets/approvals"), waiting),
-        ("Giveaways", page.path("pets/giveaways"), 0),
-        ("Catalog", page.path("pets/catalog"), 0),
-        ("Bans", page.path("pets/bans"), 0),
-    ];
     html! {
         (view::style())
-        nav.tabs.pets-tabs {
-            @for (label, href, n) in &items {
-                a.tab.on[*label == active] href=(href) aria-current=[(*label == active).then_some("page")] {
-                    (label)
-                    @if *n > 0 { span.pets-tab-count { (text::num(*n)) } }
-                }
-            }
-        }
+        style { (PreEscaped(DASH_CSS)) }
+        (ui::tabs_counted(&[
+            ("Collection", page.path("pets"), None),
+            ("Approvals", page.path("pets/approvals"), (waiting > 0).then_some(waiting)),
+            ("Giveaways", page.path("pets/giveaways"), None),
+            ("Catalog", page.path("pets/catalog"), None),
+            ("Bans", page.path("pets/bans"), None),
+        ], active))
+    }
+}
+
+/// Styles only the dashboard's pet pages use: Discord's look for the announcement preview.
+const DASH_CSS: &str = r#"
+.pets-dc { border-radius: 12px; overflow: hidden; background: #313338; color: #dbdee1; font-size: 14.5px; box-shadow: 0 22px 44px -24px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+.pets-dc-head { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 14px; color: #f2f3f5; font-weight: 600; font-size: 14px; box-shadow: 0 1px 0 rgba(4, 4, 5, 0.25); }
+.pets-dc-head .icon { color: #80848e; width: 18px; height: 18px; }
+.pets-dc-msg { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 0 14px; padding: 12px 14px 16px; }
+.pets-dc-av { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+span.pets-dc-av { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
+span.pets-dc-av img { width: 22px; height: 22px; }
+.pets-dc-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.375; }
+.pets-dc-name strong { color: #f2f3f5; font-weight: 600; }
+.pets-dc-app { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font: 600 10px/1 var(--sans); }
+.pets-dc-time { color: #949ba4; font-size: 12px; }
+.pets-dc-text { line-height: 1.375; overflow-wrap: anywhere; }
+.pets-dc-text b { color: #f2f3f5; }
+.pets-dc-mention { background: rgba(88, 101, 242, 0.3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; font-weight: 500; }
+.pets-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 340px); gap: 20px; align-items: start; }
+.pets-split .pets-cap { font-size: 12.5px; color: var(--ink-3); margin-bottom: 8px; }
+@media (max-width: 1180px) { .pets-split { grid-template-columns: 1fr; } }
+"#;
+
+/// The bot as members see it: its name, and its avatar or the dashboard's mark while it isn't
+/// connected.
+fn bot_face(ctx: &Ctx) -> (String, Markup) {
+    let user = ctx.bot_id().and_then(|b| ctx.cache.user(Id::new(b)).map(|u| (b, u)));
+    match user {
+        Some((id, u)) => (
+            u.global_name.clone().unwrap_or_else(|| u.name.clone()),
+            html! { img.pets-dc-av src=(bot_core::discord::avatar_url(id, u.avatar.map(|a| a.to_string()).as_deref())) alt=""; },
+        ),
+        None => ("Bot".into(), html! { span.pets-dc-av { img src="/static/icon.svg" alt=""; } }),
     }
 }
 
@@ -111,23 +138,6 @@ fn members_datalist(ctx: &Ctx, guild: u64) -> Markup {
 
 const DAY_MS: i64 = 86_400_000;
 
-const COLLECTION_CSS: &str = "
-.pets-req { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; align-items: start; font-size: 13px; }
-.pets-req strong { font-weight: 500; }
-.pets-req-acts { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
-.pets-req-acts form { display: inline; }
-.pets-gv { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; font-size: 13px; }
-.pets-pair { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-3); }
-.pets-pair .avatar { width: 26px; height: 26px; }
-.pets-arrow { flex: none; margin: 0 1px; }
-.pets-gv .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pets-gv-state { font-size: 12px; white-space: nowrap; color: var(--ink-3); }
-.pets-gv-state.soon { color: var(--waiting); }
-.pets-gv-state.ok { color: var(--live); }
-.pets-gv-state.bad { color: var(--held); }
-.pets-foot { font-size: 12px; }
-";
-
 /// `"in 2 h"` style for a giveaway's expiry, read as "2 h left".
 fn left_text(expires_at: Option<i64>) -> String {
     match expires_at {
@@ -152,22 +162,23 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
     let find = |id: &str| catalog.iter().find(|p| p.id == id).cloned().unwrap_or_else(|| missing_pet(id));
 
     let groups = view::groups(&catalog);
+    // Where each category's tiles start in the page's one wave of arrivals.
+    let starts: Vec<usize> = groups.iter().scan(0, |n, (_, l)| { let at = *n; *n += l.len(); Some(at) }).collect();
     let actions = html! {
-        a.btn.small href={ "/p/" (guild) "/pets" } target="_blank" rel="noopener" { "Public page" (ui::icon(Icon::External)) }
+        a.btn.outline href={ "/p/" (guild) "/pets" } target="_blank" rel="noopener" { (ui::icon(Icon::External)) span.pop-label { "Public page" } }
     };
 
     let body = html! {
-        style { (PreEscaped(COLLECTION_CSS)) }
         (tabs(&page, "Collection", waiting))
         div.with-rail {
             div.stack.pets-main {
                 (view::collection_hero(&groups, &counts, week))
-
-                @for (i, (name, list)) in groups.iter().enumerate() {
-                    (ui::section(name, if i == 0 { Some("Faded ones aren't in the collection yet") } else { None }, html! {
+                @for (g, (name, list)) in groups.iter().enumerate() {
+                    @let have = list.iter().filter(|p| counts.contains_key(&p.id)).count();
+                    (ui::section(name, Some(&format!("{have} of {} collected{}", list.len(), if g == 0 { ". Faded ones aren't in the collection yet." } else { "" })), html! {
                         div.pets-grid {
-                            @for p in list {
-                                (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0)))
+                            @for (k, p) in list.iter().enumerate() {
+                                (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0), starts[g] + k))
                             }
                         }
                     }))
@@ -194,26 +205,32 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
                     @for p in pending.iter().take(3) {
                         @let pet = find(&p.pet_id);
                         div.pets-req {
-                            img.avatar src=(ctx.member_avatar(guild, p.user_id)) alt="" width="32" height="32" loading="lazy";
+                            (view::pet_art(&pet, "md"))
                             div {
-                                div { strong { (ctx.display_name(guild, p.user_id)) } " added " (pet.icon()) " " (pet.name) @if p.quantity > 1 { " ×" (p.quantity) } }
-                                div.muted.small { (text::ago(p.requested_at)) }
+                                div { strong { (pet.name) } @if p.quantity > 1 { span.mono { " ×" (p.quantity) } } }
+                                div.who.muted.small {
+                                    img.avatar src=(ctx.member_avatar(guild, p.user_id)) alt="" loading="lazy";
+                                    (ctx.display_name(guild, p.user_id)) " · " (text::ago(p.requested_at))
+                                }
                                 @if page.can_edit() {
                                     div.pets-req-acts {
                                         form method="post" action=(page.path("pets/approvals/approve")) {
                                             input type="hidden" name="only" value=(p.id);
                                             input type="hidden" name="back" value="collection";
-                                            button.btn.small.outline type="submit" { "Approve" }
+                                            button.btn.small.outline type="submit" { (ui::icon(Icon::Check)) "Approve" }
                                         }
                                         form method="post" action=(page.path("pets/approvals/reject")) {
                                             input type="hidden" name="only" value=(p.id);
                                             input type="hidden" name="back" value="collection";
-                                            button.btn.small type="submit" { "Reject" }
+                                            button.btn.small.ghost type="submit" { "Reject" }
                                         }
                                     }
                                 }
                             }
                         }
+                    }
+                    @if pending.len() > 3 {
+                        a.btn.small.ghost href=(page.path("pets/approvals")) { (pending.len() - 3) " more on Approvals" (ui::icon(Icon::Enter)) }
                     }
                 }
                 div.rail-block {
@@ -222,23 +239,20 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
                         p.muted.small { "Giveaways you record show up here until they're confirmed or expire." }
                     }
                     @for g in active.iter().take(3).chain(past.iter().take(3)) {
-                        div.pets-gv {
-                            span.pets-pair {
-                                img.avatar src=(ctx.member_avatar(guild, g.giver_id)) alt="" loading="lazy";
-                                (view::arrow())
-                                img.avatar src=(ctx.member_avatar(guild, g.winner_id)) alt="" loading="lazy";
-                            }
-                            span.grow { (g.pet_emoji) " " (g.pet_name) }
+                        div.pets-mini-gv {
+                            (ui::avatars(&[ctx.member_avatar(guild, g.giver_id), ctx.member_avatar(guild, g.winner_id)], 2))
+                            (view::art(g.icon(), None, &g.pet_rarity, "sm"))
+                            span.grow data-tip={ (ctx.display_name(guild, g.giver_id)) " to " (ctx.display_name(guild, g.winner_id)) } { (g.pet_name) }
                             @match g.status {
-                                Status::Pending => span.pets-gv-state.soon { (left_text(g.expires_at)) },
-                                Status::Confirmed => span.pets-gv-state.ok { "Confirmed" },
-                                Status::Expired => span.pets-gv-state.bad { "Expired" },
-                                Status::Cancelled => span.pets-gv-state { "Cancelled" },
+                                Status::Pending => span.pets-state.soon { (left_text(g.expires_at)) },
+                                Status::Confirmed => span.pets-state.ok { "Confirmed" },
+                                Status::Expired => span.pets-state.bad { "Expired" },
+                                Status::Cancelled => span.pets-state { "Cancelled" },
                             }
                         }
                     }
                     @if gstats.confirmed > 0 {
-                        p.muted.small.pets-foot {
+                        p.muted.small {
                             (gstats.confirmed) " confirmed"
                             @if let Some(rate) = gstats.confirmation_rate() { " · " (rate) "% of giveaways go through" }
                         }
@@ -273,10 +287,17 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     let edit = page.can_edit();
     let approve = page.path("pets/approvals/approve");
     let reject = page.path("pets/approvals/reject");
+    let copies: i64 = pending.iter().map(|p| p.quantity).sum();
+    let submitters = pending.iter().map(|p| p.user_id).collect::<std::collections::HashSet<_>>().len() as i64;
     let body = html! {
         (tabs(&page, "Approvals", pending.len() as i64))
         div.with-rail {
             div.stack.pets-main {
+                (view::readings(&[
+                    ("waiting for review", text::num(pending.len() as i64)),
+                    ("copies in them", text::num(copies)),
+                    ("from members", text::num(submitters)),
+                ]))
                 @if pending.is_empty() {
                     (ui::empty(Icon::Paw, "Nothing to review", if edit {
                         "Submissions from /pet add wait here until you approve or reject them."
@@ -291,23 +312,23 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
                             @if edit { label.pets-check { input #sel-all type="checkbox"; "Select all" } }
                             span.muted.small { "Approved pets join the collection, credited to whoever submitted them." }
                         }
-                        div.pets-list {
+                        div.pets-rows.pets-tiles.wide {
                             @for p in &pending {
                                 @let pet = find(&p.pet_id);
-                                div.pets-row {
+                                div class={ "pets-row r-" (store::clean_rarity(&pet.rarity)) } {
                                     @if edit { input type="checkbox" name="sel" value=(p.id) aria-label={ "Select " (pet.name) " from " (ctx.display_name(guild, p.user_id)) }; }
-                                    (view::pet_tile(&pet, false))
+                                    (view::pet_art(&pet, "lg"))
                                     div.pets-row-main {
-                                        span { strong { (pet.name) } @if p.quantity > 1 { span.mono { " ×" (p.quantity) } } " " (view::rarity(&pet.rarity)) }
+                                        span { strong { (pet.name) } @if p.quantity > 1 { span.mono { "×" (p.quantity) } } (view::rarity(&pet.rarity)) }
                                         span.pets-by {
-                                            img.avatar src=(ctx.member_avatar(guild, p.user_id)) alt="" width="18" height="18" loading="lazy";
-                                            (ctx.display_name(guild, p.user_id)) " · " (text::ago(p.requested_at))
+                                            img.avatar src=(ctx.member_avatar(guild, p.user_id)) alt="" loading="lazy";
+                                            b { (ctx.display_name(guild, p.user_id)) } " · " (text::ago(p.requested_at))
                                         }
                                     }
                                     @if edit {
                                         div.pets-row-acts {
-                                            button.btn.small type="submit" formaction=(approve) name="only" value=(p.id) { "Approve" }
-                                            button.btn.small type="submit" formaction=(reject) name="only" value=(p.id) { "Reject" }
+                                            button.btn.small.outline type="submit" formaction=(approve) name="only" value=(p.id) { (ui::icon(Icon::Check)) "Approve" }
+                                            button.btn.small.ghost type="submit" formaction=(reject) name="only" value=(p.id) { "Reject" }
                                         }
                                     }
                                 }
@@ -316,9 +337,9 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
                         @if edit {
                             div.bulk {
                                 input.input type="text" name="reason" maxlength="300" placeholder="Reason for rejecting, sent to them (optional)" autocomplete="off" aria-label="Reason for rejecting";
-                                button.btn.small type="submit" formaction=(approve) { "Approve selected" }
                                 button.btn.small type="submit" formaction=(reject) { "Reject selected" }
-                                button.btn.small type="submit" formaction=(approve) name="all" value="1" { "Approve all" }
+                                button.btn.small type="submit" formaction=(approve) { "Approve selected" }
+                                button.btn.small.primary type="submit" formaction=(approve) name="all" value="1" { "Approve all" }
                             }
                         }
                     }
@@ -335,16 +356,17 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
                         @let pet = find(&p.pet_id);
                         @let approved = p.status == "approved";
                         div.mini {
-                            img.avatar src=(ctx.member_avatar(guild, p.user_id)) alt="" width="32" height="32" loading="lazy";
+                            img.avatar src=(ctx.member_avatar(guild, p.user_id)) alt="" loading="lazy";
                             div.grow {
-                                span { strong { (ctx.display_name(guild, p.user_id)) } " · " (pet.icon()) " " (pet.name) @if p.quantity > 1 { " ×" (p.quantity) } }
-                                span.muted.small {
+                                span { strong { (ctx.display_name(guild, p.user_id)) } " · " (pet.name) @if p.quantity > 1 { " ×" (p.quantity) } }
+                                span.muted {
                                     span class=(if approved { "pets-ok" } else { "pets-bad" }) { (if approved { "Approved" } else { "Rejected" }) }
                                     @if let Some(by) = p.reviewed_by.as_deref().filter(|b| !b.is_empty()) { " by " (by) }
                                     @if let Some(at) = p.reviewed_at { " · " (text::ago(at)) }
                                 }
-                                @if !p.reason.is_empty() { span.muted.small title=(p.reason) { (p.reason) } }
+                                @if !p.reason.is_empty() { span.muted title=(p.reason) { "“" (p.reason) "”" } }
                             }
+                            (view::pet_art(&pet, "sm"))
                         }
                     }
                 }
@@ -432,12 +454,13 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
     let editing = q.edit.as_deref().and_then(|id| catalog.iter().find(|p| p.id == id));
     let edit = page.can_edit();
     let actions = edit.then(|| header_pop("Add a pet", pet_form(&page, &cats, None)));
+    let copies: i64 = counts.values().sum();
     let body = html! {
         (tabs(&page, "Catalog", waiting))
         div.with-rail {
             div.stack.pets-main {
                 @if let (Some(p), true) = (editing, edit) {
-                    div #edit { (ui::section(&format!("Edit {}", p.name), Some("Removing a pet also takes every copy out of the collection."), html! {
+                    div #edit { (view::section(Icon::Brush, &format!("Edit {}", p.name), Some("Removing a pet also takes every copy out of the collection."), Some(view::pet_art(p, "lg")), html! {
                         (pet_form(&page, &cats, Some(p)))
                         div { (ui::action_button(&page.path(&format!("pets/catalog/{}/delete", p.id)), "Remove pet", Tone::Bad, true)) }
                     })) }
@@ -453,36 +476,36 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
                                 (ui::empty(Icon::Paw, "No pets here", "Pets staff add to this category show here."))
                             }
                         } @else {
-                            div.table-wrap { table.table.pets-cat-table {
-                                thead { tr { th { "Pet" } th.pets-rar-col { "Rarity" } th.num { "Owned" } } }
-                                tbody { @for p in &pets {
+                            div.pets-entries {
+                                @for p in &pets {
                                     @let n = counts.get(&p.id).copied().unwrap_or(0);
-                                    @let detail = if p.bonus.is_empty() { p.description.clone() } else { p.bonus.clone() };
-                                    tr id={ "pet-" (p.id) } {
-                                        td {
-                                            @if edit {
-                                                a.pets-edit href={ (page.path("pets/catalog")) "?edit=" (p.id) "#edit" } title={ "Edit " (p.name) } {
-                                                    (view::pet_cell(p, (!detail.is_empty()).then_some(detail.as_str())))
-                                                }
-                                            } @else {
-                                                (view::pet_cell(p, (!detail.is_empty()).then_some(detail.as_str())))
+                                    @let rarity = store::clean_rarity(&p.rarity);
+                                    div class={ "pets-entry r-" (rarity) @if n == 0 { " missing" } } id={ "pet-" (p.id) } {
+                                        (view::pet_art(p, "md"))
+                                        div.t {
+                                            span {
+                                                @if edit {
+                                                    a.pets-edit href={ (page.path("pets/catalog")) "?edit=" (p.id) "#edit" } title={ "Edit " (p.name) } { strong { (p.name) } }
+                                                } @else { strong { (p.name) } }
+                                                (view::rarity(rarity))
                                             }
+                                            @if !p.bonus.is_empty() { p.bonus title=(p.bonus) { (p.bonus) } }
+                                            @else if !p.description.is_empty() { p title=(p.description) { (p.description) } }
                                         }
-                                        td.pets-rar-col { (view::rarity(&p.rarity)) }
-                                        td.num {
-                                            @if edit {
-                                                form.inline method="post" action=(page.path(&format!("pets/catalog/{}/owned", p.id))) {
-                                                    span.pets-stepper {
-                                                        button.btn.small type="submit" name="delta" value="-1" disabled[n == 0] aria-label={ "Remove one " (p.name) } { "−" }
-                                                        span { (n) }
-                                                        button.btn.small type="submit" name="delta" value="1" aria-label={ "Add one " (p.name) } { "+" }
-                                                    }
+                                        @if edit {
+                                            form.inline method="post" action=(page.path(&format!("pets/catalog/{}/owned", p.id))) {
+                                                span.pets-stepper {
+                                                    button.btn.ghost type="submit" name="delta" value="-1" disabled[n == 0] aria-label={ "Remove one " (p.name) } { "−" }
+                                                    span aria-label={ (n) " owned" } { (n) }
+                                                    button.btn.ghost type="submit" name="delta" value="1" aria-label={ "Add one " (p.name) } { "+" }
                                                 }
-                                            } @else { (n) }
+                                            }
+                                        } @else {
+                                            span.pets-owned { "×" (n) }
                                         }
                                     }
-                                } }
-                            } }
+                                }
+                            }
                         }
                     }))
                 }
@@ -490,12 +513,12 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
             aside.rail {
                 div.rail-block {
                     h2 { "Catalog" }
-                    div.pets-nums {
-                        div { b.mono { (text::num(catalog.len() as i64)) } span { "companions" } }
-                        div { b.mono { (text::num(counts.len() as i64)) } span { "collected" } }
-                        div { b.mono { (text::num(cats.len() as i64)) } span { "categories" } }
+                    div.rail-nums {
+                        div { b data-count { (text::num(catalog.len() as i64)) } span { "companions" } }
+                        div { b data-count { (text::num(counts.len() as i64)) } span { "collected" } }
+                        div { b data-count { (text::num(copies)) } span { "copies" } }
                     }
-                    @if edit { p.muted.small { "Click a pet to edit it." } }
+                    @if edit { p.muted.small { "Click a pet's name to edit it." } }
                 }
                 div.rail-block {
                     h2 { "Categories" }
@@ -656,6 +679,7 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
         options.push((p.id.clone(), label));
     }
     let default_expiry = if s.expiry_hours > 0 { format!("{}h", s.expiry_hours) } else { String::new() };
+    let image = |id: &str| catalog.iter().find(|p| p.id == id).and_then(|p| p.image_url().map(str::to_owned));
     let actions = page.can_edit().then(|| {
         header_pop("Record a giveaway", html! {
             form.pform method="post" action=(page.path("pets/giveaways")) {
@@ -676,11 +700,20 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
             }
         })
     });
+    // The announcement preview shows the latest confirmed giveaway, or a waiting one.
+    let example = past.iter().find(|g| g.status == Status::Confirmed).or(active.first());
+    let bot = bot_face(&ctx);
+    let channel = s.announce_channel.and_then(|c| ctx.text_channels(guild).into_iter().find(|x| x.0 == c)).map(|(_, n)| n);
     let body = html! {
         (tabs(&page, "Giveaways", waiting))
         div.with-rail {
             div.stack.pets-main {
-                (ui::section("Waiting", Some("Confirm once the pet has changed hands. Confirming takes one copy out of the collection."), html! {
+                (view::readings(&[
+                    ("waiting for a hand-over", text::num(stats.active)),
+                    ("confirmed", text::num(stats.confirmed)),
+                    ("go through", stats.confirmation_rate().map(|r| format!("{r}%")).unwrap_or_else(|| "None yet".into())),
+                ]))
+                (view::section(Icon::Gift, "Waiting", Some("Confirm once the pet has changed hands. Confirming takes one copy out of the collection."), None, html! {
                     @if active.is_empty() {
                         @if page.can_edit() {
                             (ui::empty(Icon::Gift, "No giveaways waiting", "Record one with the button above and it waits here until it's confirmed or expires."))
@@ -688,42 +721,60 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
                             (ui::empty(Icon::Gift, "No giveaways waiting", "Giveaways staff record wait here until they're confirmed or expire."))
                         }
                     } @else {
-                        div { @for g in &active { (giveaway_item(&ctx, &page, g, comments.get(&g.id).map(Vec::as_slice).unwrap_or(&[]))) } }
+                        div.pets-gvs.pets-tiles.wide { @for g in &active { (giveaway_item(&ctx, &page, g, image(&g.pet_id).as_deref(), comments.get(&g.id).map(Vec::as_slice).unwrap_or(&[]))) } }
                     }
                 }))
-                (ui::section("History", None, html! {
+                (view::section(Icon::Log, "History", None, None, html! {
                     @if past.is_empty() {
                         (ui::empty(Icon::Log, "No history yet", "Confirmed, expired and cancelled giveaways are kept here."))
                     } @else {
-                        div { @for g in &past { (giveaway_item(&ctx, &page, g, comments.get(&g.id).map(Vec::as_slice).unwrap_or(&[]))) } }
+                        div.pets-gvs.pets-tiles.wide { @for g in &past { (giveaway_item(&ctx, &page, g, image(&g.pet_id).as_deref(), comments.get(&g.id).map(Vec::as_slice).unwrap_or(&[]))) } }
                     }
                 }))
                 (ui::settings_form(&page, &page.path("pets"), html! {
-                    (ui::section("Giveaway settings", None, ui::card(html! {
-                        (ui::field_channel(&ctx, guild, "announce_channel", "Confirmed giveaways", Some("Posted here when a giveaway is confirmed, mentioning the giver and the winner. None posts nothing."), s.announce_channel))
-                        (ui::field_number("expiry_hours", "Giveaways expire after", Some("The default when you record one. 0 means no expiry."), s.expiry_hours, 0, 720, Some("hours")))
-                        (ui::field_toggle("dm_reviews", "DM review results", Some("Members get a DM when their submission is approved or rejected."), s.dm_reviews))
-                    })))
+                    (view::section(Icon::Gear, "Giveaway settings", None, None, html! {
+                        div.pets-split {
+                            (ui::card(html! {
+                                (ui::field_channel(&ctx, guild, "announce_channel", "Confirmed giveaways", Some("Posted here when a giveaway is confirmed, mentioning the giver and the winner. None posts nothing."), s.announce_channel))
+                                (ui::field_number("expiry_hours", "Giveaways expire after", Some("The default when you record one. 0 means no expiry."), s.expiry_hours, 0, 720, Some("hours")))
+                                (ui::field_toggle("dm_reviews", "DM review results", Some("Members get a DM when their submission is approved or rejected."), s.dm_reviews))
+                            }))
+                            @if let Some(g) = example {
+                                div {
+                                    p.pets-cap { @if channel.is_some() { "Posted when you confirm one" } @else { "Posted when you confirm one, once a channel is picked" } }
+                                    div.pets-dc {
+                                        div.pets-dc-head { (ui::icon(Icon::Hash)) span { (channel.as_deref().unwrap_or("pick a channel")) } }
+                                        div.pets-dc-msg {
+                                            (bot.1)
+                                            div {
+                                                div.pets-dc-name { strong { (bot.0) } span.pets-dc-app { "APP" } span.pets-dc-time { "Today" } }
+                                                div.pets-dc-text {
+                                                    span.pets-dc-mention { "@" (ctx.display_name(guild, g.giver_id)) } " gave "
+                                                    span.pets-dc-mention { "@" (ctx.display_name(guild, g.winner_id)) } " " (g.icon()) " " b { (g.pet_name) } "."
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }))
                 }))
             }
             aside.rail {
-                div.rail-block {
-                    h2 { "All time" }
-                    div.pets-nums {
-                        div { b.mono { (text::num(stats.active)) } span { "waiting" } }
-                        div { b.mono { (text::num(stats.confirmed)) } span { "confirmed" } }
-                        @if let Some(rate) = stats.confirmation_rate() { div { b.mono { (rate) "%" } span { "go through" } } }
-                    }
-                }
                 div.rail-block {
                     h2 { "Top givers" }
                     @if stats.top_givers.is_empty() {
                         p.muted.small { "Givers show here once a giveaway is confirmed." }
                     }
+                    @let most = stats.top_givers.first().map(|t| t.1).unwrap_or(1).max(1);
                     @for (u, n) in stats.top_givers.iter().take(5) {
                         div.mini {
-                            img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="32" height="32" loading="lazy";
-                            div.grow { span { (ctx.display_name(guild, *u)) } }
+                            img.avatar src=(ctx.member_avatar(guild, *u)) alt="" loading="lazy";
+                            div.grow {
+                                span { (ctx.display_name(guild, *u)) }
+                                span.meter style="margin-top:6px" { span style={ "width:" (n * 100 / most) "%" } {} }
+                            }
                             span.mono { (text::num(*n)) }
                         }
                     }
@@ -746,54 +797,45 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     shell(&ctx, &page, actions, body)
 }
 
-fn giveaway_item(ctx: &Ctx, page: &Page, g: &Giveaway, comments: &[store::Comment]) -> Markup {
-    let guild = page.guild_id;
+fn giveaway_item(ctx: &Ctx, page: &Page, g: &Giveaway, image: Option<&str>, comments: &[store::Comment]) -> Markup {
     let base = page.path(&format!("pets/giveaways/{}", g.id));
-    let (expiry, close) = view::expiry(g.expires_at);
-    html! {
-        div.gv-wrap {
-            div.gv {
-                (view::tile(g.icon(), None, false))
-                div.t {
-                    span { b { (g.pet_name) } " " (view::rarity(&g.pet_rarity)) }
-                    (view::pair(ctx, guild, g.giver_id, g.winner_id))
-                }
-                div.gv-side {
-                    @if g.status == Status::Pending {
-                        span.soon[close] { (expiry) }
-                        @if page.can_edit() {
-                            div.gv-acts {
-                                (ui::action_button(&format!("{base}/confirm"), "Confirm", Tone::Muted, false))
-                                (ui::action_button(&format!("{base}/cancel"), "Cancel", Tone::Bad, true))
-                            }
-                        }
-                    } @else {
-                        (view::status_badge(g.status))
-                        span { (g.closed_at.map(text::ago).unwrap_or_else(|| text::ago(g.recorded_at))) @if let Some(by) = g.closed_by.as_deref().filter(|b| *b != "Expired") { " by " (by) } }
-                    }
+    let side = html! {
+        @if g.status == Status::Pending {
+            (view::clock(g.expires_at))
+            @if page.can_edit() {
+                div.pets-gv-acts {
+                    (ui::action_button(&format!("{base}/confirm"), "Confirm", Tone::Muted, false))
+                    (ui::action_button(&format!("{base}/cancel"), "Cancel", Tone::Bad, true))
                 }
             }
-            @if !g.notes.is_empty() { p.gv-note { (g.notes) } }
-            details.gv-more {
-                summary { @if comments.is_empty() { "Comments" } @else { "Comments (" (comments.len()) ")" } " · recorded by " (g.recorded_by) " " (text::ago(g.recorded_at)) }
-                div.cmts {
-                    @for c in comments {
-                        div.cmt {
-                            div.grow { strong { (c.author) } " " span { (text::ago(c.at)) } div { (c.text) } }
-                            @if page.can_edit() { (ui::action_button(&format!("{base}/comments/{}/delete", c.id), "Delete", Tone::Bad, true)) }
-                        }
+        } @else {
+            (view::status_badge(g.status))
+            span { (g.closed_at.map(text::ago).unwrap_or_else(|| text::ago(g.recorded_at))) @if let Some(by) = g.closed_by.as_deref().filter(|b| *b != "Expired") { " by " (by) } }
+        }
+    };
+    let extra = html! {
+        @if !g.notes.is_empty() { p.pets-note { (g.notes) } }
+        details.pets-more {
+            summary { @if comments.is_empty() { "Comments" } @else { "Comments (" (comments.len()) ")" } " · recorded by " (g.recorded_by) " " (text::ago(g.recorded_at)) }
+            div.pets-cmts {
+                @for c in comments {
+                    div.pets-cmt {
+                        span.ini { (c.author.chars().next().map(|ch| ch.to_uppercase().to_string()).unwrap_or_default()) }
+                        div.grow { strong { (c.author) } " " span { (text::ago(c.at)) } div { (c.text) } }
+                        @if page.can_edit() { (ui::action_button(&format!("{base}/comments/{}/delete", c.id), "Delete", Tone::Bad, true)) }
                     }
-                    @if page.can_edit() {
-                        form.inline-form method="post" action={ (base) "/comments" } {
-                            input.input type="text" name="text" maxlength="500" required placeholder="Add a comment" autocomplete="off" aria-label="Comment";
-                            button.btn.small type="submit" { "Comment" }
-                        }
-                        @if g.status != Status::Pending { div { (ui::action_button(&format!("{base}/delete"), "Delete giveaway", Tone::Bad, true)) } }
+                }
+                @if page.can_edit() {
+                    form.inline-form method="post" action={ (base) "/comments" } {
+                        input.input type="text" name="text" maxlength="500" required placeholder="Add a comment" autocomplete="off" aria-label="Comment";
+                        button.btn.small type="submit" { "Comment" }
                     }
+                    @if g.status != Status::Pending { div { (ui::action_button(&format!("{base}/delete"), "Delete giveaway", Tone::Bad, true)) } }
                 }
             }
         }
-    }
+    };
+    view::giveaway_card(ctx, page.guild_id, g, image, side, Some(extra))
 }
 
 async fn record_giveaway(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
@@ -904,7 +946,7 @@ async fn bans(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
         (tabs(&page, "Bans", waiting))
         div.with-rail {
             div.stack.pets-main {
-                (ui::section("Banned givers", Some("They can't be recorded as the giver of a pet giveaway. They can still win."), html! {
+                (view::section(Icon::Shield, "Banned givers", Some("They can't be recorded as the giver of a pet giveaway. They can still win."), None, html! {
                     @if list.is_empty() {
                         @if edit {
                             (ui::empty(Icon::Shield, "Nobody is banned", "Ban a member with the button above and they can't be recorded as a giver."))
@@ -912,18 +954,18 @@ async fn bans(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                             (ui::empty(Icon::Shield, "Nobody is banned", "Members staff ban from giving pets show here."))
                         }
                     } @else {
-                        div.pets-list {
+                        div.pets-rows.pets-tiles.wide {
                             @for b in &list {
                                 @let n = given.get(&b.user_id).copied().unwrap_or(0);
                                 div.pets-row {
-                                    img.avatar src=(ctx.member_avatar(guild, b.user_id)) alt="" width="34" height="34" loading="lazy";
+                                    img.avatar src=(ctx.member_avatar(guild, b.user_id)) alt="" loading="lazy";
                                     div.pets-row-main {
-                                        strong { (ctx.display_name(guild, b.user_id)) }
+                                        span { strong { (ctx.display_name(guild, b.user_id)) } (ui::badge("Can't give", Tone::Bad)) }
                                         @if b.reason.is_empty() { span.muted.small { "No reason given" } } @else { span.pets-reason { (b.reason) } }
                                     }
                                     div.pets-row-side {
                                         span { "Banned " (text::ago(b.banned_at)) " by " (b.banned_by) }
-                                        span { (text::num(n)) " " (if n == 1 { "pet given" } else { "pets given" }) }
+                                        span { (text::num(n)) " " (if n == 1 { "pet given before" } else { "pets given before" }) }
                                     }
                                     @if edit {
                                         div.pets-row-acts { (ui::action_button(&page.path(&format!("pets/bans/{}/delete", b.user_id)), "Unban", Tone::Muted, false)) }
@@ -942,10 +984,10 @@ async fn bans(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                     }
                     @for (u, n) in top.iter().take(6) {
                         div.mini {
-                            img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="32" height="32" loading="lazy";
+                            img.avatar src=(ctx.member_avatar(guild, *u)) alt="" loading="lazy";
                             div.grow {
                                 span { (ctx.display_name(guild, *u)) }
-                                span.muted.small {
+                                span.muted {
                                     (text::num(*n)) " confirmed"
                                     @if list.iter().any(|b| b.user_id == *u) { " · " span.pets-bad { "banned" } }
                                 }

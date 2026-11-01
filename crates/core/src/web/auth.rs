@@ -259,9 +259,13 @@ fn set_cookie(ctx: &Ctx, name: &str, value: &str, max_age_secs: i64) -> String {
 
 pub(super) fn routes(preview: bool) -> Router<Ctx> {
     let r = Router::new();
-    let r = if preview { r.route("/dev/login", get(preview_login)) } else { r };
+    let r = if preview {
+        // /dev/sign-in still shows the real sign-in page, for screenshots.
+        r.route("/dev/login", get(preview_login)).route("/login", get(preview_login_page)).route("/dev/sign-in", get(login_page))
+    } else {
+        r.route("/login", get(login_page))
+    };
     r
-        .route("/login", get(login_page))
         .route("/auth/discord", get(start))
         .route("/auth/callback", get(callback))
         .route("/logout", post(logout))
@@ -286,6 +290,26 @@ async fn preview_login(State(ctx): State<Ctx>, Query(q): Query<PreviewQuery>) ->
     Ok(([(header::SET_COOKIE, set_cookie(&ctx, SESSION_COOKIE, &session, 86_400))], Redirect::to(&to)).into_response())
 }
 
+/// Preview only: Discord sign-in can't work here, and a restart of the preview forgets every
+/// session, so the sign-in page opens the preview as the owner instead.
+async fn preview_login_page() -> Response {
+    let body = html! {
+        (DOCTYPE)
+        html lang="en" {
+            head { (ui::head("Preview")) }
+            body.bare {
+                main.notice {
+                    span.mark { (ui::mark()) }
+                    h1 { "Dashboard preview" }
+                    p { "This preview runs on sample servers and members, and opens as the owner, so every page is there." }
+                    a.btn.primary href="/dev/login?to=/" { "Open the preview" }
+                }
+            }
+        }
+    };
+    body.into_response()
+}
+
 async fn login_page() -> Response {
     let body = html! {
         (DOCTYPE)
@@ -293,10 +317,10 @@ async fn login_page() -> Response {
             head { (ui::head("Sign in")) }
             body.bare {
                 main.notice {
-                    img.mark src="/static/icon.svg" alt="" width="36" height="36";
+                    span.mark { (ui::mark()) }
                     h1 { "Bot dashboard" }
-                    p { "Sign in with the Discord account the owner added." }
-                    a.btn.primary href="/auth/discord" { "Sign in with Discord" }
+                    p { "Sign in with the Discord account the owner added. Only people the owner adds get in, and each sees only the pages they were given." }
+                    a.btn.discord href="/auth/discord" { "Sign in with Discord" }
                 }
             }
         }
@@ -393,6 +417,7 @@ async fn callback(State(ctx): State<Ctx>, headers: HeaderMap, Query(q): Query<Ca
                 head { (ui::head("No access yet")) }
                 body.bare {
                     main.notice {
+                        span.mark { (ui::mark()) }
                         h1 { "You're not on the list yet" }
                         p { "Signed in as " strong { (name) } ". Send the owner your Discord ID so they can add you:" }
                         p.mono.copyable { (id) }

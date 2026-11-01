@@ -120,10 +120,12 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
 
 The owner's house style applies; `docs/DESIGN.md` has the full reference and `docs/ui/` the screenshots. In short:
 
-- **Look:** near-black and calm. One answer per page, above the fold: lead with the
-  `readings` that matter, then the controls. No boxes around passive content; cards only group
-  settings rows. Use the coral accent (`var(--signal)`) only for what needs the person. State
-  colours (`badge` Ok, Warn, Bad) only mean state. Charts use `var(--data)`.
+- **Look:** the redesign of 2026-10-31 (`docs/DESIGN.md`). Lead with the answer (readings that
+  count up with `b data-count`, a chart that draws in), then the controls. Faces and pictures
+  wherever people or streams appear. Your page takes its sidebar group's hue (`var(--hue)`)
+  automatically; use it for accents. Primary actions use the server's colour (`.btn.primary`).
+  Coral (`var(--signal)`) marks what waits on someone; `badge` Ok, Warn, Bad only mean state;
+  charts use `var(--data)`. Cards group settings rows or related things, never nested.
 - **Empty states:** every list has one, drawn with `ui::empty` and the section's icon, with one
   line on how it fills.
 - **Copy:** dry, specific, in "you". No exclamation marks, no em dashes, no hype, nothing that

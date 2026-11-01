@@ -598,9 +598,9 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     // (prize, emoji, winners, ends_in_ms, role, entrants, winners picked)
     type Row = (&'static str, &'static str, i64, i64, Option<u64>, usize, &'static [usize]);
     let rows: [Row; 5] = [
-        ("Discord Nitro, 3 months", "💎", 1, 2 * 24 * hour + 5 * hour, None, 8, &[]),
-        ("Signed poster from the next stream", "🖼️", 2, 9 * hour, Some(guild + 300), 5, &[]),
-        ("Steam key: Hades II", "🎮", 1, 40 * 60_000, None, 3, &[]),
+        ("Discord Nitro, 3 months", "💎", 1, 2 * 24 * hour + 5 * hour, None, 10, &[]),
+        ("Signed poster from the next stream", "🖼️", 2, 9 * hour, Some(guild + 300), 6, &[]),
+        ("Steam key: Hades II", "🎮", 1, 40 * 60_000, None, 9, &[]),
         ("Idleon account boost", "🚀", 1, -5 * hour, None, 9, &[2]),
         ("Merch pack", "👕", 3, -10 * 24 * hour, Some(guild + 100), 7, &[0, 4, 5]),
     ];

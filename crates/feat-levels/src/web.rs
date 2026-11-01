@@ -47,11 +47,27 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let first_levels: Vec<String> = (1..=5u32)
         .map(|l| text::num(curve::xp_to_reach(l, s.curve_base, s.curve_factor, &s.custom_curve)))
         .collect();
+    // XP to reach levels 1 to 30, for the curve in the rail.
+    let climb: Vec<i64> = (1..=CURVE_LEVELS).map(|l| curve::xp_to_reach(l, s.curve_base, s.curve_factor, &s.custom_curve)).collect();
+    // The level-up preview celebrates whoever leads the board, at their next level.
+    let leader = crate::top(&ctx, guild, 0, 1)?.into_iter().next();
+    let (who, who_level) = match &leader {
+        Some(m) => (ctx.display_name(guild, m.user_id), s.progress(m.xp).level + 1),
+        None => (page.user.name.clone(), 5),
+    };
+    let channel = s
+        .announce_channel
+        .and_then(|c| ctx.text_channels(guild).into_iter().find(|x| x.0 == c))
+        .map(|(_, n)| n)
+        .unwrap_or_else(|| "general".into());
+    let (bot_name, bot_avatar) = bot_face(&ctx);
+    let now = page.user.local(bot_core::now_ms());
+    let clock = format!("{}:{:02} {}", if now.hour() % 12 == 0 { 12 } else { now.hour() % 12 }, now.minute(), if now.hour() < 12 { "AM" } else { "PM" });
 
-    let body = html! {
-        (tabs(&page, "Settings"))
-        (ui::settings_form(&page, &page.path("levels/settings"), html! {
-            (ui::section("Earning XP", None, ui::card(html! {
+    let form = ui::settings_form(&page, &page.path("levels/settings"), html! {
+        // Two columns of sections once the column is wide enough (CSS, .lv-cols).
+        div.lv-cols {
+            (section(Icon::Star, "Earning XP", None, ui::card(html! {
                 (ui::field_number("xp_min", "XP per message, lowest", None, s.xp_min, 0, 1000, Some("XP")))
                 (ui::field_number("xp_max", "XP per message, highest", Some("Each message earns a random amount between the two."), s.xp_max, 0, 1000, Some("XP")))
                 (ui::field_number("cooldown_secs", "Cooldown", Some("Messages inside this window after one that earned XP earn nothing."), s.cooldown_secs, 0, 3600, Some("seconds")))
@@ -59,7 +75,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_toggle("voice_require_active", "Only unmuted voice counts", Some("Muted or deafened members earn no voice XP."), s.voice_require_active))
                 (ui::field_number("reaction_xp", "Reaction XP", Some("For adding a reaction, with the same cooldown. 0 turns it off."), s.reaction_xp, 0, 1000, Some("XP")))
             })))
-            (ui::section("Level curve", Some(&format!("Levels 1 to 5 start at {} XP.", first_levels.join(", "))), ui::card(html! {
+            (section(Icon::Chart, "Level curve", Some(&format!("Levels 1 to 5 start at {} XP.", first_levels.join(", "))), ui::card(html! {
                 @if custom {
                     (ui::field_custom("Custom table", Some("This server uses a custom XP table carried over from the old bot. Switch it off to use the curve below."), html! {
                         label.switch { input type="checkbox" name="keep_custom" checked; span.track { span.thumb {} } }
@@ -68,54 +84,327 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_number("curve_base", "First level", Some("XP needed to go from level 0 to 1."), s.curve_base, 1, 100_000, Some("XP")))
                 (ui::field_text("curve_factor", "Growth per level", Some("Each level costs this many times the one before. 1.2 means 20% more."), &s.curve_factor.to_string(), "1.2"))
             })))
-            (ui::section("Level-up messages", None, ui::card(html! {
+            (section(Icon::Bell, "Level-up messages", None, ui::card(html! {
                 (ui::field_toggle("announce", "Post level-ups", None, s.announce))
                 (ui::field_channel(&ctx, guild, "announce_channel", "Channel", Some("None posts in the channel where they levelled up."), s.announce_channel))
                 (ui::field_toggle("announce_ping", "Mention the member", None, s.announce_ping))
                 (ui::field_number("announce_min_level", "Start at level", Some("Quieter: skip messages for the first few levels."), s.announce_min_level as i64, 0, 500, None))
                 (ui::field_text("message", "Message", Some("{user} is the member, {level} the new level."), &s.message, crate::DEFAULT_MESSAGE))
             })))
-            (ui::section("Weekly board", Some("The board starts over every Monday at 00:00 UTC. The top three are kept for a week and shown on the leaderboard."), ui::card(html! {
+            (section(Icon::Calendar, "Weekly board", Some("The board starts over every Monday at 00:00 UTC. The top three are kept for a week and shown on the leaderboard."), ui::card(html! {
                 (ui::field_toggle("weekly_post", "Post the top three", Some("When the week ends, with how much XP each gained. Names show without a ping."), s.weekly_post))
                 (ui::field_channel(&ctx, guild, "weekly_channel", "Channel", None, s.weekly_channel))
             })))
-            (ui::section("Prestige", None, ui::card(html! {
+            (section(Icon::Trophy, "Prestige", None, ui::card(html! {
                 (ui::field_number("prestige_level", "Prestige from level", Some("Members at this level or higher can use /prestige to start over at level 0 and rank above everyone with less prestige. 0 turns it off."), s.prestige_level as i64, 0, 500, None))
                 (ui::field_number("prestige_bonus", "Bonus per prestige", Some("Extra XP from messages, voice and reactions, for each prestige."), s.prestige_bonus, 0, 100, Some("%")))
             })))
-            (ui::section("Streaks", Some("A streak counts the days in a row, in UTC, a member earned XP. Streaks show on /rank and the leaderboard while the bonus is on."), ui::card(html! {
+            (section(Icon::Activity, "Streaks", Some("A streak counts the days in a row, in UTC, a member earned XP. Streaks show on /rank and the leaderboard while the bonus is on."), ui::card(html! {
                 (ui::field_number("streak_bonus", "Bonus per day", Some("Extra XP from messages, voice and reactions for each day in a row after the first. 0 turns the bonus off."), s.streak_bonus, 0, 100, Some("%")))
                 (ui::field_number("streak_max", "Bonus cap", Some("The streak bonus stops growing here."), s.streak_max, 0, 500, Some("%")))
             })))
-            (ui::section("No XP in", None, ui::card(html! {
+            (section(Icon::Close, "No XP in", None, ui::card(html! {
                 (ui::field_channels(&ctx, guild, "no_xp_channels", "Text channels", Some("Threads in these channels earn nothing too."), &s.no_xp_channels))
                 (ui::field_custom_wide("Voice channels", Some("Time in these earns nothing, and neither does their text chat."), chips("no_xp_voice", &voice_channels(&ctx, guild), &s.no_xp_channels)))
                 (ui::field_custom_wide("Categories", Some("Every channel and thread in these earns nothing."), chips("no_xp_categories", &ctx.categories(guild), &s.no_xp_categories)))
                 (ui::field_roles(&ctx, guild, "no_xp_roles", "Roles", Some("Members with any of these roles earn nothing."), &s.no_xp_roles))
                 (ui::field_toggle("stack_rewards", "Keep earlier reward roles", Some("Off: members only keep the reward role for their highest level."), s.stack_rewards))
             })))
-        }))
+        }
+    });
+    let max = climb.iter().copied().max().unwrap_or(1).max(1) as f64;
+    let rail = html! {
+        div.rail-block {
+            h2 { "What members see" }
+            div.lv-dc {
+                div.lv-dc-head { (ui::icon(Icon::Hash)) span #lv-chan { (channel) } }
+                div.lv-dc-msg.off[!s.announce] #lv-msg data-who=(who) data-level=(who_level) {
+                    (bot_avatar)
+                    div {
+                        div.lv-dc-name { strong { (bot_name) } span.lv-dc-app { "APP" } span.lv-dc-time { "Today at " (clock) } }
+                        div.lv-dc-text #lv-say {
+                            @let template = if s.message.trim().is_empty() { crate::DEFAULT_MESSAGE } else { s.message.as_str() };
+                            @for (i, part) in template.split("{user}").enumerate() {
+                                @if i > 0 { @if s.announce_ping { span.lv-dc-mention { "@" (who) } } @else { (who) } }
+                                (part.replace("{level}", &who_level.to_string()))
+                            }
+                        }
+                    }
+                }
+            }
+            p.muted.lv-dc-note #lv-note {
+                @if s.announce { "Posted when a member reaches a new level" @if s.announce_min_level > 1 { ", from level " (s.announce_min_level) } "." }
+                @else { "Level-ups aren't posted. Members still see their level with /rank." }
+            }
+        }
+        div.rail-block.lv-curve {
+            h2 { "The climb" }
+            p.muted.small { "XP a member needs in all to reach each level." }
+            div.mini-bars {
+                svg #lv-curve viewBox={ "0 0 " (CURVE_LEVELS * 10 - 4) " 60" } preserveAspectRatio="none" role="img" aria-label="XP to reach levels 1 to 30" {
+                    defs { linearGradient #lv-hi x1="0" y1="0" x2="0" y2="1" { stop offset="0" stop-color="var(--data)" {} stop offset="1" stop-color="var(--data-2)" {} } }
+                    @for (i, xp) in climb.iter().enumerate() {
+                        @let h = (*xp as f64 / max * 58.0).max(1.5);
+                        rect.bar x=(i * 10) y=(60.0 - h) width="6" height=(h) rx="1.2" style={ "--i:" (i) }
+                            fill=(if (i + 1) % 10 == 0 { "url(#lv-hi)" } else { "var(--data-dim)" }) data-tip={ "Level " (i + 1) ": " (text::num(*xp)) " XP" } {}
+                    }
+                }
+            }
+            div.axis { span { "Level 1" } span { "15" } span { "30" } }
+            div.rail-nums {
+                @for l in [10usize, 20, 30] {
+                    div { b.mono #{ "lv-at-" (l) } { (compact(climb[l - 1])) } span { "Level " (l) } }
+                }
+            }
+            @if custom { p.muted.small { "Drawn from the custom table carried over from the old bot." } }
+        }
+    };
+    let body = html! {
+        style { (PreEscaped(CSS)) }
+        (tabs(&page, "Settings"))
+        div.with-rail {
+            div.stack { (form) }
+            aside.rail { (rail) }
+        }
+        script { (PreEscaped(SETTINGS_JS)) }
     };
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
 }
 
-/// Each place keeps its spot on the podium even when fewer than three members have XP.
-const CSS: &str = "
+/// Levels the settings rail draws the curve for.
+const CURVE_LEVELS: u32 = 30;
+
+/// The settings rail follows the form: the level-up message as it's typed, the curve as its
+/// numbers change (not while a custom table is kept, which only the server can read).
+const SETTINGS_JS: &str = r##"
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const msg = $("lv-msg"), say = $("lv-say");
+  if (!msg) return;
+  const text = $("message"), ping = $("announce_ping"), on = $("announce"), chan = $("announce_channel"), min = $("announce_min_level");
+  const who = msg.dataset.who, level = msg.dataset.level;
+  const drawMsg = () => {
+    say.textContent = "";
+    const tpl = text.value.trim() || text.placeholder;
+    tpl.split("{user}").forEach((part, i) => {
+      if (i > 0) {
+        if (ping.checked) { const m = document.createElement("span"); m.className = "lv-dc-mention"; m.textContent = "@" + who; say.append(m); }
+        else say.append(who);
+      }
+      say.append(part.split("{level}").join(level));
+    });
+    msg.classList.toggle("off", !on.checked);
+    const c = chan.selectedOptions[0];
+    $("lv-chan").textContent = c && c.value ? c.text.replace(/^#/, "") : "general";
+    const from = Number(min.value) || 0;
+    $("lv-note").textContent = on.checked ? "Posted when a member reaches a new level" + (from > 1 ? ", from level " + from : "") + "." : "Level-ups aren't posted. Members still see their level with /rank.";
+  };
+  [text, ping, on, chan, min].forEach((el) => { el.addEventListener("input", drawMsg); el.addEventListener("change", drawMsg); });
+  const base = $("curve_base"), factor = $("curve_factor"), keep = document.querySelector('input[name="keep_custom"]');
+  const bars = [...document.querySelectorAll("#lv-curve rect")];
+  const fmt = new Intl.NumberFormat("en-US");
+  const short = (n) => n < 1e4 ? fmt.format(n) : n < 1e5 ? (n / 1e3).toFixed(1) + "k" : n < 1e6 ? Math.floor(n / 1e3) + "k" : (n / 1e6).toFixed(1) + "M";
+  const drawCurve = () => {
+    if (keep && keep.checked) return;
+    const b = Number(base.value), f = Number(factor.value);
+    if (!(b >= 1) || !(f >= 1 && f <= 5)) return;
+    let sum = 0;
+    const xs = bars.map((_, l) => (sum += Math.max(1, Math.round(b * Math.pow(f, l)))));
+    const max = Math.max(1, ...xs);
+    bars.forEach((r, i) => {
+      const h = Math.max(1.5, xs[i] / max * 58);
+      r.setAttribute("y", 60 - h); r.setAttribute("height", h);
+      r.dataset.tip = "Level " + (i + 1) + ": " + fmt.format(xs[i]) + " XP";
+    });
+    [10, 20, 30].forEach((l) => { const el = $("lv-at-" + l); if (el) el.textContent = short(xs[l - 1]); });
+  };
+  [base, factor].forEach((el) => el.addEventListener("input", drawCurve));
+  keep?.addEventListener("change", drawCurve);
+})();
+"##;
+
+/// The levels pages' own styles. Each place keeps its spot on the podium even when fewer than
+/// three members have XP.
+const CSS: &str = r#"
 .podium .step.p1 { grid-column: 2; grid-row: 1; } .podium .step.p2 { grid-column: 1; grid-row: 1; } .podium .step.p3 { grid-column: 3; grid-row: 1; }
-.lv-role { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.lv-acts { display: flex; gap: 6px; justify-content: flex-end; }
-.lv-acts .pop-body { width: 240px; right: 0; left: auto; }
-.lv-acts .pop-body .stack { gap: 10px; }
 .lv-board { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.lv-name { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 .lv-prestige { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-/* Room for \"Level 17 · Prestige 1 · 27-day streak\" on one line. */
+.big-num b { font: inherit; }
+/* Room for "Level 17 · Prestige 1 · 27-day streak" on one line. The meter takes the middle. */
 @media (min-width: 821px) { .lb .rank { grid-template-columns: 28px 28px minmax(100px, 250px) minmax(0, 1fr) auto auto; } }
-@media (max-width: 560px) {
-  .lv-table th:nth-child(3), .lv-table td:nth-child(3) { display: none; }
-  .lv-acts { flex-direction: column; align-items: flex-end; }
+.lb .rank .progress { max-width: none; }
+/* A wide column holds the list twice over: places run down the left half, then the right. */
+@container col (min-width: 1300px) {
+  .lb .ranks { display: grid; grid-auto-flow: column; grid-template-rows: repeat(var(--rows, 1), auto); grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 36px; }
+  .lb .rank.col2 { border-top: 0; }
 }
-";
+/* Readings stretch to share their row, so the page's answer spans the column. */
+.readings.lv-readings > .reading { flex: 1 1 160px; }
+
+/* Settings: sections in two columns once there's room for both. */
+.lv-cols { display: flex; flex-direction: column; gap: 18px; }
+@container col (min-width: 1080px) {
+  .lv-cols { display: block; columns: 2; column-gap: 24px; }
+  .lv-cols > .lv-sec { break-inside: avoid; margin-bottom: 18px; }
+}
+
+/* Section heads carry the group's icon tile. */
+.lv-sec { gap: 14px; }
+.lv-sec-head { display: flex; align-items: flex-start; gap: 12px; }
+.lv-sec-ic { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; flex: none; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 24%, transparent); }
+.lv-sec-ic .icon { width: 17px; height: 17px; }
+.lv-sec-head h2 { padding-top: 6px; }
+.lv-sec-head p { font-size: 13px; margin-top: 3px; max-width: 68ch; }
+
+/* Rewards: the climb. A track runs down through each reward's level, drawn in on arrival. */
+.lv-ladder { position: relative; display: flex; flex-direction: column; gap: 12px; }
+.lv-ladder::before { content: ""; position: absolute; left: 27px; top: 34px; bottom: 34px; width: 2px; border-radius: 2px; background: linear-gradient(180deg, var(--hue), var(--data-2)); opacity: 0.6; transform-origin: top; animation: lv-draw 1.1s var(--ease) both 0.15s; }
+.lv-rung { --role: var(--hue); position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 16px; align-items: center; }
+.lv-node { position: relative; z-index: 1; display: grid; place-content: center; justify-items: center; width: 56px; height: 56px; border-radius: 50%; background: radial-gradient(circle at 50% 28%, color-mix(in oklab, var(--role) 34%, var(--page)), var(--page) 78%); box-shadow: 0 0 0 2px color-mix(in oklab, var(--role) 75%, transparent), 0 0 0 6px var(--page); animation: pop-in 0.55s var(--spring) both; animation-delay: calc(0.3s + var(--i, 0) * 110ms); }
+.lv-node b { font: 650 19px/1 var(--sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.lv-node small { font-size: 10px; color: var(--ink-2); margin-top: 3px; }
+.lv-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "top acts" "reach reach"; align-items: center; gap: 10px 12px; min-width: 0; padding: 14px 16px 15px; border-radius: 14px; background: linear-gradient(90deg, color-mix(in oklab, var(--role) 9%, transparent), rgba(243, 242, 248, 0.015) 70%); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; animation: rise 0.5s var(--ease) both; animation-delay: calc(0.36s + var(--i, 0) * 110ms); }
+.lv-rung:hover .lv-card { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
+.lv-card-top { grid-area: top; display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; min-width: 0; }
+.lv-reach { grid-area: reach; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.lv-pill { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 7px; font-weight: 600; font-size: 14px; color: color-mix(in oklab, var(--role), white 40%); background: color-mix(in oklab, var(--role) 17%, transparent); white-space: nowrap; }
+.lv-card-top .muted { font-size: 12.5px; }
+.lv-acts { grid-area: acts; display: flex; gap: 6px; justify-content: flex-end; }
+/* On a wide column each rung reads as one line: the role, who reached it, then its actions. */
+@container col (min-width: 1100px) {
+  .lv-card { grid-template-columns: minmax(180px, 0.6fr) minmax(0, 1.6fr) auto; grid-template-areas: "top reach acts"; column-gap: 28px; }
+  .lv-reach { gap: 8px; }
+}
+.lv-acts .pop-body { width: 250px; }
+.lv-acts .pop-body .stack { gap: 10px; }
+.lv-who { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); flex-wrap: wrap; }
+.lv-who .avatar { width: 26px; height: 26px; }
+.lv-who b { color: var(--ink); font-weight: 600; }
+.lv-card .meter { height: 5px; }
+.lv-card .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--role) 60%, var(--data-2)), color-mix(in oklab, var(--role), white 20%)); box-shadow: none; }
+.lv-add .lv-node { background: var(--page); box-shadow: 0 0 0 6px var(--page); border: 1.5px dashed var(--edge-3); color: var(--ink-3); }
+.lv-add .lv-node .icon { width: 18px; height: 18px; }
+.lv-add .lv-card { display: flex; gap: 10px; background: none; box-shadow: inset 0 0 0 1px var(--edge-1); flex-direction: row; align-items: center; flex-wrap: wrap; }
+.lv-add .lv-card .input.num { width: 96px; }
+.lv-add .lv-card .select-wrap { flex: 1; min-width: 160px; max-width: 280px; }
+.lv-warn { font-size: 12.5px; color: var(--ink-2); }
+.lv-near .mini { padding: 4px 0; }
+.lv-near .mini .mono { color: var(--data); }
+
+/* Settings: the rail shows what members will see and how the curve climbs. */
+.lv-dc { border-radius: 12px; overflow: hidden; background: #313338; color: #dbdee1; font-size: 14px; box-shadow: 0 18px 40px -20px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+.lv-dc-head { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px; border-bottom: 1px solid #26272b; color: #f2f3f5; font-weight: 600; font-size: 13.5px; }
+.lv-dc-head .icon { color: #80848e; width: 16px; height: 16px; }
+.lv-dc-msg { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; padding: 12px 14px 16px; transition: opacity 0.3s, filter 0.3s; }
+.lv-dc-msg.off { opacity: 0.4; filter: saturate(0.4); }
+.lv-dc-av { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+span.lv-dc-av { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
+span.lv-dc-av img { width: 22px; height: 22px; }
+.lv-dc-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.3; }
+.lv-dc-name strong { color: #f2f3f5; font-weight: 600; font-size: 14.5px; }
+.lv-dc-app { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font: 600 10px/1 var(--sans); }
+.lv-dc-time { color: #949ba4; font-size: 11.5px; }
+.lv-dc-text { margin-top: 3px; line-height: 1.4; overflow-wrap: anywhere; }
+.lv-dc-mention { background: rgba(88, 101, 242, 0.3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; font-weight: 500; }
+.lv-dc-note { font-size: 12px; }
+.lv-curve .mini-bars svg { height: 92px; }
+.lv-curve .axis { display: flex; justify-content: space-between; color: var(--ink-3); font: 11px var(--mono); margin-top: 6px; }
+.lv-curve .rail-nums b { font-size: 21px; }
+
+/* Import: a drop zone that takes the whole card. */
+.lv-drop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 20px 30px; border-radius: 16px; text-align: center; border: 1.5px dashed var(--edge-3); background: radial-gradient(70% 120% at 50% 0%, color-mix(in oklab, var(--hue) 6%, transparent), transparent 70%); transition: border-color 0.2s, background 0.3s, transform 0.3s var(--ease); }
+.lv-drop:hover, .lv-drop.over { border-color: var(--hue); background: radial-gradient(80% 130% at 50% 0%, color-mix(in oklab, var(--hue) 11%, transparent), transparent 75%); }
+.lv-drop.over { transform: scale(1.01); }
+.lv-drop:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 3px; }
+.lv-drop input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.lv-drop-ic { display: grid; place-items: center; width: 54px; height: 54px; margin-bottom: 6px; border-radius: 17px; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 25%)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); animation: float 5s ease-in-out infinite; }
+.lv-drop-ic .icon { width: 26px; height: 26px; }
+.lv-drop strong { font-size: 15px; font-weight: 600; }
+.lv-drop .muted { font-size: 12.5px; }
+.lv-drop .lv-file { display: none; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 12px; border-radius: 10px; background: var(--control); font-size: 12.5px; color: var(--ink); }
+.lv-drop.picked .lv-file { display: inline-flex; animation: pop-in 0.4s var(--spring) both; }
+.lv-go { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.lv-result { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; border-radius: 14px; font-size: 13.5px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.45s var(--ease) both; }
+.lv-result[hidden] { display: none; }
+.lv-result .lv-res-ic { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; flex: none; background: var(--control); color: var(--ink-2); }
+.lv-result.ok { background: color-mix(in oklab, var(--live) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--live) 28%, transparent); }
+.lv-result.ok .lv-res-ic { background: var(--live); color: #062014; }
+.lv-result.bad { background: color-mix(in oklab, var(--held) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--held) 28%, transparent); }
+.lv-result.bad .lv-res-ic { background: var(--held); color: #1a0507; }
+.lv-local { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 16px 18px; }
+.lv-local .grow p { font-size: 12.5px; margin-top: 2px; overflow-wrap: anywhere; }
+.lv-local code { color: var(--ink-2); }
+.lv-main { gap: 30px; }
+/* Import: the upload beside what happens, once the page is wide enough for both. */
+.lv-import { display: flex; flex-direction: column; gap: 30px; }
+@container col (min-width: 1000px) {
+  .lv-import { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: 30px 36px; align-items: start; }
+}
+.lv-steps { display: flex; flex-direction: column; gap: 12px; }
+.lv-steps .mini { align-items: flex-start; }
+.lv-steps .mini .lvl { flex: none; }
+.lv-steps .mini .grow > * { white-space: normal; }
+@keyframes lv-draw { from { transform: scaleY(0); } }
+@media (max-width: 920px) {
+  .lv-ladder::before { left: 21px; }
+  .lv-rung { grid-template-columns: 44px minmax(0, 1fr); gap: 12px; }
+  .lv-node { width: 44px; height: 44px; }
+  .lv-node b { font-size: 16px; }
+  .lv-node small { display: none; }
+  .lv-card { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "reach" "acts"; }
+  .lv-acts { justify-content: flex-start; }
+}
+"#;
+
+/// A section headed by an icon tile in the group's hue.
+fn section(ic: Icon, title: &str, hint: Option<&str>, body: Markup) -> Markup {
+    html! {
+        section.block.lv-sec {
+            div.lv-sec-head {
+                span.lv-sec-ic { (ui::icon(ic)) }
+                div { h2 { (title) } @if let Some(h) = hint { p.muted { (h) } } }
+            }
+            (body)
+        }
+    }
+}
+
+/// Reading cards whose figures count up as they scroll into view.
+fn readings(items: &[(&str, String)]) -> Markup {
+    html! { div.readings.lv-readings { @for (label, value) in items { div.reading { b data-count { (value) } span { (label) } } } } }
+}
+
+/// "740", "25.9k", "1.2M": XP short enough for a rail figure.
+fn compact(n: i64) -> String {
+    match n {
+        ..10_000 => text::num(n),
+        10_000..100_000 => format!("{:.1}k", n as f64 / 1000.0),
+        100_000..1_000_000 => format!("{}k", n / 1000),
+        _ => format!("{:.1}M", n as f64 / 1_000_000.0),
+    }
+}
+
+/// The bot as members see it in a channel: its name, and its avatar or the dashboard's mark
+/// when the bot isn't connected.
+fn bot_face(ctx: &Ctx) -> (String, Markup) {
+    let user = ctx.bot_id().and_then(|b| ctx.cache.user(Id::new(b)).map(|u| (b, u)));
+    match user {
+        Some((id, u)) => (
+            u.global_name.clone().unwrap_or_else(|| u.name.clone()),
+            html! { img.lv-dc-av src=(bot_core::discord::avatar_url(id, u.avatar.map(|a| a.to_string()).as_deref())) alt=""; },
+        ),
+        None => ("Bot".into(), html! { span.lv-dc-av { img src="/static/icon.svg" alt=""; } }),
+    }
+}
+
+/// An upload arrow over a tray, drawn on the dashboard's 24-unit grid.
+fn upload_icon() -> Markup {
+    html! {
+        svg.icon viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" {
+            path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M4.5 14.5v3A2.5 2.5 0 0 0 7 20h10a2.5 2.5 0 0 0 2.5-2.5v-3" {}
+        }
+    }
+}
 
 /// The server's voice and stage channels, in Discord's order.
 fn voice_channels(ctx: &Ctx, guild: u64) -> Vec<(u64, String)> {
@@ -481,10 +770,12 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         } @else if rows.is_empty() && search.is_none() {
             p.muted.small { @if board == Board::Week { "Everyone who earned XP this week is on the podium so far." } @else { "Everyone with XP is on the podium so far." } }
         } @else {
-            div.ranks {
-                @for (place, m, gain) in &rows {
+            // Two columns on a wide screen, filled top to bottom: the first half, then the rest.
+            @let half = rows.len().div_ceil(2);
+            div.ranks style={ "--rows:" (half.max(1)) } {
+                @for (i, (place, m, gain)) in rows.iter().enumerate() {
                     @let p = s.progress(m.xp);
-                    div.rank {
+                    div.rank.col2[i == half] {
                         span.mono.muted.pos { (place) }
                         img.avatar src=(avatar(m.user_id)) alt="" width="28" height="28" loading="lazy";
                         @let more = extras(m);
@@ -533,7 +824,7 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let week_block = html! {
         div.rail-block {
             h2 { "XP earned this week" }
-            div.big-num { (text::num(week.1)) }
+            div.big-num { b data-count { (text::num(week.1)) } }
             span.muted.small { "by " (text::num(week.0)) @if week.0 == 1 { " member" } @else { " members" } " since Monday" }
         }
     };
@@ -605,45 +896,79 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let roles = ctx.roles(guild);
     let options = role_options(&ctx, guild);
-    let body = html! {
-        style { (PreEscaped(CSS)) }
-        (tabs(&page, "Rewards"))
-        (ui::section("Reward roles", Some(if s.stack_rewards {
+    let ranked = crate::count(&ctx, guild)?;
+    // Everyone on the board, best first: (member, level).
+    let board: Vec<(u64, u32)> = crate::top(&ctx, guild, 0, 2000)?.into_iter().map(|m| (m.user_id, s.progress(m.xp).level)).collect();
+    // Members at or above a level, counted in the database, and the faces of the first five.
+    let reached = |level: u32| -> (i64, Vec<String>) {
+        let n = ctx
+            .db
+            .with(|c| c.query_row("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND level >= ?2", params![guild as i64, level as i64], |r| r.get::<_, i64>(0)))
+            .unwrap_or(0);
+        (n, board.iter().filter(|(_, l)| *l >= level).take(5).map(|(u, _)| ctx.member_avatar(guild, *u)).collect())
+    };
+    let holding = rewards.first().map(|(l, _)| reached(*l).0).unwrap_or(0);
+    // Close to their next reward: within three levels of it, nearest first.
+    let mut near: Vec<(u64, u32, u32, u64)> = board
+        .iter()
+        .filter_map(|(u, l)| rewards.iter().find(|(rl, _)| rl > l).map(|(rl, r)| (*u, *l, *rl, *r)))
+        .filter(|(_, l, rl, _)| rl - l <= 3)
+        .collect();
+    near.sort_by_key(|(_, l, rl, _)| rl - l);
+    near.truncate(4);
+    // Members per band of levels, for the rail's chart.
+    let top_level = board.iter().map(|(_, l)| *l).max().unwrap_or(0);
+    let band = (top_level / 10 + 1).max(1);
+    let spread: Vec<(String, Option<i64>)> = (0..=top_level / band)
+        .map(|b| {
+            let (lo, hi) = (b * band, b * band + band - 1);
+            let label = if band == 1 { format!("Level {lo}") } else { format!("Levels {lo}–{hi}") };
+            (label, Some(board.iter().filter(|(_, l)| (lo..=hi).contains(l)).count() as i64))
+        })
+        .collect();
+    let color = |role: u64| roles.iter().find(|r| r.0 == role).map(|r| role_color(r.2)).unwrap_or_else(|| "var(--ink-3)".into());
+
+    let main = html! {
+        (readings(&[
+            ("reward roles", text::num(rewards.len() as i64)),
+            ("members holding one", text::num(holding)),
+            ("highest reward", rewards.last().map(|(l, _)| format!("Level {l}")).unwrap_or_else(|| "None".into())),
+        ]))
+        (section(Icon::Trophy, "The climb", Some(if s.stack_rewards {
             "Given when a member reaches the level, and to members already past it. Members keep earlier rewards. Removing a reward leaves the role on whoever has it."
         } else {
             "Given when a member reaches the level, and to members already past it. Members keep only the reward for their highest level. Removing a reward leaves the role on whoever has it."
         }), html! {
-            @if rewards.is_empty() {
-                (ui::empty(Icon::Trophy, "No reward roles", "Add a role below and members get it at that level."))
+            @if rewards.is_empty() && !page.can_edit() {
+                (ui::empty(Icon::Trophy, "No reward roles", "Roles staff add here are given to members when they reach the level."))
             } @else {
-                div.table-wrap { table.table.lv-table {
-                    thead { tr { th { "Level" } th { "Role" } th.num { "Members" } th {} } }
-                    tbody { @for (level, role) in &rewards {
-                        @let known = roles.iter().find(|r| r.0 == *role);
-                        @let problem = cant_give(&ctx, guild, *role);
-                        tr {
-                            td.num style="text-align:left" { (level) }
-                            td {
-                                span.lv-role {
-                                    span.lv-name {
-                                        span.dot style={ "background:" (known.map(|r| role_color(r.2)).unwrap_or_else(|| "var(--ink-3)".into())) } {}
-                                        (role_name(&ctx, guild, *role))
-                                    }
-                                    @match (known, problem) {
-                                        (None, _) => { (ui::badge("Can't give", Tone::Warn)) },
-                                        (Some(_), Some(why)) => { (ui::badge("Can't give", Tone::Warn)) span.muted.small { (why) } },
-                                        _ => {},
-                                    }
+                div.lv-ladder {
+                    @for (i, (level, role)) in rewards.iter().enumerate() {
+                        @let known = roles.iter().any(|r| r.0 == *role);
+                        @let problem = if known { cant_give(&ctx, guild, *role) } else { Some("Deleted role") };
+                        @let (n, faces) = reached(*level);
+                        @let pct = if ranked > 0 { (n * 100 / ranked).clamp(0, 100) } else { 0 };
+                        div.lv-rung style={ "--i:" (i) ";--role:" (color(*role)) } {
+                            span.lv-node data-tip={ "Level " (level) } { b { (level) } small { "level" } }
+                            div.lv-card {
+                                div.lv-card-top {
+                                    span.lv-pill { (role_name(&ctx, guild, *role)) }
+                                    @if let Some(why) = problem { (ui::badge("Can't give", Tone::Warn)) span.lv-warn { (why) } }
                                 }
-                            }
-                            td.num {
-                                (text::num(ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM levels WHERE guild_id = ?1 AND level >= ?2", params![guild as i64, *level as i64], |r| r.get::<_, i64>(0))).unwrap_or(0)))
-                            }
-                            td.actions {
+                                div.lv-reach {
+                                    div.lv-who {
+                                        @if !faces.is_empty() { (ui::avatars(&faces, 5)) }
+                                        span {
+                                            @if n == 0 { "Nobody has reached it yet" }
+                                            @else { b { (text::num(n)) } (if n == 1 { " member reached it" } else { " members reached it" }) span.muted { " · " (pct) "% of the board" } }
+                                        }
+                                    }
+                                    span.meter { span style={ "width:" (pct) "%" } {} }
+                                }
                                 @if page.can_edit() {
                                     div.lv-acts {
                                         details.pop {
-                                            summary.btn.small { "Change" }
+                                            summary.btn.small.outline { "Change" }
                                             div.pop-body {
                                                 form.stack method="post" action=(page.path(&format!("levels/rewards/{level}/edit"))) {
                                                     input.input.num type="number" name="level" min="1" max="500" value=(level) aria-label="Level" required;
@@ -657,20 +982,58 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                 }
                             }
                         }
-                    } }
-                } }
+                    }
+                    @if page.can_edit() {
+                        div.lv-rung.lv-add style={ "--i:" (rewards.len()) } {
+                            span.lv-node { (ui::icon(Icon::Plus)) }
+                            form.lv-card method="post" action=(page.path("levels/rewards")) {
+                                input.input.num type="number" name="level" min="1" max="500" placeholder="Level" required aria-label="Level";
+                                (ui::select("role", &std::iter::once((String::new(), "Pick a role".to_owned())).chain(options.iter().cloned()).collect::<Vec<_>>(), ""))
+                                button.btn type="submit" { "Add reward" }
+                                @if rewards.is_empty() { span.muted.small { "Members get the role when they reach the level." } }
+                            }
+                        }
+                    }
+                }
                 @if rewards.iter().any(|(_, r)| cant_give(&ctx, guild, *r).is_some()) {
                     p.muted.small { "Members reaching a level marked Can't give get nothing. Pick another role, or move the bot's role above it in Discord." }
                 }
             }
-            @if page.can_edit() {
-                form.inline-form method="post" action=(page.path("levels/rewards")) {
-                    input.input.num type="number" name="level" min="1" max="500" placeholder="Level" required style="max-width:110px";
-                    (ui::select("role", &std::iter::once((String::new(), "Pick a role".to_owned())).chain(options.iter().cloned()).collect::<Vec<_>>(), ""))
-                    button.btn type="submit" { "Add reward" }
+        }))
+    };
+    let rail = html! {
+        div.rail-block {
+            h2 { "Members by level" }
+            @if board.is_empty() {
+                p.muted.small { "Nobody has XP yet." }
+            } @else {
+                (ui::column_bars(&spread, "members", "Members in each band of levels"))
+            }
+        }
+        div.rail-block.lv-near {
+            h2 { "Close to a reward" }
+            @if near.is_empty() {
+                p.muted.small { "Nobody is within three levels of their next reward." }
+            }
+            @for (u, l, rl, r) in &near {
+                div.mini {
+                    img.avatar src=(ctx.member_avatar(guild, *u)) alt="" loading="lazy";
+                    div.grow {
+                        span { (ctx.display_name(guild, *u)) }
+                        span.muted { "Level " (l) " · " (role_name(&ctx, guild, *r)) " at " (rl) }
+                    }
+                    span.mono { (rl - l) (if rl - l == 1 { " level" } else { " levels" }) }
                 }
             }
-        }))
+        }
+    };
+    let body = html! {
+        style { (PreEscaped(CSS)) }
+        (tabs(&page, "Rewards"))
+        div.with-rail {
+            div.stack.lv-main { (main) }
+            aside.rail { (rail) }
+        }
     };
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
 }
@@ -698,45 +1061,110 @@ async fn set_member_xp(State(ctx): State<Ctx>, user: User, Path((guild, member))
 async fn import_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let local = legacy_db_path().filter(|p| std::path::Path::new(p).exists());
+    let ranked = crate::count(&ctx, guild)?;
+    let rewards = crate::rewards(&ctx, guild)?.len() as i64;
+    let top_level: i64 = ctx
+        .db
+        .with(|c| c.query_row("SELECT COALESCE(MAX(level), 0) FROM levels WHERE guild_id = ?1", [guild as i64], |r| r.get(0)))
+        .unwrap_or(0);
+    // Replace or keep the higher, as a segmented choice; `name` is what the form or script reads.
+    let modes = |name: &str, theirs: &str| {
+        html! {
+            div.seg role="radiogroup" aria-label="When a member already has XP" {
+                label { input type="radio" name=(name) value="replace" checked; { "Use " (theirs) } }
+                label { input type="radio" name=(name) value="higher"; "Keep the higher" }
+            }
+        }
+    };
     let body = html! {
+        style { (PreEscaped(CSS)) }
         (tabs(&page, "Import"))
+        (readings(&[
+            ("members with XP now", text::num(ranked)),
+            ("reward roles", text::num(rewards)),
+            ("highest level", text::num(top_level)),
+        ]))
         @if let Some(path) = &local {
-            (ui::section("The old bot's database is on this server", Some(&format!("Found at {path}. Importing reads it and leaves it as it is.")), html! {
-                @if page.can_edit() {
-                    form.inline-form method="post" action=(page.path("levels/import-local")) {
-                        (ui::select("mode", &[("replace".into(), "Replace XP with the old bot's".into()), ("higher".into(), "Keep whichever is higher".into())], "replace"))
-                        button.btn.primary type="submit" { "Import from the old bot" }
+            (section(Icon::Plug, "The old bot's database is on this server", None, html! {
+                div.card.lv-local {
+                    div.grow {
+                        strong { "Ready to read" }
+                        p.muted { "Found at " code { (path) } ". Importing reads it and leaves it as it is." }
+                    }
+                    @if page.can_edit() {
+                        form.inline-form method="post" action=(page.path("levels/import-local")) {
+                            (modes("mode", "the old bot's"))
+                            button.btn.primary type="submit" { "Import from the old bot" }
+                        }
                     }
                 }
             }))
         }
-        (ui::section(if local.is_some() { "Or upload a file" } else { "Bring XP over from antho-s-bot" }, Some("Use a backup of its database, or the JSON the Render Shell command prints. Only members of this server are imported. Reward roles and XP settings come too."), html! {
+        div.lv-import {
+        (section(Icon::Log, if local.is_some() { "Or upload a file" } else { "Bring XP over from antho-s-bot" }, Some("Use a backup of its database, or the JSON the Render Shell command prints. Only members of this server are imported. Reward roles and XP settings come too."), html! {
             div.card style="padding:18px" {
-                div.stack {
-                    input.input id="import-file" type="file" accept=".db,.sqlite,.json,application/json" style="height:auto;padding:8px";
-                    div.inline-form {
-                        (ui::select("import-mode", &[("replace".into(), "Replace XP with the file's".into()), ("higher".into(), "Keep whichever is higher".into())], "replace"))
-                        button.btn.primary id="import-go" type="button" { "Import" }
-                    }
-                    p.muted.small id="import-result" {}
+                label.lv-drop #import-drop {
+                    input #import-file type="file" accept=".db,.sqlite,.json,application/json" aria-label="The old bot's database or JSON";
+                    span.lv-drop-ic { (upload_icon()) }
+                    strong { "Drop the database or JSON here" }
+                    span.muted { "or click to pick it. A .db, .sqlite or .json file up to 64 MB." }
+                    span.lv-file { (ui::icon(Icon::Log)) span #import-name {} }
+                }
+                div.lv-go {
+                    (modes("import-mode", "the file's"))
+                    button.btn.primary #import-go type="button" { (upload_icon()) "Import" }
                 }
             }
+            div.lv-result #import-result hidden role="status" {
+                span.lv-res-ic #import-icon {}
+                div.grow { strong #import-title {} p.muted.small #import-text {} }
+            }
         }))
-        script { (bot_core::maud::PreEscaped(format!(r#"
-document.getElementById("import-go").addEventListener("click", async () => {{
-  const file = document.getElementById("import-file").files[0];
-  const out = document.getElementById("import-result");
-  if (!file) {{ out.textContent = "Pick a file first."; return; }}
-  out.textContent = "Importing…";
-  const mode = document.getElementById("import-mode").value;
-  try {{
-    const res = await fetch("{path}?mode=" + mode, {{ method: "POST", body: file }});
-    const data = await res.json();
-    out.textContent = data.message;
-    if (data.ok) window.botToast("Imported");
-  }} catch (e) {{ out.textContent = "The upload failed. Try again."; }}
-}});
-"#, path = page.path("levels/import")))) }
+        (section(Icon::Bulb, "What happens", None, html! {
+            div.lv-steps {
+                div.mini { span.lvl { "1" } div.grow { span { "Only this server's members are read" } span.muted { "Other servers in the file are left alone." } } }
+                div.mini { span.lvl { "2" } div.grow { span { "XP is replaced, or the higher of the two is kept" } span.muted { "Levels are worked out again from the XP, on the curve the file brings." } } }
+                div.mini { span.lvl { "3" } div.grow { span { "Reward roles and XP settings come along" } span.muted { "Roles with moderation or admin power come only when an admin imports." } } }
+            }
+        }))
+        }
+        script { (PreEscaped(format!(r#"
+(() => {{
+  const $ = (id) => document.getElementById(id);
+  const input = $("import-file"), drop = $("import-drop"), out = $("import-result");
+  const size = (n) => n < 1048576 ? Math.max(1, Math.round(n / 1024)) + " KB" : (n / 1048576).toFixed(1) + " MB";
+  const show = () => {{
+    const f = input.files[0];
+    drop.classList.toggle("picked", !!f);
+    $("import-name").textContent = f ? f.name + " · " + size(f.size) : "";
+  }};
+  input.addEventListener("change", show);
+  ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, () => drop.classList.add("over")));
+  ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, () => drop.classList.remove("over")));
+  const say = (kind, title, text) => {{
+    out.hidden = false;
+    out.className = "lv-result " + kind;
+    $("import-icon").innerHTML = kind === "ok" ? '{ok}' : kind === "bad" ? '{bad}' : "";
+    $("import-title").textContent = title;
+    $("import-text").textContent = text;
+  }};
+  $("import-go").addEventListener("click", async (e) => {{
+    const file = input.files[0];
+    if (!file) {{ say("bad", "Pick a file first", "Drop the old bot's database or JSON on the box above."); return; }}
+    const btn = e.currentTarget;
+    btn.classList.add("busy");
+    say("", "Importing " + file.name, "Large databases take a minute.");
+    const mode = document.querySelector('input[name="import-mode"]:checked').value;
+    try {{
+      const res = await fetch("{path}?mode=" + mode, {{ method: "POST", body: file }});
+      const data = await res.json();
+      say(data.ok ? "ok" : "bad", data.ok ? "Imported" : "Nothing imported", data.message);
+      if (data.ok) window.botToast("Imported");
+    }} catch (_) {{ say("bad", "The upload failed", "Check the connection and try again."); }}
+    btn.classList.remove("busy");
+  }});
+}})();
+"#, path = page.path("levels/import"), ok = ui::icon(Icon::Check).into_string(), bad = ui::icon(Icon::Close).into_string()))) }
     };
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
 }
