@@ -88,6 +88,15 @@ The page fills the window; nothing is capped at a fixed width and parked at the 
   `DOMContentLoaded` and passes `window.botPage.signal` to timers and document listeners.
 - **Save** sits at the end of its form (`.save-bar`). While a settings form has changes and its
   Save is out of view, a Discord-style bar at the bottom offers Reset and Save.
+- **Refusals**: a post the server turns down (`WebError::Bad`, or any error status) shows its
+  reason in a popup by the button that asked, never on a page of its own. Write the reason as
+  what to do: "Pick a channel for reminders and save first."
+- **Send a test**: wherever the bot posts on its own, the block showing that post has a test
+  button (POST route, `Level::Edit`, audited, marked as a test, nobody pinged, saved settings).
+  Inside a settings form it's a `formaction` button. It returns with `?sent=1`; render
+  `ui::sent_toast(sent, "Test sent")`.
+- A form that changes the sidebar (switching a feature, the banner) carries `data-full` so it
+  loads the whole page.
 - **Overview** (`ui::layout_custom`) draws the A3 hero: banner photo (or `ui::art`), server icon
   in a ring of its colour, the greeting, then stat cards that count up, the area chart, "Needs
   you" and "Around the server" (side by side when wide), with the right column panel. The stat
