@@ -5,6 +5,8 @@
 //! expiry), the bot DMs both, warns 15 minutes before expiry and cancels on expiry, and an editor
 //! confirms the hand-over. Three public pages show the collection, giveaways and stats.
 
+mod idleon;
+mod picture;
 mod public;
 pub mod store;
 mod view;
@@ -80,18 +82,18 @@ impl Feature for Pets {
                         .option(qty_opt("How many, 1 if left out")),
                 )
                 .option(SubCommandBuilder::new("list", "The server's collection"))
+                .option(SubCommandBuilder::new("mine", "Pets you've added and what's waiting for approval"))
                 .option(
                     SubCommandBuilder::new("remove", "Take pets out of the collection (staff)")
                         .option(pet_opt("Which pet"))
                         .option(qty_opt("How many, 1 if left out")),
                 )
                 .build(),
-            CommandBuilder::new("mypets", "Pets you've added and what's waiting for approval", CommandType::ChatInput).build(),
         ]
     }
 
     fn routes(&self) -> bot_core::axum::Router<Ctx> {
-        web::routes().merge(public::routes())
+        web::routes().merge(public::routes()).merge(picture::routes()).merge(idleon::routes())
     }
 
     fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> Overview {
@@ -134,62 +136,60 @@ impl Feature for Pets {
     async fn on_command(&self, ctx: &Ctx, call: &CommandCall) -> Result<()> {
         let Some(guild) = call.guild_id() else { return Ok(()) };
         store::ensure_seeded(ctx, guild)?;
-        match call.data.name.as_str() {
-            "pet" => {
-                let Some((sub, opts)) = call.opts().sub() else { return Ok(()) };
-                let qty = opts.int("quantity").unwrap_or(1).clamp(1, 25);
-                match sub {
-                    "add" => {
-                        let Some(pet) = store::find_pet(ctx, guild, opts.str("pet").unwrap_or_default())? else {
-                            return ctx.reply(&call.interaction, Reply::text("That pet isn't in the catalog. Pick one from the list.").ephemeral()).await;
-                        };
-                        let issued = now_ms() / 1000;
-                        let confirm = format!("{KEY}:confirm:{}:{qty}:{issued}", pet.id);
-                        let cancel = format!("{KEY}:cancel");
-                        let mut e = EmbedBuilder::new()
-                            .color(COLOR)
-                            .title(format!("Submit {}{} {}?", qty_label(qty), pet.icon(), pet.name))
-                            .description("Staff review submissions on the dashboard before they join the collection.")
-                            .field(EmbedFieldBuilder::new("Rarity", store::rarity_label(&pet.rarity)).inline())
-                            .field(EmbedFieldBuilder::new("Quantity", qty.to_string()).inline());
-                        if let Some(img) = pet.image_url().and_then(|u| ImageSource::url(u).ok()) {
-                            e = e.thumbnail(img);
-                        }
-                        let row = button_row(&[(&confirm, "Submit", ButtonStyle::Success), (&cancel, "Cancel", ButtonStyle::Secondary)]);
-                        ctx.reply(&call.interaction, Reply::embed(e.build()).components(vec![row]).ephemeral()).await?;
-                    }
-                    "list" => {
-                        let (embed, rows) = list_page(ctx, guild, 0)?;
-                        ctx.reply(&call.interaction, Reply::embed(embed).components(rows)).await?;
-                    }
-                    "remove" => {
-                        let staff = call
-                            .interaction
-                            .member
-                            .as_ref()
-                            .and_then(|m| m.permissions)
-                            .is_some_and(|p| p.intersects(Permissions::ADMINISTRATOR | Permissions::MANAGE_GUILD));
-                        if !staff {
-                            return ctx.reply(&call.interaction, Reply::text("Only staff with Manage Server can remove pets.").ephemeral()).await;
-                        }
-                        let Some(pet) = store::find_pet(ctx, guild, opts.str("pet").unwrap_or_default())? else {
-                            return ctx.reply(&call.interaction, Reply::text("That pet isn't in the catalog.").ephemeral()).await;
-                        };
-                        let removed = store::remove_owned(ctx, guild, &pet.id, qty, None)?;
-                        let msg = if removed == 0 {
-                            format!("The collection has no {} {}.", pet.icon(), pet.name)
-                        } else {
-                            let left = store::owned_counts(ctx, guild)?.get(&pet.id).copied().unwrap_or(0);
-                            format!("Removed {}{} {}. {} left.", qty_label(removed), pet.icon(), pet.name, if left == 0 { "None".to_owned() } else { left.to_string() })
-                        };
-                        ctx.reply(&call.interaction, Reply::text(msg).ephemeral()).await?;
-                    }
-                    _ => {}
+        if call.data.name != "pet" {
+            return Ok(());
+        }
+        let Some((sub, opts)) = call.opts().sub() else { return Ok(()) };
+        let qty = opts.int("quantity").unwrap_or(1).clamp(1, 25);
+        match sub {
+            "add" => {
+                let Some(pet) = store::find_pet(ctx, guild, opts.str("pet").unwrap_or_default())? else {
+                    return ctx.reply(&call.interaction, Reply::text("That pet isn't in the catalog. Pick one from the list.").ephemeral()).await;
+                };
+                let issued = now_ms() / 1000;
+                let confirm = format!("{KEY}:confirm:{}:{qty}:{issued}", pet.id);
+                let cancel = format!("{KEY}:cancel");
+                let mut e = EmbedBuilder::new()
+                    .color(COLOR)
+                    .title(format!("Submit {}{} {}?", qty_label(qty), pet.icon(), pet.name))
+                    .description("Staff review submissions on the dashboard before they join the collection.")
+                    .field(EmbedFieldBuilder::new("Rarity", store::rarity_label(&pet.rarity)).inline())
+                    .field(EmbedFieldBuilder::new("Quantity", qty.to_string()).inline());
+                if let Some(img) = pet.embed_image(&ctx.cfg.public_url).and_then(|u| ImageSource::url(u).ok()) {
+                    e = e.thumbnail(img);
                 }
+                let row = button_row(&[(&confirm, "Submit", ButtonStyle::Success), (&cancel, "Cancel", ButtonStyle::Secondary)]);
+                ctx.reply(&call.interaction, Reply::embed(e.build()).components(vec![row]).ephemeral()).await?;
             }
-            "mypets" => {
+            "list" => {
+                let (embed, rows) = list_page(ctx, guild, 0)?;
+                ctx.reply(&call.interaction, Reply::embed(embed).components(rows)).await?;
+            }
+            "mine" => {
                 let embed = my_pets(ctx, guild, call.user_id())?;
                 ctx.reply(&call.interaction, Reply::embed(embed).ephemeral()).await?;
+            }
+            "remove" => {
+                let staff = call
+                    .interaction
+                    .member
+                    .as_ref()
+                    .and_then(|m| m.permissions)
+                    .is_some_and(|p| p.intersects(Permissions::ADMINISTRATOR | Permissions::MANAGE_GUILD));
+                if !staff {
+                    return ctx.reply(&call.interaction, Reply::text("Only staff with Manage Server can remove pets.").ephemeral()).await;
+                }
+                let Some(pet) = store::find_pet(ctx, guild, opts.str("pet").unwrap_or_default())? else {
+                    return ctx.reply(&call.interaction, Reply::text("That pet isn't in the catalog.").ephemeral()).await;
+                };
+                let removed = store::remove_owned(ctx, guild, &pet.id, qty, None)?;
+                let msg = if removed == 0 {
+                    format!("The collection has no {} {}.", pet.icon(), pet.name)
+                } else {
+                    let left = store::owned_counts(ctx, guild)?.get(&pet.id).copied().unwrap_or(0);
+                    format!("Removed {}{} {}. {} left.", qty_label(removed), pet.icon(), pet.name, if left == 0 { "None".to_owned() } else { left.to_string() })
+                };
+                ctx.reply(&call.interaction, Reply::text(msg).ephemeral()).await?;
             }
             _ => {}
         }
@@ -268,20 +268,13 @@ impl Feature for Pets {
                 let Some(at) = g.expires_at else { continue };
                 if at <= now_ms() {
                     if store::close_giveaway(ctx, guild, g.id, Status::Expired, "Expired")? {
-                        let line = format!("The {} giveaway from {} to {} in {} expired and was cancelled.", g.pet_name, name(ctx, guild, g.giver_id), name(ctx, guild, g.winner_id), ctx.guild_name(guild));
+                        let line = expired_dm(&g.pet_name, &name(ctx, guild, g.giver_id), &name(ctx, guild, g.winner_id), &ctx.guild_name(guild));
                         dm_later(ctx, g.winner_id, line.clone());
                         dm_later(ctx, g.giver_id, line);
                     }
                 } else if !g.warned {
                     store::mark_warned(ctx, guild, g.id)?;
-                    let line = format!(
-                        "The {} giveaway from {} to {} in {} expires <t:{}:R>. Finish the hand-over before then.",
-                        g.pet_name,
-                        name(ctx, guild, g.giver_id),
-                        name(ctx, guild, g.winner_id),
-                        ctx.guild_name(guild),
-                        at / 1000
-                    );
+                    let line = warning_dm(&g.pet_name, &name(ctx, guild, g.giver_id), &name(ctx, guild, g.winner_id), &ctx.guild_name(guild), at);
                     dm_later(ctx, g.winner_id, line.clone());
                     dm_later(ctx, g.giver_id, line);
                 }
@@ -389,7 +382,7 @@ fn list_page(ctx: &Ctx, guild: u64, page: i64) -> Result<(Embed, Vec<Component>)
     Ok((e.build(), rows))
 }
 
-/// `/mypets`: what a member has added or given, and what's waiting.
+/// `/pet mine`: what a member has added or given, and what's waiting.
 fn my_pets(ctx: &Ctx, guild: u64, user: u64) -> Result<Embed> {
     let catalog = store::catalog(ctx, guild)?;
     let find = |id: &str| catalog.iter().find(|p| p.id == id);
@@ -441,19 +434,53 @@ fn my_pets(ctx: &Ctx, guild: u64, user: u64) -> Result<Embed> {
         .build())
 }
 
+// ---- what the bot sends on its own, also sent as tests from the dashboard ----
+
+/// The DM a member gets when staff review their submission. `pet` is "👑 King Doot".
+pub(crate) fn review_dm(qty: i64, pet: &str, server: &str, approved: bool, reason: &str) -> String {
+    let qty = qty_label(qty);
+    if approved {
+        format!("Your {qty}{pet} submission in {server} was approved and is in the collection.")
+    } else if reason.is_empty() {
+        format!("Your {qty}{pet} submission in {server} was rejected.")
+    } else {
+        format!("Your {qty}{pet} submission in {server} was rejected: {reason}")
+    }
+}
+
+/// The DMs the winner and the giver get when a giveaway is recorded: `(winner's, giver's)`.
+pub(crate) fn recorded_dms(icon: &str, pet: &str, giver: &str, winner: &str, server: &str, expires_at: Option<i64>) -> (String, String) {
+    let until = expires_at.map(|t| format!(" It expires <t:{}:R>.", t / 1000)).unwrap_or_default();
+    (format!("You won {icon} {pet} from {giver} in {server}.{until}"), format!("You're giving {icon} {pet} to {winner} in {server}.{until}"))
+}
+
+/// Sent to both 15 minutes before a giveaway expires.
+pub(crate) fn warning_dm(pet: &str, giver: &str, winner: &str, server: &str, at: i64) -> String {
+    format!("The {pet} giveaway from {giver} to {winner} in {server} expires <t:{}:R>. Finish the hand-over before then.", at / 1000)
+}
+
+/// Sent to both when a giveaway expires unconfirmed.
+pub(crate) fn expired_dm(pet: &str, giver: &str, winner: &str, server: &str) -> String {
+    format!("The {pet} giveaway from {giver} to {winner} in {server} expired and was cancelled.")
+}
+
+/// The post in the announce channel when a giveaway is confirmed.
+pub(crate) fn announcement(giver: u64, winner: u64, icon: &str, pet: &str) -> String {
+    format!("<@{giver}> gave <@{winner}> {icon} **{pet}**.")
+}
+
 /// DM the giver and winner about a new giveaway.
 pub(crate) fn announce_recorded(ctx: &Ctx, guild: u64, g: &Giveaway) {
-    let until = g.expires_at.map(|t| format!(" It expires <t:{}:R>.", t / 1000)).unwrap_or_default();
-    let server = ctx.guild_name(guild);
-    dm_later(ctx, g.winner_id, format!("You won {} {} from {} in {server}.{until}", g.icon(), g.pet_name, name(ctx, guild, g.giver_id)));
-    dm_later(ctx, g.giver_id, format!("You're giving {} {} to {} in {server}.{until}", g.icon(), g.pet_name, name(ctx, guild, g.winner_id)));
+    let (to_winner, to_giver) = recorded_dms(g.icon(), &g.pet_name, &name(ctx, guild, g.giver_id), &name(ctx, guild, g.winner_id), &ctx.guild_name(guild), g.expires_at);
+    dm_later(ctx, g.winner_id, to_winner);
+    dm_later(ctx, g.giver_id, to_giver);
 }
 
 /// Post a confirmed giveaway in the announce channel, mentioning both.
 pub(crate) async fn announce_confirmed(ctx: &Ctx, guild: u64, g: &Giveaway) {
     let Ok(s) = ctx.settings::<Settings>(guild, KEY) else { return };
     let Some(channel) = s.announce_channel else { return };
-    let content = format!("<@{}> gave <@{}> {} **{}**.", g.giver_id, g.winner_id, g.icon(), g.pet_name);
+    let content = announcement(g.giver_id, g.winner_id, g.icon(), &g.pet_name);
     let mentions = AllowedMentions { users: vec![Id::new(g.giver_id), Id::new(g.winner_id)], ..Default::default() };
     if let Err(e) = ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&mentions)).await {
         bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post a confirmed pet giveaway");
@@ -566,6 +593,16 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use bot_core::Feature as _;
+
+    #[test]
+    fn one_command_with_subcommands() {
+        let cmds = super::Pets.commands();
+        assert_eq!(cmds.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["pet"]);
+        let subs: Vec<&str> = cmds[0].options.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(subs, ["add", "list", "mine", "remove"]);
+    }
+
     #[test]
     fn a_dialog_submits_once() {
         assert!(super::first_press(1));
