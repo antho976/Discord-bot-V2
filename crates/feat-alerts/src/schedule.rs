@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use bot_core::anyhow::Result;
+use bot_core::anyhow::{Result, anyhow};
 use bot_core::discord::{CommandCall, Reply};
 use bot_core::jiff::civil::{Date, Weekday};
 use bot_core::jiff::tz::TimeZone;
@@ -337,6 +337,43 @@ pub async fn week_png(ctx: &Ctx, s: &Settings) -> Result<Vec<u8>> {
     let link = bs.first().map(|b| format!("twitch.tv/{}", b.login)).unwrap_or_default();
     let svg = week_svg(&name, &link, monday, today, &tz, &s.timezone, &segs);
     bot_core::tokio::task::spawn_blocking(move || bot_render::png(&svg)).await?
+}
+
+/// The dashboard's "Send a test reminder": the next stream's reminder (or a sample one an hour
+/// from now), posted now in the reminder channel with nobody pinged.
+pub async fn test_reminder(ctx: &Ctx, s: &Settings) -> Result<()> {
+    let channel = s.reminder_channel.ok_or_else(|| anyhow!("no channel"))?;
+    let bs = twitch::for_settings(ctx, s);
+    let ids: Vec<String> = bs.iter().map(|b| b.user_id.clone()).collect();
+    let now = now_ms();
+    let first = bs.first().cloned().unwrap_or_else(|| {
+        let login = s.twitch_logins.first().cloned().unwrap_or_else(|| "twitch".into());
+        Broadcaster { name: login.clone(), login, user_id: String::new(), avatar: String::new() }
+    });
+    let seg = segments(ctx, &ids, now, now + 14 * 86_400_000).into_iter().find(|g| !g.canceled).unwrap_or(Segment {
+        id: "test".into(),
+        broadcaster_id: first.user_id.clone(),
+        starts_at: now + 60 * 60_000,
+        ends_at: None,
+        title: "Test stream".into(),
+        game: "Just Chatting".into(),
+        canceled: false,
+    });
+    let b = bs.iter().find(|b| b.user_id == seg.broadcaster_id).cloned().unwrap_or(first);
+    let content = format!("{}\n-# Test reminder. Nobody was pinged.", reminder_text(s.reminder_role, &b, &seg));
+    let none = AllowedMentions::default();
+    ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&none)).await?;
+    Ok(())
+}
+
+/// The dashboard's "Send a test post" for the Monday image: this week's picture, now.
+pub async fn test_weekly(ctx: &Ctx, s: &Settings) -> Result<()> {
+    let channel = s.weekly_channel.ok_or_else(|| anyhow!("no channel"))?;
+    let png = week_png(ctx, s).await?;
+    let files = [Attachment::from_bytes("schedule.png".into(), png, 1)];
+    let none = AllowedMentions::default();
+    ctx.http.create_message(Id::new(channel)).content("This week's streams.\n-# Test post.").attachments(&files).allowed_mentions(Some(&none)).await?;
+    Ok(())
 }
 
 /// `/schedule`: post this week's image in the channel.

@@ -769,7 +769,8 @@
     const f = e.target;
     const b = e.submitter;
     if (b && b.classList.contains("btn")) busyTimers.push(setTimeout(() => b.classList.add("busy"), 120));
-    if (f === dirty) { dirty = null; syncBar(); }
+    // A test button posts the form elsewhere (formaction); only a real save clears "unsaved".
+    if (f === dirty && !b?.hasAttribute("formaction")) { dirty = null; syncBar(); }
     const method = (b?.getAttribute("formmethod") || f.getAttribute("method") || "get").toUpperCase();
     const action = new URL(b?.getAttribute("formaction") || f.getAttribute("action") || location.href, location.href);
     if (f.target || f.hasAttribute("data-full") || !boostable(action) || f.closest(".account-menu")) return;
