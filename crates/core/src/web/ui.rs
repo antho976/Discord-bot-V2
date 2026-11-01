@@ -143,15 +143,18 @@ pub fn head(title: &str) -> Markup {
         link rel="preconnect" href="https://fonts.googleapis.com";
         link rel="preconnect" href="https://fonts.gstatic.com" crossorigin;
         link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap";
-        link rel="stylesheet" href="/static/app.css";
+        link rel="stylesheet" href=(&*CSS_URL);
         script { (PreEscaped(EARLY_JS)) }
-        script src="/static/app.js" defer {}
+        script src=(&*JS_URL) defer {}
     }
 }
 
 /// Runs in the head before the first paint: the server's colour, and how this page arrives.
 /// Coming back to the same page with another filter, or after a save, is `html.same`: no page
 /// slide and no entrance, only the parts that changed (charts) move.
+static CSS_URL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| super::asset("/static/app.css", super::APP_CSS));
+static JS_URL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| super::asset("/static/app.js", super::APP_JS));
+
 const EARLY_JS: &str = r#"(function(){var d=document.documentElement;try{var m=location.pathname.match(/^\/g\/(\d+)/),a=m&&localStorage.getItem("accent:"+m[1]);if(a)d.style.setProperty("--accent",a)}catch(e){}var same=false;try{var r=document.referrer&&new URL(document.referrer),n=performance.getEntriesByType("navigation")[0];same=!!(r&&r.origin===location.origin&&r.pathname===location.pathname&&(!n||n.type==="navigate"))}catch(e){}if(same)d.classList.add("same");addEventListener("pagereveal",function(e){if(!e.viewTransition)return;if(same){e.viewTransition.ready.catch(function(){});e.viewTransition.skipTransition()}else d.classList.add("vt")});addEventListener("pageswap",function(){d.classList.remove("vt")})})()"#;
 
 /// The signed-in shell: sidebar with the server switcher and the pages this person can open,

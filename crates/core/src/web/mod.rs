@@ -77,8 +77,10 @@ pub fn saved(path: &str) -> Response {
 /// Build the whole site: core pages plus every feature's routes.
 pub fn router(ctx: Ctx) -> Router {
     let mut app = Router::new()
-        .route("/static/app.css", get(|| async { ([(header::CONTENT_TYPE, "text/css"), (header::CACHE_CONTROL, "public, max-age=3600")], include_str!("assets/app.css")) }))
-        .route("/static/app.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript"), (header::CACHE_CONTROL, "public, max-age=3600")], include_str!("assets/app.js")) }))
+        // Linked with ?v=<hash of the file> (ui::asset), so they can be kept for good: a new
+        // build links a new address.
+        .route("/static/app.css", get(|| async { ([(header::CONTENT_TYPE, "text/css"), (header::CACHE_CONTROL, IMMUTABLE)], APP_CSS) }))
+        .route("/static/app.js", get(|| async { ([(header::CONTENT_TYPE, "text/javascript"), (header::CACHE_CONTROL, IMMUTABLE)], APP_JS) }))
         .route("/static/icon.svg", get(|| async { ([(header::CONTENT_TYPE, "image/svg+xml"), (header::CACHE_CONTROL, "public, max-age=86400")], include_str!("assets/icon.svg")) }))
         .route("/healthz", get(|| async { "ok" }))
         .merge(auth::routes(ctx.cfg.preview))
@@ -90,8 +92,22 @@ pub fn router(ctx: Ctx) -> Router {
     for f in ctx.features() {
         app = app.merge(f.routes());
     }
+    // Pages are mostly repeated markup and compress about 5x; pictures are left alone.
     app.layer(middleware::from_fn_with_state(ctx.clone(), same_origin))
+        .layer(tower_http::compression::CompressionLayer::new().quality(tower_http::CompressionLevel::Fastest))
         .with_state(ctx)
+}
+
+pub(crate) const APP_CSS: &str = include_str!("assets/app.css");
+pub(crate) const APP_JS: &str = include_str!("assets/app.js");
+const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+
+/// The address of a static file with its content's hash, so a browser fetches it again exactly
+/// when it changed.
+pub(crate) fn asset(path: &str, body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(body.as_bytes());
+    format!("{path}?v={}", hex::encode(&hash[..6]))
 }
 
 /// Refuse form posts that come from another site. Machine endpoints (`/api/`, `/webhooks/`)
@@ -133,4 +149,28 @@ pub async fn serve(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -
         })
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::Body;
+    use axum::http::{Request, header};
+    use tower::ServiceExt;
+
+    /// Guards the dashboard's transfer size: pages and static files go out gzipped to browsers
+    /// that ask, and the static files are versioned and kept for good.
+    #[tokio::test]
+    async fn pages_are_compressed_and_static_files_kept() {
+        let ctx = crate::Ctx::new(crate::Config::preview(0), crate::Db::memory().unwrap()).unwrap();
+        let app = super::router(ctx);
+        let res = app
+            .oneshot(Request::get("/static/app.css").header(header::ACCEPT_ENCODING, "gzip").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(res.headers().get(header::CONTENT_ENCODING).map(|v| v.to_str().unwrap()), Some("gzip"));
+        assert!(res.headers()[header::CACHE_CONTROL].to_str().unwrap().contains("immutable"));
+        let css = super::asset("/static/app.css", super::APP_CSS);
+        assert!(css.starts_with("/static/app.css?v=") && css.len() == "/static/app.css?v=".len() + 12, "{css}");
+        assert_ne!(css, super::asset("/static/app.css", "changed"));
+    }
 }
