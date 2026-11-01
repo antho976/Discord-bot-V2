@@ -259,9 +259,12 @@ fn set_cookie(ctx: &Ctx, name: &str, value: &str, max_age_secs: i64) -> String {
 
 pub(super) fn routes(preview: bool) -> Router<Ctx> {
     let r = Router::new();
-    let r = if preview { r.route("/dev/login", get(preview_login)) } else { r };
+    let r = if preview {
+        r.route("/dev/login", get(preview_login)).route("/login", get(preview_login_page))
+    } else {
+        r.route("/login", get(login_page))
+    };
     r
-        .route("/login", get(login_page))
         .route("/auth/discord", get(start))
         .route("/auth/callback", get(callback))
         .route("/logout", post(logout))
@@ -284,6 +287,26 @@ async fn preview_login(State(ctx): State<Ctx>, Query(q): Query<PreviewQuery>) ->
     })?;
     let to = q.to.filter(|t| t.starts_with('/')).unwrap_or_else(|| "/".into());
     Ok(([(header::SET_COOKIE, set_cookie(&ctx, SESSION_COOKIE, &session, 86_400))], Redirect::to(&to)).into_response())
+}
+
+/// Preview only: Discord sign-in can't work here, and a restart of the preview forgets every
+/// session, so the sign-in page opens the preview as the owner instead.
+async fn preview_login_page() -> Response {
+    let body = html! {
+        (DOCTYPE)
+        html lang="en" {
+            head { (ui::head("Preview")) }
+            body.bare {
+                main.notice {
+                    span.mark { (ui::mark()) }
+                    h1 { "Dashboard preview" }
+                    p { "This preview runs on sample servers and members, and opens as the owner, so every page is there." }
+                    a.btn.primary href="/dev/login?to=/" { "Open the preview" }
+                }
+            }
+        }
+    };
+    body.into_response()
 }
 
 async fn login_page() -> Response {

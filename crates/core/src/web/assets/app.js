@@ -238,11 +238,19 @@
   tip.setAttribute("role", "tooltip");
   document.body.append(tip);
   let tipFor = null;
+  // On a big screen the page is zoomed (app.css), so a fixed position of 100px lands further
+  // right than 100 screen pixels. Measure how far, once per window size.
+  const probe = Object.assign(document.createElement("i"), { ariaHidden: "true" });
+  probe.style.cssText = "position:fixed;left:100px;top:0;width:0;height:0;visibility:hidden;pointer-events:none";
+  document.body.append(probe);
+  let scale = 0;
+  addEventListener("resize", () => { scale = 0; }, { passive: true });
+  const px = (v) => { if (!scale) scale = probe.getBoundingClientRect().left / 100 || 1; return v / scale + "px"; };
   const showTip = (el, html, x, y, side) => {
     tipFor = el;
     tip.innerHTML = html;
-    tip.style.left = x + "px";
-    tip.style.top = y + "px";
+    tip.style.left = px(x);
+    tip.style.top = px(y);
     tip.style.transform = side === "right" ? "translate(14px, -50%)" : "";
     tip.classList.add("show");
   };
@@ -265,7 +273,7 @@
   addEventListener("scroll", hideTip, { passive: true });
 
   // ---------------------------------------------------------------- area chart cursor
-  $$("figure.area[data-points]").forEach((fig) => {
+  const areaCursor = (fig) => {
     let pts;
     try { pts = JSON.parse(fig.dataset.points); } catch (_) { return; }
     const plot = $(".area-plot", fig), cur = $(".area-cursor", fig), dot = $(".area-dot", fig);
@@ -285,14 +293,15 @@
     };
     plot.addEventListener("pointermove", (e) => at(e.clientX));
     plot.addEventListener("pointerleave", () => { plot.classList.remove("hovering"); hideTip(); });
-  });
+  };
+  $$("figure.area[data-points]").forEach(areaCursor);
 
   // ---------------------------------------------------------------- numbers count up
   const fmt = new Intl.NumberFormat("en-US");
   const countUp = (el) => {
     // Only a plain figure with a short unit ("1,284", "66 h", "+42", "7%"), never a time or date.
     const m = el.textContent.trim().match(/^([+\-]?)(\d[\d,]*)(\s?[A-Za-z%]{0,5})$/);
-    if (!m || calm) { el.classList.add("counted"); return; }
+    if (!m || calm || root.classList.contains("same")) { el.classList.add("counted"); return; }
     const [, pre, num, post] = m;
     const target = Number(num.replace(/,/g, ""));
     if (!Number.isFinite(target) || Math.abs(target) < 2) { el.classList.add("counted"); return; }
@@ -431,6 +440,56 @@
       }
     });
   }
+
+  // ---------------------------------------------------------------- in-place switches
+  // A link marked data-swap (the overview's readings and its 7 / 30 days) changes one part of
+  // the page: fetch where it points, put in the parts data-swap names, bring the other
+  // data-swap links up to date, and leave the rest of the page still. Any surprise falls back
+  // to an ordinary visit.
+  let swap = null;
+  document.addEventListener("click", async (e) => {
+    const a = e.target.closest?.("a[data-swap]");
+    if (!a || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    const parts = a.dataset.swap.split(/\s*,\s*/).map((s) => $(s));
+    if (parts.some((p) => !p)) return (location.href = a.href);
+    swap?.abort();
+    const ctl = (swap = new AbortController());
+    parts.forEach((p) => p.classList.add("swapping"));
+    try {
+      const res = await fetch(a.href, { credentials: "same-origin", signal: ctl.signal });
+      if (!res.ok || res.redirected) throw new Error("visit");
+      const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+      const next = a.dataset.swap.split(/\s*,\s*/).map((s) => doc.querySelector(s));
+      const olds = $$("a[data-swap]"), news = [...doc.querySelectorAll("a[data-swap]")];
+      if (next.some((n) => !n) || olds.length !== news.length) throw new Error("visit");
+      // Where the lit reading's underline sits now, to glide it to its new card.
+      const line = $(".stat-line"), from = line?.getBoundingClientRect();
+      olds.forEach((o, i) => {
+        const n = news[i];
+        o.href = n.getAttribute("href");
+        o.className = n.className;
+        n.hasAttribute("aria-current") ? o.setAttribute("aria-current", n.getAttribute("aria-current")) : o.removeAttribute("aria-current");
+        if (line && n.querySelector(".stat-line") && !o.contains(line)) o.append(line);
+      });
+      if (line && from && !calm) {
+        const to = line.getBoundingClientRect();
+        if (to.width) line.animate([{ transform: `translateX(${(from.left - to.left) / (to.width / line.offsetWidth)}px) scaleX(${from.width / to.width})`, transformOrigin: "left" }, { transform: "none", transformOrigin: "left" }], { duration: 420, easing: "cubic-bezier(0.16, 1, 0.3, 1)" });
+      }
+      parts.forEach((p, i) => {
+        const n = document.importNode(next[i], true);
+        p.replaceWith(n);
+        $$("figure.area[data-points]", n).forEach(areaCursor);
+        $$("[data-count]", n).forEach(countUp);
+      });
+      history.replaceState(null, "", a.href);
+    } catch (err) {
+      if (err.name !== "AbortError") location.href = a.href;
+    } finally {
+      if (swap === ctl) swap = null;
+      parts.forEach((p) => p.classList.remove("swapping"));
+    }
+  });
 
   // ---------------------------------------------------------------- clicks
   const closeOpen = (except) => $$(".pop[open]").forEach((d) => { if (!d.contains(except)) d.removeAttribute("open"); });

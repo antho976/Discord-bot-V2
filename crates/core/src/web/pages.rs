@@ -207,7 +207,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let main = html! {
         nav.ov-stats aria-label="Readings" {
             @for st in &stats {
-                a.ov-stat.on[st.key == show] href=(link(st.key, days)) aria-current=[(st.key == show).then_some("true")] {
+                a.ov-stat.on[st.key == show] href=(link(st.key, days)) aria-current=[(st.key == show).then_some("true")] data-swap="#ov-caption, #ov-plot" {
                     span.muted.small { (st.label) }
                     b data-count { (st.value) }
                     span.small.up[st.up].down[st.down] { (st.note) }
@@ -217,7 +217,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         }
         div.ov-chart {
             div.ov-chart-head {
-                div {
+                div #ov-caption {
                     h2 { (caption) }
                     p {
                         (text::num(avg)) " on average over " (days) " days"
@@ -225,47 +225,52 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                     }
                 }
                 div.seg {
-                    a.on[days == 7] href=(link(show, 7)) { "7 days" }
-                    a.on[days == 30] href=(link(show, 30)) { "30 days" }
+                    a.on[days == 7] href=(link(show, 7)) data-swap="#ov-caption, #ov-plot" { "7 days" }
+                    a.on[days == 30] href=(link(show, 30)) data-swap="#ov-caption, #ov-plot" { "30 days" }
                 }
             }
-            @if series.iter().all(|d| d.1 == 0) {
-                (ui::empty(Icon::Chart, "Nothing counted in these days", "The bot counts as things happen, and the chart fills in day by day."))
-            } @else {
-                (ui::area_chart(&series, unit))
+            div #ov-plot {
+                @if series.iter().all(|d| d.1 == 0) {
+                    (ui::empty(Icon::Chart, "Nothing counted in these days", "The bot counts as things happen, and the chart fills in day by day."))
+                } @else {
+                    (ui::area_chart(&series, unit))
+                }
             }
         }
-        section.ov-block {
-            h2 { "Needs you" @if !needs.is_empty() { span.count-pill { (needs.len()) } } }
-            @if needs.is_empty() {
-                (ui::empty(Icon::Check, "Nothing is waiting on you", "Scam catches, pet requests, tickets and app approvals land here when they need someone."))
-            } @else {
-                div.ov-rows {
-                    @for (hue, n) in &needs {
-                        div.need.alert[n.alert] data-hue=(hue) {
-                            @if n.people.is_empty() {
-                                span.need-icon.alert[n.alert] { (ui::icon(n.icon)) }
-                            } @else {
-                                (ui::avatars(&n.people, 2))
+        // Side by side once the column is wide enough (app.css, .ov-pair).
+        div.ov-pair {
+            section.ov-block {
+                h2 { "Needs you" @if !needs.is_empty() { span.count-pill { (needs.len()) } } }
+                @if needs.is_empty() {
+                    (ui::empty(Icon::Check, "Nothing is waiting on you", "Scam catches, pet requests, tickets and app approvals land here when they need someone."))
+                } @else {
+                    div.ov-rows {
+                        @for (hue, n) in &needs {
+                            div.need.alert[n.alert] data-hue=(hue) {
+                                @if n.people.is_empty() {
+                                    span.need-icon.alert[n.alert] { (ui::icon(n.icon)) }
+                                } @else {
+                                    (ui::avatars(&n.people, 2))
+                                }
+                                div.grow { strong { (n.title) } p.muted.small { (n.detail) } }
+                                a class=(if n.alert { "btn small primary" } else { "btn small outline" }) href=(n.href) { (n.action) }
                             }
-                            div.grow { strong { (n.title) } p.muted.small { (n.detail) } }
-                            a class=(if n.alert { "btn small primary" } else { "btn small outline" }) href=(n.href) { (n.action) }
                         }
                     }
                 }
             }
-        }
-        section.ov-block {
-            h2 { "Around the server" }
-            @if feed.is_empty() {
-                (ui::empty(Icon::Activity, "Quiet so far", "Level-ups, new members, pet additions and suggestion results show up here."))
-            } @else {
-                div.ov-feed {
-                    @for h in &feed {
-                        div.happen {
-                            img.avatar src=(h.avatar) alt="" width="32" height="32" loading="lazy";
-                            span.grow { strong { (h.who) } " " (h.text) }
-                            span.muted.small { (short_ago(h.at)) }
+            section.ov-block {
+                h2 { "Around the server" }
+                @if feed.is_empty() {
+                    (ui::empty(Icon::Activity, "Quiet so far", "Level-ups, new members, pet additions and suggestion results show up here."))
+                } @else {
+                    div.ov-feed {
+                        @for h in &feed {
+                            div.happen {
+                                img.avatar src=(h.avatar) alt="" width="32" height="32" loading="lazy";
+                                span.grow { strong { (h.who) } " " (h.text) }
+                                span.muted.small { (short_ago(h.at)) }
+                            }
                         }
                     }
                 }
@@ -453,17 +458,47 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let notes = recent_notifications(&ctx, &user, guild, 100);
     let is_new = |n: &Note| n.at > if n.global { global_seen } else { seen };
     let fresh = notes.iter().filter(|n| is_new(n)).count();
+    // Which features the notices came from, busiest first: (feature, notices, new).
+    let mut from: Vec<(&str, usize, usize)> = Vec::new();
+    for n in &notes {
+        match from.iter_mut().find(|f| f.0 == n.feature) {
+            Some(f) => {
+                f.1 += 1;
+                f.2 += usize::from(is_new(n));
+            }
+            None => from.push((n.feature.as_str(), 1, usize::from(is_new(n)))),
+        }
+    }
+    from.sort_by_key(|f| std::cmp::Reverse(f.1));
     let body = html! {
         @if notes.is_empty() {
             (ui::empty(Icon::Bell, "No notifications", "Features post here when something needs you: a caught scam, a new ticket, a pet request."))
         } @else {
-            // No data-local: its one-time reload for the timezone would count as a second visit
-            // and clear the new marks. The overview, where everyone lands, sets the timezone.
-            div.timeline.notes {
-                @for (i, n) in notes.iter().enumerate() {
-                    @let label = day_label(&user, n.at);
-                    @if i == 0 || day_label(&user, notes[i - 1].at) != label { h2.day { (label) } }
-                    (notification_row(&ctx, &user, n, is_new(n)))
+            div.with-rail {
+                // No data-local: its one-time reload for the timezone would count as a second
+                // visit and clear the new marks. The overview, where everyone lands, sets it.
+                div.timeline.notes {
+                    @for (i, n) in notes.iter().enumerate() {
+                        @let label = day_label(&user, n.at);
+                        @if i == 0 || day_label(&user, notes[i - 1].at) != label { h2.day { (label) } }
+                        (notification_row(&ctx, &user, n, is_new(n)))
+                    }
+                }
+                aside.rail {
+                    div.rail-block {
+                        h2 { "Where they came from" span.muted.small { (notes.len()) } }
+                        @for (key, total, new) in &from {
+                            @let f = ctx.feature(key);
+                            div.mini data-hue=(ui::feature_hue(&ctx, key)) {
+                                span.nav-ic { (ui::icon(f.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Bell))) }
+                                span.grow {
+                                    span { (f.map(|f| f.meta().name).unwrap_or("Dashboard")) }
+                                    span.muted { @if *new > 0 { (new) " new" } @else { "Nothing new" } }
+                                }
+                                span.mono { (total) }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -720,7 +755,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
         .collect();
 
     let body = html! {
-        form.settings.narrow method="post" action={ "/users/" (id) } {
+        form.settings method="post" action={ "/users/" (id) } {
             (ui::card(html! {
                 @if is_owner {
                     (ui::field_custom("Admin", Some("The owner is always an admin."), ui::badge("Owner", Tone::Accent)))
@@ -730,6 +765,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
             }))
             @if !person.admin && !is_owner {
                 p.muted.small { "Per server: None hides a page, View shows it read-only, Edit lets them change it." }
+                div.access-grid {
                 @for g in ctx.guild_ids() {
                     @let feats = grantable(g);
                     @let given = feats.iter().filter(|f| level_of(g, f.meta().key) > 0).count();
@@ -760,6 +796,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                         }
                         }))
                     }
+                }
                 }
             }
             div.save-bar { button.btn.primary type="submit" { "Save" } }
