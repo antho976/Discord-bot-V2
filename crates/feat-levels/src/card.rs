@@ -285,15 +285,29 @@ pub async fn avatar(ctx: &Ctx, url: &str, size: u32) -> Option<String> {
 
 /// Several avatars at once, in order. Whatever hasn't arrived in four seconds is left out.
 pub async fn avatars(ctx: &Ctx, urls: Vec<String>, size: u32) -> Vec<Option<String>> {
-    let mut set = bot_core::tokio::task::JoinSet::new();
-    for (i, url) in urls.iter().cloned().enumerate() {
+    let jobs = urls.into_iter().map(|url| {
         let ctx = ctx.clone();
-        set.spawn(async move { (i, avatar(&ctx, &url, size).await) });
+        async move { avatar(&ctx, &url, size).await }
+    });
+    in_order(jobs.collect(), Duration::from_secs(4)).await
+}
+
+/// Run `jobs` together and give their answers in order, `None` for any not done within `wait`.
+/// A job that fails leaves only its own place empty.
+async fn in_order<F>(jobs: Vec<F>, wait: Duration) -> Vec<Option<String>>
+where
+    F: std::future::Future<Output = Option<String>> + Send + 'static,
+{
+    let mut out = vec![None; jobs.len()];
+    let mut set = bot_core::tokio::task::JoinSet::new();
+    for (i, job) in jobs.into_iter().enumerate() {
+        set.spawn(async move { (i, job.await) });
     }
-    let mut out = vec![None; urls.len()];
-    let _ = bot_core::tokio::time::timeout(Duration::from_secs(4), async {
-        while let Some(Ok((i, a))) = set.join_next().await {
-            out[i] = a;
+    let _ = bot_core::tokio::time::timeout(wait, async {
+        while let Some(done) = set.join_next().await {
+            if let Ok((i, a)) = done {
+                out[i] = a;
+            }
         }
     })
     .await;
@@ -309,6 +323,21 @@ pub async fn png(svg: String) -> bot_core::anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_failed_face_leaves_only_its_own_place_empty() {
+        // The first job fails at once, before the others are done: their faces still come in.
+        let jobs = (0..3)
+            .map(|i| async move {
+                if i == 0 {
+                    panic!("a face that failed");
+                }
+                bot_core::tokio::time::sleep(Duration::from_millis(20)).await;
+                Some(format!("face {i}"))
+            })
+            .collect();
+        assert_eq!(in_order(jobs, Duration::from_secs(2)).await, vec![None, Some("face 1".into()), Some("face 2".into())]);
+    }
 
     fn rank() -> Rank {
         Rank {

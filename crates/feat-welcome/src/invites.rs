@@ -1,6 +1,8 @@
 //! Invite tracking: remember each invite's use count, and on a join find the one that went up.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bot_core::Ctx;
 use bot_core::anyhow::Result;
@@ -110,7 +112,8 @@ fn describe(e: &bot_core::twilight_http::Error) -> String {
 
 /// Every invite of the server right now, or the reason it couldn't be read.
 async fn fetch(ctx: &Ctx, guild: u64) -> Result<Vec<Inv>, String> {
-    let res = ctx.http.guild_invites(Id::new(guild)).await.map_err(|e| describe(&e))?;
+    let guild = Id::new_checked(guild).ok_or("That isn't a server.")?;
+    let res = ctx.http.guild_invites(guild).await.map_err(|e| describe(&e))?;
     let list = res.models().await.map_err(|e| format!("Couldn't read Discord's answer: {e}"))?;
     Ok(list
         .into_iter()
@@ -118,21 +121,62 @@ async fn fetch(ctx: &Ctx, guild: u64) -> Result<Vec<Inv>, String> {
         .collect())
 }
 
-/// Read the server's invites and store them as the new baseline. Returns whether it worked.
-pub async fn refresh(ctx: &Ctx, guild: u64) -> bool {
-    match fetch(ctx, guild).await {
-        Ok(list) => match store(ctx, guild, &list) {
-            Ok(()) => true,
-            Err(e) => {
-                bot_core::tracing::warn!(guild, error = %e, "couldn't store invites");
-                false
+/// A reading stored: the invites before it, when there was a good reading to compare with, and now.
+type Stored = (Option<Vec<Inv>>, Vec<Inv>);
+
+/// The invite readings in flight. Each one asks Discord without holding any lock, so a slow or
+/// rate-limited answer (a join raid can rate-limit reading invites) holds up only that reading,
+/// never another join or another server. Readings are numbered as they start; one that answers
+/// after a later one was stored is older than the baseline and isn't stored over it.
+#[derive(Default)]
+pub struct Readings {
+    started: AtomicU64,
+    /// Per server, the number of the newest reading stored. Locked only to compare and store,
+    /// never across a call to Discord.
+    newest: Mutex<HashMap<u64, u64>>,
+}
+
+impl Readings {
+    fn start(&self) -> u64 {
+        self.started.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Store reading `n` of `guild` as the new baseline, unless a reading that started later was
+    /// stored first. `None` when nothing was stored: an older reading, or Discord refused.
+    fn settle(&self, ctx: &Ctx, guild: u64, n: u64, fetched: Result<Vec<Inv>, String>) -> Option<Stored> {
+        let mut newest = self.newest.lock().unwrap();
+        let newest = newest.entry(guild).or_default();
+        if n < *newest {
+            return None;
+        }
+        match fetched {
+            Ok(now) => {
+                let baseline = state(ctx, guild).ok().flatten().is_some_and(|s| s.ok);
+                let before = baseline.then(|| load(ctx, guild).unwrap_or_default());
+                if let Err(e) = store(ctx, guild, &now) {
+                    bot_core::tracing::warn!(guild, error = %e, "couldn't store invites");
+                    return None;
+                }
+                *newest = n;
+                Some((before, now))
             }
-        },
-        Err(msg) => {
-            store_error(ctx, guild, &msg);
-            false
+            Err(msg) => {
+                store_error(ctx, guild, &msg);
+                None
+            }
         }
     }
+
+    async fn read(&self, ctx: &Ctx, guild: u64) -> Option<Stored> {
+        let n = self.start();
+        let fetched = fetch(ctx, guild).await;
+        self.settle(ctx, guild, n, fetched)
+    }
+}
+
+/// Read the server's invites and store them as the new baseline. Returns whether it was stored.
+pub async fn refresh(ctx: &Ctx, readings: &Readings, guild: u64) -> bool {
+    readings.read(ctx, guild).await.is_some()
 }
 
 /// Servers whose invites are due: never read, or last read over an hour ago.
@@ -170,25 +214,15 @@ pub fn on_invite_delete(ctx: &Ctx, guild: u64, code: &str) {
     }
 }
 
-/// Work out which invite a new member used and record the join. `lock` keeps two joins at the
-/// same moment from reading each other's counts.
-pub async fn record_join(ctx: &Ctx, lock: &bot_core::tokio::sync::Mutex<()>, guild: u64, user: u64, bot: bool, track: bool) {
-    let _guard = lock.lock().await;
+/// Work out which invite a new member used and record the join. Two joins at the same moment
+/// each compare their reading with the one stored before it (see [`Readings`]).
+pub async fn record_join(ctx: &Ctx, readings: &Readings, guild: u64, user: u64, bot: bool, track: bool) {
     let mut used: Option<Inv> = None;
-    if track && !bot {
-        let baseline = state(ctx, guild).ok().flatten().is_some_and(|s| s.ok);
-        let old = if baseline { load(ctx, guild).unwrap_or_default() } else { Vec::new() };
-        match fetch(ctx, guild).await {
-            Ok(new) => {
-                if baseline {
-                    used = find_used(&old, &new);
-                }
-                if let Err(e) = store(ctx, guild, &new) {
-                    bot_core::tracing::warn!(guild, error = %e, "couldn't store invites");
-                }
-            }
-            Err(msg) => store_error(ctx, guild, &msg),
-        }
+    if track
+        && !bot
+        && let Some((Some(before), now)) = readings.read(ctx, guild).await
+    {
+        used = find_used(&before, &now);
     }
     let res = ctx.db.with(|c| {
         c.execute(
@@ -354,6 +388,31 @@ mod tests {
         assert!(find_used(&old, &new).is_none());
         // And for whoever's join is handled second: the first reading already took both rises.
         assert!(find_used(&new, &new).is_none());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn an_older_reading_never_replaces_a_newer_one() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Welcome::default())]).unwrap();
+        let r = Readings::default();
+        let (first, second) = (r.start(), r.start());
+        // The later reading answers first and becomes the baseline; there was none to compare with.
+        assert_eq!(r.settle(&ctx, 1, second, Ok(vec![inv("a", 3, 0)])), Some((None, vec![inv("a", 3, 0)])));
+        // The earlier one answers after it: older than the baseline, so it's dropped.
+        assert_eq!(r.settle(&ctx, 1, first, Ok(vec![inv("a", 2, 0)])), None);
+        assert_eq!(load(&ctx, 1).unwrap(), vec![inv("a", 3, 0)]);
+        // The next one compares with the baseline.
+        let third = r.start();
+        let (before, now) = r.settle(&ctx, 1, third, Ok(vec![inv("a", 4, 0)])).unwrap();
+        assert_eq!(find_used(&before.unwrap(), &now).unwrap().code, "a");
+        // Each server keeps its own order: a reading of server 2 isn't older than server 1's.
+        assert!(r.settle(&ctx, 2, first, Ok(vec![inv("b", 1, 0)])).is_some());
+        // A refusal is noted, unless a newer reading is already stored.
+        assert_eq!(r.settle(&ctx, 1, second, Err("refused".into())), None);
+        assert!(state(&ctx, 1).unwrap().unwrap().ok);
+        let fourth = r.start();
+        assert_eq!(r.settle(&ctx, 1, fourth, Err("refused".into())), None);
+        assert!(!state(&ctx, 1).unwrap().unwrap().ok);
     }
 
     #[test]

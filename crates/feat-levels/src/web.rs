@@ -184,22 +184,9 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
             aside.rail { (rail) }
         }
         script { (PreEscaped(SETTINGS_JS)) }
-        @match q.sent.as_deref() {
-            Some("week") => { (toast("Test sent to the weekly channel")) },
-            Some(_) => { (toast("Test level-up sent")) },
-            None => {},
-        }
+        (ui::sent_toast(q.sent.is_some(), if q.sent.as_deref() == Some("week") { "Test sent to the weekly channel" } else { "Test level-up sent" }))
     };
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
-}
-
-/// A toast once the page is in, then the flag leaves the address so a reload doesn't repeat it.
-fn toast(msg: &str) -> Markup {
-    html! {
-        script { (PreEscaped(format!(
-            "(()=>{{const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash);window.botToast&&window.botToast({msg:?})}})()"
-        ))) }
-    }
 }
 
 /// Post the saved level-up message for whoever asked, at their next level.
@@ -639,7 +626,7 @@ fn recompute_levels(ctx: &Ctx, guild: u64, s: &Settings) -> bot_core::anyhow::Re
 
 /// Why the bot can't give a reward role, or None when it can.
 fn cant_give(ctx: &Ctx, guild: u64, role: u64) -> Option<&'static str> {
-    let Some(r) = ctx.cache.role(Id::new(role)) else { return Some("Deleted role") };
+    let Some(r) = Id::new_checked(role).and_then(|id| ctx.cache.role(id)) else { return Some("Deleted role") };
     if r.managed {
         return Some("Managed by an integration");
     }
@@ -1228,6 +1215,10 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 
 async fn set_member_xp(State(ctx): State<Ctx>, user: User, Path((guild, member)): Path<(u64, u64)>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    // 0 is never a member; a row for it would sit on the board as "Unknown member".
+    if member == 0 {
+        return Err(WebError::NotFound);
+    }
     let xp = form
         .i64("xp")
         .filter(|x| (0..=curve::MAX_XP).contains(x))

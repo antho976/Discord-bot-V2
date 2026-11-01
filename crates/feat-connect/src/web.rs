@@ -104,9 +104,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
 
     let body = html! {
         style { (PreEscaped(CSS)) }
-        @if q.sent.is_some() {
-            script { (PreEscaped("(() => { const go = () => { window.botToast?.(\"Test DM sent\"); history.replaceState(history.state, '', location.pathname); }; document.readyState === 'loading' ? addEventListener('DOMContentLoaded', go, { once: true }) : setTimeout(go); })()")) }
-        }
+        (ui::sent_toast(q.sent.is_some(), "Test DM sent"))
         @if !cloud {
             div.cn-note role="note" {
                 span.cn-note-ic { (cloud_off_icon()) }

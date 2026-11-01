@@ -7,7 +7,7 @@ mod web;
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bot_core::anyhow::{Result, anyhow};
 use bot_core::rusqlite::params;
@@ -117,8 +117,8 @@ const MIGRATIONS: &[Migration] = &[Migration {
 
 #[derive(Default)]
 pub struct Welcome {
-    /// Held while a join reads the invite counts, so two joins at once don't share a reading.
-    invite_lock: bot_core::tokio::sync::Mutex<()>,
+    /// Invite readings, so two joins at once each compare with the reading before their own.
+    readings: invites::Readings,
 }
 
 #[feature_async]
@@ -166,9 +166,13 @@ impl Feature for Welcome {
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
         for guild in ctx.enabled_guilds(KEY) {
             let s = ctx.settings::<Settings>(guild, KEY)?;
-            if s.track_invites && invites::due(ctx, guild) {
-                let _guard = self.invite_lock.lock().await;
-                invites::refresh(ctx, guild).await;
+            // A slow answer from Discord mustn't hold up the tick, which every feature shares. It's
+            // due again next minute.
+            if s.track_invites
+                && invites::due(ctx, guild)
+                && bot_core::tokio::time::timeout(Duration::from_secs(10), invites::refresh(ctx, &self.readings, guild)).await.is_err()
+            {
+                bot_core::tracing::warn!(guild, "reading invites took over 10 seconds; trying again next minute");
             }
             roles::prune(ctx, guild, s.rejoin_days.max(1))?;
         }
@@ -209,17 +213,21 @@ impl Welcome {
         let bot = m.user.bot;
         let s = ctx.settings::<Settings>(guild, KEY)?;
 
-        invites::record_join(ctx, &self.invite_lock, guild, user, bot, s.track_invites).await;
-        give_roles(ctx, &s, guild, user, bot, &m.member.roles.iter().map(|r| r.get()).collect::<Vec<_>>()).await;
-
-        if s.welcome_on && !bot && s.welcome_channel.is_some() {
-            let name = m.member.nick.clone().or_else(|| m.user.global_name.clone()).unwrap_or_else(|| m.user.name.clone());
-            let avatar = bot_core::discord::avatar_url(user, m.user.avatar.map(|a| a.to_string()).as_deref());
-            if let Err(e) = post_welcome(ctx, &s, guild, user, &name, &m.user.name, &avatar).await {
-                bot_core::tracing::warn!(guild, user, error = %e, "couldn't post a welcome");
-                notify_failure(ctx, guild, "welcome", format!("New members aren't being welcomed. {e}"));
+        // The invites are read alongside the roles and the welcome, so a slow answer from Discord
+        // (reading invites gets rate-limited in a join raid) holds neither up.
+        let record = invites::record_join(ctx, &self.readings, guild, user, bot, s.track_invites);
+        let greet = async {
+            give_roles(ctx, &s, guild, user, bot, &m.member.roles.iter().map(|r| r.get()).collect::<Vec<_>>()).await;
+            if s.welcome_on && !bot && s.welcome_channel.is_some() {
+                let name = m.member.nick.clone().or_else(|| m.user.global_name.clone()).unwrap_or_else(|| m.user.name.clone());
+                let avatar = bot_core::discord::avatar_url(user, m.user.avatar.map(|a| a.to_string()).as_deref());
+                if let Err(e) = post_welcome(ctx, &s, guild, user, &name, &m.user.name, &avatar).await {
+                    bot_core::tracing::warn!(guild, user, error = %e, "couldn't post a welcome");
+                    notify_failure(ctx, guild, "welcome", format!("New members aren't being welcomed. {e}"));
+                }
             }
-        }
+        };
+        bot_core::tokio::join!(record, greet);
         Ok(())
     }
 
@@ -272,11 +280,22 @@ fn fill_message(ctx: &Ctx, template: &str, default: &str, guild: u64, user: &str
     text::clip(&fill(template, &[("user", user), ("name", name), ("server", &server), ("count", &count)]), 1900)
 }
 
+/// The welcome for `user`, called `name`, and the goodbye for a member called `name`. Names show
+/// as typed: one like "[Free Nitro](link)" stays text instead of becoming a link the bot posted.
+fn welcome_text(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: &str, count: Option<i64>) -> String {
+    fill_message(ctx, &s.welcome_text, DEFAULT_WELCOME, guild, &format!("<@{user}>"), &text::escape_markdown(name), count)
+}
+
+fn goodbye_text(ctx: &Ctx, s: &Settings, guild: u64, name: &str, count: Option<i64>) -> String {
+    let name = text::escape_markdown(name);
+    fill_message(ctx, &s.goodbye_text, DEFAULT_GOODBYE, guild, &name, &name, count)
+}
+
 /// Post the goodbye message for a member called `name` in `channel`. Mentions nobody. Used for
 /// real leaves and for the dashboard's test button.
 pub async fn post_goodbye(ctx: &Ctx, s: &Settings, guild: u64, channel: u64, name: &str) -> Result<()> {
     let count = if s.goodbye_text.contains("{count}") { member_total(ctx, guild).await } else { None };
-    let text = fill_message(ctx, &s.goodbye_text, DEFAULT_GOODBYE, guild, name, name, count);
+    let text = goodbye_text(ctx, s, guild, name, count);
     ctx.say(channel, &text).await?;
     Ok(())
 }
@@ -285,11 +304,11 @@ pub async fn post_goodbye(ctx: &Ctx, s: &Settings, guild: u64, channel: u64, nam
 /// Mentions only that user. Used for real joins and for the dashboard's test button. `username`
 /// is the card's fallback when the display name is in a script it can't draw.
 pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: &str, username: &str, avatar_url: &str) -> Result<()> {
-    let channel = s.welcome_channel.ok_or_else(|| anyhow!("Pick a welcome channel first."))?;
+    let channel = s.welcome_channel.and_then(Id::new_checked).ok_or_else(|| anyhow!("Pick a welcome channel first."))?;
     let wants_count = s.welcome_card || s.welcome_text.contains("{count}") || s.welcome_text.trim().is_empty();
     let count = if wants_count { member_total(ctx, guild).await } else { None };
-    let content = fill_message(ctx, &s.welcome_text, DEFAULT_WELCOME, guild, &format!("<@{user}>"), name, count);
-    let mentions = AllowedMentions { users: vec![Id::new(user)], ..Default::default() };
+    let content = welcome_text(ctx, s, guild, user, name, count);
+    let mentions = AllowedMentions { users: Id::new_checked(user).into_iter().collect(), ..Default::default() };
 
     let mut files = Vec::new();
     if s.welcome_card {
@@ -299,7 +318,7 @@ pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: 
         }
     }
     ctx.http
-        .create_message(Id::new(channel))
+        .create_message(channel)
         .content(&content)
         .attachments(&files)
         .allowed_mentions(Some(&mentions))
@@ -346,7 +365,7 @@ async fn give_roles(ctx: &Ctx, s: &Settings, guild: u64, user: u64, bot: bool, h
     let mut restore: Vec<u64> = Vec::new();
     if s.rejoin_on && !bot {
         match roles::waiting(ctx, guild, user, s.rejoin_days.max(1)) {
-            Ok(saved) => restore = saved.into_iter().filter(|r| !s.rejoin_exclude.contains(r) && roles::assignable(ctx, guild, *r)).collect(),
+            Ok(saved) => restore = restorable(ctx, s, guild, saved),
             Err(e) => bot_core::tracing::warn!(guild, user, error = %e, "couldn't read saved roles"),
         }
         wanted.extend(&restore);
@@ -358,11 +377,12 @@ async fn give_roles(ctx: &Ctx, s: &Settings, guild: u64, user: u64, bot: bool, h
             continue;
         }
         seen.push(role);
+        let (Some(guild_id), Some(user_id), Some(role_id)) = (Id::new_checked(guild), Id::new_checked(user), Id::new_checked(role)) else { continue };
         if !roles::assignable(ctx, guild, role) {
             bot_core::tracing::warn!(guild, user, role, "the bot can't give this role");
             continue;
         }
-        match ctx.http.add_guild_member_role(Id::new(guild), Id::new(user), Id::new(role)).await {
+        match ctx.http.add_guild_member_role(guild_id, user_id, role_id).await {
             Ok(_) => {
                 if restore.contains(&role) {
                     given_back.push(role);
@@ -376,6 +396,13 @@ async fn give_roles(ctx: &Ctx, s: &Settings, guild: u64, user: u64, bot: bool, h
     {
         bot_core::tracing::warn!(guild, user, error = %e, "couldn't note restored roles");
     }
+}
+
+/// The saved roles a returning member gets back: those not excluded, and only roles that are safe
+/// to hand out without anyone choosing to (`Ctx::safe_role`). A moderator who was kicked and
+/// rejoins doesn't get Moderator back by themselves.
+fn restorable(ctx: &Ctx, s: &Settings, guild: u64, saved: Vec<u64>) -> Vec<u64> {
+    saved.into_iter().filter(|r| !s.rejoin_exclude.contains(r) && ctx.safe_role(guild, *r)).collect()
 }
 
 fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
@@ -474,7 +501,33 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::fill;
+    use super::*;
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn staff_roles_never_come_back_by_themselves() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        // Moderator (Kick Members), Admin (Administrator), Regulars and Muted (no permissions).
+        let role = |id: u64, perms: u64, pos: i64| {
+            bot_core::serde_json::json!({"id": id.to_string(), "name": format!("Role {id}"), "color": 0, "colors": {"primary_color": 0}, "hoist": false, "managed": false, "mentionable": false, "permissions": perms.to_string(), "position": pos, "flags": 0})
+        };
+        for r in [role(101, 1 << 1, 4), role(102, 1 << 3, 3), role(103, 0, 2), role(104, 0, 1)] {
+            let add = bot_core::serde_json::json!({"guild_id": "1", "role": r});
+            ctx.cache.update(&Event::RoleCreate(bot_core::serde_json::from_value(add).unwrap()));
+        }
+        let s = Settings { rejoin_exclude: vec![104], ..Default::default() };
+        // 105 was deleted since, and 0 is no role.
+        assert_eq!(restorable(&ctx, &s, 1, vec![101, 102, 103, 104, 105, 0]), vec![103]);
+        assert!(!roles::assignable(&ctx, 1, 0));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_name_cant_become_a_link_in_a_welcome_or_goodbye() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        let s = Settings { welcome_text: "Hi {name} ({user})".into(), ..Default::default() };
+        let name = "[Free Nitro](https://evil.co)";
+        assert_eq!(welcome_text(&ctx, &s, 1, 5, name, None), r"Hi \[Free Nitro\]\(https://evil.co\) (<@5>)");
+        assert_eq!(goodbye_text(&ctx, &s, 1, name, None), r"\[Free Nitro\]\(https://evil.co\) left Server 1.");
+    }
 
     #[test]
     fn fills_the_placeholders() {

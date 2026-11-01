@@ -244,6 +244,17 @@ const MIGRATIONS: &[Migration] = &[Migration {
         ALTER TABLE levels ADD COLUMN streak INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE levels ADD COLUMN streak_day INTEGER NOT NULL DEFAULT 0;
     ",
+}, Migration {
+    // 0 is never a Discord id. Imports and Set XP could store it before they checked, and a
+    // reward for role 0 broke every level change in its server.
+    name: "005_levels_no_zero_ids",
+    sql: "
+        DELETE FROM levels WHERE user_id = 0 OR guild_id = 0;
+        DELETE FROM level_rewards WHERE role_id = 0 OR guild_id = 0;
+        DELETE FROM level_week WHERE user_id = 0;
+        DELETE FROM level_ups WHERE user_id = 0;
+        DELETE FROM level_week_winners WHERE user_id = 0;
+    ",
 }];
 
 #[feature_async]
@@ -356,7 +367,8 @@ impl Feature for Levels {
             if s.voice_xp <= 0 {
                 continue;
             }
-            let afk = ctx.cache.guild(Id::new(guild)).and_then(|g| g.afk_channel_id());
+            let Some(guild_id) = Id::new_checked(guild) else { continue };
+            let afk = ctx.cache.guild(guild_id).and_then(|g| g.afk_channel_id());
             let states: Vec<_> = ctx
                 .cache
                 .iter()
@@ -373,7 +385,7 @@ impl Feature for Levels {
                 }
                 let no_xp_role = ctx
                     .cache
-                    .member(Id::new(guild), Id::new(*user))
+                    .member(guild_id, Id::new(*user))
                     .is_some_and(|m| m.roles().iter().any(|r| s.no_xp_roles.contains(&r.get())));
                 if no_xp_role {
                     continue;
@@ -432,7 +444,14 @@ impl Feature for Levels {
                 }
                 let Some((sub, opts)) = call.opts().sub() else { return Ok(()) };
                 let Some(user) = opts.user("member").map(|u| u.get()) else { return Ok(()) };
-                let name = ctx.display_name(guild, user);
+                if !matches!(sub, "give" | "take" | "set-level") {
+                    return Ok(());
+                }
+                // Reward roles and the level-up post can take longer than the 3 seconds Discord
+                // waits. Without the defer the command shows as failed although the XP changed,
+                // and staff run it again.
+                ctx.defer(&call.interaction, true).await?;
+                let name = text::escape_markdown(&ctx.display_name(guild, user));
                 let msg = match sub {
                     "give" => {
                         let n = opts.int("amount").unwrap_or(0);
@@ -444,7 +463,8 @@ impl Feature for Levels {
                         grant(ctx, guild, user, -n, Earned::Manual, None).await?;
                         format!("Took {} XP from {name}.", text::num(n))
                     }
-                    "set-level" => {
+                    // "set-level", the only other part the check above lets through.
+                    _ => {
                         let level = opts.int("level").unwrap_or(0).max(0) as u32;
                         let xp = curve::xp_to_reach(level, s.curve_base, s.curve_factor, &s.custom_curve);
                         if xp > curve::MAX_XP {
@@ -454,9 +474,8 @@ impl Feature for Levels {
                             format!("{name} is now level {level}.")
                         }
                     }
-                    _ => return Ok(()),
                 };
-                ctx.reply(&call.interaction, Reply::text(msg).ephemeral()).await?;
+                ctx.edit_original(&call.interaction, Reply::text(msg)).await?;
             }
             _ => {}
         }
@@ -665,7 +684,7 @@ fn level_command(prestige: bool) -> Command {
 
 /// The colour of a member's highest coloured role, when the cache knows their roles.
 fn role_color(ctx: &Ctx, guild: u64, user: u64) -> Option<u32> {
-    let m = ctx.cache.member(Id::new(guild), Id::new(user))?;
+    let m = ctx.cache.member(Id::new_checked(guild)?, Id::new_checked(user)?)?;
     let roles: Vec<(i64, u32)> = m.roles().iter().filter_map(|r| ctx.cache.role(*r).map(|r| (r.position, r.colors.primary_color))).collect();
     roles.into_iter().filter(|r| r.1 != 0).max_by_key(|r| r.0).map(|r| r.1)
 }
@@ -673,7 +692,7 @@ fn role_color(ctx: &Ctx, guild: u64, user: u64) -> Option<u32> {
 /// A name the card can draw: the display name, else the username, else "Member".
 fn card_name(ctx: &Ctx, name: &str, user: u64) -> String {
     card::drawable(name)
-        .or_else(|| ctx.cache.user(Id::new(user)).and_then(|u| card::drawable(&u.name)))
+        .or_else(|| ctx.cache.user(Id::new_checked(user)?).and_then(|u| card::drawable(&u.name)))
         .unwrap_or_else(|| "Member".into())
 }
 
@@ -683,12 +702,13 @@ async fn send_rank(ctx: &Ctx, s: &Settings, call: &CommandCall, guild: u64, user
     let p = s.progress(m.xp);
     let place = rank_of(ctx, guild, user)?;
     // Someone the cache doesn't hold still comes with the command, name and face.
-    let given = call.data.resolved.as_ref().and_then(|r| r.users.get(&Id::new(user))).cloned().or_else(|| call.user().filter(|u| u.id.get() == user).cloned());
+    let user_id = Id::new_checked(user);
+    let given = call.data.resolved.as_ref().zip(user_id).and_then(|(r, id)| r.users.get(&id)).cloned().or_else(|| call.user().filter(|u| u.id.get() == user).cloned());
     let name = ctx
         .known_name(guild, user)
         .or_else(|| given.as_ref().map(|u| u.global_name.clone().unwrap_or_else(|| u.name.clone())))
         .unwrap_or_else(|| "Unknown member".into());
-    let face = match (&given, ctx.cache.user(Id::new(user)).is_some()) {
+    let face = match (&given, user_id.and_then(|id| ctx.cache.user(id)).is_some()) {
         (Some(u), false) => bot_core::discord::avatar_url(user, u.avatar.map(|a| a.to_string()).as_deref()),
         _ => ctx.member_avatar(guild, user),
     };
@@ -808,7 +828,7 @@ fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64, you: u64) -> Resu
         };
         let prestige = if s.prestige_on() && m.prestige > 0 { format!("prestige {}  ·  ", m.prestige) } else { String::new() };
         let streak = if s.streaks_on() && m.streak > 1 { format!("{}-day streak  ·  ", m.streak) } else { String::new() };
-        lines.push(format!("`{place:>2}`  {name}  ·  {prestige}level {}  ·  {streak}{figure}", m.level));
+        lines.push(format!("`{place:>2}`  {}  ·  {prestige}level {}  ·  {streak}{figure}", text::escape_markdown(&name), m.level));
         card_rows.push(card::Row {
             place,
             name: card_name(ctx, &name, m.user_id),
@@ -1032,8 +1052,9 @@ pub fn winners_text(winners: &[(u64, i64)]) -> String {
 async fn post_winners(ctx: &Ctx, guild: u64, winners: &[(u64, i64)]) {
     let Ok(s) = ctx.settings::<Settings>(guild, KEY) else { return };
     let Some(channel) = s.weekly_channel.filter(|_| s.weekly_post) else { return };
+    let Some(to) = Id::new_checked(channel) else { return };
     let embed = EmbedBuilder::new().title("Most XP last week").color(0xf0806a).description(winners_text(winners)).build();
-    if let Err(e) = ctx.http.create_message(Id::new(channel)).embeds(&[embed]).allowed_mentions(Some(&AllowedMentions::default())).await {
+    if let Err(e) = ctx.http.create_message(to).embeds(&[embed]).allowed_mentions(Some(&AllowedMentions::default())).await {
         bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post the weekly top three");
         notify_failure(ctx, guild, format!("The weekly top three wasn't posted. {}", why_refused(&e)), format!("/g/{guild}/{KEY}/settings"));
     }
@@ -1140,13 +1161,16 @@ pub fn resync_rewards(ctx: &Ctx, guild: u64, from_level: u32, dropped: Option<u6
             .unwrap_or_default();
         let still_given = rewards(&ctx, guild).unwrap_or_default();
         let dropped = dropped.filter(|r| !still_given.iter().any(|(_, x)| x == r));
+        let Some(guild_id) = Id::new_checked(guild) else { return };
         for (user, level) in members {
-            let Some(has) = ctx.cache.member(Id::new(guild), Id::new(user)).map(|m| m.roles().iter().map(|r| r.get()).collect::<Vec<_>>()) else {
+            let Some(user_id) = Id::new_checked(user) else { continue };
+            let Some(has) = ctx.cache.member(guild_id, user_id).map(|m| m.roles().iter().map(|r| r.get()).collect::<Vec<_>>()) else {
                 continue;
             };
             if let Some(role) = dropped
                 && has.contains(&role)
-                && let Err(e) = ctx.http.remove_guild_member_role(Id::new(guild), Id::new(user), Id::new(role)).await
+                && let Some(role_id) = Id::new_checked(role)
+                && let Err(e) = ctx.http.remove_guild_member_role(guild_id, user_id, role_id).await
             {
                 bot_core::tracing::warn!(guild, user, role, error = %e, "couldn't take back a changed reward role");
             }
@@ -1156,6 +1180,7 @@ pub fn resync_rewards(ctx: &Ctx, guild: u64, from_level: u32, dropped: Option<u6
 }
 
 async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
+    let (Some(guild_id), Some(user_id)) = (Id::new_checked(guild), Id::new_checked(user)) else { return };
     let Ok(list) = rewards(ctx, guild) else { return };
     if list.is_empty() {
         return;
@@ -1163,18 +1188,16 @@ async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
     let stack = ctx.settings::<Settings>(guild, KEY).map(|s| s.stack_rewards).unwrap_or(true);
     let earned: Vec<u64> = list.iter().filter(|(l, _)| *l <= level).map(|(_, r)| *r).collect();
     let keep: Vec<u64> = if stack { earned.clone() } else { earned.last().copied().into_iter().collect() };
-    let has: Vec<u64> = ctx
-        .cache
-        .member(Id::new(guild), Id::new(user))
-        .map(|m| m.roles().iter().map(|r| r.get()).collect())
-        .unwrap_or_default();
+    let has: Vec<u64> = ctx.cache.member(guild_id, user_id).map(|m| m.roles().iter().map(|r| r.get()).collect()).unwrap_or_default();
     for (_, role) in &list {
+        // A reward stored without a real role (0) gives and takes nothing.
+        let Some(role_id) = Id::new_checked(*role) else { continue };
         let want = keep.contains(role);
         let have = has.contains(role);
         let res = if want && !have {
-            ctx.http.add_guild_member_role(Id::new(guild), Id::new(user), Id::new(*role)).await.map(|_| ())
+            ctx.http.add_guild_member_role(guild_id, user_id, role_id).await.map(|_| ())
         } else if !want && have {
-            ctx.http.remove_guild_member_role(Id::new(guild), Id::new(user), Id::new(*role)).await.map(|_| ())
+            ctx.http.remove_guild_member_role(guild_id, user_id, role_id).await.map(|_| ())
         } else {
             Ok(())
         };
@@ -1185,28 +1208,29 @@ async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
 }
 
 /// A level-up message for `user`, with the mentions it may make: only that member, and only when
-/// the server pings.
+/// the server pings. Without the ping the name shows as typed: a name like "[Free Nitro](link)"
+/// stays text instead of becoming a link the bot posted.
 fn level_up_message(ctx: &Ctx, s: &Settings, guild: u64, user: u64, level: u32) -> (String, AllowedMentions) {
-    let who = if s.announce_ping { format!("<@{user}>") } else { ctx.display_name(guild, user) };
+    let who = if s.announce_ping { format!("<@{user}>") } else { text::escape_markdown(&ctx.display_name(guild, user)) };
     let template = if s.message.trim().is_empty() { DEFAULT_MESSAGE } else { s.message.as_str() };
     let content = text::fill(template, &[("user", &who), ("level", &level.to_string())]);
-    let mentions = AllowedMentions { users: if s.announce_ping { vec![Id::new(user)] } else { vec![] }, ..Default::default() };
+    let mentions = AllowedMentions { users: Id::new_checked(user).filter(|_| s.announce_ping).into_iter().collect(), ..Default::default() };
     (content, mentions)
 }
 
 /// The dashboard's test: the saved level-up message for `user` at `level`, in the level-up
 /// channel. Mentions nobody but `user`.
 pub async fn test_level_up(ctx: &Ctx, s: &Settings, guild: u64, user: u64, level: u32) -> Result<()> {
-    let channel = s.announce_channel.ok_or_else(|| bot_core::anyhow::anyhow!("Pick a level-up channel first."))?;
+    let channel = s.announce_channel.and_then(Id::new_checked).ok_or_else(|| bot_core::anyhow::anyhow!("Pick a level-up channel first."))?;
     let (content, mentions) = level_up_message(ctx, s, guild, user, level);
-    ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&mentions)).await?;
+    ctx.http.create_message(channel).content(&content).allowed_mentions(Some(&mentions)).await?;
     Ok(())
 }
 
 /// The dashboard's test of the weekly post: this week's top three so far, or last week's when
 /// nobody has XP yet this week, in the weekly channel. Names show without a ping.
 pub async fn test_weekly(ctx: &Ctx, s: &Settings, guild: u64) -> Result<bool> {
-    let channel = s.weekly_channel.ok_or_else(|| bot_core::anyhow::anyhow!("Pick a channel for the weekly top three first."))?;
+    let channel = s.weekly_channel.and_then(Id::new_checked).ok_or_else(|| bot_core::anyhow::anyhow!("Pick a channel for the weekly top three first."))?;
     let mut winners: Vec<(u64, i64)> = week_top(ctx, guild, 0, 3)?.into_iter().map(|(m, g)| (m.user_id, g)).collect();
     let mut title = "Most XP this week so far";
     if winners.is_empty() {
@@ -1222,14 +1246,16 @@ pub async fn test_weekly(ctx: &Ctx, s: &Settings, guild: u64) -> Result<bool> {
         .description(winners_text(&winners))
         .footer(bot_core::twilight_util::builder::embed::EmbedFooterBuilder::new("A test from the dashboard. The real post goes out when the week ends."))
         .build();
-    ctx.http.create_message(Id::new(channel)).embeds(&[embed]).allowed_mentions(Some(&AllowedMentions::default())).await?;
+    ctx.http.create_message(channel).embeds(&[embed]).allowed_mentions(Some(&AllowedMentions::default())).await?;
     Ok(true)
 }
 
 async fn announce(ctx: &Ctx, s: &Settings, guild: u64, user: u64, level: u32, here: Option<u64>) {
-    let Some(channel) = s.announce_channel.or(here) else { return };
+    // An import could store channel 0 before it checked: that's no channel, so the member's own.
+    let Some(channel) = s.announce_channel.filter(|c| *c != 0).or(here) else { return };
+    let Some(to) = Id::new_checked(channel) else { return };
     let (content, mentions) = level_up_message(ctx, s, guild, user, level);
-    if let Err(e) = ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&mentions)).await {
+    if let Err(e) = ctx.http.create_message(to).content(&content).allowed_mentions(Some(&mentions)).await {
         bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post a level-up");
         // Only the chosen channel is worth a notice; a member's own channel may simply be closed to the bot.
         if s.announce_channel.is_some() {
@@ -1582,6 +1608,47 @@ mod tests {
         let s = Settings { streak_bonus: 3, streak_max: 20, ..Default::default() };
         assert_eq!([0, 1, 2, 5, 7, 8, 100].map(|d| s.streak_pct(d)), [0, 0, 3, 12, 18, 20, 20]);
         assert_eq!(Settings::default().streak_pct(30), 0, "the bonus is off by default");
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn id_0_in_stored_rows_breaks_nothing() {
+        let ctx = ctx();
+        ctx.set_enabled(1, KEY, true).unwrap();
+        ctx.save_settings(1, KEY, &Settings { announce: false, ..Settings::default() }).unwrap();
+        // A reward for role 0, as an old import could store: level changes still go through.
+        ctx.db.with(|c| c.execute("INSERT INTO level_rewards (guild_id, level, role_id) VALUES (1, 1, 0)", [])).unwrap();
+        grant(&ctx, 1, 10, 100_000, Earned::Manual, None).await.unwrap();
+        assert!(member(&ctx, 1, 10).unwrap().unwrap().level > 1);
+        // So do changes for user 0, and the leaderboard with them on it.
+        set_xp(&ctx, 1, 0, 500).await.unwrap();
+        grant(&ctx, 1, 0, 50, Earned::Message, None).await.unwrap();
+        assert_eq!(leaderboard(&ctx, 1, Board::All, 0, 10).unwrap().board.rows.len(), 2);
+        // The cleanup on upgrade drops them.
+        let cleanup = MIGRATIONS.iter().find(|m| m.name == "005_levels_no_zero_ids").unwrap();
+        ctx.db.with(|c| c.execute_batch(cleanup.sql)).unwrap();
+        assert!(member(&ctx, 1, 0).unwrap().is_none());
+        assert!(member(&ctx, 1, 10).unwrap().is_some());
+        assert!(rewards(&ctx, 1).unwrap().is_empty());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_name_without_the_ping_cant_become_a_link() {
+        let ctx = ctx();
+        let add = bot_core::serde_json::json!({
+            "guild_id": "1", "roles": [], "joined_at": "2025-03-01T00:00:00.000000+00:00", "deaf": false, "mute": false, "flags": 0,
+            "user": {"id": "10", "username": "mira", "global_name": "[Free Nitro](https://evil.co)", "discriminator": "0", "avatar": null, "bot": false}
+        });
+        ctx.cache.update(&Event::MemberAdd(Box::new(bot_core::serde_json::from_value(add).unwrap())));
+        let s = Settings { announce_ping: false, ..Settings::default() };
+        let (content, mentions) = level_up_message(&ctx, &s, 1, 10, 4);
+        assert!(mentions.users.is_empty());
+        assert_eq!(content, r"\[Free Nitro\]\(https://evil.co\) reached level 4.");
+        let s = Settings { announce_ping: true, ..Settings::default() };
+        let (content, mentions) = level_up_message(&ctx, &s, 1, 10, 4);
+        assert_eq!(content, "<@10> reached level 4.");
+        assert_eq!(mentions.users, vec![Id::new(10)]);
+        // User 0 is never pinged.
+        assert!(level_up_message(&ctx, &s, 1, 0, 4).1.users.is_empty());
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]

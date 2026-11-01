@@ -466,12 +466,14 @@ async fn update(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64
     if let Err(e) = data.validate() {
         return rerender(&ctx, &page, failed(data, &form, Some(&sent), e));
     }
+    // A stored row never holds 0, but a 0 would be no message to edit.
+    let (Some(channel), Some(message)) = (Id::new_checked(sent.channel_id), Id::new_checked(sent.message_id)) else { return Err(WebError::NotFound) };
     let embeds: Vec<Embed> = data.embed().into_iter().collect();
     let allowed = mentions();
     let content = Some(data.content.as_str()).filter(|c| !c.is_empty());
     let res = ctx
         .http
-        .update_message(Id::new(sent.channel_id), Id::new(sent.message_id))
+        .update_message(channel, message)
         .content(content)
         .embeds(Some(&embeds))
         .allowed_mentions(Some(&allowed))

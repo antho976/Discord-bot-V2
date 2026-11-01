@@ -1,5 +1,5 @@
 use bot_core::axum::Router;
-use bot_core::axum::extract::{Path, State};
+use bot_core::axum::extract::{Path, Query, State};
 use bot_core::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
@@ -387,16 +387,16 @@ const SCRIPT: &str = r##"
     $(id).addEventListener("input", sync);
     $(id).addEventListener("change", sync);
   });
-  const url = new URL(location.href);
-  if (url.searchParams.has("sent")) {
-    window.botToast && window.botToast(url.searchParams.get("sent") === "goodbye" ? "Test goodbye sent" : "Test welcome sent");
-    url.searchParams.delete("sent");
-    history.replaceState(null, "", url.pathname + url.search + url.hash);
-  }
 })();
 "##;
 
-async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+#[derive(serde::Deserialize)]
+struct SentQuery {
+    /// Set after a test post went out, for the toast.
+    sent: Option<String>,
+}
+
+async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<SentQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let now = now_ms();
@@ -531,6 +531,7 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     }
                 }
                 script { (PreEscaped(SCRIPT)) }
+                (ui::sent_toast(q.sent.is_some(), if q.sent.as_deref() == Some("goodbye") { "Test goodbye sent" } else { "Test welcome sent" }))
             }
 
             aside.rail {
@@ -598,7 +599,7 @@ async fn save_messages(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
 
 /// The signed-in person's Discord username, when the cache has it.
 fn username(ctx: &Ctx, user: u64) -> String {
-    ctx.cache.user(Id::new(user)).map(|u| u.name.clone()).unwrap_or_default()
+    Id::new_checked(user).and_then(|id| ctx.cache.user(id)).map(|u| u.name.clone()).unwrap_or_default()
 }
 
 /// The welcome card for whoever is signed in, as the page's preview.
@@ -646,7 +647,7 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
     let waiting_list = roles::waiting_members(&ctx, guild, days, 5)?;
     let restored = roles::recently_restored(&ctx, guild, 25)?;
     let this_week = restored.iter().filter(|r| r.at >= now - 7 * DAY_MS).count() as i64;
-    let exists = |r: &u64| ctx.cache.role(Id::new(*r)).is_some();
+    let exists = |r: &u64| Id::new_checked(*r).and_then(|id| ctx.cache.role(id)).is_some();
     let stuck: Vec<u64> = s.autoroles.iter().copied().filter(|r| exists(r) && !roles::assignable(&ctx, guild, *r)).collect();
     let deleted = s.autoroles.iter().filter(|r| !exists(r)).count() as i64;
     let given = role_list(&ctx, guild, &s.autoroles);
@@ -715,7 +716,7 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                             (ui::field_toggle("autorole_bots", "Include bots", Some("Off: bots that join get no auto-roles."), s.autorole_bots))
                         })))
                         (section("Roles back on rejoin", None, ui::card(html! {
-                            (ui::field_toggle("rejoin_on", "Give roles back", Some("A member who leaves and returns gets the roles they left with."), s.rejoin_on))
+                            (ui::field_toggle("rejoin_on", "Give roles back", Some("A member who leaves and returns gets the roles they left with. Roles with moderation or admin permissions are never given back."), s.rejoin_on))
                             (ui::field_number("rejoin_days", "Keep for", Some("After this long, a leaver's saved roles are deleted."), days, 1, 3650, Some("days")))
                             (ui::field_roles(&ctx, guild, "rejoin_exclude", "Never give back", Some("Useful for staff or punishment roles."), &s.rejoin_exclude))
                         })))
@@ -760,7 +761,7 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                 div.rail-block {
                     h2 { "Never given back" }
                     @if s.rejoin_exclude.is_empty() {
-                        p.muted.small { "Every saved role comes back. Exclude staff or punishment roles in the form." }
+                        p.muted.small { "Every saved role comes back except roles with moderation or admin permissions. Exclude other staff or punishment roles in the form." }
                     } @else {
                         (role_pills(&role_list(&ctx, guild, &s.rejoin_exclude)))
                     }
