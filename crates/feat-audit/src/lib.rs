@@ -13,8 +13,6 @@ use bot_core::anyhow::Result;
 use bot_core::discord::avatar_url;
 use bot_core::twilight_model::channel::message::embed::EmbedField;
 use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
-use bot_core::twilight_model::channel::permission_overwrite::{PermissionOverwrite, PermissionOverwriteType};
-use bot_core::twilight_model::channel::ChannelType;
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
@@ -840,65 +838,12 @@ pub fn afk_toggle(before: Option<&str>, after: Option<&str>, account: &str) -> b
     }
 }
 
-/// Whether a message's text in `source` should stay out of the log posted in `log`: true when a
-/// role that can see the log channel can't see the source, counting a thread by its channel and a
-/// private thread as hidden from anyone without Manage Threads. A channel the cache doesn't know
-/// counts as private.
+/// Whether a message's text in `source` should stay out of the log posted in `log`: true unless
+/// everyone who can read the log can read the source too (a thread counting by its channel, a
+/// private thread as hidden from anyone not in it). A channel the cache doesn't know counts as
+/// private.
 fn private_source(ctx: &Ctx, guild: u64, source: u64, log: Option<u64>) -> bool {
-    let Some(log) = log else { return false };
-    let Some(g) = Id::new_checked(guild) else { return true };
-    let (Some((source_ow, private_thread)), Some((log_ow, _))) = (overwrites_of(ctx, source), overwrites_of(ctx, log)) else { return true };
-    let Some(everyone) = ctx.cache.role(g.cast()).map(|r| r.permissions) else { return true };
-    let roles: Vec<(u64, Permissions)> = ctx
-        .cache
-        .guild_roles(g)
-        .map(|set| set.iter().copied().collect::<Vec<_>>())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|r| r.get() != guild)
-        .filter_map(|r| ctx.cache.role(r).map(|role| (r.get(), role.permissions)))
-        .collect();
-    hidden_from_readers(guild, everyone, &roles, &source_ow, private_thread, &log_ow)
-}
-
-/// A channel's permission overwrites, a thread's from its channel, and whether it's a private thread.
-fn overwrites_of(ctx: &Ctx, channel: u64) -> Option<(Vec<PermissionOverwrite>, bool)> {
-    let (kind, parent, own) = ctx.cache.channel(Id::new_checked(channel)?).map(|c| (c.kind, c.parent_id, c.permission_overwrites.clone()))?;
-    if kind.is_thread() {
-        let ow = ctx.cache.channel(parent?)?.permission_overwrites.clone();
-        Some((ow.unwrap_or_default(), kind == ChannelType::PrivateThread))
-    } else {
-        Some((own.unwrap_or_default(), false))
-    }
-}
-
-/// [`private_source`] without the cache: whether @everyone alone, or a member holding any one of
-/// `roles` besides it, can view the log channel but not the source.
-pub fn hidden_from_readers(guild: u64, everyone: Permissions, roles: &[(u64, Permissions)], source: &[PermissionOverwrite], private_thread: bool, log: &[PermissionOverwrite]) -> bool {
-    let need = if private_thread { Permissions::VIEW_CHANNEL | Permissions::MANAGE_THREADS } else { Permissions::VIEW_CHANNEL };
-    std::iter::once(None).chain(roles.iter().copied().map(Some)).any(|role| {
-        let sees = |ow: &[PermissionOverwrite], need: Permissions| role_channel_permissions(guild, everyone, role, ow).contains(need);
-        sees(log, Permissions::VIEW_CHANNEL) && !sees(source, need)
-    })
-}
-
-/// What a member holding only `role` besides @everyone may do in a channel: the roles' server
-/// permissions, then the channel's overwrites for @everyone, then for the role. Administrator
-/// allows everything. Overwrites for single members aren't counted.
-fn role_channel_permissions(guild: u64, everyone: Permissions, role: Option<(u64, Permissions)>, overwrites: &[PermissionOverwrite]) -> Permissions {
-    let base = everyone | role.map_or(Permissions::empty(), |(_, p)| p);
-    if base.contains(Permissions::ADMINISTRATOR) {
-        return Permissions::all();
-    }
-    let apply = |p: Permissions, id: u64| match overwrites.iter().find(|o| o.kind == PermissionOverwriteType::Role && o.id.get() == id) {
-        Some(o) => (p & !o.deny) | o.allow,
-        None => p,
-    };
-    let p = apply(base, guild);
-    match role {
-        Some((id, _)) => apply(p, id),
-        None => p,
-    }
+    log.is_some_and(|log| !ctx.readers_can_see(guild, log, source))
 }
 
 /// Roles in `after` but not `before`, and the other way round, in their original order.
@@ -1545,31 +1490,6 @@ mod tests {
         assert!(!afk_toggle(Some("[AFK] Mira"), Some("Kasia"), "mira_01"));
         assert!(!afk_toggle(Some("Mira"), Some("Kasia"), "mira_01"));
         assert!(!afk_toggle(None, Some("Mira"), "mira_01"));
-    }
-
-    #[test]
-    fn text_from_a_channel_the_log_readers_cannot_see_stays_out() {
-        use bot_core::twilight_model::channel::permission_overwrite::PermissionOverwrite;
-        let (guild, mods, admins) = (1u64, 2u64, 3u64);
-        let view = Permissions::VIEW_CHANNEL;
-        let everyone = view | Permissions::SEND_MESSAGES;
-        let ow = |id: u64, allow: Permissions, deny: Permissions| PermissionOverwrite { allow, deny, id: Id::new(id), kind: PermissionOverwriteType::Role };
-        let roles = [(mods, Permissions::MANAGE_MESSAGES), (admins, Permissions::ADMINISTRATOR)];
-        // The log: hidden from @everyone, open to mods.
-        let log = [ow(guild, Permissions::empty(), view), ow(mods, view, Permissions::empty())];
-        let public: [PermissionOverwrite; 0] = [];
-        let staff = [ow(guild, Permissions::empty(), view), ow(mods, view, Permissions::empty())];
-        let admin_only = [ow(guild, Permissions::empty(), view)];
-        assert!(!hidden_from_readers(guild, everyone, &roles, &public, false, &log));
-        assert!(!hidden_from_readers(guild, everyone, &roles, &staff, false, &log));
-        // Mods read the log but not the admins' channel; administrators see it anyway.
-        assert!(hidden_from_readers(guild, everyone, &roles, &admin_only, false, &log));
-        // A private thread in a public channel: mods without Manage Threads aren't in it.
-        assert!(hidden_from_readers(guild, everyone, &roles, &public, true, &log));
-        let managers = [(mods, Permissions::MANAGE_THREADS)];
-        assert!(!hidden_from_readers(guild, everyone, &managers, &public, true, &log));
-        // A log everyone can read, and a channel only mods can.
-        assert!(hidden_from_readers(guild, everyone, &roles, &staff, false, &public));
     }
 
     #[test]

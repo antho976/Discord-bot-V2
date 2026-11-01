@@ -257,6 +257,8 @@ pub struct CtxInner {
     /// Who sent a message today, per server, for the "active today" count: `(day, sets)`.
     active: Mutex<(String, HashMap<u64, HashSet<u64>>)>,
     pub(crate) snapshots: Mutex<discord::Snapshots>,
+    /// Recent answers of `readers_can_see`.
+    pub(crate) seen: Mutex<perms::Answers>,
     /// Live member counts: set from GuildCreate, then moved by joins and leaves (the cache's own
     /// count never changes after connect).
     pub(crate) member_counts: Mutex<HashMap<u64, u64>>,
@@ -317,6 +319,7 @@ impl Ctx {
             counters: Mutex::new(HashMap::new()),
             active: Mutex::new((today(), HashMap::new())),
             snapshots: Mutex::new(discord::Snapshots::default()),
+            seen: Mutex::new(HashMap::new()),
             member_counts: Mutex::new(HashMap::new()),
             notified: Mutex::new(HashMap::new()),
         })))

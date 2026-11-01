@@ -7,9 +7,7 @@ use std::time::Instant;
 use bot_core::rusqlite::{Connection, OptionalExtension, params};
 use bot_core::twilight_http::error::ErrorType;
 use bot_core::twilight_http::request::channel::reaction::RequestReactionType;
-use bot_core::twilight_model::channel::permission_overwrite::{PermissionOverwrite, PermissionOverwriteType};
 use bot_core::twilight_model::channel::{ChannelType, Message};
-use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::channel::message::{AllowedMentions, EmojiReactionType};
 use bot_core::twilight_model::id::marker::{ChannelMarker, EmojiMarker, GuildMarker, MessageMarker};
 use bot_core::twilight_model::id::Id;
@@ -375,58 +373,21 @@ pub fn may_repost(p: &Place, star_channel: u64, star_nsfw: bool, ignored: &[u64]
 /// can see (active ones arrive with the server, new ones as they're made), so None, a channel
 /// it doesn't know (or a starboard it doesn't know), means no repost rather than a guess.
 fn place_of(ctx: &Ctx, guild: u64, channel: Id<ChannelMarker>, star: Id<ChannelMarker>) -> Option<Place> {
-    let roles = server_roles(ctx, guild);
     // One cache entry at a time: each is let go before the next is read.
-    let star_overwrites = ctx.cache.channel(star).map(|c| c.permission_overwrites.clone().unwrap_or_default())?;
+    ctx.cache.channel(star)?;
     let (kind, parent_id) = ctx.cache.channel(channel).map(|c| (c.kind, c.parent_id))?;
     let thread = matches!(kind, ChannelType::PublicThread | ChannelType::PrivateThread | ChannelType::AnnouncementThread);
     let private_thread = kind == ChannelType::PrivateThread;
     let parent = ctx.cache.channel(if thread { parent_id? } else { channel })?;
+    let (parent_id, nsfw) = (parent.id.get(), parent.nsfw.unwrap_or(false));
+    drop(parent);
     Some(Place {
-        channel: parent.id.get(),
+        channel: parent_id,
         private_thread,
-        hidden: !audience_covered(&roles, guild, &star_overwrites, parent.permission_overwrites.as_deref().unwrap_or_default()),
-        nsfw: parent.nsfw.unwrap_or(false),
+        // Everyone who reads the starboard must be able to read the message where it was posted.
+        hidden: !ctx.readers_can_see(guild, star.get(), channel.get()),
+        nsfw,
     })
-}
-
-/// Every role of a server with its permissions, @everyone (the server's id) included.
-fn server_roles(ctx: &Ctx, guild: u64) -> Vec<(u64, Permissions)> {
-    let Some(g) = Id::new_checked(guild) else { return Vec::new() };
-    let ids: Vec<_> = ctx.cache.guild_roles(g).map(|set| set.iter().copied().collect()).unwrap_or_default();
-    let mut roles: Vec<(u64, Permissions)> = ids.into_iter().filter_map(|id| ctx.cache.role(id).map(|r| (id.get(), r.permissions))).collect();
-    if !roles.iter().any(|r| r.0 == guild) {
-        roles.push((guild, Permissions::empty()));
-    }
-    roles
-}
-
-/// Whether everyone who can see the starboard can see the channel too, judged role by role: a
-/// role's view is @everyone's permissions with its own, then the channel's overwrite for
-/// @everyone, then its own. Administrator sees everything. Overwrites for single members are
-/// left out.
-pub fn audience_covered(roles: &[(u64, Permissions)], guild: u64, star: &[PermissionOverwrite], source: &[PermissionOverwrite]) -> bool {
-    roles.iter().all(|(role, _)| !role_sees(roles, guild, *role, star) || role_sees(roles, guild, *role, source))
-}
-
-fn role_sees(roles: &[(u64, Permissions)], guild: u64, role: u64, overwrites: &[PermissionOverwrite]) -> bool {
-    let perms = |id: u64| roles.iter().find(|r| r.0 == id).map_or(Permissions::empty(), |r| r.1);
-    let base = perms(guild) | perms(role);
-    if base.contains(Permissions::ADMINISTRATOR) {
-        return true;
-    }
-    let mut view = base.contains(Permissions::VIEW_CHANNEL);
-    for id in [guild, role] {
-        if let Some(o) = overwrites.iter().find(|o| o.kind == PermissionOverwriteType::Role && o.id.get() == id) {
-            if o.deny.contains(Permissions::VIEW_CHANNEL) {
-                view = false;
-            }
-            if o.allow.contains(Permissions::VIEW_CHANNEL) {
-                view = true;
-            }
-        }
-    }
-    view
 }
 
 /// Fetch the message and its star count, then post, update or take down its starboard post.
@@ -913,42 +874,14 @@ mod tests {
         assert_eq!(place(10), Some(Place { channel: 10, private_thread: false, hidden: false, nsfw: false }));
         assert!(place(11).unwrap().hidden && place(12).unwrap().nsfw);
         assert_eq!(place(500), Some(Place { channel: 11, private_thread: false, hidden: true, nsfw: false }));
-        assert_eq!(place(501), Some(Place { channel: 10, private_thread: true, hidden: false, nsfw: false }));
+        // A private thread is hidden from anyone not in it (and refused as a private thread anyway).
+        assert_eq!(place(501), Some(Place { channel: 10, private_thread: true, hidden: true, nsfw: false }));
         // Ignoring 10 covers its threads.
         assert!(may_repost(&place(10).unwrap(), 99, false, &[]));
         assert!(!may_repost(&place(502).unwrap(), 99, false, &[10]));
         // Unknown to the cache, or a starboard it doesn't know: no repost.
         assert_eq!(place(999), None);
         assert_eq!(place_of(&ctx, 1, Id::new(10), Id::new(998)), None);
-    }
-
-    fn overwrite(role: u64, allow: Permissions, deny: Permissions) -> PermissionOverwrite {
-        PermissionOverwrite { allow, deny, id: Id::new(role), kind: PermissionOverwriteType::Role }
-    }
-
-    #[test]
-    fn the_starboards_audience_decides_what_is_hidden() {
-        let (view, none) = (Permissions::VIEW_CHANNEL, Permissions::empty());
-        // @everyone (1) sees nothing; Member (5) sees the server; Staff (6) too; Admin (7).
-        let gated = [(1, none), (5, view), (6, view), (7, Permissions::ADMINISTRATOR)];
-        let staff_only = [overwrite(1, none, view), overwrite(5, none, view), overwrite(6, view, none)];
-        // Role-gated server, ordinary channels and a starboard members see: reposted.
-        assert!(audience_covered(&gated, 1, &[], &[]));
-        // A staff channel on a starboard members see: hidden.
-        assert!(!audience_covered(&gated, 1, &[], &staff_only));
-        // A staff starboard can take the staff channel.
-        assert!(audience_covered(&gated, 1, &staff_only, &staff_only));
-        // A channel only verified members see (@everyone denied, Member allowed) on a starboard
-        // the same people see.
-        let members = [overwrite(1, none, view), overwrite(5, view, none)];
-        assert!(audience_covered(&gated, 1, &members, &members));
-        assert!(audience_covered(&gated, 1, &members, &[]));
-        // An open server: @everyone sees the starboard, so a channel hidden from it is hidden.
-        let open = [(1, view), (5, none)];
-        assert!(audience_covered(&open, 1, &[], &[]));
-        assert!(!audience_covered(&open, 1, &[], &[overwrite(1, none, view), overwrite(5, view, none)]));
-        // Administrators see everything, so they never make a channel hidden.
-        assert!(role_sees(&gated, 1, 7, &staff_only));
     }
 
     #[test]

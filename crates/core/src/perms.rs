@@ -56,6 +56,10 @@ fn seen(ctx: &Ctx, channel: u64) -> Option<Seen> {
     }
 }
 
+/// How long an answer of [`Ctx::readers_can_see`] is kept, by (server, reader, source).
+pub(crate) type Answers = HashMap<(u64, u64, u64), (std::time::Instant, bool)>;
+const KEEP: std::time::Duration = std::time::Duration::from_secs(60);
+
 impl Ctx {
     /// Whether everyone who can read `reader` can also read `source`, so copying text from
     /// `source` into `reader` shows it to nobody new. Checked for every member the cache has
@@ -63,6 +67,24 @@ impl Ctx {
     /// stands in for members the cache hasn't loaded. False when the cache doesn't know either
     /// channel or the server: unknown counts as private.
     pub fn readers_can_see(&self, guild: u64, reader: u64, source: u64) -> bool {
+        // Kept a minute: the starboard asks on every reaction, and a big server has thousands of
+        // members to go through. Overwrites and roles rarely change faster than that matters.
+        let key = (guild, reader, source);
+        if let Some((at, ok)) = self.seen.lock().unwrap().get(&key)
+            && at.elapsed() < KEEP
+        {
+            return *ok;
+        }
+        let ok = self.readers_can_see_now(guild, reader, source);
+        let mut seen = self.seen.lock().unwrap();
+        if seen.len() > 1000 {
+            seen.retain(|_, (at, _)| at.elapsed() < KEEP);
+        }
+        seen.insert(key, (std::time::Instant::now(), ok));
+        ok
+    }
+
+    fn readers_can_see_now(&self, guild: u64, reader: u64, source: u64) -> bool {
         let Some(g) = Id::<GuildMarker>::new_checked(guild) else { return false };
         let (Some(reader), Some(source)) = (seen(self, reader), seen(self, source)) else { return false };
         let Some(everyone) = self.cache.role(g.cast()).map(|r| r.permissions) else { return false };
@@ -120,5 +142,47 @@ mod tests {
         assert!(member_permissions(guild, true, none, &perms, &[], 9, &gated).contains(view));
         let admin: HashMap<u64, Permissions> = [(5, Permissions::ADMINISTRATOR)].into();
         assert!(member_permissions(guild, false, none, &admin, &[5], 9, &gated).contains(view));
+    }
+
+    #[tokio::test]
+    async fn readers_are_the_members_the_cache_has() {
+        use twilight_model::gateway::event::Event;
+        let ctx = crate::Ctx::new(crate::Config::preview(0), crate::Db::memory().unwrap()).unwrap();
+        let view = 1u64 << 10;
+        let role = |id: u64, perms: u64| {
+            let v = serde_json::json!({"guild_id": "1", "role": {"id": id.to_string(), "name": "r", "color": 0, "colors": {"primary_color": 0}, "hoist": false, "managed": false, "mentionable": false, "permissions": perms.to_string(), "position": id, "flags": 0}});
+            ctx.cache.update(&Event::RoleCreate(serde_json::from_value(v).unwrap()));
+        };
+        // @everyone (1) sees nothing; Member (2) sees the server; Mod (3); NoSpoilers (4).
+        role(1, 0);
+        role(2, view);
+        role(3, 0);
+        role(4, 0);
+        let channel = |id: u64, ow: serde_json::Value| {
+            let v = serde_json::json!({"id": id.to_string(), "type": 0, "name": "x", "guild_id": "1", "permission_overwrites": ow});
+            ctx.cache.update(&Event::ChannelCreate(Box::new(serde_json::from_value(v).unwrap())));
+        };
+        let deny = |r: u64| serde_json::json!({"id": r.to_string(), "type": 0, "allow": "0", "deny": view.to_string()});
+        let allow = |r: u64| serde_json::json!({"id": r.to_string(), "type": 0, "allow": view.to_string(), "deny": "0"});
+        channel(10, serde_json::json!([]));
+        channel(11, serde_json::json!([deny(1), allow(3)]));
+        channel(12, serde_json::json!([deny(4)]));
+        channel(13, serde_json::json!([deny(2), allow(3)]));
+        let member = |user: u64, roles: &[u64]| {
+            let v = serde_json::json!({"guild_id": "1", "roles": roles.iter().map(|r| r.to_string()).collect::<Vec<_>>(), "joined_at": "2025-01-01T00:00:00+00:00", "deaf": false, "mute": false, "flags": 0,
+                "user": {"id": user.to_string(), "username": "u", "discriminator": "0", "avatar": null}});
+            ctx.cache.update(&Event::MemberAdd(Box::new(serde_json::from_value(v).unwrap())));
+        };
+        member(100, &[2, 3]);
+        member(101, &[2]);
+        // The mods' log (11) and the general channel (10), which Member opens: mods see both.
+        assert!(ctx.readers_can_see(1, 11, 10));
+        // A channel only mods see (13), on a channel every member reads (10): hidden.
+        assert!(!ctx.readers_can_see(1, 10, 13));
+        // NoSpoilers only denies: a member holding it with Member can't read #spoilers (12).
+        member(102, &[2, 4]);
+        assert!(!ctx.readers_can_see(1, 10, 12));
+        // Unknown channels count as private.
+        assert!(!ctx.readers_can_see(1, 10, 999));
     }
 }
