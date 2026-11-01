@@ -260,7 +260,7 @@ const CSS: &str = r#"
 .lv-ladder { position: relative; display: flex; flex-direction: column; gap: 12px; }
 .lv-ladder::before { content: ""; position: absolute; left: 27px; top: 34px; bottom: 34px; width: 2px; border-radius: 2px; background: linear-gradient(180deg, var(--hue), var(--data-2)); opacity: 0.6; transform-origin: top; animation: lv-draw 1.1s var(--ease) both 0.15s; }
 .lv-rung { --role: var(--hue); position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 16px; align-items: center; }
-.lv-node { position: relative; z-index: 1; display: grid; place-content: center; justify-items: center; width: 56px; height: 56px; border-radius: 50%; background: radial-gradient(circle at 50% 28%, color-mix(in oklab, var(--role) 34%, var(--page)), var(--page) 78%); box-shadow: 0 0 0 2px color-mix(in oklab, var(--role) 75%, transparent), 0 0 0 6px var(--page); animation: pop-in 0.55s var(--spring) both; animation-delay: calc(0.3s + var(--i, 0) * 110ms); }
+.lv-node { position: relative; z-index: 1; display: grid; place-content: center; justify-items: center; width: 56px; height: 56px; border-radius: 50%; background: color-mix(in oklab, var(--role) 16%, var(--page)); box-shadow: 0 0 0 2px color-mix(in oklab, var(--role) 75%, transparent), 0 0 0 6px var(--page); animation: pop-in 0.55s var(--spring) both; animation-delay: calc(0.3s + var(--i, 0) * 110ms); }
 .lv-node b { font: 650 19px/1 var(--sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 .lv-node small { font-size: 10px; color: var(--ink-2); margin-top: 3px; }
 .lv-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "top acts" "reach reach"; align-items: center; gap: 10px 12px; min-width: 0; padding: 14px 16px 15px; border-radius: 14px; background: linear-gradient(90deg, color-mix(in oklab, var(--role) 9%, transparent), rgba(243, 242, 248, 0.015) 70%); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; animation: rise 0.5s var(--ease) both; animation-delay: calc(0.36s + var(--i, 0) * 110ms); }
@@ -312,8 +312,8 @@ span.lv-dc-av img { width: 22px; height: 22px; }
 .lv-curve .rail-nums b { font-size: 21px; }
 
 /* Import: a drop zone that takes the whole card. */
-.lv-drop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 20px 30px; border-radius: 16px; text-align: center; border: 1.5px dashed var(--edge-3); background: radial-gradient(70% 120% at 50% 0%, color-mix(in oklab, var(--hue) 6%, transparent), transparent 70%); transition: border-color 0.2s, background 0.3s, transform 0.3s var(--ease); }
-.lv-drop:hover, .lv-drop.over { border-color: var(--hue); background: radial-gradient(80% 130% at 50% 0%, color-mix(in oklab, var(--hue) 11%, transparent), transparent 75%); }
+.lv-drop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 20px 30px; border-radius: 16px; text-align: center; border: 1.5px dashed var(--edge-3); background: var(--well); transition: border-color 0.2s, background 0.3s, transform 0.3s var(--ease); }
+.lv-drop:hover, .lv-drop.over { border-color: var(--hue); background: var(--well); }
 .lv-drop.over { transform: scale(1.01); }
 .lv-drop:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 3px; }
 .lv-drop input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }

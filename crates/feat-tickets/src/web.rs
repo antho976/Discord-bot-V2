@@ -658,7 +658,7 @@ const CSS: &str = r#"
 .tk-rail .rail-nums b { font-size: 24px; }
 .tk-readings .reading { flex: 1 1 140px; }
 .tk-readings .reading > span { display: inline-flex; align-items: center; gap: 7px; }
-.reading.tk-hot { background: radial-gradient(120% 140% at 0% 0%, color-mix(in oklab, var(--waiting) 9%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 34%, transparent); }
+.reading.tk-hot { background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 34%, transparent); }
 .reading.tk-hot b { color: var(--waiting); }
 .reading.tk-hot .dot { width: 6px; height: 6px; }
 /* Settings beside the message they shape: the preview keeps about Discord's own width, the form
@@ -674,7 +674,7 @@ const CSS: &str = r#"
 .tk-list { display: flex; flex-direction: column; gap: 10px; }
 .tk-card { display: grid; grid-template-columns: 40px minmax(0, 1fr); grid-template-areas: "face body" "face convo" "side side"; gap: 10px 14px; align-items: start; padding: 14px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 60ms + 200ms); }
 .tk-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.tk-card.wait { background: radial-gradient(80% 140% at 0% 0%, color-mix(in oklab, var(--waiting) 4%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); }
+.tk-card.wait { background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); }
 .tk-face { grid-area: face; position: relative; width: 40px; height: 40px; }
 .tk-face .avatar { width: 40px; height: 40px; }
 .tk-turn { position: absolute; right: -2px; bottom: -2px; width: 14px; height: 14px; border-radius: 50%; box-shadow: 0 0 0 3px var(--page); }
@@ -750,7 +750,7 @@ const CSS: &str = r#"
 .sb-grid { columns: 300px; column-gap: 14px; }
 .sb-card { position: relative; break-inside: avoid; display: flex; flex-direction: column; margin: 0 0 14px; border-radius: 18px; overflow: hidden; isolation: isolate; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: sb-in 0.75s var(--ease) both; animation-delay: calc(var(--i, 0) * 80ms + 150ms); transition: box-shadow 0.25s; }
 .sb-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.sb-card.lead { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 45%, transparent); background: radial-gradient(100% 70% at 0% 0%, color-mix(in oklab, var(--hue) 7%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); }
+.sb-card.lead { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 45%, transparent); background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); }
 .sb-pic { position: relative; margin: 0; overflow: hidden; background: var(--well); }
 .sb-pic img { display: block; width: 100%; height: auto; max-height: 340px; object-fit: cover; transition: transform 1.1s var(--ease), filter 0.4s; }
 .sb-card:hover .sb-pic img { transform: scale(1.05); filter: saturate(1.12); }

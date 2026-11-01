@@ -242,7 +242,8 @@ const SCRIPT: &str = r#"
     });
   };
   tick();
-  setInterval(tick, 1000);
+  const id = setInterval(tick, 1000);
+  window.botPage?.signal.addEventListener("abort", () => clearInterval(id));
 })();
 "#;
 
@@ -332,7 +333,7 @@ const STYLE: &str = r#"
    the post as members see it. Two columns (art, body; the post under the body) from 600 px,
    three from 1000. */
 .gv-hero { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px 26px; align-items: center; padding: 18px; border-radius: 24px; isolation: isolate;
-  background: radial-gradient(60% 120% at 0% 0%, color-mix(in oklab, var(--hue) 8%, transparent), transparent 62%), radial-gradient(50% 90% at 100% 100%, color-mix(in oklab, var(--accent) 4%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
+  background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 22%, var(--edge-1)); }
 .gv-hero-body { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; min-width: 0; }
 .gv-prize { font-size: 27px; line-height: 1.15; letter-spacing: -0.03em; overflow-wrap: anywhere; }
@@ -407,7 +408,7 @@ const STYLE: &str = r#"
 /* The newest open poll, across the page: the results, and beside them (under them when narrow)
    the poll as members see it in Discord. */
 .pl-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px 36px; align-items: start; padding: 22px 24px 20px; border-radius: 24px;
-  background: radial-gradient(60% 100% at 0% 0%, color-mix(in oklab, var(--data) 6%, transparent), transparent 62%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
+  background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 18%, var(--edge-1)); }
 .pl-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 @container col (min-width: 1000px) {
@@ -487,10 +488,10 @@ const STYLE: &str = r#"
 .sg-card { display: grid; grid-template-columns: 46px minmax(0, 1fr); grid-template-areas: "score body" "score state" "side side"; gap: 10px 14px; align-items: start; padding: 14px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 55ms + 150ms); }
 .sg-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .sg-score { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; height: 66px; border-radius: 15px; color: var(--data);
-  background: radial-gradient(100% 100% at 50% 0%, var(--data-wash), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 28%, transparent); }
+  background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 28%, transparent); }
 .sg-score .icon { width: 15px; height: 15px; }
 .sg-score b { font: 650 20px/1.1 var(--sans); letter-spacing: -0.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
-.sg-score.down { color: var(--held); background: radial-gradient(100% 100% at 50% 100%, color-mix(in oklab, var(--held) 8%, transparent), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--held) 28%, transparent); }
+.sg-score.down { color: var(--held); background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--held) 28%, transparent); }
 .sg-score.flat { color: var(--ink-3); background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
 .sg-score { grid-area: score; }
 .sg-body { grid-area: body; min-width: 0; display: flex; flex-direction: column; gap: 8px; }

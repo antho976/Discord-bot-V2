@@ -159,9 +159,9 @@ pub trait Feature: Send + Sync + 'static {
         &[]
     }
 
-    /// Admin-only features can't be granted per server: they act on things shared by every
-    /// server (app connections), so only dashboard admins see or change them.
-    fn admin_only(&self) -> bool {
+    /// Features kept for the owner and the people they give Admin+: they act on things shared
+    /// by every server (app connections), so no per-server grant or plain admin reaches them.
+    fn admin_plus_only(&self) -> bool {
         false
     }
 

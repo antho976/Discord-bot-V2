@@ -44,11 +44,17 @@ impl Level {
 /// asks about many pages at once: the sidebar, the overview, the bell.
 pub struct Levels {
     admin: bool,
+    admin_plus: bool,
+    /// Pages only the owner and Admin+ people open ([`crate::Feature::admin_plus_only`]).
+    kept: Vec<&'static str>,
     grants: std::collections::HashMap<String, Level>,
 }
 
 impl Levels {
     pub fn get(&self, key: &str) -> Level {
+        if self.kept.contains(&key) {
+            return if self.admin_plus { Level::Edit } else { Level::None };
+        }
         if self.admin { Level::Edit } else { self.grants.get(key).copied().unwrap_or(Level::None) }
     }
 }
@@ -60,6 +66,8 @@ pub struct User {
     pub name: String,
     pub avatar: Option<String>,
     pub admin: bool,
+    /// An admin who also opens the owner's pages (App approvals). The owner always is.
+    pub admin_plus: bool,
     /// The browser's timezone, from the `tz` cookie app.js sets. UTC until it's known.
     pub tz: jiff::tz::TimeZone,
 }
@@ -107,11 +115,11 @@ impl Page {
 impl Ctx {
     /// What `user` can do on page `key` in a server.
     pub fn level(&self, user: &User, guild_id: u64, key: &str) -> Level {
+        if self.feature(key).is_some_and(|f| f.admin_plus_only()) {
+            return if user.admin_plus { Level::Edit } else { Level::None };
+        }
         if user.admin {
             return Level::Edit;
-        }
-        if self.feature(key).is_some_and(|f| f.admin_only()) {
-            return Level::None;
         }
         self.db
             .with(|c| {
@@ -130,8 +138,9 @@ impl Ctx {
 
     /// [`Ctx::level`] for every page in a server at once.
     pub fn levels(&self, user: &User, guild_id: u64) -> Levels {
+        let kept: Vec<&'static str> = self.features().iter().filter(|f| f.admin_plus_only()).map(|f| f.meta().key).collect();
         if user.admin {
-            return Levels { admin: true, grants: Default::default() };
+            return Levels { admin: true, admin_plus: user.admin_plus, kept, grants: Default::default() };
         }
         let grants = self
             .db
@@ -144,9 +153,9 @@ impl Ctx {
             })
             .unwrap_or_default()
             .into_iter()
-            .filter(|(key, _)| !self.feature(key).is_some_and(|f| f.admin_only()))
+            .filter(|(key, _)| !kept.contains(&key.as_str()))
             .collect();
-        Levels { admin: false, grants }
+        Levels { admin: false, admin_plus: false, kept, grants }
     }
 
     /// Open a page for a user, or refuse when they lack `need` on it.
@@ -190,7 +199,7 @@ impl FromRequestParts<Ctx> for User {
         let hash = hash_token(&token);
         let user = ctx.db.with(|c| {
             c.query_row(
-                "SELECT u.id, u.name, u.avatar, u.admin FROM dash_sessions s JOIN dash_users u ON u.id = s.user_id
+                "SELECT u.id, u.name, u.avatar, u.admin, u.admin_plus FROM dash_sessions s JOIN dash_users u ON u.id = s.user_id
                  WHERE s.token_hash = ?1 AND s.expires_at > ?2",
                 params![hash, crate::now_ms()],
                 |r| {
@@ -199,6 +208,7 @@ impl FromRequestParts<Ctx> for User {
                         name: r.get(1)?,
                         avatar: r.get(2)?,
                         admin: r.get(3)?,
+                        admin_plus: r.get(4)?,
                         tz: jiff::tz::TimeZone::UTC,
                     })
                 },
@@ -208,7 +218,10 @@ impl FromRequestParts<Ctx> for User {
         let mut user = user.ok_or(WebError::Login)?;
         if user.id == ctx.cfg.owner_id {
             user.admin = true;
+            user.admin_plus = true;
         }
+        // Admin+ is only ever on top of admin.
+        user.admin_plus &= user.admin;
         if let Some(tz) = cookie(&parts.headers, "tz").and_then(|t| jiff::tz::TimeZone::get(&decode_tz(&t)).ok()) {
             user.tz = tz;
         }
@@ -453,7 +466,21 @@ async fn logout(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::decode_tz;
+    use super::{Level, Levels, decode_tz};
+
+    #[test]
+    fn kept_pages_need_admin_plus() {
+        let kept = vec!["connect"];
+        let admin = Levels { admin: true, admin_plus: false, kept: kept.clone(), grants: Default::default() };
+        assert_eq!(admin.get("connect"), Level::None);
+        assert_eq!(admin.get("levels"), Level::Edit);
+        let plus = Levels { admin: true, admin_plus: true, kept: kept.clone(), grants: Default::default() };
+        assert_eq!(plus.get("connect"), Level::Edit);
+        // A per-server grant never reaches a kept page.
+        let member = Levels { admin: false, admin_plus: false, kept, grants: [("connect".to_owned(), Level::Edit), ("levels".to_owned(), Level::View)].into() };
+        assert_eq!(member.get("connect"), Level::None);
+        assert_eq!(member.get("levels"), Level::View);
+    }
 
     #[test]
     fn timezone_cookie_decodes() {

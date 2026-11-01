@@ -740,7 +740,7 @@ const STYLE: &str = r#"
 /* Readings: the week, with what waits on you lit amber. */
 .gd-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .gd-readings .reading { min-width: 0; }
-.gd-readings .gd-lead { background: radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--hue) 9%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent); }
+.gd-readings .gd-lead { background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent); }
 .gd-readings .gd-lead::before { width: 100%; opacity: 1; }
 .gd-readings .gd-wait b { color: var(--waiting); }
 .gd-readings .gd-wait::before { background: linear-gradient(90deg, var(--waiting), transparent); }
@@ -761,7 +761,7 @@ const STYLE: &str = r#"
 .gd-catch:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 /* An open Release or Ban popover stays above the card under it. */
 .gd-catch:has(.gd-pop[open]) { z-index: 4; }
-.gd-catch.open { background: radial-gradient(90% 120% at 100% 0%, color-mix(in oklab, var(--waiting) 6%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 32%, transparent); }
+.gd-catch.open { background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 32%, transparent); }
 .gd-what { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
 /* The message as Discord drew it. Discord's own colours: its chat grey, its name white. */

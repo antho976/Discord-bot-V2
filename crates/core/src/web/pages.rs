@@ -22,6 +22,7 @@ pub(super) fn routes() -> Router<Ctx> {
         .route("/g/{guild}/features", get(features_page))
         .route("/g/{guild}/features/{key}", post(toggle_feature))
         .route("/g/{guild}/notifications", get(notifications))
+        .route("/g/{guild}/notifications/peek", get(notifications_peek))
         .route("/users", get(users_page).post(add_user))
         .route("/users/{id}", get(user_page).post(save_user))
         .route("/users/{id}/delete", post(delete_user))
@@ -397,12 +398,12 @@ struct Note {
 }
 
 /// Notices for a server that this person may see: only features they can at least view, and
-/// server-less notices (app connections) only for admins.
+/// server-less notices (app connections) only for the owner and Admin+ people.
 fn recent_notifications(ctx: &Ctx, user: &User, guild: u64, limit: i64) -> Vec<Note> {
     let mut notes = all_notifications(ctx, guild, limit * 4);
     let levels = ctx.levels(user, guild);
     notes.retain(|n| match n.global {
-        true => user.admin,
+        true => user.admin_plus,
         false => levels.get(&n.feature) >= Level::View,
     });
     notes.truncate(limit as usize);
@@ -504,6 +505,13 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         }
     };
     // Seen from now on, so the bell on this page is already clear.
+    mark_seen(&ctx, &user, guild)?;
+    let actions = (fresh > 0).then(|| ui::badge(&format!("{fresh} new"), Tone::Accent));
+    Ok(ui::layout(&ctx, &page, "Notifications", actions, body).into_response())
+}
+
+/// Every notice for this server counts as seen from now.
+fn mark_seen(ctx: &Ctx, user: &User, guild: u64) -> WebResult<()> {
     ctx.db.with(|c| {
         c.execute(
             "INSERT INTO dash_notif_seen (user_id, guild_id, seen_at) VALUES (?1, ?2, ?3)
@@ -511,8 +519,34 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
             params![user.id as i64, guild as i64, crate::now_ms()],
         )
     })?;
-    let actions = (fresh > 0).then(|| ui::badge(&format!("{fresh} new"), Tone::Accent));
-    Ok(ui::layout(&ctx, &page, "Notifications", actions, body).into_response())
+    Ok(())
+}
+
+/// The bell's dropdown: the newest notices as a fragment app.js puts in place. Opening it
+/// counts as seeing them, as the full page does.
+async fn notifications_peek(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    if !ctx.guilds_for(&user).contains(&guild) {
+        return Err(WebError::Forbidden);
+    }
+    let seen = ui::notifications_seen(&ctx, user.id, guild);
+    let global_seen = ui::notifications_seen_anywhere(&ctx, user.id);
+    let notes = recent_notifications(&ctx, &user, guild, 8);
+    let is_new = |n: &Note| n.at > if n.global { global_seen } else { seen };
+    let body = html! {
+        div.peek-head {
+            strong { "Notifications" }
+            a href={ "/g/" (guild) "/notifications" } { "See all" }
+        }
+        @if notes.is_empty() {
+            p.peek-none { "Nothing yet. Features post here when something needs you." }
+        } @else {
+            div.peek-list {
+                @for n in &notes { (notification_row(&ctx, &user, n, is_new(n))) }
+            }
+        }
+    };
+    mark_seen(&ctx, &user, guild)?;
+    Ok(([(axum::http::header::CACHE_CONTROL, "no-store")], body).into_response())
 }
 
 /// "Today", "Yesterday", a weekday for the last week, then "Oct 3": a day heading in the
@@ -598,6 +632,7 @@ struct Person {
     name: String,
     avatar: Option<String>,
     admin: bool,
+    admin_plus: bool,
     created_at: i64,
     grants: i64,
     signed_in: Option<i64>,
@@ -608,7 +643,7 @@ fn people(ctx: &Ctx) -> Vec<Person> {
     ctx.db
         .with(|c| {
             let mut s = c.prepare(
-                "SELECT u.id, u.name, u.avatar, u.admin, u.created_at,
+                "SELECT u.id, u.name, u.avatar, u.admin, u.created_at, u.admin_plus,
                         (SELECT COUNT(*) FROM dash_perms p WHERE p.user_id = u.id AND p.level > 0),
                         (SELECT MAX(s.created_at) FROM dash_sessions s WHERE s.user_id = u.id),
                         (SELECT a.name FROM dash_users a WHERE a.id = u.added_by AND a.name != '')
@@ -622,9 +657,10 @@ fn people(ctx: &Ctx) -> Vec<Person> {
                         avatar: r.get(2)?,
                         admin: r.get(3)?,
                         created_at: r.get(4)?,
-                        grants: r.get(5)?,
-                        signed_in: r.get(6)?,
-                        added_by: r.get(7)?,
+                        admin_plus: r.get(5)?,
+                        grants: r.get(6)?,
+                        signed_in: r.get(7)?,
+                        added_by: r.get(8)?,
                     })
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -685,7 +721,8 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
                         p.muted.small { (seen) @if let Some(by) = p.added_by.as_ref().filter(|_| p.id != owner) { " · added by " (by) } }
                     }
                     @if p.id == owner { (ui::badge("Owner", Tone::Accent)) }
-                    @else if p.admin { (ui::badge("Admin, every page", Tone::Muted)) }
+                    @else if p.admin && p.admin_plus { (ui::badge("Admin+, every page", Tone::Muted)) }
+                    @else if p.admin { (ui::badge("Admin", Tone::Muted)) }
                     @else if pages.is_empty() { (ui::badge("No pages yet", Tone::Warn)) }
                     @else {
                         span.access-tiles {
@@ -745,8 +782,9 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
     })?;
     let level_of = |g: u64, key: &str| grants.iter().find(|(gg, k, _)| *gg == g && k == key).map(|x| x.2).unwrap_or(0);
     let is_owner = id == ctx.cfg.owner_id;
+    let viewer_is_owner = user.id == ctx.cfg.owner_id;
     let display = if person.name.is_empty() { "Not signed in yet".to_owned() } else { person.name.clone() };
-    let grantable = |g: u64| ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key) && !f.admin_only()).collect::<Vec<_>>();
+    let grantable = |g: u64| ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key) && !f.admin_plus_only()).collect::<Vec<_>>();
     // People whose pages can be copied over: not admins (they have no grants to copy), not this one.
     let others: Vec<(String, String)> = people(&ctx)
         .into_iter()
@@ -758,9 +796,14 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
         form.settings method="post" action={ "/users/" (id) } {
             (ui::card(html! {
                 @if is_owner {
-                    (ui::field_custom("Admin", Some("The owner is always an admin."), ui::badge("Owner", Tone::Accent)))
+                    (ui::field_custom("Admin", Some("The owner is always an admin, with App approvals."), ui::badge("Owner", Tone::Accent)))
+                } @else if person.admin_plus && !viewer_is_owner {
+                    (ui::field_custom("Admin+", Some("Only the owner changes an Admin+ person's access."), ui::badge("Admin+", Tone::Accent)))
                 } @else {
-                    (ui::field_toggle("admin", "Admin", Some("Everything on every server, including features, people and the activity log."), person.admin))
+                    (ui::field_toggle("admin", "Admin", Some("Everything on every server, including features, people and the activity log, except App approvals."), person.admin))
+                    @if viewer_is_owner {
+                        (ui::field_toggle("admin_plus", "Admin+", Some("An admin who also sees App approvals, which is otherwise yours alone. Only you can give it."), person.admin_plus))
+                    }
                 }
             }))
             @if !person.admin && !is_owner {
@@ -828,10 +871,17 @@ async fn save_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>, form
     let guild = any_guild(&ctx, &user)?;
     admin_page(&ctx, &user, guild, "users")?;
     let is_owner = id == ctx.cfg.owner_id;
-    let admin = is_owner || form.bool("admin");
+    let by_owner = user.id == ctx.cfg.owner_id;
+    let was_plus = people(&ctx).iter().any(|p| p.id == id && p.admin_plus);
+    if was_plus && !by_owner {
+        return Err(WebError::Bad("Only the owner changes an Admin+ person's access.".into()));
+    }
+    // Admin+ is the owner's to give, and always comes with admin.
+    let plus = if by_owner { form.bool("admin_plus") } else { was_plus };
+    let admin = is_owner || plus || form.bool("admin");
     let mut conn = ctx.db.lock();
     let tx = conn.transaction()?;
-    tx.execute("UPDATE dash_users SET admin = ?2 WHERE id = ?1", params![id as i64, admin])?;
+    tx.execute("UPDATE dash_users SET admin = ?2, admin_plus = ?3 WHERE id = ?1", params![id as i64, admin, plus && !is_owner])?;
     if !admin {
         for (k, v) in &form.0 {
             let Some(rest) = k.strip_prefix("p:") else { continue };
@@ -892,6 +942,9 @@ async fn delete_user(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) ->
     admin_page(&ctx, &user, guild, "users")?;
     if id == ctx.cfg.owner_id {
         return Err(WebError::Bad("The owner can't be removed.".into()));
+    }
+    if user.id != ctx.cfg.owner_id && people(&ctx).iter().any(|p| p.id == id && p.admin_plus) {
+        return Err(WebError::Bad("Only the owner removes an Admin+ person.".into()));
     }
     let name = person_name(&ctx, id);
     ctx.db.with(|c| {

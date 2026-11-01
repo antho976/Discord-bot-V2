@@ -952,7 +952,7 @@ const CSS: &str = r#"
 .rv-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .rv-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .rv-readings .reading { min-width: 0; }
-.rv-readings .rv-lead { background: radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--hue) 9%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent); }
+.rv-readings .rv-lead { background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent); }
 .rv-readings .rv-lead::before { width: 100%; opacity: 1; }
 /* Twitch's own purple for anything channel points. */
 .rv-readings .rv-points::before { background: linear-gradient(90deg, #9146ff, transparent); }
@@ -972,7 +972,7 @@ const CSS: &str = r#"
 .rv-row:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 @keyframes rv-in { from { opacity: 0; transform: translateX(-14px); filter: blur(3px); } }
 .rv-place { position: relative; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; margin-top: 5px; border-radius: 10px; font: 600 12.5px var(--mono); color: var(--ink-2); background: var(--raised); box-shadow: inset 0 0 0 1px var(--edge-2), 0 0 0 4px var(--page); }
-.rv-row.next { padding: 18px 18px 18px 16px; align-items: center; background: radial-gradient(90% 140% at 0% 0%, color-mix(in oklab, var(--hue) 8%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 34%, transparent); }
+.rv-row.next { padding: 18px 18px 18px 16px; align-items: center; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 34%, transparent); }
 .rv-queue.numbered .rv-row.next { grid-template-columns: 30px 60px minmax(0, 1fr) auto; }
 .rv-row.next .rv-place { margin-top: 0; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue)); box-shadow: 0 0 0 4px var(--page); animation: pop-in 0.6s var(--spring) both 0.35s; }
 .rv-next { height: 20px; padding: 0 8px; border-radius: 10px; font: 600 11px/20px var(--sans); color: var(--hue); background: color-mix(in oklab, var(--hue) 16%, transparent); }

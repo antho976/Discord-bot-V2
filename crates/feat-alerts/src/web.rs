@@ -88,7 +88,7 @@ fn toast_if(q: &HashMap<String, String>, key: &str, msg: &str) -> Markup {
     html! {
         @if q.contains_key(key) {
             script { (PreEscaped(format!(
-                "addEventListener('DOMContentLoaded',()=>{{window.botToast&&window.botToast({msg:?});history.replaceState(null,'',location.pathname)}})"
+                "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg:?});history.replaceState(history.state,'',location.pathname)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go):setTimeout(go)}})()"
             ))) }
         }
     }
@@ -1718,13 +1718,14 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
     let ids: Vec<String> = bs.iter().map(|b| b.user_id.clone()).collect();
     let marks = vec!["?"; ids.len()].join(", ");
     let sql = format!(
-        "SELECT game, title, thumbnail, ended_at, duration_secs, peak FROM alerts_streams
+        "SELECT game, title, thumbnail, ended_at, duration_secs, peak, broadcaster_id, vod_url FROM alerts_streams
          WHERE broadcaster_id IN ({marks}) ORDER BY started_at DESC LIMIT 1"
     );
-    let last: Option<(String, String, String, Option<i64>, i64, i64)> = ctx
+    type Last = (String, String, String, Option<i64>, i64, i64, String, Option<String>);
+    let last: Option<Last> = ctx
         .db
         .with(|c| {
-            c.query_row(&sql, bot_core::rusqlite::params_from_iter(ids.iter()), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+            c.query_row(&sql, bot_core::rusqlite::params_from_iter(ids.iter()), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)))
                 .optional()
         })
         .ok()
@@ -1751,8 +1752,11 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
             "Stream"
             span.status { span.dot.live[live] {} (if live { "Live" } else { "Offline" }) }
         }
-        @if let Some((game, title, thumb, _, secs, peak)) = &last {
-            a.stream-card href=(page.path("alerts/stats")) {
+        @if let Some((game, title, thumb, _, secs, peak, who, vod)) = &last {
+            // Watch it: the channel while live, else the recording when Twitch kept one.
+            @let channel = bs.iter().find(|b| &b.user_id == who).or(bs.first()).map(Broadcaster::url);
+            @let watch = if live { channel } else { vod.clone().or(channel) };
+            a.stream-card href=[watch] target="_blank" rel="noopener" aria-label=(if live { "Watch the stream on Twitch" } else { "Watch the last stream on Twitch" }) {
                 @if thumb.is_empty() {
                     span.stream-ph { (ui::icon(Icon::Live)) }
                 } @else {

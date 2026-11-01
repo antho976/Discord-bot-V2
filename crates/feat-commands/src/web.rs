@@ -845,7 +845,9 @@ const JS: &str = r#"(() => {
       set('cc-p-said', mode === 'exact' ? pat : mode === 'starts_with' ? pat + ' …' : '… ' + pat + ' …');
     }
   };
-  document.addEventListener('input', update);
-  document.addEventListener('change', update);
+  // Until the page is swapped out (app.js).
+  const signal = window.botPage?.signal;
+  document.addEventListener('input', update, { signal });
+  document.addEventListener('change', update, { signal });
   update();
 })();"#;

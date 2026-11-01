@@ -477,7 +477,7 @@ const CSS: &str = r#"
 /* Requests side by side once the column has room for two; a lone one fills the column. */
 .cn-reqs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); gap: 12px; }
 .cn-req { container: cnreq / inline-size; position: relative; display: flex; flex-direction: column; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; isolation: isolate; }
-.cn-req.first { background: radial-gradient(70% 160% at 100% 0%, color-mix(in oklab, var(--hue) 9%, transparent), transparent 62%), linear-gradient(180deg, rgba(243, 242, 248, 0.055), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 40%, transparent); }
+.cn-req.first { background: linear-gradient(180deg, rgba(243, 242, 248, 0.055), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 40%, transparent); }
 .cn-req-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 20px 22px 18px; }
 .cn-tile { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 17px; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 24%, transparent); }
 .cn-req.first .cn-tile { color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 22%)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); animation: pop-in 0.6s var(--spring) both 0.15s; }

@@ -414,7 +414,8 @@ const JS: &str = r#"(() => {
       if (el.classList.contains("au-zone")) el.classList.toggle("is-day", h >= 6 && h < 18);
     });
   };
-  setInterval(tick, 30000);
+  const id = setInterval(tick, 30000);
+  window.botPage?.signal.addEventListener("abort", () => clearInterval(id));
 })();"#;
 
 const CSS: &str = r#"
@@ -442,7 +443,7 @@ const CSS: &str = r#"
 
 /* One card per zone: a clock face, the time, the place and the people there. */
 .au-zones { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-.au-zone { --tint: var(--hue); position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px 16px 15px; border-radius: var(--r-card); background: radial-gradient(130% 120% at 100% 0%, color-mix(in oklab, var(--tint) 8%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
+.au-zone { --tint: var(--hue); position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px 16px 15px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
 .au-zone.is-day { --tint: var(--waiting); }
 .au-zone:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .au-zone-top { display: flex; align-items: center; gap: 14px; }

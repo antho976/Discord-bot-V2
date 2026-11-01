@@ -394,7 +394,7 @@ const CSS: &str = r#"
 .mm-main { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 .mm-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .mm-readings .reading { min-width: 0; }
-.mm-readings .reading:first-child { background: radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--hue) 8%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 28%, transparent); }
+.mm-readings .reading:first-child { background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 28%, transparent); }
 .mm-readings .reading:first-child::before { width: 100%; opacity: 1; }
 .mm-readings .mm-wait b { color: var(--waiting); }
 .mm-readings .mm-wait::before { background: linear-gradient(90deg, var(--waiting), transparent); }
@@ -405,7 +405,7 @@ const CSS: &str = r#"
 .mm-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; }
 .mm-conv { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 80ms + 160ms); transition: box-shadow 0.25s, transform 0.35s var(--ease); }
 .mm-conv:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.mm-conv.waiting { background: radial-gradient(90% 120% at 100% 0%, color-mix(in oklab, var(--waiting) 5%, transparent), transparent 55%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 28%, transparent); }
+.mm-conv.waiting { background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 28%, transparent); }
 .mm-head { display: flex; align-items: center; gap: 13px; min-width: 0; }
 .mm-face { width: 44px; height: 44px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--edge-2); }
 .mm-conv.waiting .mm-face { box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px color-mix(in oklab, var(--waiting) 70%, transparent); }

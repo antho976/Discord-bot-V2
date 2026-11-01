@@ -158,7 +158,6 @@ pub fn layout(ctx: &Ctx, page: &Page, title: &str, actions: Option<Markup>, body
     let (ic, line, hue) = identity(ctx, page, title);
     let unread = unread_by_feature(ctx, page);
     let head = html! {
-        div.page-glow aria-hidden="true" {}
         header.page-head {
             span.head-icon { (icon(ic)) }
             div.head-text {
@@ -285,13 +284,12 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                             }
                         }
                         div.guilds-foot {
-                            (bell_count(page, total_unread, "rail-btn bell"))
                             details.pop.account {
                                 summary aria-label="Your account" { img src=(me) alt="" width="38" height="38"; }
                                 div.pop-body.account-menu {
                                     div.account-who {
                                         img src=(me) alt="";
-                                        div { strong { (page.user.name) } span.muted.small { @if page.user.admin { "Admin" } @else { "Member of the team" } } }
+                                        div { strong { (page.user.name) } span.muted.small { @if page.user.admin_plus { "Admin+" } @else if page.user.admin { "Admin" } @else { "Member of the team" } } }
                                     }
                                     @if page.user.admin {
                                         a.menu-item.on[key == "features"] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
@@ -353,6 +351,16 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                         }
                     }
                     main.page #main tabindex="-1" data-hue=(hue) {
+                        // The bell, top right of every page: a dropdown of the newest notices.
+                        div.page-corner {
+                            details.pop.bell-pop data-peek={ "/g/" (guild) "/notifications/peek" } {
+                                summary.bell aria-label={ "Notifications, " (total_unread) " new" } {
+                                    (icon(Icon::Bell))
+                                    @if total_unread > 0 { span.count { (if total_unread > 99 { "99+".to_owned() } else { total_unread.to_string() }) } }
+                                }
+                                div.pop-body.peek-pop { div.peek { p.peek-none { "Loading" } } }
+                            }
+                        }
                         (top)
                         (body)
                     }
@@ -451,7 +459,7 @@ fn unread_by_feature(ctx: &Ctx, page: &Page) -> HashMap<String, i64> {
     let levels = ctx.levels(&page.user, page.guild_id);
     let mut out = HashMap::new();
     for (feature, global) in rows {
-        if if global { page.user.admin } else { levels.get(&feature) >= Level::View } {
+        if if global { page.user.admin_plus } else { levels.get(&feature) >= Level::View } {
             *out.entry(if global { String::new() } else { feature }).or_insert(0) += 1;
         }
     }
