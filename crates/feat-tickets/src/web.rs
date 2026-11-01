@@ -25,6 +25,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/tickets/{number}/close", post(close_ticket))
         .route("/g/{guild}/tickets/{number}/reopen", post(reopen_ticket))
         .route("/g/{guild}/tickets/starboard", get(starboard_page).post(save_starboard))
+        .route("/g/{guild}/tickets/starboard/test", post(send_star_test))
 }
 
 fn thread_url(guild: u64, thread: u64) -> String {
@@ -469,6 +470,21 @@ async fn reopen_ticket(State(ctx): State<Ctx>, user: User, Path((guild, number))
 #[derive(Deserialize)]
 struct StarQuery {
     view: Option<String>,
+    sent: Option<String>,
+}
+
+async fn send_star_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    if s.star_channel.is_none() {
+        return Err(WebError::Bad("Pick a starboard channel and save first.".into()));
+    }
+    if let Err(e) = starboard::test_post(&ctx, &s, &page.user.name, &page.user.avatar_url()).await {
+        bot_core::tracing::warn!(guild, error = %e, "test starboard post failed");
+        return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
+    }
+    ctx.audit(&page.user, Some(guild), KEY, "Sent a test starboard post");
+    Ok(bot_core::axum::response::Redirect::to(&page.path("tickets/starboard?view=settings&sent=1")).into_response())
 }
 
 async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<StarQuery>) -> WebResult {
@@ -505,6 +521,9 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs)
+        @if q.sent.is_some() {
+            script { (PreEscaped("(()=>{const go=()=>{window.botToast&&window.botToast('Test post sent');history.replaceState(history.state,'',location.pathname+'?view=settings')};document.readyState==='loading'?addEventListener('DOMContentLoaded',go):setTimeout(go)})()")) }
+        }
         @if view == "settings" {
             // The settings beside the repost they shape.
             div.compose.tk-compose {
@@ -528,6 +547,9 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
                                 p.muted.small { "The most starred message, as the bot reposted it." }
                             },
                             None => p.muted.small { "Once a message gets enough stars, its repost shows here as Discord draws it." },
+                        }
+                        @if page.can_edit() {
+                            div { (ui::action_button(&page.path("tickets/starboard/test"), "Send a test post", Tone::Muted, false)) }
                         }
                     }
                 }

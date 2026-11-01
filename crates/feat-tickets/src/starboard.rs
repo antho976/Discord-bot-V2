@@ -377,6 +377,25 @@ fn preview_of(m: &Message) -> String {
     if m.attachments.is_empty() { String::new() } else { "Attachment".into() }
 }
 
+/// The dashboard's "Send a test post": a sample repost in the starboard channel, credited to
+/// whoever pressed it, marked as a test. Nothing is starred or stored.
+pub async fn test_post(ctx: &Ctx, s: &Settings, who: &str, avatar: &str) -> bot_core::anyhow::Result<()> {
+    let channel = s.star_channel.ok_or_else(|| bot_core::anyhow::anyhow!("no starboard channel"))?;
+    let mut author = EmbedAuthorBuilder::new(who);
+    if let Ok(icon) = ImageSource::url(avatar) {
+        author = author.icon_url(icon);
+    }
+    let embed = EmbedBuilder::new()
+        .color(COLOR)
+        .author(author)
+        .description("A message that gets enough stars is reposted here like this, with a link back to it.")
+        .build();
+    let line = format!("{} {}\n-# Test post. Nothing was starred.", s.star_emoji.trim(), s.star_threshold.max(1));
+    let none = AllowedMentions::default();
+    ctx.http.create_message(Id::new(channel)).content(&line).embeds(&[embed]).allowed_mentions(Some(&none)).await?;
+    Ok(())
+}
+
 fn build_embed(guild: u64, m: &Message) -> bot_core::twilight_model::channel::message::Embed {
     let name = m
         .member
