@@ -366,20 +366,55 @@ pub async fn set_status(ctx: &Ctx, id: i64, status: Status, reason: &str, staff:
             tracing::warn!(suggestion = id, error = %e, "couldn't edit the suggestion message");
         }
     }
-    if decided && status != Status::Open {
-        let mut dm = EmbedBuilder::new()
-            .color(status.color())
-            .title(format!("Your suggestion was {}", status.label().to_lowercase()))
-            .description(text::clip(&s.content, 300))
-            .footer(EmbedFooterBuilder::new(ctx.guild_name(s.guild_id)));
-        if !s.reason.is_empty() {
-            dm = dm.field(EmbedFieldBuilder::new("Reason", &s.reason));
-        }
-        if let Err(e) = ctx.dm(s.author_id, "", &[dm.build()], &[]).await {
-            tracing::warn!(suggestion = id, error = %e, "couldn't DM a suggestion author");
-        }
+    if decided
+        && status != Status::Open
+        && let Err(e) = ctx.dm(s.author_id, "", &[decision_embed(ctx, &s)], &[]).await
+    {
+        tracing::warn!(suggestion = id, error = %e, "couldn't DM a suggestion author");
     }
     Ok(Some(s))
+}
+
+/// What the author is sent when staff decide on their suggestion.
+fn decision_embed(ctx: &Ctx, s: &Suggestion) -> Embed {
+    let mut dm = EmbedBuilder::new()
+        .color(s.status.color())
+        .title(format!("Your suggestion was {}", s.status.label().to_lowercase()))
+        .description(text::clip(&s.content, 300))
+        .footer(EmbedFooterBuilder::new(ctx.guild_name(s.guild_id)));
+    if !s.reason.is_empty() {
+        dm = dm.field(EmbedFieldBuilder::new("Reason", &s.reason));
+    }
+    dm.build()
+}
+
+/// A test for the dashboard, in `to`'s DMs: the newest suggestion's post as members see it
+/// (with the saved "hide the author" setting, and without its vote buttons, which would count),
+/// then the message its author gets when staff approve it. With no suggestion yet, a sample
+/// from `to`. False when Discord won't let the bot DM them.
+pub async fn send_test(ctx: &Ctx, guild: u64, to: u64, settings: &Settings) -> Result<bool> {
+    let newest = ctx.db.with(|c| list(c, guild, 1))?.into_iter().next().map(|(s, _)| s);
+    let mut s = newest.unwrap_or_else(|| Suggestion {
+        id: 0,
+        guild_id: guild,
+        channel_id: settings.suggestions_channel.unwrap_or_default(),
+        message_id: None,
+        author_id: to,
+        content: "Test suggestion: this is how one posts.".into(),
+        anonymous: false,
+        status: Status::Open,
+        reason: String::new(),
+        staff_id: None,
+        created_at: now_ms(),
+    });
+    s.anonymous = settings.anonymous;
+    let post = embed(ctx, &s);
+    if !s.status.is_decided() {
+        s.status = Status::Approved;
+    }
+    let decided = decision_embed(ctx, &s);
+    let note = "-# Test from the dashboard: a suggestion post as members see it, without its vote buttons, then the message its author gets when staff decide.";
+    Ok(ctx.dm(to, note, &[post, decided], &[]).await?.is_some())
 }
 
 /// Store a status and reply. A new status is dated `now`; the same status keeps its date.

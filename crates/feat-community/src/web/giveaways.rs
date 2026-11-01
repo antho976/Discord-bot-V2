@@ -6,8 +6,8 @@ use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 
 use super::{
-    TabQuery, channel_in, channel_name, channel_select, countdown, discord_message, discord_relative, face_row, header_pop, month_start, open_link, plural,
-    post_block, rail_figures, role_name, script, style, until, when,
+    TabQuery, channel_in, channel_name, channel_select, countdown, discord_message, discord_relative, dm_refused, face_row, header_pop, month_start, open_link,
+    plural, post_block, rail_figures, role_name, script, sent_toast, style, until, when,
 };
 use crate::giveaways::{self as gw, EditOutcome, EndOutcome, Giveaway, RerollOutcome};
 use crate::{CORAL, KEY, NEUTRAL};
@@ -96,6 +96,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             }
         }
         (script())
+        (sent_toast(&q, "Test sent to your DMs"))
     };
     Ok(ui::layout(&ctx, &page, "Giveaways", actions, body).into_response())
 }
@@ -147,7 +148,7 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64]
                     // Units start at the first one that isn't zero; minutes and seconds always show.
                     @for (i, (v, u, label)) in units.iter().enumerate() {
                         @if i >= 2 || units[..=i].iter().any(|x| x.0 > 0) {
-                            div.gv-unit { b data-u=(u) { (format!("{v:02}")) } span { (label) } }
+                            div.gv-unit { b data-u=(u) { (digits(&format!("{v:02}"))) } span { (label) } }
                         }
                     }
                 }
@@ -177,8 +178,24 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64]
                     (open_link(page, g.channel_id, g.message_id, false))
                 }
             }
-            (post_block("The post", &channel_name(ctx, guild, g.channel_id), discord_message(ctx, page, g.created_at, post_preview(ctx, guild, g, n))))
+            (post_block(
+                "The post",
+                &channel_name(ctx, guild, g.channel_id),
+                discord_message(ctx, page, g.created_at, post_preview(ctx, guild, g, n)),
+                edit.then(|| html! {
+                    (ui::action_button(&page.path(&format!("community/giveaways/{}/test", g.id)), "Send a test", Tone::Muted, false))
+                    span.cm-dc-note { "DMs you how this one ends, with you as the winner." }
+                }),
+            ))
         }
+    }
+}
+
+/// A clock figure, one slot per digit, so the countdown script rolls only the digit that
+/// changes.
+fn digits(s: &str) -> Markup {
+    html! {
+        @for c in s.chars() { span.gv-dg { span { (c) } } }
     }
 }
 
@@ -426,6 +443,26 @@ pub async fn edit(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u
         EditOutcome::Missing => return Err(WebError::NotFound),
     }
     Ok(saved(&page.path("community/giveaways")))
+}
+
+/// "Send a test" on a running giveaway: its end, in the editor's DMs, with them as the winner.
+pub async fn send_test(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    owned(&ctx, guild, id).await?;
+    // The preview has no Discord to send to.
+    if !ctx.cfg.preview {
+        match gw::send_test(&ctx, id, page.user.id).await {
+            Ok(Some(true)) => {}
+            Ok(Some(false)) => return Err(dm_refused()),
+            Ok(None) => return Err(WebError::NotFound),
+            Err(e) => {
+                bot_core::tracing::warn!(guild, error = %e, "couldn't send a test giveaway end");
+                return Err(WebError::Bad("The test didn't send. Discord turned it down; try again in a minute.".into()));
+            }
+        }
+    }
+    ctx.audit(&page.user, Some(guild), KEY, format!("Sent themselves a test of giveaway #{id}'s end"));
+    Ok(bot_core::axum::response::Redirect::to(&page.path("community/giveaways?sent=1")).into_response())
 }
 
 pub async fn reroll(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {

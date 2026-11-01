@@ -172,7 +172,7 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, edit: bool) -> Markup {
                     }
                 }
             }
-            (post_block("The poll", &channel_name(ctx, guild, p.channel_id), discord_message(ctx, page, p.created_at, poll_preview(ctx, p))))
+            (post_block("The poll", &channel_name(ctx, guild, p.channel_id), discord_message(ctx, page, p.created_at, poll_preview(ctx, p)), None))
         }
     }
 }

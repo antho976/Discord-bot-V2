@@ -569,6 +569,24 @@ async fn announce(ctx: &Ctx, g: &Giveaway, winners: &[u64], reroll: bool) {
     }
 }
 
+/// A test for the dashboard, in `to`'s DMs: how this giveaway's end looks, with `to` as the
+/// winner. The closed post, and the line that replies to it in the channel. Nothing is picked
+/// or stored. None when there's no such giveaway, false when Discord won't let the bot DM them.
+pub async fn send_test(ctx: &Ctx, id: i64, to: u64) -> Result<Option<bool>> {
+    let found = ctx.db.with(|c| match get(c, id)? {
+        Some(g) => Ok(Some((g, entry_count(c, id)?))),
+        None => Ok(None),
+    })?;
+    let Some((g, n)) = found else { return Ok(None) };
+    let ended = Giveaway { ended: true, ended_at: now_ms(), winner_ids: vec![to], ..g };
+    let content = format!(
+        "Congratulations <@{to}>, you won **{}**.\n-# Test from the dashboard: when the giveaway ends, this line replies to its post and pings the winners, and the post closes like this.",
+        ended.prize
+    );
+    let embeds = [embed(&ended, n)];
+    Ok(Some(ctx.dm(to, &content, &embeds, &[]).await?.is_some()))
+}
+
 /// End every giveaway whose time is up.
 pub async fn tick(ctx: &Ctx) {
     for guild in ctx.enabled_guilds(KEY) {

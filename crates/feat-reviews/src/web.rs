@@ -28,6 +28,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/reviews/settings", get(settings_page).post(save_settings))
         .route("/g/{guild}/reviews/scan", post(scan))
         .route("/g/{guild}/reviews/sync", post(sync))
+        .route("/g/{guild}/reviews/test", post(send_test))
         .route("/g/{guild}/reviews/{id}/ping", post(ping))
         .route("/g/{guild}/reviews/{id}/complete", post(complete))
         .route("/g/{guild}/reviews/{id}/remove", post(remove))
@@ -78,6 +79,16 @@ fn wait_words(ms: i64) -> String {
     }
 }
 
+/// "Oct 31, 14:00" in the viewer's timezone, for tooltips.
+fn stamp(page: &Page, ms: i64) -> String {
+    page.user.local(ms).strftime("%b %-d, %H:%M").to_string()
+}
+
+/// Channel points, as a dot in Twitch's purple and the words.
+fn points_flag() -> Markup {
+    html! { span.rv-flag.cp { span.dot {} "Channel points" } }
+}
+
 fn thread_url(guild: u64, thread: u64) -> String {
     format!("https://discord.com/channels/{guild}/{thread}")
 }
@@ -93,9 +104,10 @@ fn face(ctx: &Ctx, guild: u64, r: &Review, class: &str) -> Markup {
     }
 }
 
-/// Who asked, in words: "Mira", "pavel_tv on Twitch", or both.
+/// Who asked, in words: "Mira", "pavel_tv on Twitch", or both. The member's name is left out
+/// when the request already carries it.
 fn who(ctx: &Ctx, guild: u64, r: &Review) -> Option<String> {
-    let member = r.user_id.map(|u| ctx.display_name(guild, u));
+    let member = r.user_id.map(|u| ctx.display_name(guild, u)).filter(|m| !m.eq_ignore_ascii_case(r.name.trim()));
     let viewer = r.twitch_user.as_ref().map(|t| format!("{t} on Twitch"));
     match (member, viewer) {
         (Some(m), Some(v)) => Some(format!("{m}, {v}")),
@@ -150,12 +162,12 @@ async fn queue_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
         div.with-rail {
             div.rv-main {
                 div.readings.rv-readings {
-                    div.reading.rv-lead { b data-count { (open.len()) } span { "Waiting in the queue" } }
-                    div.reading.rv-points { b data-count { (redeemed) } span { "With channel points" } }
+                    div.reading { b data-count { (open.len()) } span { "Waiting in the queue" } }
+                    div.reading { b data-count { (redeemed) } span { "With channel points" } }
                     div.reading { b data-count { (longest) } span { "Longest wait" } }
                     div.reading { b data-count { (text::num(done_week)) } span { "Done this week" } }
                 }
-                @if let Some(note) = result_note(&q) { p.rv-note { span.rv-note-ic { (ui::icon(Icon::Check)) } (note) } }
+                @if let Some(note) = result_note(&q) { p.rv-note { (ui::icon(Icon::Check)) (note) } }
                 @if !open.is_empty() {
                     form.rv-search method="get" action=(page.path("reviews")) role="search" {
                         (ui::icon(Icon::Search))
@@ -215,26 +227,28 @@ fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, num
     let next = numbered && place == 1;
     let since = r.eligible_at.unwrap_or(r.requested_at);
     html! {
-        li.rv-row.next[next] style={ "--i:" (place.min(10)) } {
+        li.rv-row.next[next] {
             @if numbered { span.rv-place { (place) } }
             (face(ctx, guild, r, if next { "big" } else { "" }))
             div.rv-body {
                 div.rv-title {
                     strong { (r.name) }
                     @if next { span.rv-next { "Up next" } }
-                    @if r.redeemed_at.is_some() { span.rv-cp { span.rv-cp-dot {} "Channel points" } }
-                    @if let Some(p) = r.pinged_at { span.badge.warn title=(page.user.local(p).strftime("%b %-d, %H:%M").to_string()) { "Pinged " (text::ago(p)) } }
+                    @if r.redeemed_at.is_some() { (points_flag()) }
+                    @if let Some(p) = r.pinged_at { span.rv-flag.pinged title=(stamp(page, p)) { span.dot {} "Pinged " (text::ago(p)) } }
                 }
-                p.rv-meta {
-                    @if let Some(w) = who(ctx, guild, r) { span { (w) } }
-                    span title=(page.user.local(r.requested_at).strftime("%b %-d, %H:%M").to_string()) { "asked " (text::ago(r.requested_at)) }
-                    @if let Some(t) = r.thread_id { a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { (ui::icon(Icon::External)) "Open post" } }
+                @let who = who(ctx, guild, r);
+                @if who.is_some() || r.thread_id.is_some() {
+                    p.rv-meta {
+                        @if let Some(w) = who { span { (w) } }
+                        @if let Some(t) = r.thread_id { a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { (ui::icon(Icon::External)) "Open post" } }
+                    }
                 }
             }
             // Under the name on a narrow row, a column of its own on a wide one (CSS).
             @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
             div.rv-side {
-                span.rv-wait title="How long they've waited in the queue" { b { (wait_words(now - since)) } span { "waiting" } }
+                span.rv-wait data-tip={ "Asked: " (stamp(page, r.requested_at)) } { b { (wait_words(now - since)) } " waiting" }
                 @if page.can_edit() {
                     div.rv-acts {
                         @if r.thread_id.is_some() {
@@ -332,12 +346,11 @@ fn recent_block(ctx: &Ctx, page: &Page, closed: &[Review]) -> Markup {
                     (face(ctx, page.guild_id, r, "small"))
                     div.grow {
                         span { (r.name) }
-                        span.muted {
-                            @if let Some(by) = &r.closed_by { "by " (by) }
-                            @if let Some(at) = r.closed_at { " · waited " (wait_words(at - r.requested_at)) }
-                        }
+                        @if let Some(by) = &r.closed_by { span.muted { "by " (by) } }
                     }
-                    @if let Some(at) = r.closed_at { span.mono.small title=(page.user.local(at).strftime("%b %-d, %H:%M").to_string()) { (text::ago(at)) } }
+                    @if let Some(at) = r.closed_at {
+                        span.rv-ago data-tip={ "Waited " (wait_words(at - r.requested_at)) ": " (stamp(page, at)) } { (text::ago(at)) }
+                    }
                 }
             }
         }
@@ -354,19 +367,16 @@ async fn waitlist_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         style { (PreEscaped(CSS)) }
         (tabs(&ctx, &page, &s, "Waitlist")?)
         div.rv-main {
-            div.rv-intro {
-                span.rv-intro-ic { (ui::icon(Icon::Clock)) }
-                @if s.wait_days > 0 {
-                    p { "Someone who asks again within " strong { (days(s.wait_days)) } " of their last review waits here, and joins the back of the queue on their own when the time is up." }
-                } @else {
-                    p { "The waitlist is off, so new requests go straight to the queue. The ones still here join it at their time." }
-                }
+            @if s.wait_days > 0 {
+                p.rv-intro { "Someone who asks again within " strong { (days(s.wait_days)) } " of their last review waits here, and joins the back of the queue on their own when the time is up." }
+            } @else {
+                p.rv-intro { "The waitlist is off, so new requests go straight to the queue. The ones still here join it at their time." }
             }
             @if waiting.is_empty() {
                 (ui::empty(Icon::Review, "No one is on the waitlist", &format!("Someone who asks again within {} of their last review shows up here.", days(s.wait_days.max(1)))))
             } @else {
                 div.rv-wl {
-                    @for (i, r) in waiting.iter().enumerate() { (waitlist_card(&ctx, &page, r, now, i)) }
+                    @for r in &waiting { (waitlist_card(&ctx, &page, r, now)) }
                 }
             }
         }
@@ -375,27 +385,26 @@ async fn waitlist_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
 }
 
 /// Someone on the waitlist, with how far through their wait they are.
-fn waitlist_card(ctx: &Ctx, page: &Page, r: &Review, now: i64, i: usize) -> Markup {
+fn waitlist_card(ctx: &Ctx, page: &Page, r: &Review, now: i64) -> Markup {
     let guild = page.guild_id;
     let last = ctx.db.with(|c| store::last_done(c, guild, r.user_id, r.twitch_user.as_deref())).ok().flatten();
-    let stamp = |ms: i64| page.user.local(ms).strftime("%b %-d, %H:%M").to_string();
     // How much of the wait has passed, from their last review to when they join.
     let through = match (last, r.eligible_at) {
         (Some(l), Some(e)) if e > l => Some(((now - l) * 100 / (e - l)).clamp(3, 100)),
         _ => None,
     };
     html! {
-        article.rv-card style={ "--i:" (i.min(8)) } {
+        article.rv-card {
             div.rv-card-head {
-                (face(ctx, guild, r, "big"))
-                div.grow {
+                (face(ctx, guild, r, ""))
+                div.rv-body {
                     div.rv-title {
                         strong { (r.name) }
-                        @if r.redeemed_at.is_some() { span.rv-cp { span.rv-cp-dot {} "Channel points" } }
+                        @if r.redeemed_at.is_some() { (points_flag()) }
                     }
                     p.rv-meta {
                         @if let Some(w) = who(ctx, guild, r) { span { (w) } }
-                        span title=(stamp(r.requested_at)) { "asked " (text::ago(r.requested_at)) }
+                        span title=(stamp(page, r.requested_at)) { "asked " (text::ago(r.requested_at)) }
                         @if let Some(t) = r.thread_id { a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { (ui::icon(Icon::External)) "Open post" } }
                     }
                 }
@@ -403,8 +412,8 @@ fn waitlist_card(ctx: &Ctx, page: &Page, r: &Review, now: i64, i: usize) -> Mark
             @if let Some(at) = r.eligible_at {
                 div.rv-countdown {
                     div.rv-cd-text {
-                        span { "Joins the queue " strong title=(stamp(at)) { (joins_words(page, at, now)) } }
-                        @if let Some(l) = last { span.muted.small title=(stamp(l)) { "Last review " (text::ago(l)) } }
+                        span { "Joins the queue " strong title=(stamp(page, at)) { (joins_words(page, at, now)) } }
+                        @if let Some(l) = last { span.rv-cd-last title=(stamp(page, l)) { "Last review " (text::ago(l)) } }
                     }
                     @if let Some(p) = through { span.meter { span style={ "width:" (p) "%" } {} } }
                 }
@@ -439,40 +448,35 @@ async fn done_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
         (tabs(&ctx, &page, &s, "Done")?)
         div.rv-main {
             div.readings.rv-readings.three {
-                div.reading.rv-lead { b data-count { (text::num(done_week)) } span { "Done this week" } }
+                div.reading { b data-count { (text::num(done_week)) } span { "Done this week" } }
                 div.reading { b data-count { (typical) } span { "Typical wait before a review" } }
                 div.reading { b data-count { (removed_n) } span { "Removed, of the last 50" } }
             }
-            div.rv-intro {
-                span.rv-intro-ic { (ui::icon(Icon::Check)) }
-                p { "The last 50 completed or removed. Removed requests stay here so their post or redemption isn't added again. A removed one with channel points was refunded, so it can't go back to the queue." }
-            }
+            p.rv-intro { "The last 50 completed or removed. Removed requests stay here so their post or redemption isn't added again. A removed one with channel points was refunded, so it can't go back to the queue." }
             @if closed.is_empty() {
                 (ui::empty(Icon::Review, "Nothing finished yet", "Requests you complete or remove from the queue are listed here."))
             } @else {
                 div.rv-done {
-                    @for (i, r) in closed.iter().enumerate() {
+                    @for r in &closed {
                         @let removed = r.status == "removed";
-                        div.rv-drow.removed[removed] style={ "--i:" (i.min(10)) } {
-                            span.rv-dface {
+                        div.rv-drow.removed[removed] {
+                            span.rv-dface data-tip=(if removed { "Removed" } else { "Done" }) {
                                 (face(&ctx, guild, r, ""))
                                 span.rv-dmark { (ui::icon(if removed { Icon::Close } else { Icon::Check })) }
                             }
                             div.rv-body {
                                 div.rv-title {
                                     strong { (r.name) }
-                                    @if removed { (ui::badge("Removed", Tone::Muted)) } @else { (ui::badge("Done", Tone::Ok)) }
-                                    @if r.redeemed_at.is_some() { span.rv-cp { span.rv-cp-dot {} "Channel points" } }
+                                    @if r.redeemed_at.is_some() { (points_flag()) }
                                 }
                                 p.rv-meta {
                                     @if let Some(w) = who(&ctx, guild, r) { span { (w) } }
                                     @if let Some(at) = r.closed_at {
-                                        span title=(page.user.local(at).strftime("%b %-d, %H:%M").to_string()) {
-                                            (if removed { "removed" } else { "done" })
+                                        span data-tip={ "Waited " (wait_words(at - r.requested_at)) ": " (stamp(&page, at)) } {
+                                            (if removed { "Removed" } else { "Done" })
                                             @if let Some(by) = &r.closed_by { " by " (by) }
                                             " " (text::ago(at))
                                         }
-                                        span { "waited " (wait_words(at - r.requested_at)) }
                                     }
                                 }
                                 @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
@@ -626,6 +630,8 @@ async fn sync(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
 #[derive(Deserialize, Default)]
 struct SettingsQuery {
     twitch: Option<String>,
+    /// After "Send a test".
+    sent: Option<String>,
 }
 
 async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<SettingsQuery>) -> WebResult {
@@ -636,6 +642,9 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let rewards = if ready && page.can_edit() { Some(twitch::rewards(&ctx, guild).await.map_err(|e| e.to_string())) } else { None };
     let body = html! {
         style { (PreEscaped(CSS)) }
+        @if q.sent.is_some() {
+            script { (PreEscaped("(()=>{const go=()=>{window.botToast&&window.botToast(\"Test sent to your DMs\");const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash)};document.readyState==='loading'?addEventListener('DOMContentLoaded',go):setTimeout(go)})()")) }
+        }
         (tabs(&ctx, &page, &s, "Settings")?)
         div.with-rail {
         div.rv-main.rv-settings {
@@ -648,6 +657,17 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::section("Messages", Some("{mention} pings the member, or names them when there's no member. {name} is the request's name."), ui::card(html! {
                     (ui::field_textarea("ping_message", "Ping", Some("Posted in their post when you press Ping."), &s.ping_message, DEFAULT_PING))
                     (ui::field_textarea("done_message", "Closing message", Some("Filled in when you complete a request. You can change or clear it each time."), &s.done_message, DEFAULT_DONE))
+                    @if page.can_edit() {
+                        // A form can't hold another form, so the test posts this one to its own
+                        // route, which reads the saved messages.
+                        div.row.rv-test {
+                            div.row-text {
+                                label { "Try them" }
+                                p.help { "Sends both to your DMs, filled in with your name, as saved." }
+                            }
+                            div.row-control { button.btn.small type="submit" formaction=(page.path("reviews/test")) formmethod="post" formnovalidate { "Send a test" } }
+                        }
+                    }
                 })))
             }
         }))
@@ -668,8 +688,8 @@ fn flow(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>) -> Markup {
         div.rail-block {
             h2 { "How a request moves" }
             ol.rv-flow {
-                li style="--s:0" {
-                    span.rv-flow-ic { (ui::icon(Icon::Hash)) }
+                li {
+                    span.rv-flow-dot {}
                     div {
                         strong { "Asks" }
                         span {
@@ -678,23 +698,23 @@ fn flow(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>) -> Markup {
                         }
                     }
                 }
-                li.muted[s.wait_days == 0] style="--s:1" {
-                    span.rv-flow-ic { (ui::icon(Icon::Clock)) }
+                li.muted[s.wait_days == 0] {
+                    span.rv-flow-dot {}
                     div {
                         strong { "Waits, if they asked lately" }
                         span { @if s.wait_days > 0 { "On the waitlist until " (days(s.wait_days)) " after their last review" } @else { "Waitlist off: everyone goes straight to the queue" } }
                     }
                 }
-                li style="--s:2" {
-                    span.rv-flow-ic { (ui::icon(Icon::Review)) }
+                li {
+                    span.rv-flow-dot {}
                     div { strong { "Queues" } span { "Channel points first, then whoever has waited longest" } }
                 }
-                li style="--s:3" {
-                    span.rv-flow-ic { (ui::icon(Icon::Bell)) }
+                li {
+                    span.rv-flow-dot {}
                     div { strong { "Pinged" } span { "Your ping message in their post, when you press Ping" } }
                 }
-                li style="--s:4" {
-                    span.rv-flow-ic { (ui::icon(Icon::Check)) }
+                li {
+                    span.rv-flow-dot {}
                     div { strong { "Done" } span { "The closing message is posted" @if twitch { " and the redemption fulfilled" } } }
                 }
             }
@@ -716,7 +736,7 @@ fn twitch_block(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>, rewar
             } @else {
                 @match conn {
                     Some(c) if c.connected() && c.can_manage() => {
-                        div.rv-tw-head { span.rv-src.twitch.on { (ui::icon(Icon::Live)) }
+                        div.rv-tw-head {
                             (ui::status(Dot::Live, &format!("Connected as {}", c.login)))
                             @if page.can_edit() { (ui::action_button(&page.path("reviews/twitch/disconnect"), "Disconnect", Tone::Bad, true)) }
                         }
@@ -724,12 +744,12 @@ fn twitch_block(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>, rewar
                         (reward_picker(page, s, rewards))
                     }
                     Some(c) if c.connected() => {
-                        div.rv-tw-head { span.rv-src.twitch.on { (ui::icon(Icon::Live)) } (ui::status(Dot::Waiting, &format!("Connected as {}, without channel points", c.login))) }
+                        div.rv-tw-head { (ui::status(Dot::Waiting, &format!("Connected as {}, without channel points", c.login))) }
                         p.small { "Twitch didn't give the bot permission to manage channel points redemptions. Connect again and allow it." }
                         div { (connect) }
                     }
                     _ => {
-                        div.rv-tw-head { span.rv-src.twitch.on { (ui::icon(Icon::Live)) } (ui::status(Dot::Off, "Not connected")) }
+                        div.rv-tw-head { (ui::status(Dot::Off, "Not connected")) }
                         p.small { "Sign in as the broadcaster so the bot can read and fulfil redemptions. Twitch only shows the bot redemptions of rewards it created, so you pick or create the reward here after connecting. Stream alerts reads the follower total with the same sign-in." }
                         p.muted.small { "The Twitch app needs " code { (redirect) } " in its OAuth redirect URLs." }
                         div { (connect) }
@@ -780,6 +800,40 @@ fn reward_picker(page: &Page, s: &Settings, rewards: Option<Result<Vec<twitch::R
             }
         }
     }
+}
+
+/// "Send a test" under the messages: the ping and the closing message, as saved, in the
+/// editor's DMs, filled in as if the request were theirs.
+async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let me = page.user.id;
+    let name = ctx.display_name(guild, me);
+    let ping = if s.ping_message.trim().is_empty() { DEFAULT_PING } else { s.ping_message.as_str() };
+    let fill_me = |t: &str| text::fill(t, &[("mention", &format!("<@{me}>")), ("name", &name)]);
+    let mut sends = vec![format!("{}\n-# Test from the dashboard: the ping, as it posts in their post.", fill_me(ping))];
+    if !s.done_message.trim().is_empty() {
+        sends.push(format!("{}\n-# Test from the dashboard: the closing message, posted when you complete a request.", fill_me(s.done_message.trim())));
+    }
+    // The preview has no Discord to send to.
+    if !ctx.cfg.preview {
+        for content in &sends {
+            match ctx.dm(me, &text::clip(content, 2000), &[], &[]).await {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    return Err(WebError::Bad(
+                        "Discord didn't let the bot DM you. Allow direct messages from members of this server (the server's Privacy Settings in Discord), then try again.".into(),
+                    ));
+                }
+                Err(e) => {
+                    bot_core::tracing::warn!(guild, error = %e, "couldn't send a test review message");
+                    return Err(WebError::Bad("The test didn't send. Discord turned it down; try again in a minute.".into()));
+                }
+            }
+        }
+    }
+    ctx.audit(&page.user, Some(guild), KEY, "Sent themselves the account review messages as a test");
+    Ok(Redirect::to(&format!("{}?sent=1", page.path("reviews/settings"))).into_response())
 }
 
 async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
@@ -952,108 +1006,120 @@ const CSS: &str = r#"
 .rv-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .rv-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .rv-readings .reading { min-width: 0; }
-.rv-readings .rv-lead { background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent); }
-.rv-readings .rv-lead::before { width: 100%; opacity: 1; }
-/* Twitch's own purple for anything channel points. */
-.rv-readings .rv-points::before { background: linear-gradient(90deg, #9146ff, transparent); }
-.rv-note { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; font-size: 13px; color: var(--ink); background: color-mix(in oklab, var(--live) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--live) 26%, transparent); animation: rise 0.5s var(--ease) both; }
-.rv-note-ic { display: grid; place-items: center; width: 22px; height: 22px; flex: none; border-radius: 50%; background: var(--live); color: #062014; }
-.rv-note-ic .icon { width: 13px; height: 13px; stroke-width: 2.2; }
+.rv-note { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.rv-note .icon { width: 15px; height: 15px; flex: none; color: var(--live); }
 .rv-warn { font-size: 12.5px; color: var(--waiting); }
 .rv-search { position: relative; display: flex; gap: 8px; align-items: center; }
 .rv-search > .icon { position: absolute; left: 12px; top: 10px; width: 15px; height: 15px; color: var(--ink-3); pointer-events: none; }
 .rv-search .input { flex: 1; max-width: 420px; padding-left: 36px; }
 
-/* The queue: numbered places on a line, the first one drawn larger. */
-.rv-queue { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; position: relative; }
-.rv-queue.numbered::before { content: ""; position: absolute; left: 31px; top: 40px; bottom: 30px; width: 2px; border-radius: 1px; background: linear-gradient(180deg, color-mix(in oklab, var(--hue) 60%, transparent), var(--edge-1) 40%, transparent); transform-origin: top; animation: grow 1.2s var(--ease) both 0.3s; }
-.rv-row { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; padding: 14px 16px; border-radius: 14px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rv-in 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 150ms); transition: transform 0.35s var(--ease), box-shadow 0.25s, background 0.25s; }
-.rv-queue.numbered .rv-row { grid-template-columns: 30px 40px minmax(0, 1fr) auto; }
-.rv-row:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-@keyframes rv-in { from { opacity: 0; transform: translateX(-14px); filter: blur(3px); } }
-.rv-place { position: relative; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; margin-top: 5px; border-radius: 10px; font: 600 12.5px var(--mono); color: var(--ink-2); background: var(--raised); box-shadow: inset 0 0 0 1px var(--edge-2), 0 0 0 4px var(--page); }
-.rv-row.next { padding: 18px 18px 18px 16px; align-items: center; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 34%, transparent); }
-.rv-queue.numbered .rv-row.next { grid-template-columns: 30px 60px minmax(0, 1fr) auto; }
-.rv-row.next .rv-place { margin-top: 0; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue)); box-shadow: 0 0 0 4px var(--page); animation: pop-in 0.6s var(--spring) both 0.35s; }
-.rv-next { height: 20px; padding: 0 8px; border-radius: 10px; font: 600 11px/20px var(--sans); color: var(--hue); background: color-mix(in oklab, var(--hue) 16%, transparent); }
+/* A list of requests: one surface, a hairline between rows. */
+.rv-queue, .rv-wl, .rv-done { list-style: none; margin: 0; padding: 0; border-radius: var(--r-card); background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
+
+/* The queue, in the order you take them. The first, when it isn't filtered, is a size up. */
+.rv-queue { display: flex; flex-direction: column; }
+.rv-row { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; padding: 14px 18px; transition: background 0.2s; }
+.rv-row + .rv-row { border-top: 1px solid var(--edge-1); }
+.rv-row:first-child { border-radius: var(--r-card) var(--r-card) 0 0; }
+.rv-row:last-child { border-radius: 0 0 var(--r-card) var(--r-card); }
+.rv-row:only-child { border-radius: var(--r-card); }
+.rv-row:hover { background: var(--well); }
+.rv-row:has(.pop[open]), .rv-card:has(.pop[open]) { z-index: 5; }
+/* Numbered, the faces share a column as wide as the first one's, centred, so every name starts
+   on one line. */
+.rv-queue.numbered .rv-row { grid-template-columns: 16px 48px minmax(0, 1fr) auto; }
+.rv-queue.numbered .rv-face { justify-self: center; }
+.rv-place { font-size: 13px; line-height: 20px; font-weight: 500; color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: right; }
+.rv-row.next { padding-top: 18px; padding-bottom: 18px; }
+.rv-row.next .rv-place { line-height: 22px; color: var(--ink); }
+.rv-next { font-size: 12px; font-weight: 600; color: var(--hue); }
 .rv-face { width: 40px; height: 40px; }
-.rv-face.big { width: 60px; height: 60px; box-shadow: 0 0 0 3px var(--page), 0 0 0 5px color-mix(in oklab, var(--hue) 70%, transparent); }
+.rv-face.big { width: 48px; height: 48px; }
 .rv-face.small { width: 30px; height: 30px; font-size: 12px; }
-.rv-letter { display: grid; place-items: center; border-radius: 50%; color: #fff; font-weight: 650; font-size: 16px; background: linear-gradient(145deg, #a970ff, #6c2bd9); }
-.rv-letter.big { font-size: 24px; }
-.rv-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.rv-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.rv-title strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
-.rv-row.next .rv-title strong { font-size: 17px; letter-spacing: -0.015em; }
-.rv-cp { display: inline-flex; align-items: center; gap: 6px; height: 21px; padding: 0 9px; border-radius: 11px; font-size: 11px; font-weight: 600; color: #c9a8ff; background: rgba(145, 70, 255, 0.18); }
-.rv-cp-dot { width: 7px; height: 7px; border-radius: 50%; background: #9146ff; box-shadow: none; }
+/* A Twitch viewer with no member: their first letter on Twitch's purple. */
+.rv-letter { display: grid; place-items: center; border-radius: 50%; color: #fff; font-weight: 600; font-size: 16px; background: #9146ff; }
+.rv-letter.big { font-size: 19px; }
+.rv-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rv-title { display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; min-height: 20px; }
+.rv-title strong { font-size: 14.5px; font-weight: 600; overflow-wrap: anywhere; }
+.rv-row.next .rv-title { min-height: 22px; }
+.rv-row.next .rv-title strong { font-size: 16px; letter-spacing: -0.01em; }
+.rv-flag { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.rv-flag .dot { width: 6px; height: 6px; }
+.rv-flag.cp .dot { background: #a970ff; }
+.rv-flag.pinged .dot { background: var(--waiting); }
 .rv-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; font-size: 12.5px; color: var(--ink-3); }
-.rv-meta > :not(:last-child)::after { content: "·"; margin: 0 7px; color: var(--ink-3); }
+.rv-meta > :not(:last-child)::after { content: "·"; margin: 0 7px; }
 .rv-link { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); transition: color 0.18s; }
 .rv-link .icon { width: 12px; height: 12px; }
 .rv-link:hover { color: var(--ink); }
-.rv-notes { margin-top: 4px; padding: 8px 11px; border-radius: 10px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); font-size: 12.5px; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; max-width: 62ch; }
+.rv-notes { margin-top: 2px; font-size: 13px; line-height: 1.5; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; max-width: 62ch; }
 .rv-side { grid-column: -2 / -1; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
 /* A request's notes sit under its name, beside the face and the actions. */
 .rv-row > .rv-notes { grid-column: -3 / -2; grid-row: 2; margin-top: 0; }
 .rv-row:has(> .rv-notes) > :is(.rv-place, .rv-face, .rv-side) { grid-row: 1 / span 2; }
 /* On a wide column the queue reads like a table: who asked, their notes, the wait and actions. */
 @container col (min-width: 1200px) {
-  .rv-row, .rv-queue.numbered .rv-row { grid-template-columns: 40px minmax(0, 0.85fr) minmax(0, 1.15fr) auto; column-gap: 24px; }
-  .rv-queue.numbered .rv-row { grid-template-columns: 30px 40px minmax(0, 0.85fr) minmax(0, 1.15fr) auto; }
-  .rv-queue.numbered .rv-row.next { grid-template-columns: 30px 60px minmax(0, 0.85fr) minmax(0, 1.15fr) auto; }
-  .rv-row > .rv-notes { grid-row: 1; align-self: center; }
+  .rv-row { grid-template-columns: 40px minmax(0, 0.85fr) minmax(0, 1.15fr) auto; column-gap: 24px; }
+  .rv-queue.numbered .rv-row { grid-template-columns: 16px 48px minmax(0, 0.85fr) minmax(0, 1.15fr) auto; }
+  .rv-queue.numbered .rv-row > .rv-place { margin-right: -10px; }
+  .rv-row > .rv-notes { grid-row: 1; padding-top: 1px; }
   /* The same width for the actions on every row, so the notes start on one line. */
   .rv-row > .rv-side { min-width: 210px; }
   .rv-row:has(> .rv-notes) > :is(.rv-place, .rv-face, .rv-side) { grid-row: 1; }
 }
-.rv-wait { display: flex; align-items: baseline; gap: 5px; font-size: 11.5px; color: var(--ink-3); }
-.rv-wait b { font-size: 13.5px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.rv-row.next .rv-wait b { font-size: 15px; color: var(--ink); }
+.rv-wait { font-size: 12px; line-height: 20px; color: var(--ink-3); white-space: nowrap; cursor: default; }
+.rv-wait b { font-size: 14px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 .rv-acts { position: relative; display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
 .rv-acts .pop-body { width: 290px; right: 0; left: auto; }
 .rv-pop-foot { border-top: 1px solid var(--edge-1); padding-top: 10px; }
 
-/* The rail. */
-.rv-src { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 10px; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); }
-.rv-src .icon { width: 15px; height: 15px; }
-.rv-src.on { color: #0b0b10; background: var(--hue); box-shadow: none; }
-.rv-src.twitch { color: #b38bff; background: rgba(145, 70, 255, 0.16); }
-.rv-src.twitch.on { color: #fff; background: #9146ff; box-shadow: none; }
+/* The rail. A source's icon takes its colour when it's working. */
+.rv-src { display: grid; place-items: center; width: 30px; height: 30px; flex: none; color: var(--ink-3); }
+.rv-src .icon { width: 18px; height: 18px; }
+.rv-src.on { color: var(--hue); }
+.rv-src.twitch.on { color: #a970ff; }
+.rv-ago { font-size: 12px; color: var(--ink-3); white-space: nowrap; cursor: default; }
 .rail-block h2 a { font-weight: 400; }
 
 /* Waitlist and done. */
-.rv-intro { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--ink-2); max-width: 80ch; }
+.rv-intro { font-size: 13.5px; line-height: 1.55; color: var(--ink-2); max-width: 80ch; }
 .rv-intro strong { color: var(--ink); font-weight: 600; }
-.rv-intro-ic { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 11px; color: var(--hue); background: color-mix(in oklab, var(--hue) 15%, transparent); }
-.rv-intro-ic .icon { width: 17px; height: 17px; }
-.rv-wl { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
-.rv-card { display: flex; flex-direction: column; gap: 14px; padding: 18px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 80ms + 150ms); }
-.rv-card-head { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.rv-card-head .grow { display: flex; flex-direction: column; gap: 4px; }
-.rv-card .rv-face.big { width: 52px; height: 52px; }
-.rv-countdown { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
-.rv-cd-text { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
-.rv-cd-text strong { color: var(--hue); font-weight: 600; }
-.rv-countdown .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--hue), black 25%), var(--hue)); box-shadow: none; animation-delay: calc(var(--i, 0) * 80ms + 450ms); }
+.rv-wl { display: flex; flex-direction: column; }
+.rv-card { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; }
+.rv-card + .rv-card { border-top: 1px solid var(--edge-1); }
+.rv-card-head { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
+/* Stacked, the notes come right under the name they belong to. */
+.rv-card > .rv-notes { order: 1; margin: 0 0 0 54px; }
+.rv-card > .rv-countdown { order: 2; }
+.rv-card > .rv-acts { order: 3; }
+.rv-countdown { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.rv-cd-text { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
+.rv-cd-text strong { color: var(--ink); font-weight: 600; }
+.rv-cd-last { font-size: 12px; color: var(--ink-3); }
+.rv-countdown .meter { height: 4px; }
+.rv-countdown .meter > span { background: var(--data); }
 .rv-card .rv-acts { justify-content: flex-start; }
 .rv-card .rv-acts .pop-body { left: 0; right: auto; }
-/* A wide page lists the waitlist as rows: who, their countdown, then the actions at the end. */
+/* A wide page lists the waitlist across: who, their countdown, then the actions at the end. */
 @container col (min-width: 900px) {
-  .rv-wl { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .rv-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 1fr) auto; grid-template-areas: "head cd acts"; align-items: center; gap: 10px 28px; padding: 16px 18px; }
+  .rv-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 0.9fr) auto; grid-template-areas: "head cd acts"; align-items: center; gap: 10px 32px; }
   .rv-card:has(> .rv-notes) { grid-template-areas: "head cd acts" "notes cd acts"; }
   .rv-card > .rv-card-head { grid-area: head; }
-  .rv-card > .rv-countdown { grid-area: cd; }
-  .rv-card > .rv-notes { grid-area: notes; margin-top: 0; }
-  .rv-card > .rv-acts { grid-area: acts; }
+  .rv-card > .rv-countdown { grid-area: cd; justify-self: end; width: 100%; max-width: 480px; }
+  .rv-card > .rv-notes { grid-area: notes; }
+  .rv-card > .rv-acts { grid-area: acts; justify-content: flex-end; }
+  .rv-card .rv-acts .pop-body { left: auto; right: 0; }
 }
 .rv-readings.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-/* Finished requests in as many columns as fit. Every row carries its hairline; the list hides
-   its top pixel so the first row of each column starts clean. */
-.rv-done { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); column-gap: 32px; margin-top: -1px; clip-path: inset(1px -16px -40px -16px); }
-.rv-drow { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 10px; border-radius: 12px; border-top: 1px solid var(--edge-1); animation: rise 0.45s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms + 150ms); transition: background 0.18s; }
-.rv-drow:hover { background: var(--well); }
+/* Finished requests: one column, two once there's room. */
+.rv-done { display: grid; grid-template-columns: minmax(0, 1fr); padding: 0 18px; }
+.rv-drow { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 14px 0; }
+.rv-drow + .rv-drow { border-top: 1px solid var(--edge-1); }
+@container col (min-width: 1100px) {
+  .rv-done { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 40px; }
+  .rv-drow:nth-child(2) { border-top: 0; }
+}
 .rv-dface { position: relative; width: 40px; height: 40px; }
 .rv-dmark { position: absolute; right: -4px; bottom: -3px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--live); color: #062014; box-shadow: 0 0 0 2.5px var(--page); }
 .rv-dmark .icon { width: 10px; height: 10px; stroke-width: 2.6; }
@@ -1065,20 +1131,21 @@ const CSS: &str = r#"
 @container col (min-width: 1100px) {
   .rv-msgs .card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; }
   .rv-msgs .row + .row { border-top: 0; }
+  .rv-msgs .row.rv-test { grid-column: 1 / -1; border-top: 1px solid var(--edge-1); }
 }
 
-/* Settings: how a request moves. */
+/* Settings: how a request moves, as dots on a line. */
 .rv-settings { gap: 30px; }
-.rv-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
-.rv-flow::before { content: ""; position: absolute; left: 17px; top: 20px; bottom: 20px; width: 2px; border-radius: 1px; background: linear-gradient(180deg, var(--hue), color-mix(in oklab, var(--hue) 15%, transparent)); transform-origin: top; animation: grow 1.1s var(--ease) both 0.3s; }
-.rv-flow li { position: relative; display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; animation: rise 0.5s var(--ease) both; animation-delay: calc(var(--s, 0) * 110ms + 250ms); }
-.rv-flow-ic { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 12px; color: #0b0b10; background: var(--hue); box-shadow: 0 0 0 4px var(--raised); }
-.rv-flow-ic .icon { width: 17px; height: 17px; }
-.rv-flow li div { display: flex; flex-direction: column; gap: 1px; padding-top: 1px; min-width: 0; }
+.rv-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.rv-flow li { position: relative; display: flex; gap: 14px; align-items: flex-start; }
+.rv-flow li:not(:last-child)::before { content: ""; position: absolute; left: 4px; top: 17px; bottom: -15px; width: 1.5px; border-radius: 1px; background: var(--edge-3); }
+.rv-flow-dot { width: 9px; height: 9px; margin-top: 5px; flex: none; border-radius: 50%; background: var(--hue); }
+.rv-flow li.muted .rv-flow-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.rv-flow li div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .rv-flow strong { font-size: 13.5px; font-weight: 600; }
-.rv-flow span { font-size: 12.5px; color: var(--ink-3); }
-.rv-flow li.muted .rv-flow-ic { color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, var(--raised)); }
+.rv-flow span { font-size: 12.5px; line-height: 1.45; color: var(--ink-2); }
 .rv-flow li.muted strong { color: var(--ink-2); }
+.rv-flow li.muted span { color: var(--ink-3); }
 
 /* Settings: Twitch. */
 .rv-twitch { padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
@@ -1094,9 +1161,8 @@ const CSS: &str = r#"
   .rv-readings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
-  .rv-row, .rv-queue.numbered .rv-row, .rv-queue.numbered .rv-row.next { grid-template-columns: 40px minmax(0, 1fr); padding: 12px; }
+  .rv-row, .rv-queue.numbered .rv-row, .rv-queue.numbered .rv-row.next { grid-template-columns: 40px minmax(0, 1fr); padding: 14px; }
   .rv-place { display: none; }
-  .rv-queue.numbered::before { display: none; }
   .rv-row.next .rv-face.big { width: 40px; height: 40px; }
   .rv-side { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; }
   .rv-row > .rv-notes { grid-column: 2 / -1; }
@@ -1106,9 +1172,11 @@ const CSS: &str = r#"
   .rv-side { position: relative; }
   .rv-acts .pop-body { left: 0; right: 0; width: auto; }
   .rv-search .input { min-width: 0; }
-  .rv-wl { grid-template-columns: 1fr; }
+  .rv-card { padding: 14px; }
+  .rv-card > .rv-notes { margin-left: 54px; }
   .rv-readings.three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .rv-readings.three > :last-child { grid-column: 1 / -1; }
+  .rv-done { padding: 0 14px; }
   .rv-drow { grid-template-columns: 40px minmax(0, 1fr); align-items: start; }
   .rv-drow .rv-acts { grid-column: 2; justify-content: flex-start; }
 }

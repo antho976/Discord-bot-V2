@@ -21,16 +21,36 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/community/giveaways/{id}/end", post(giveaways::end))
         .route("/g/{guild}/community/giveaways/{id}/reroll", post(giveaways::reroll))
         .route("/g/{guild}/community/giveaways/{id}/edit", post(giveaways::edit))
+        .route("/g/{guild}/community/giveaways/{id}/test", post(giveaways::send_test))
         .route("/g/{guild}/community/polls", get(polls::page).post(polls::create))
         .route("/g/{guild}/community/polls/{id}/end", post(polls::end))
         .route("/g/{guild}/community/suggestions", get(suggestions::page).post(suggestions::save_settings))
         .route("/g/{guild}/community/suggestions/{id}/status", post(suggestions::set_status))
+        .route("/g/{guild}/community/suggestions/test", post(suggestions::send_test))
 }
 
 /// `?tab=` on the three pages. Each page reads the tab names it knows and ignores the rest.
+/// `?sent=1` follows a test the dashboard sent.
 #[derive(Deserialize)]
 pub struct TabQuery {
     pub tab: Option<String>,
+    pub sent: Option<String>,
+}
+
+/// A "Test sent" toast after a test, once; the flag then leaves the address.
+fn sent_toast(q: &TabQuery, msg: &str) -> Markup {
+    html! {
+        @if q.sent.is_some() {
+            script { (PreEscaped(format!(
+                "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg:?});const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go):setTimeout(go)}})()"
+            ))) }
+        }
+    }
+}
+
+/// A test the bot couldn't DM to the person who asked for it.
+fn dm_refused() -> WebError {
+    WebError::Bad("Discord didn't let the bot DM you. Allow direct messages from members of this server (the server's Privacy Settings in Discord), then try again.".into())
 }
 
 /// A channel that belongs to this server, from a form field.
@@ -174,11 +194,12 @@ fn discord_message(ctx: &Ctx, page: &Page, at: i64, body: Markup) -> Markup {
 /// Discord's relative timestamp, as a member sees `<t:…:R>`: "in 39 minutes", "5 hours ago".
 /// The message a hero is about, as members see it, under what it is and where it was posted:
 /// "The post · #announcements". Sits beside the hero's body on a wide page, under it on a narrow one.
-fn post_block(label: &str, channel: &str, message: Markup) -> Markup {
+fn post_block(label: &str, channel: &str, message: Markup, foot: Option<Markup>) -> Markup {
     html! {
         div.cm-post {
             h3.cm-post-h { (label) span.muted { (channel) } }
             (message)
+            @if let Some(f) = foot { div.cm-post-foot { (f) } }
         }
     }
 }
@@ -203,15 +224,19 @@ pub(super) fn style() -> Markup {
 }
 
 /// Countdowns: every `[data-ends]` counts down each second. A `[data-clock]` fills its
-/// `[data-u]` cells (days, hours, minutes, seconds) and nudges a cell as it changes.
+/// `[data-u]` cells (days, hours, minutes, seconds), one `.gv-dg` slot per digit, and rolls
+/// only the digit that changed. Ticks land just after each whole second of the clock's own
+/// deadline, so a second never shows twice or gets skipped.
 pub(super) fn script() -> Markup {
     html! { script { (PreEscaped(SCRIPT)) } }
 }
 
 const SCRIPT: &str = r#"
 (() => {
-  const els = document.querySelectorAll("[data-ends]");
+  const els = [...document.querySelectorAll("[data-ends]")];
   if (!els.length) return;
+  const signal = window.botPage?.signal;
+  const calm = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const pad = (n) => String(n).padStart(2, "0");
   const days = (d) => d === 1 ? "1 day" : d + " days";
   const left = (s) => {
@@ -220,30 +245,57 @@ const SCRIPT: &str = r#"
     if (h) return m ? h + " h " + m + " min" : h + " h";
     return m ? m + " min" : s + " s";
   };
-  const tick = () => {
-    if (document.hidden) return;
+  // One digit: the old one rolls down and out as the new one rolls in from above.
+  const roll = (slot, ch, still) => {
+    const old = slot.lastElementChild;
+    if (old && old.textContent === ch) return;
+    const next = document.createElement("span");
+    next.textContent = ch;
+    slot.append(next);
+    if (!old) return;
+    if (still) { old.remove(); return; }
+    const o = { duration: 520, easing: "cubic-bezier(0.22, 1, 0.36, 1)" };
+    next.animate([{ transform: "translateY(-100%)", opacity: 0 }, { transform: "none", opacity: 1 }], o);
+    const out = old.animate([{ transform: "none", opacity: 1 }, { transform: "translateY(100%)", opacity: 0 }], { ...o, fill: "forwards" });
+    out.finished.then(() => old.remove(), () => old.remove());
+  };
+  const cell = (u, t, still) => {
+    let slots = u.querySelectorAll(":scope > .gv-dg");
+    if (slots.length !== t.length) {
+      u.replaceChildren(...[...t].map(() => Object.assign(document.createElement("span"), { className: "gv-dg" })));
+      slots = u.querySelectorAll(":scope > .gv-dg");
+      still = true;
+    }
+    [...t].forEach((ch, i) => roll(slots[i], ch, still));
+  };
+  const tick = (still) => {
     const now = Date.now();
     els.forEach((el) => {
       const s = Math.max(0, Math.floor((Number(el.dataset.ends) - now) / 1000));
+      const t = s ? el.dataset.pre + " " + left(s) : "Ending now";
       if (el.hasAttribute("data-clock")) {
         const v = { d: Math.floor(s / 86400), h: Math.floor(s % 86400 / 3600), m: Math.floor(s % 3600 / 60), s: s % 60 };
-        el.querySelectorAll("[data-u]").forEach((u) => {
-          const t = pad(v[u.dataset.u]);
-          if (u.textContent === t) return;
-          u.textContent = t;
-          u.classList.remove("tick");
-          void u.offsetWidth;
-          u.classList.add("tick");
-        });
-      } else {
-        const t = s ? el.dataset.pre + " " + left(s) : "Ending now";
-        if (el.textContent !== t) el.textContent = t;
-      }
+        el.querySelectorAll("[data-u]").forEach((u) => cell(u, pad(v[u.dataset.u]), still));
+        const label = s ? "Ends in " + left(s) : "Ending now";
+        if (el.getAttribute("aria-label") !== label) el.setAttribute("aria-label", label);
+      } else if (el.textContent !== t) el.textContent = t;
     });
   };
-  tick();
-  const id = setInterval(tick, 1000);
-  window.botPage?.signal.addEventListener("abort", () => clearInterval(id));
+  // Every countdown shows whole seconds, so each tick lands 30 ms after the next whole second
+  // of the main clock's deadline (the first countdown when there's no clock).
+  const anchor = Number((els.find((el) => el.hasAttribute("data-clock")) || els[0]).dataset.ends);
+  let timer = 0;
+  const loop = () => {
+    if (!document.hidden) tick(calm);
+    const until = anchor - Date.now();
+    if (els.every((el) => Number(el.dataset.ends) < Date.now() - 1000)) return;
+    timer = setTimeout(loop, (until % 1000 + 1000) % 1000 + 30);
+  };
+  tick(true);
+  timer = setTimeout(loop, ((anchor - Date.now()) % 1000 + 1000) % 1000 + 30);
+  // Back on the tab: catch up at once, without rolling every digit.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(true); }, { signal });
+  signal?.addEventListener("abort", () => clearTimeout(timer));
 })();
 "#;
 
@@ -280,6 +332,11 @@ const STYLE: &str = r#"
 .cm-post { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .cm-post-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .cm-post-h .muted { font-size: 12px; font-weight: 400; }
+.cm-post-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cm-post-foot .cm-dc-note { flex: 1; min-width: 180px; }
+/* A test under a preview in the rail. */
+.cm-test { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cm-test .cm-dc-note { flex: 1; min-width: 160px; }
 /* A rail line standing on its own as a tile, when the rail's list moves into the main column. */
 .cm-tiles > .mini, .cm-tiles > .pl-recent { padding: 12px 14px; border-radius: 14px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); }
 .cm-tiles > .pl-recent + .pl-recent { padding-top: 12px; border-top: 0; }
@@ -343,12 +400,15 @@ const STYLE: &str = r#"
 .gv-by { display: inline-flex; align-items: center; gap: 6px; }
 .gv-role { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 11px; background: color-mix(in oklab, var(--hue) 14%, transparent); color: var(--hue); font-size: 12px; font-weight: 500; }
 .gv-clock { display: flex; gap: 8px; }
-.gv-unit { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 66px; padding: 10px 10px 8px; border-radius: 14px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.07), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; }
-.gv-unit::before { content: ""; position: absolute; inset: 0 15% auto; height: 1px; background: linear-gradient(90deg, transparent, var(--hue), transparent); opacity: 0.8; }
-.gv-unit b { display: inline-block; font: 600 28px/1.1 var(--mono); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-.gv-unit b.tick { animation: gv-tick 0.5s var(--ease); }
-.gv-unit span { font-size: 11px; color: var(--ink-3); }
+.gv-unit { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 66px; padding: 10px 10px 8px; border-radius: 12px; background: var(--well); }
+/* Each digit has its own slot; the countdown script rolls the old digit out and the new one
+   in, inside the slot, so the figure never changes width and nothing around it moves. */
+.gv-unit b { display: inline-flex; font: 600 28px/1.15 var(--sans); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.gv-dg { display: inline-grid; overflow: hidden; }
+.gv-dg > span { grid-area: 1 / 1; }
+.gv-unit > span { font-size: 11.5px; color: var(--ink-3); }
 .gv-time { display: flex; flex-direction: column; gap: 7px; width: 100%; }
+.gv-time .meter > span, .gv-card .meter > span { background: var(--data); }
 @container col (min-width: 600px) {
   .gv-hero { grid-template-columns: auto minmax(0, 1fr); padding: 24px; }
   .gv-hero > .cm-post { grid-column: 2; }
@@ -481,48 +541,54 @@ const STYLE: &str = r#"
 .cm-dc-poll-foot .cm-dc-btn { height: 30px; padding: 0 12px; }
 
 /* ---- suggestions ---- */
-.sg-list { display: flex; flex-direction: column; gap: 10px; }
+/* The board: one list, a hairline between suggestions. */
+.sg-list { display: flex; flex-direction: column; border-radius: var(--r-card); background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
 /* One suggestion. Narrow: score and words, the votes and reply under them, status and actions in
    a foot. From 600 px the status sits at the right. From 1000 px the votes and the reply take a
    column of their own, so a row reads across: score, suggestion, how it went, status. */
-.sg-card { display: grid; grid-template-columns: 46px minmax(0, 1fr); grid-template-areas: "score body" "score state" "side side"; gap: 10px 14px; align-items: start; padding: 14px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 55ms + 150ms); }
-.sg-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.sg-score { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; height: 66px; border-radius: 15px; color: var(--data);
-  background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 28%, transparent); }
-.sg-score .icon { width: 15px; height: 15px; }
-.sg-score b { font: 650 20px/1.1 var(--sans); letter-spacing: -0.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
-.sg-score.down { color: var(--held); background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--held) 28%, transparent); }
-.sg-score.flat { color: var(--ink-3); background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
-.sg-score { grid-area: score; }
-.sg-body { grid-area: body; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.sg-state { grid-area: state; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-.sg-text { max-width: 70ch; font-size: 15px; font-weight: 550; line-height: 1.45; text-wrap: pretty; overflow-wrap: anywhere; }
+.sg-card { position: relative; display: grid; grid-template-columns: 46px minmax(0, 1fr); grid-template-areas: "score body" "score state" "side side"; gap: 10px 12px; align-items: start; padding: 16px 16px 14px; transition: background 0.2s; }
+.sg-card + .sg-card { border-top: 1px solid var(--edge-1); }
+.sg-card:first-child { border-radius: var(--r-card) var(--r-card) 0 0; }
+.sg-card:last-child { border-radius: 0 0 var(--r-card) var(--r-card); }
+.sg-card:only-child { border-radius: var(--r-card); }
+.sg-card:hover { background: var(--well); }
+/* The score: a small arrow and the net, on the first line of the suggestion. */
+.sg-score { grid-area: score; display: flex; align-items: center; gap: 3px; height: 22px; color: var(--ink-3); white-space: nowrap; cursor: default; }
+.sg-score .icon { width: 13px; height: 13px; flex: none; }
+.sg-score b { font: 600 15px/1 var(--sans); color: var(--ink); font-variant-numeric: tabular-nums; }
+.sg-score.up .icon { color: var(--data); }
+.sg-score.down .icon { color: var(--held); }
+.sg-score.flat b { color: var(--ink-2); }
+.sg-body { grid-area: body; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.sg-state { grid-area: state; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.sg-text { max-width: 70ch; font-size: 15px; font-weight: 560; line-height: 1.45; text-wrap: pretty; overflow-wrap: anywhere; }
 .sg-by { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12.5px; color: var(--ink-3); }
-.sg-by .avatar { width: 22px; height: 22px; }
+.sg-by .avatar { width: 20px; height: 20px; }
 .sg-by strong { color: var(--ink-2); font-weight: 500; }
-.sg-tally { display: flex; align-items: center; gap: 10px; max-width: 380px; font: 11.5px var(--mono); color: var(--ink-3); white-space: nowrap; }
-.sg-split { flex: 1; display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--edge-1); animation: cm-wipe 1.1s var(--ease) both; animation-delay: calc(var(--i, 0) * 55ms + 400ms); }
-.sg-split .up { background: linear-gradient(90deg, var(--data-2), var(--data)); }
-.sg-split .down { background: color-mix(in oklab, var(--held) 70%, transparent); }
-.sg-reply { display: flex; align-items: flex-start; gap: 10px; margin-top: 2px; }
-.sg-reply .avatar { width: 28px; height: 28px; margin-top: 2px; }
-.sg-bubble { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 9px 13px; border-radius: 4px 14px 14px 14px; font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere;
-  background: color-mix(in oklab, var(--tone, var(--ink)) 9%, rgba(243, 242, 248, 0.03)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--tone, var(--ink)) 22%, transparent); }
-.sg-bubble strong { color: var(--ink); font-weight: 600; font-size: 12.5px; }
-.sg-bubble strong span { color: var(--tone, var(--ink-3)); font-weight: 500; }
-.sg-reply.ok { --tone: var(--live); }
-.sg-reply.warn { --tone: var(--waiting); }
-.sg-reply.bad { --tone: var(--held); }
+.sg-anon { text-decoration: underline dotted; text-underline-offset: 3px; cursor: default; }
+.sg-tally { font-size: 12.5px; color: var(--ink-3); }
+.sg-tally b { color: var(--ink-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Staff's answer: who, what they did, and why, as plain lines beside their face. */
+.sg-reply { display: flex; align-items: flex-start; gap: 10px; max-width: 64ch; }
+.sg-reply .avatar { width: 22px; height: 22px; margin-top: 1px; }
+.sg-reply > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; }
+.sg-reply-head { font-size: 12.5px; color: var(--ink-3); }
+.sg-reply-head strong { color: var(--ink-2); font-weight: 600; }
 .sg-side { grid-area: side; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
 .sg-side .cm-actions { flex-wrap: nowrap; gap: 4px; }
+.sg-status { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+.sg-status.open .dot { background: var(--signal); }
+.sg-status.warn .dot { background: var(--waiting); }
+.sg-status.ok .dot { background: var(--live); }
+.sg-status.bad .dot { background: var(--held); }
 @container col (min-width: 600px) {
-  .sg-card { grid-template-columns: 58px minmax(0, 1fr) auto; grid-template-areas: "score body side" "score state side"; gap: 8px 16px; padding: 16px 18px; }
-  .sg-side { flex-direction: column; align-items: flex-end; justify-content: flex-start; }
+  .sg-card { grid-template-columns: 46px minmax(0, 1fr) auto; grid-template-areas: "score body side" "score state side"; gap: 10px 14px; padding: 16px 18px; }
+  .sg-side { flex-direction: column; align-items: flex-end; justify-content: flex-start; gap: 8px; }
+  .sg-status { height: 22px; }
 }
 @container col (min-width: 1000px) {
-  .sg-card { grid-template-columns: 58px minmax(0, 1.15fr) minmax(0, 1fr) auto; grid-template-areas: "score body state side"; column-gap: 28px; }
-  .sg-state { padding-top: 3px; }
-  .sg-tally { max-width: none; }
+  .sg-card { grid-template-columns: 46px minmax(0, 1.15fr) minmax(0, 1fr) auto; grid-template-areas: "score body state side"; column-gap: 28px; padding: 18px 20px; }
+  .sg-state { padding-top: 2px; }
 }
 .sg-top { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: end; }
 .sg-voter { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; text-align: center; font-size: 12.5px; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 300ms); }
@@ -536,7 +602,6 @@ const STYLE: &str = r#"
 @keyframes gv-pop { from { opacity: 0; transform: scale(0.7) rotate(-6deg); } }
 @keyframes gv-spin { to { transform: rotate(360deg); } }
 @keyframes gv-float { to { transform: translateY(-6px) rotate(-3deg); } }
-@keyframes gv-tick { from { transform: translateY(-40%); opacity: 0.15; filter: blur(2px); } }
 
 @media (max-width: 1180px) {
   .gv-art.big { width: 150px; height: 150px; }
@@ -558,8 +623,6 @@ const STYLE: &str = r#"
   .pl-ans { grid-template-columns: minmax(0, 1fr) 58px; }
   .pl-voters { display: none; }
   .pl-card { padding: 14px; }
-  .sg-score { height: 56px; border-radius: 13px; }
-  .sg-score b { font-size: 17px; }
   .cm-edit[open] { flex-basis: 100%; order: 10; }
   .cm-edit .pop-body { position: static; width: 100%; margin-top: 8px; }
 }
