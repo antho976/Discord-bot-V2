@@ -248,13 +248,14 @@ pub fn mod_actions(ctx: &Ctx, guild: u64, since: i64) -> Result<Vec<ModAction>> 
 /// first delete comes as an entry, so later ones find the entry used up.
 pub const MERGE_MS: i64 = 10 * 60_000;
 
-/// Message deletes since `since` whose entries are used up, newest first, each with Discord's id
-/// for its entry: one may have gone on to cover more deletes than it said.
-pub fn used_up_deletes(ctx: &Ctx, guild: u64, since: i64) -> Result<Vec<(ModAction, u64)>> {
+/// Message delete entries since `since`, newest first, each with Discord's id for it: any may
+/// have gone on to cover more deletes than it said, whether or not its uses so far were taken
+/// (a delete the bot didn't log leaves one untaken).
+pub fn recent_deletes(ctx: &Ctx, guild: u64, since: i64) -> Result<Vec<(ModAction, u64)>> {
     ctx.db.with(|c| {
         let mut st = c.prepare_cached(
             "SELECT id, at, moderator_id, action, target_id, channel_id, reason, covers, used, entry_id FROM audit_mod_actions
-             WHERE guild_id = ?1 AND at >= ?2 AND action = 'delete' AND used >= covers AND entry_id IS NOT NULL ORDER BY at DESC LIMIT 50",
+             WHERE guild_id = ?1 AND at >= ?2 AND action = 'delete' AND entry_id IS NOT NULL ORDER BY at DESC LIMIT 50",
         )?;
         st.query_map(params![guild as i64, since], |r| Ok((mod_action(r)?, r.get::<_, i64>(9)? as u64)))?.collect()
     })

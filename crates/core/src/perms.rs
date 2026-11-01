@@ -52,7 +52,9 @@ fn seen(ctx: &Ctx, channel: u64) -> Option<Seen> {
         let need = if c.kind == ChannelType::PrivateThread { Permissions::VIEW_CHANNEL | Permissions::MANAGE_THREADS } else { Permissions::VIEW_CHANNEL };
         Some(Seen { overwrites: parent.permission_overwrites.clone().unwrap_or_default(), need })
     } else {
-        Some(Seen { overwrites: c.permission_overwrites.clone().unwrap_or_default(), need: Permissions::VIEW_CHANNEL })
+        // A voice or stage channel's text chat also takes Connect.
+        let need = if matches!(c.kind, ChannelType::GuildVoice | ChannelType::GuildStageVoice) { Permissions::VIEW_CHANNEL | Permissions::CONNECT } else { Permissions::VIEW_CHANNEL };
+        Some(Seen { overwrites: c.permission_overwrites.clone().unwrap_or_default(), need })
     }
 }
 
@@ -82,6 +84,11 @@ impl Ctx {
         }
         seen.insert(key, (std::time::Instant::now(), ok));
         ok
+    }
+
+    /// Forget a server's kept answers: its channels, roles or members changed.
+    pub(crate) fn forget_seen(&self, guild: u64) {
+        self.seen.lock().unwrap().retain(|k, _| k.0 != guild);
     }
 
     fn readers_can_see_now(&self, guild: u64, reader: u64, source: u64) -> bool {

@@ -704,48 +704,70 @@ const AUDIT_READ_EVERY: Duration = Duration::from_secs(5);
 /// most one read a server every [`AUDIT_READ_EVERY`], and only when the bot may view the audit
 /// log; anything that goes wrong just leaves the deletes unexplained.
 async fn merged_deletes(ctx: &Ctx, guild: u64, unexplained: Vec<(usize, Who)>) -> Vec<(usize, Who, store::ModAction)> {
-    let mut out = Vec::new();
-    let mut used_up = match store::used_up_deletes(ctx, guild, now_ms() - store::MERGE_MS) {
+    let mut recent = match store::recent_deletes(ctx, guild, now_ms() - store::MERGE_MS) {
         Ok(u) => u,
         Err(e) => {
-            bot_core::tracing::warn!(guild, error = %e, "couldn't read used-up delete entries");
-            return out;
+            bot_core::tracing::warn!(guild, error = %e, "couldn't read recent delete entries");
+            return Vec::new();
         }
     };
-    used_up.retain(|(a, _)| unexplained.iter().any(|(_, w)| merges_into(a, w)));
-    if used_up.is_empty() || !may_read_audit_log(ctx, guild) {
-        return out;
+    recent.retain(|(a, _)| unexplained.iter().any(|(_, w)| merges_into(a, w)));
+    if recent.is_empty() || !may_read_audit_log(ctx, guild) {
+        return Vec::new();
     }
-    let Some(g) = Id::new_checked(guild) else { return out };
+    let Some(g) = Id::new_checked(guild) else { return Vec::new() };
     use bot_core::twilight_model::guild::audit_log::AuditLogEventType;
-    let entries = match ctx.http.audit_log(g).action_type(AuditLogEventType::MessageDelete).limit(10).await {
+    // The most Discord gives in one read: an entry a few minutes old can sit behind a busy
+    // bot's own deletes.
+    let entries = match ctx.http.audit_log(g).action_type(AuditLogEventType::MessageDelete).limit(100).await {
         Ok(r) => match r.model().await {
             Ok(log) => log.entries,
-            Err(_) => return out,
+            Err(_) => return Vec::new(),
         },
         Err(e) => {
             bot_core::tracing::debug!(guild, error = %e, "couldn't read the audit log");
-            return out;
+            return Vec::new();
         }
     };
-    for (a, entry) in &mut used_up {
-        let count = entries
-            .iter()
-            .find(|e| e.id.get() == *entry)
-            .and_then(|e| e.options.as_ref()?.count.as_deref()?.parse::<i64>().ok());
-        if let Some(count) = count.filter(|n| *n > a.covers) {
-            match store::raise_covers(ctx, a.id, count) {
-                Ok(()) => a.covers = count,
-                Err(e) => bot_core::tracing::warn!(guild, error = %e, "couldn't raise an entry's count"),
-            }
+    let counts: HashMap<u64, i64> =
+        entries.iter().filter_map(|e| Some((e.id.get(), e.options.as_ref()?.count.as_deref()?.parse::<i64>().ok()?))).collect();
+    let (raised, out) = hand_out_merged(&mut recent, &counts, unexplained);
+    for (action, covers) in raised {
+        if let Err(e) = store::raise_covers(ctx, action, covers) {
+            bot_core::tracing::warn!(guild, error = %e, "couldn't raise an entry's count");
         }
     }
-    for (i, who) in unexplained {
-        let Some((a, _)) = used_up.iter_mut().find(|(a, _)| a.used < a.covers && merges_into(a, &who)) else { continue };
-        a.used += 1;
-        out.push((i, who, a.clone()));
-    }
     out
+}
+
+/// A queued event (by its place in the queue) and the entry that explains it.
+type Explained = (usize, Who, store::ModAction);
+
+/// From one read of the audit log (`counts`: Discord's count by entry id): each entry whose count
+/// rose since it was last read explains up to that rise of the unexplained deletes it could have
+/// taken, oldest first. Uses an entry had before (deletes the bot never logged) aren't handed
+/// out, so they can't land on a member deleting their own message. Returns the entries' new
+/// counts and the deletes explained.
+fn hand_out_merged(recent: &mut [(store::ModAction, u64)], counts: &HashMap<u64, i64>, mut unexplained: Vec<(usize, Who)>) -> (Vec<(i64, i64)>, Vec<Explained>) {
+    let mut raised = Vec::new();
+    let mut fresh: Vec<i64> = Vec::with_capacity(recent.len());
+    for (a, entry) in recent.iter_mut() {
+        let rise = counts.get(entry).map_or(0, |n| (n - a.covers).max(0));
+        if rise > 0 {
+            a.covers += rise;
+            raised.push((a.id, a.covers));
+        }
+        fresh.push(rise);
+    }
+    unexplained.sort_by_key(|(_, w)| w.at);
+    let mut out = Vec::new();
+    for (i, who) in unexplained {
+        let Some(k) = recent.iter().enumerate().position(|(k, (a, _))| fresh[k] > 0 && merges_into(a, &who)) else { continue };
+        fresh[k] -= 1;
+        recent[k].0.used += 1;
+        out.push((i, who, recent[k].0.clone()));
+    }
+    (raised, out)
 }
 
 /// Whether Discord could have added a delete to a delete entry: the same member's message in the
@@ -1189,6 +1211,23 @@ mod tests {
         assert!(!merges_into(&entry, &Who { kind: Kind::Ban, ..who(5, Some(20), at + 1_000) }));
     }
 
+    #[test]
+    fn only_the_rise_in_discords_count_is_handed_out() {
+        let at = 1_000_000;
+        let who = |target, at| Who { guild: 1, kind: Kind::MessageDelete, target, channel: Some(20), at, row: None };
+        // A moderator's delete the bot never logged: entry 777 (count 1) with its use untaken.
+        let mut recent = vec![(action(at, 9, "delete", 5, Some(20)), 777u64)];
+        assert_eq!((recent[0].0.covers, recent[0].0.used), (1, 0));
+        // Discord still says 1: a member deleting their own message later gets no name.
+        let (raised, out) = hand_out_merged(&mut recent, &HashMap::from([(777, 1)]), vec![(0, who(5, at + 60_000))]);
+        assert!(raised.is_empty() && out.is_empty());
+        // The moderator deletes two more and Discord says 3: two deletes are named, oldest
+        // first, and a third waits for the next rise.
+        let (raised, out) = hand_out_merged(&mut recent, &HashMap::from([(777, 3)]), vec![(2, who(5, at + 90_000)), (1, who(5, at + 80_000)), (3, who(5, at + 95_000))]);
+        assert_eq!(raised, [(recent[0].0.id, 3)]);
+        assert_eq!(out.iter().map(|(i, _, a)| (*i, a.moderator)).collect::<Vec<_>>(), [(1, 9), (2, 9)]);
+    }
+
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
     async fn a_used_up_delete_entry_can_be_raised_to_discords_count() {
         let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
@@ -1202,10 +1241,11 @@ mod tests {
         };
         store::record_moderator(&ctx, &entry(777, "1")).unwrap();
         let since = now_ms() - store::MERGE_MS;
-        assert!(store::used_up_deletes(&ctx, 1, since).unwrap().is_empty(), "it has a use left");
+        // Listed whether or not its use was taken.
         let a = store::mod_actions(&ctx, 1, since).unwrap().remove(0);
+        assert_eq!(store::recent_deletes(&ctx, 1, since).unwrap().iter().map(|(a, e)| (a.id, *e)).collect::<Vec<_>>(), [(a.id, 777)]);
         assert!(store::use_action(&ctx, &a, None, true).unwrap());
-        let used_up = store::used_up_deletes(&ctx, 1, since).unwrap();
+        let used_up = store::recent_deletes(&ctx, 1, since).unwrap();
         assert_eq!(used_up.iter().map(|(a, e)| (a.id, *e)).collect::<Vec<_>>(), [(a.id, 777)]);
         // Discord's count went to 3: two more deletes are explained, and it's never lowered.
         store::raise_covers(&ctx, a.id, 3).unwrap();

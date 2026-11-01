@@ -202,8 +202,8 @@ pub struct Member {
 
 #[derive(Default)]
 pub struct Levels {
-    cooldowns: Mutex<HashMap<(u64, u64), Instant>>,
-    reaction_cooldowns: Mutex<HashMap<(u64, u64), Instant>>,
+    cooldowns: Mutex<Cooldowns>,
+    reaction_cooldowns: Mutex<Cooldowns>,
 }
 
 const MIGRATIONS: &[Migration] = &[Migration {
@@ -896,24 +896,27 @@ fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64, you: u64) -> Resu
 /// old settings file is held to it.
 const MAX_COOLDOWN_SECS: u64 = 3600;
 
+/// (server, member) -> when their cooldown started, and how long it was then.
+type Cooldowns = HashMap<(u64, u64), (Instant, std::time::Duration)>;
+
 /// Whether `key` is past its cooldown; if so, the cooldown starts again now. The map holds when
-/// each cooldown started, so a server that lowers its cooldown sees it at once. Entries older
-/// than the longest cooldown are dropped once it grows, so it stays small.
-fn cooled_down(map: &Mutex<HashMap<(u64, u64), Instant>>, key: (u64, u64), cooldown_secs: i64) -> bool {
+/// each cooldown started, so a server that lowers its cooldown sees it at once. Past 5,000
+/// entries, the ones whose own cooldown is over are dropped, which frees most of them, so the
+/// sweep doesn't run again on the next message.
+fn cooled_down(map: &Mutex<Cooldowns>, key: (u64, u64), cooldown_secs: i64) -> bool {
     cooled_down_at(map, key, cooldown_secs, Instant::now())
 }
 
 /// `cooled_down` as of `now`.
-fn cooled_down_at(map: &Mutex<HashMap<(u64, u64), Instant>>, key: (u64, u64), cooldown_secs: i64, now: Instant) -> bool {
+fn cooled_down_at(map: &Mutex<Cooldowns>, key: (u64, u64), cooldown_secs: i64, now: Instant) -> bool {
     let cooldown = std::time::Duration::from_secs((cooldown_secs.max(0) as u64).min(MAX_COOLDOWN_SECS));
     let mut cd = map.lock().unwrap();
-    if cd.get(&key).is_some_and(|started| now.saturating_duration_since(*started) < cooldown) {
+    if cd.get(&key).is_some_and(|(started, _)| now.saturating_duration_since(*started) < cooldown) {
         return false;
     }
-    cd.insert(key, now);
+    cd.insert(key, (now, cooldown));
     if cd.len() > 5000 {
-        let longest = std::time::Duration::from_secs(MAX_COOLDOWN_SECS);
-        cd.retain(|_, started| now.saturating_duration_since(*started) < longest);
+        cd.retain(|_, (started, length)| now.saturating_duration_since(*started) < *length);
     }
     true
 }
@@ -1236,9 +1239,13 @@ struct Sweep {
 /// Record a new sweep in `guild` and return it. One still running there is replaced, and the new
 /// one takes on its levels and dropped roles, since it stops before it's done.
 fn start_sweep(sweeps: &mut HashMap<u64, Sweep>, guild: u64, from_level: u32, dropped: Option<u64>) -> Sweep {
+    // Never reused, even after a server's entry is gone: an old sweep still mid-member must
+    // never pass for a new one.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let generation = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let mut sweep = match sweeps.get(&guild) {
-        Some(old) => Sweep { generation: old.generation.wrapping_add(1), from_level: old.from_level.min(from_level), dropped: old.dropped.clone() },
-        None => Sweep { generation: 0, from_level, dropped: Vec::new() },
+        Some(old) => Sweep { generation, from_level: old.from_level.min(from_level), dropped: old.dropped.clone() },
+        None => Sweep { generation, from_level, dropped: Vec::new() },
     };
     if let Some(role) = dropped
         && !sweep.dropped.contains(&role)
@@ -1598,11 +1605,12 @@ mod tests {
     fn a_newer_sweep_takes_over_from_an_older_one() {
         let mut sweeps = HashMap::new();
         let first = start_sweep(&mut sweeps, 1, 5, Some(70));
-        assert_eq!(first, Sweep { generation: 0, from_level: 5, dropped: vec![70] });
+        assert_eq!((first.from_level, first.dropped.clone()), (5, vec![70]));
         assert!(sweep_current(&sweeps, 1, first.generation));
         // A second save while it runs: the first stops, and the second covers its levels and role.
         let second = start_sweep(&mut sweeps, 1, 20, None);
-        assert_eq!(second, Sweep { generation: 1, from_level: 5, dropped: vec![70] });
+        assert_eq!((second.from_level, second.dropped.clone()), (5, vec![70]));
+        assert_ne!(second.generation, first.generation);
         assert!(!sweep_current(&sweeps, 1, first.generation));
         assert!(sweep_current(&sweeps, 1, second.generation));
         let third = start_sweep(&mut sweeps, 1, 0, Some(70));
@@ -1611,8 +1619,12 @@ mod tests {
         assert_eq!((third.from_level, third.dropped), (0, vec![70, 71]));
         // Another server's sweep is its own.
         let other = start_sweep(&mut sweeps, 2, 8, None);
-        assert_eq!(other, Sweep { generation: 0, from_level: 8, dropped: vec![] });
+        assert_eq!((other.from_level, other.dropped.clone()), (8, vec![]));
         assert!(sweep_current(&sweeps, 1, third.generation));
+        // Once a server's sweeps are done, a new one never reuses an old one's number.
+        sweeps.remove(&1);
+        let fresh = start_sweep(&mut sweeps, 1, 0, None);
+        assert!(![first.generation, second.generation, third.generation].contains(&fresh.generation));
     }
 
     #[test]

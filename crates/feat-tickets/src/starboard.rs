@@ -305,17 +305,33 @@ fn recheck_at(ctx: &Ctx, lock: std::sync::Arc<bot_core::tokio::sync::Mutex<()>>,
     }
     let ctx = ctx.clone();
     bot_core::tokio::spawn(async move {
-        let wait = (at - now_ms()).clamp(0, KEEP_MS) as u64 + 1_000;
-        bot_core::tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
-        PENDING.lock().unwrap().remove(&(guild, message));
-        let _one_at_a_time = lock.lock().await;
-        let Ok(s) = ctx.settings::<Settings>(guild, KEY) else { return };
-        let (Some(star_channel), Some(wanted)) = (s.star_channel, parse_emoji(&s.star_emoji)) else { return };
-        if !ctx.db.with(|c| get(c, guild, message)).ok().flatten().is_some_and(|p| !p.removed) {
-            return;
-        }
-        if let Err(e) = refresh(&ctx, guild, channel, message, &s, &wanted, star_channel).await {
-            bot_core::tracing::warn!(guild, message, error = %e, "couldn't update the starboard");
+        let mut at = at;
+        loop {
+            let wait = (at - now_ms()).clamp(0, KEEP_MS) as u64 + 1_000;
+            bot_core::tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+            // Let go first, so a dip during the look below arms a look of its own.
+            PENDING.lock().unwrap().remove(&(guild, message));
+            let next = {
+                let _one_at_a_time = lock.lock().await;
+                let Ok(s) = ctx.settings::<Settings>(guild, KEY) else { return };
+                let (Some(star_channel), Some(wanted)) = (s.star_channel, parse_emoji(&s.star_emoji)) else { return };
+                if !ctx.db.with(|c| get(c, guild, message)).ok().flatten().is_some_and(|p| !p.removed) {
+                    return;
+                }
+                match refresh(&ctx, guild, channel, message, &s, &wanted, star_channel).await {
+                    Ok(next) => next,
+                    Err(e) => {
+                        bot_core::tracing::warn!(guild, message, error = %e, "couldn't update the starboard");
+                        None
+                    }
+                }
+            };
+            // Still young and under the threshold (a newer post of the same message): look again
+            // then, unless another look already took it on.
+            match next {
+                Some(n) if PENDING.lock().unwrap().insert((guild, message)) => at = n,
+                _ => return,
+            }
         }
     });
 }
