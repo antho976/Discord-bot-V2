@@ -1057,7 +1057,15 @@ impl Ctx {
             | P::KICK_MEMBERS
             | P::MODERATE_MEMBERS
             | P::MANAGE_MESSAGES
-            | P::MENTION_EVERYONE;
+            | P::MENTION_EVERYONE
+            | P::MANAGE_NICKNAMES
+            | P::MANAGE_THREADS
+            | P::MANAGE_EVENTS
+            | P::MANAGE_GUILD_EXPRESSIONS
+            | P::VIEW_AUDIT_LOG
+            | P::MUTE_MEMBERS
+            | P::DEAFEN_MEMBERS
+            | P::MOVE_MEMBERS;
         role != guild_id
             && !r.managed
             && self.cache.guild_roles(g).is_some_and(|set| set.contains(&r.id))
