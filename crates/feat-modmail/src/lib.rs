@@ -74,6 +74,12 @@ pub struct Modmail {
     /// Staff threads of open conversations, loaded on first use, so a message in any other
     /// channel costs no query. May hold a few closed ones; those drop out when looked up.
     threads: Mutex<Option<HashSet<u64>>>,
+    /// When each member was last told their conversation can't take messages, so a burst of
+    /// DMs gets one answer.
+    stuck_told: Mutex<HashMap<u64, Instant>>,
+    /// Threads already checked for a closed conversation, so each is looked up (and staff told)
+    /// once. Cleared when it grows large.
+    looked: Mutex<HashSet<u64>>,
 }
 
 impl Modmail {
@@ -105,6 +111,27 @@ impl Modmail {
 
     fn remember_pick(&self, user: u64, guild: u64) {
         self.picks.lock().unwrap().insert(user, (guild, Instant::now()));
+    }
+
+    /// True when the member hasn't been told in the last [`PICK_KEPT`] that their conversation
+    /// can't take messages; notes that they are now.
+    fn tell_stuck(&self, user: u64) -> bool {
+        let mut told = self.stuck_told.lock().unwrap();
+        told.retain(|_, at| at.elapsed() < PICK_KEPT);
+        if told.contains_key(&user) {
+            return false;
+        }
+        told.insert(user, Instant::now());
+        true
+    }
+
+    /// True the first time `thread` is checked for a closed conversation.
+    fn first_look(&self, thread: u64) -> bool {
+        let mut looked = self.looked.lock().unwrap();
+        if looked.len() >= 1024 {
+            looked.clear();
+        }
+        looked.insert(thread)
     }
 
     fn add_thread(&self, thread: u64) {
