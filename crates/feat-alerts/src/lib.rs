@@ -37,6 +37,8 @@ pub struct Settings {
     pub live_channel: Option<u64>,
     pub live_role: Option<u64>,
     pub live_message: String,
+    /// Viewers on the live post, edited in every 5 minutes.
+    pub live_viewers: bool,
 
     pub reminders: bool,
     pub reminder_channel: Option<u64>,
@@ -72,6 +74,7 @@ impl Default for Settings {
             live_channel: None,
             live_role: None,
             live_message: DEFAULT_LIVE_MESSAGE.into(),
+            live_viewers: true,
             reminders: true,
             reminder_channel: None,
             reminder_role: None,
@@ -153,6 +156,15 @@ const MIGRATIONS: &[Migration] = &[Migration {
             guild_id INTEGER NOT NULL, video_id TEXT NOT NULL, user_id INTEGER NOT NULL,
             xp INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (guild_id, video_id, user_id));
         CREATE INDEX alerts_video_claims_by_time ON alerts_video_claims(guild_id, at);
+    ",
+}, Migration {
+    // The last viewer count read, for the live post, and the follower total when the stream
+    // started and ended, for the gain on the ended post. NULL when Twitch wouldn't say.
+    name: "005_alerts_live_numbers",
+    sql: "
+        ALTER TABLE alerts_streams ADD COLUMN viewers INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE alerts_streams ADD COLUMN followers_start INTEGER;
+        ALTER TABLE alerts_streams ADD COLUMN followers_end INTEGER;
     ",
 }];
 
@@ -392,8 +404,8 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
     }
     // On air now, 52 minutes in, so the pages show a live stream.
     tx.execute(
-        "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, peak, average, samples, last_sample, viewer_sum, games, thumbnail)
-         VALUES ('41234567', '40000000099', ?1, 'Idleon: world 6 push', 'Legends of Idleon', 61, 48, 10, ?2, 480, 'Legends of Idleon', ?3)",
+        "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, title, game, peak, average, samples, last_sample, viewer_sum, games, thumbnail, viewers, followers_start)
+         VALUES ('41234567', '40000000099', ?1, 'Idleon: world 6 push', 'Legends of Idleon', 61, 48, 10, ?2, 480, 'Legends of Idleon', ?3, 54, 1250)",
         params![now - 52 * 60_000, now - 2 * 60_000, pictures[0]],
     )?;
     // A follower total for each of the last 30 days, as the daily check stores them.

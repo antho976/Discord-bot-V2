@@ -123,6 +123,8 @@ struct Sample<'a> {
     started: String,
     /// A real picture of the stream when one is stored, else a placeholder is drawn.
     thumb: Option<String>,
+    /// The viewer field as the post shows it, or `None` when the post leaves it out.
+    viewers: Option<String>,
 }
 
 /// Readings whose numbers count up as they come into view.
@@ -262,6 +264,7 @@ fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broad
             div.sa-fields {
                 @if !sample.game.is_empty() { div { b { "Playing" } span { (sample.game) } } }
                 div { b { "Started" } span { span.sa-ts { (sample.started) } } }
+                @if let Some(v) = &sample.viewers { div { b { "Viewers" } span { (v) } } }
             }
             div.sa-media {
                 @match &sample.thumb {
@@ -269,7 +272,7 @@ fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broad
                     None => { div.sa-thumb { (ui::icon(Icon::Live)) span { "The stream's picture" } } }
                 }
             }
-            div.sa-foot { "Twitch" }
+            div.sa-foot { @if sample.viewers.is_some() { "Twitch · updated a minute ago" } @else { "Twitch" } }
         }
         div.sa-buttons { a.sa-watch href=(b.url()) target="_blank" rel="noopener" { "Watch on Twitch" (ui::icon(Icon::External)) } }
     })
@@ -565,6 +568,11 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         game: shown.map(|r| r.game.as_str()).unwrap_or("Just Chatting"),
         started: live.as_ref().map(|r| text::ago(r.started_at)).unwrap_or_else(|| "just now".into()),
         thumb: shown.and_then(StreamRow::thumb_640),
+        // The stream that's on, else a made-up count so the setting shows what it does.
+        viewers: s.live_viewers.then(|| match &live {
+            Some(r) if r.samples > 0 => twitch::viewers_line(r),
+            _ => "24 (peak 31)".into(),
+        }),
     };
     let line = twitch::fill_live(&s.live_message, &sample, preview.title, preview.game);
     // Push mode with nothing arriving looks like it works. One Helix call says whether Twitch
@@ -662,7 +670,7 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                                 (Some(r), _) => {
                                     span.dot.live {}
                                     "Live now, started " (text::ago(r.started_at))
-                                    @if r.samples > 0 { " · peak " (text::num(r.peak)) " viewers" }
+                                    @if r.samples > 0 { " · " (text::num(r.viewers)) " watching, peak " (text::num(r.peak)) }
                                 }
                                 (None, Some(r)) => { span.dot {} "Offline · last streamed " (text::ago(r.started_at)) " for " (text::duration(r.duration_secs)) }
                                 _ => { span.dot {} "Offline · no stream recorded yet" }
@@ -706,6 +714,7 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         (ui::field_channel(&ctx, guild, "live_channel", "Post in", None, s.live_channel))
                         (ui::field_role(&ctx, guild, "live_role", "Ping", Some("Only this role is pinged."), s.live_role))
                         (ui::field_text("live_message", "Message", Some("{streamer}, {title}, {game} and {url} are filled in."), &s.live_message, crate::DEFAULT_LIVE_MESSAGE))
+                        (ui::field_toggle("live_viewers", "Show viewers", Some("The live post shows the viewer count and peak, edited in every 5 minutes. The post after the stream always has its numbers."), s.live_viewers))
                     }))))
                 }
             }
@@ -756,6 +765,7 @@ async fn save_twitch(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         live_channel: form.channel(&ctx, guild, "live_channel"),
         live_role: form.role(&ctx, guild, "live_role"),
         live_message: if message.is_empty() { crate::DEFAULT_LIVE_MESSAGE.into() } else { message },
+        live_viewers: form.bool("live_viewers"),
         ..(*old).clone()
     };
     ctx.save_settings(guild, KEY, &s)?;
