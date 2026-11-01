@@ -286,7 +286,8 @@
   document.body.append(probe);
   let scale = 0;
   addEventListener("resize", () => { scale = 0; }, { passive: true });
-  const px = (v) => { if (!scale) scale = probe.getBoundingClientRect().left / 100 || 1; return v / scale + "px"; };
+  const zf = () => { if (!scale) scale = probe.getBoundingClientRect().left / 100 || 1; return scale; };
+  const px = (v) => v / zf() + "px";
   const showTip = (el, html, x, y, side) => {
     tipFor = el;
     tip.innerHTML = html;
@@ -535,6 +536,51 @@
     $$(".mac-only", page).forEach((k) => { k.textContent = mac ? "⌘K" : "Ctrl K"; });
   };
 
+  // A submitted form's button spins after a beat; a quick answer cancels the spin.
+  let busyTimers = [];
+  const unbusy = () => { busyTimers.forEach(clearTimeout); busyTimers = []; $$(".btn.busy").forEach((b) => b.classList.remove("busy")); };
+
+  // ---------------------------------------------------------------- refusals
+  // When the server turns an action down (a setting isn't set yet, a value is wrong), say why
+  // in a small popup by the button that asked, instead of opening a page. It stays until it's
+  // dismissed: OK, Escape, a click elsewhere, or leaving the page.
+  const refusal = document.createElement("div");
+  refusal.className = "refusal";
+  refusal.setAttribute("role", "alertdialog");
+  refusal.innerHTML = '<span class="refusal-ic"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 4.2v4.6M8 11.6v.01"/></svg></span><div class="refusal-text"><strong></strong><p></p></div><button type="button" class="btn small">OK</button>';
+  document.body.append(refusal);
+  let refusedFrom = null;
+  const closeRefusal = () => {
+    if (!refusal.classList.contains("show")) return false;
+    refusal.classList.remove("show");
+    if (refusedFrom && document.contains(refusedFrom)) refusedFrom.focus({ preventScroll: true });
+    refusedFrom = null;
+    return true;
+  };
+  const refuse = (title, text, from) => {
+    $("strong", refusal).textContent = title;
+    $("p", refusal).textContent = text;
+    refusal.classList.remove("show", "above");
+    const k = zf();
+    const w = refusal.offsetWidth * k, h = refusal.offsetHeight * k;
+    const r = from && document.contains(from) ? from.getBoundingClientRect() : null;
+    const seen = r && r.bottom > 0 && r.top < innerHeight && r.width > 0;
+    refusedFrom = seen ? from : null;
+    let x = innerWidth / 2, y = 76;
+    if (seen) {
+      x = r.left + r.width / 2;
+      y = r.bottom + 10;
+      if (y + h > innerHeight - 12) { y = r.top - 10; refusal.classList.add("above"); }
+    }
+    x = Math.min(Math.max(x, w / 2 + 12), innerWidth - w / 2 - 12);
+    refusal.style.left = px(x);
+    refusal.style.top = px(y);
+    requestAnimationFrame(() => { refusal.classList.add("show"); $("button", refusal).focus({ preventScroll: true }); });
+  };
+  refusal.addEventListener("click", (e) => { if (e.target.closest("button")) closeRefusal(); });
+  document.addEventListener("pointerdown", (e) => { if (!refusal.contains(e.target)) closeRefusal(); });
+  addEventListener("resize", closeRefusal, { passive: true });
+
   // ---------------------------------------------------------------- page swaps
   // A link or form inside the dashboard fetches its page and puts in the new <main> only.
   // Anything that isn't a dashboard page (sign-in, an error, another server, a file) falls
@@ -565,15 +611,20 @@
       const doc = new DOMParser().parseFromString(html, "text/html");
       const next = doc.querySelector("main.page");
       if (!next) {
-        // A refused save comes back as a notice: say it here instead of leaving the page.
+        // A refusal comes back as a notice: say it by the button instead of leaving the page.
         const why = doc.querySelector(".notice p")?.textContent;
-        if (!res.ok && why && opts.method === "POST") { toast(why, true); $$(".btn.busy").forEach((b) => b.classList.remove("busy")); return; }
+        if (res.status === 400 && why) {
+          unbusy();
+          refuse(doc.querySelector(".notice h1")?.textContent || "That didn't go through", why, opts.from);
+          return;
+        }
         location.href = res.url;
         return;
       }
       const to = new URL(res.url);
       const same = to.pathname === location.pathname;
       const swap = () => {
+        closeRefusal();
         life.abort();
         life = new AbortController();
         window.botPage = { signal: life.signal };
@@ -596,6 +647,7 @@
         run(fresh);
         if (!same) fresh.focus({ preventScroll: true });
       };
+      unbusy();
       if (!same && !calm && document.startViewTransition) {
         // html.vt stays until the next swap: taking it off would restart the entrances.
         root.classList.add("vt");
@@ -716,20 +768,22 @@
     if (e.defaultPrevented) return;
     const f = e.target;
     const b = e.submitter;
-    if (b && b.classList.contains("btn")) setTimeout(() => b.classList.add("busy"), 120);
+    if (b && b.classList.contains("btn")) busyTimers.push(setTimeout(() => b.classList.add("busy"), 120));
     if (f === dirty) { dirty = null; syncBar(); }
     const method = (b?.getAttribute("formmethod") || f.getAttribute("method") || "get").toUpperCase();
     const action = new URL(b?.getAttribute("formaction") || f.getAttribute("action") || location.href, location.href);
     if (f.target || f.hasAttribute("data-full") || !boostable(action) || f.closest(".account-menu")) return;
     e.preventDefault();
     const data = new FormData(f, b || undefined);
+    // The button that asked, or the form's own Save, anchors a refusal popup.
+    const from = b || $(".save-bar .btn", f) || f;
     if (method === "GET") {
       action.search = new URLSearchParams(data).toString();
-      visit(action.href);
+      visit(action.href, { from });
     } else if ((f.enctype || "").includes("multipart")) {
-      visit(action.href, { method, body: data });
+      visit(action.href, { method, body: data, from });
     } else {
-      visit(action.href, { method, body: new URLSearchParams(data), headers: { "content-type": "application/x-www-form-urlencoded" } });
+      visit(action.href, { method, body: new URLSearchParams(data), headers: { "content-type": "application/x-www-form-urlencoded" }, from });
     }
   });
   addEventListener("pageshow", () => $$(".btn.busy").forEach((b) => b.classList.remove("busy")));
@@ -739,6 +793,7 @@
     if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) { e.preventDefault(); pal && !pal.hidden ? closePal() : openPal(); return; }
     if (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); openPal(); return; }
     if (e.key !== "Escape") return;
+    if (closeRefusal()) return;
     if (document.body.classList.contains("drawer")) return drawer(false);
     const open = $(".pop[open]");
     if (!open) return;

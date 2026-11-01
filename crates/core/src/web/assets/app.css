@@ -700,6 +700,17 @@ body.public { background: var(--page); }
 /* A page on its way: a thin line along the top. */
 html.loading::before { content: ""; position: fixed; z-index: 99; top: 0; left: 0; height: 2px; width: 100%; background: var(--accent); transform-origin: left; animation: loading 1.2s var(--ease) infinite; }
 @keyframes loading { 0% { transform: scaleX(0); opacity: 1; } 80% { transform: scaleX(0.9); opacity: 1; } 100% { transform: scaleX(1); opacity: 0; } }
+/* Why an action was turned down, by the button that asked (app.js `refuse`). */
+.refusal { position: fixed; z-index: 96; display: flex; align-items: flex-start; gap: 12px; width: max-content; max-width: min(380px, calc(100vw - 24px)); padding: 14px; border-radius: 14px; background: var(--solid); box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--edge-2); opacity: 0; pointer-events: none; transform: translate(-50%, 6px) scale(0.97); transform-origin: top center; transition: opacity 0.16s, transform 0.28s var(--ease); }
+.refusal.above { transform: translate(-50%, calc(-100% - 6px)) scale(0.97); transform-origin: bottom center; }
+.refusal.show { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+.refusal.above.show { transform: translate(-50%, -100%); }
+.refusal-ic { flex: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: color-mix(in oklab, var(--waiting) 16%, transparent); color: var(--waiting); }
+.refusal-ic .icon { width: 16px; height: 16px; }
+.refusal-text { flex: 1; min-width: 0; padding-top: 1px; }
+.refusal-text strong { display: block; font-size: 13.5px; font-weight: 600; }
+.refusal-text p { margin-top: 3px; font-size: 13px; color: var(--ink-2); max-width: 36ch; }
+.refusal .btn { align-self: center; flex: none; }
 .toast { position: fixed; left: 50%; bottom: 24px; z-index: 95; display: flex; align-items: center; gap: 10px; padding: 10px 16px 10px 12px; border-radius: 14px; background: rgba(22, 22, 31, 0.96); box-shadow: var(--shadow-pop), inset 0 0 0 1px var(--edge-2); color: var(--ink); font-size: 13.5px; font-weight: 500; overflow: hidden; transform: translate(-50%, 24px) scale(0.94); opacity: 0; transition: opacity 0.25s, transform 0.45s var(--spring); }
 .toast .toast-ic { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--live); color: #062014; }
 .toast.bad .toast-ic { background: var(--held); color: #1a0507; }
