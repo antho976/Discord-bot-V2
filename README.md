@@ -10,7 +10,7 @@ Each feature is switched on per server on the dashboard (Admin, Features). Every
 
 | Feature | What it does |
 | --- | --- |
-| XP and levels | XP from messages, voice and reactions; level-up messages; reward roles; `/rank`, `/leaderboard`, `/xp`. Imports XP from antho-s-bot. |
+| XP and levels | XP from messages, voice and reactions; level-up messages; reward roles; `/level rank`, `/level top`, `/level prestige`, and `/xp` for staff. Imports XP from antho-s-bot. |
 | Stream alerts | Twitch live and offline posts (EventSub), schedule reminders and a weekly schedule image, YouTube uploads, a small stream history. |
 | Scam protection | Scam-message detection and a honeypot channel: deletes the messages, times the member out, alerts staff with Release and Ban buttons. |
 | Welcome | Welcome and goodbye messages with a card, auto-roles, roles back on rejoin, invite tracking. |

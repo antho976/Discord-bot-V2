@@ -62,6 +62,8 @@ pub enum Icon {
     Enter,
     /// People online, members.
     Member,
+    /// Levels: a rank badge, a hexagon with two chevrons.
+    Level,
 }
 
 impl Icon {
@@ -111,6 +113,7 @@ impl Icon {
             Icon::Gear => (24, r#"<path d="M9.6 4.2 10.2 2h3.6l.6 2.2 1.9 1.1 2.2-.6 1.8 3.1-1.6 1.6v2.2l1.6 1.6-1.8 3.1-2.2-.6-1.9 1.1-.6 2.2h-3.6l-.6-2.2-1.9-1.1-2.2.6-1.8-3.1 1.6-1.6v-2.2L3.7 8.4l1.8-3.1 2.2.6zM9.25 12a2.75 2.75 0 1 0 5.5 0 2.75 2.75 0 1 0-5.5 0"/>"#),
             Icon::Enter => (16, r#"<path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/>"#),
             Icon::Member => (16, r#"<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.5-2.5 2.5-4 5-4s4.5 1.5 5 4"/>"#),
+            Icon::Level => (24, r#"<path d="M12 2.75 19.75 7.25v9.5L12 21.25 4.25 16.75v-9.5zM8.5 12.25 12 9.5l3.5 2.75M8.5 16 12 13.25 15.5 16"/>"#),
         }
     }
 }

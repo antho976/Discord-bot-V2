@@ -587,6 +587,7 @@ name = "feat-levels"
 version = "0.1.0"
 dependencies = [
  "bot-core",
+ "bot-render",
  "maud",
  "rand",
  "serde",

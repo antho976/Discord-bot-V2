@@ -247,9 +247,7 @@ impl Welcome {
                 .and_then(|b| b.nick)
                 .or_else(|| m.user.global_name.clone())
                 .unwrap_or_else(|| m.user.name.clone());
-            let count = if s.goodbye_text.contains("{count}") { member_total(ctx, guild).await } else { None };
-            let text = fill_message(ctx, &s.goodbye_text, DEFAULT_GOODBYE, guild, &name, &name, count);
-            if let Err(e) = ctx.say(channel, &text).await {
+            if let Err(e) = post_goodbye(ctx, &s, guild, channel, &name).await {
                 bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post a goodbye");
                 notify_failure(ctx, guild, "goodbye", format!("Goodbyes aren't being posted. {}", why_refused(&e)));
             }
@@ -272,6 +270,15 @@ fn fill_message(ctx: &Ctx, template: &str, default: &str, guild: u64, user: &str
     let count = count.map(text::num).unwrap_or_else(|| "?".into());
     let server = ctx.guild_name(guild);
     text::clip(&fill(template, &[("user", user), ("name", name), ("server", &server), ("count", &count)]), 1900)
+}
+
+/// Post the goodbye message for a member called `name` in `channel`. Mentions nobody. Used for
+/// real leaves and for the dashboard's test button.
+pub async fn post_goodbye(ctx: &Ctx, s: &Settings, guild: u64, channel: u64, name: &str) -> Result<()> {
+    let count = if s.goodbye_text.contains("{count}") { member_total(ctx, guild).await } else { None };
+    let text = fill_message(ctx, &s.goodbye_text, DEFAULT_GOODBYE, guild, name, name, count);
+    ctx.say(channel, &text).await?;
+    Ok(())
 }
 
 /// Post the welcome message for `user` in the welcome channel: text, plus the card when on.

@@ -1,6 +1,8 @@
 //! XP and levels: XP from messages, voice and reactions, level-up messages, role rewards,
-//! `/rank`, `/leaderboard`, `/xp`, the dashboard pages, and the import from antho-s-bot.
+//! `/level rank|top|prestige` for members, `/xp` for staff, the dashboard pages, and the import
+//! from antho-s-bot.
 
+pub mod card;
 pub mod curve;
 pub mod import;
 mod web;
@@ -14,7 +16,9 @@ use bot_core::discord::{CommandCall, ComponentCall, Reply, button_row};
 use bot_core::rusqlite::{OptionalExtension, params};
 use bot_core::twilight_model::application::command::{Command, CommandType};
 use bot_core::twilight_model::channel::message::component::ButtonStyle;
-use bot_core::twilight_model::channel::message::AllowedMentions;
+use bot_core::twilight_model::channel::message::component::Component;
+use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
+use bot_core::twilight_model::http::attachment::Attachment;
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
@@ -55,7 +59,7 @@ pub struct Settings {
     /// Post the week's top three when the week ends.
     pub weekly_post: bool,
     pub weekly_channel: Option<u64>,
-    /// The level members can prestige from with `/prestige`; 0 turns prestige off.
+    /// The level members can prestige from with `/level prestige`; 0 turns prestige off.
     pub prestige_level: u32,
     /// Extra XP per prestige, in percent, on XP members earn.
     pub prestige_bonus: i64,
@@ -115,7 +119,7 @@ impl Settings {
     /// The extra XP, in percent, a streak of `streak` days earns: nothing on the first day, then
     /// `streak_bonus` for each day after it, up to `streak_max`.
     /// Streaks show only while they earn something, like prestige, so a server that never set a
-    /// bonus doesn't see them on /rank and the boards.
+    /// bonus doesn't see them on /level rank and the boards.
     pub fn streaks_on(&self) -> bool {
         self.streak_bonus > 0 && self.streak_max > 0
     }
@@ -250,7 +254,7 @@ impl Feature for Levels {
             name: "XP and levels",
             description: "XP from messages, voice and reactions, level-up messages and role rewards.",
             group: Group::Members,
-            nav: vec![NavItem { label: "Levels", path: "levels", icon: Icon::Trophy, about: "XP from messages, voice and reactions, and the roles it earns." }],
+            nav: vec![NavItem { label: "Levels", path: "levels", icon: Icon::Level, about: "XP from messages, voice and reactions, and the roles it earns." }],
         }
     }
 
@@ -258,14 +262,9 @@ impl Feature for Levels {
         MIGRATIONS
     }
 
+    /// `/xp` stays its own command: Manage Server can only be required of a whole command.
     fn commands(&self) -> Vec<Command> {
         vec![
-            CommandBuilder::new("rank", "Your level and XP, or someone else's", CommandType::ChatInput)
-                .option(UserBuilder::new("member", "Whose rank to show"))
-                .build(),
-            CommandBuilder::new("leaderboard", "The server's top members by XP", CommandType::ChatInput)
-                .option(StringBuilder::new("board", "All time, or this week's XP").choices([("All time", "all"), ("This week", "week")]))
-                .build(),
             CommandBuilder::new("xp", "Change a member's XP", CommandType::ChatInput)
                 .default_member_permissions(Permissions::MANAGE_GUILD)
                 .option(
@@ -287,18 +286,14 @@ impl Feature for Levels {
         ]
     }
 
-    /// `/prestige` only where prestige is on, so members elsewhere don't see a command that
-    /// would only say it's off.
+    /// `/level` for members. Its `prestige` part is there only where prestige is on, so members
+    /// elsewhere don't see a command that would only say it's off.
     fn guild_commands(&self, ctx: &Ctx, guild: u64) -> Vec<Command> {
-        if ctx.settings::<Settings>(guild, KEY).is_ok_and(|s| s.prestige_on()) {
-            vec![CommandBuilder::new("prestige", "Start over at level 0 for a prestige rank and more XP", CommandType::ChatInput).build()]
-        } else {
-            Vec::new()
-        }
+        vec![level_command(ctx.settings::<Settings>(guild, KEY).is_ok_and(|s| s.prestige_on()))]
     }
 
     fn reserved_command_names(&self) -> &'static [&'static str] {
-        &["prestige"]
+        &["level"]
     }
 
     fn routes(&self) -> bot_core::axum::Router<Ctx> {
@@ -398,52 +393,35 @@ impl Feature for Levels {
         let Some(guild) = call.guild_id() else { return Ok(()) };
         let s = ctx.settings::<Settings>(guild, KEY)?;
         match call.data.name.as_str() {
-            "rank" => {
-                let user = call.opts().user("member").map(|u| u.get()).unwrap_or(call.user_id());
-                let m = member(ctx, guild, user)?.unwrap_or(Member { user_id: user, xp: 0, level: 0, messages: 0, voice_minutes: 0, prestige: 0, streak: 0 });
-                let p = s.progress(m.xp);
-                let place = rank_of(ctx, guild, user)?;
-                let name = ctx.display_name(guild, user);
-                let mut embed = EmbedBuilder::new()
-                    .title(format!("{name}, level {}", p.level))
-                    .color(0xf0806a)
-                    .description(format!("`{}`  {} / {} XP", curve::bar(p.into, p.needed, 18), text::num(p.into), text::num(p.needed)))
-                    .field(EmbedFieldBuilder::new("Rank", place.map(|r| format!("#{r}")).unwrap_or_else(|| "Unranked".into())).inline())
-                    .field(EmbedFieldBuilder::new("Total XP", text::num(m.xp)).inline());
-                if s.prestige_on() {
-                    let bonus = s.prestige_pct(m.prestige);
-                    let value = if bonus > 0 { format!("{}, +{bonus}% XP", m.prestige) } else { m.prestige.to_string() };
-                    embed = embed.field(EmbedFieldBuilder::new("Prestige", value).inline());
-                }
-                if s.streaks_on() {
-                    let streak = match (m.streak, s.streak_pct(m.streak)) {
-                        (0, _) => "None".to_owned(),
-                        (1, _) => "1 day".to_owned(),
-                        (n, 0) => format!("{n} days"),
-                        (n, pct) => format!("{n} days, +{pct}% XP"),
-                    };
-                    embed = embed.field(EmbedFieldBuilder::new("Streak", streak).inline());
-                }
-                let embed = embed
-                    .field(EmbedFieldBuilder::new("Messages", text::num(m.messages)).inline())
-                    .field(EmbedFieldBuilder::new("Voice", text::duration(m.voice_minutes * 60)).inline())
-                    .build();
-                ctx.reply(&call.interaction, Reply::embed(embed)).await?;
-            }
-            "leaderboard" => {
-                let board = if call.opts().str("board") == Some("week") { Board::Week } else { Board::All };
-                let (embed, rows) = leaderboard(ctx, guild, board, 0)?;
-                ctx.reply(&call.interaction, Reply::embed(embed).components(rows)).await?;
-            }
-            "prestige" => {
-                let reply = match prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()) {
-                    Ok(text) => {
-                        let id = format!("{KEY}:prestige:{}", call.user_id());
-                        Reply::text(text).components(vec![button_row(&[(&id, "Prestige", ButtonStyle::Danger)])])
+            "level" => {
+                let Some((sub, opts)) = call.opts().sub() else { return Ok(()) };
+                match sub {
+                    "rank" => {
+                        let user = opts.user("member").map(|u| u.get()).unwrap_or(call.user_id());
+                        send_rank(ctx, &s, call, guild, user).await?;
                     }
-                    Err(why) => Reply::text(why),
-                };
-                ctx.reply(&call.interaction, reply.ephemeral()).await?;
+                    "top" => {
+                        let board = if opts.str("board") == Some("week") { Board::Week } else { Board::All };
+                        ctx.defer(&call.interaction, false).await?;
+                        let page = leaderboard(ctx, guild, board, 0, call.user_id())?;
+                        let token = &call.interaction.token;
+                        if let Err(e) = send_board(ctx, token, &page, false).await {
+                            bot_core::tracing::warn!(guild, error = %e, "couldn't draw the leaderboard");
+                            ctx.edit_original(&call.interaction, Reply::embed(page.embed).components(page.buttons)).await?;
+                        }
+                    }
+                    "prestige" => {
+                        let reply = match prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()) {
+                            Ok(text) => {
+                                let id = format!("{KEY}:prestige:{}", call.user_id());
+                                Reply::text(text).components(vec![button_row(&[(&id, "Prestige", ButtonStyle::Danger)])])
+                            }
+                            Err(why) => Reply::text(why),
+                        };
+                        ctx.reply(&call.interaction, reply.ephemeral()).await?;
+                    }
+                    _ => {}
+                }
             }
             "xp" => {
                 // Discord hides /xp from members without Manage Server, but server admins can
@@ -498,8 +476,18 @@ impl Feature for Levels {
         if let [which @ ("lb" | "lbw"), page] = call.args().as_slice() {
             let page: i64 = page.parse().unwrap_or(0);
             let board = if *which == "lbw" { Board::Week } else { Board::All };
-            let (embed, rows) = leaderboard(ctx, guild, board, page.max(0))?;
-            ctx.update(&call.interaction, Reply::embed(embed).components(rows)).await?;
+            ctx.defer_update(&call.interaction).await?;
+            let page = leaderboard(ctx, guild, board, page.max(0), call.user_id())?;
+            let token = &call.interaction.token;
+            if let Err(e) = send_board(ctx, token, &page, true).await {
+                bot_core::tracing::warn!(guild, error = %e, "couldn't draw the leaderboard");
+                ctx.interaction()
+                    .update_response(token)
+                    .embeds(Some(std::slice::from_ref(&page.embed)))
+                    .keep_attachment_ids(&[])
+                    .components(Some(&page.buttons))
+                    .await?;
+            }
         }
         if let ["prestige", user] = call.args().as_slice() {
             // The offer is only shown to the member it's for, but check anyway.
@@ -513,7 +501,7 @@ impl Feature for Levels {
                     let bonus = if s.prestige_bonus > 0 { format!(" You earn {}% more XP from here.", s.prestige_pct(n)) } else { String::new() };
                     format!("You're prestige {n} now, back at level 0.{bonus}")
                 }
-                None => prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()).err().unwrap_or_else(|| "Nothing changed. Try /prestige again.".into()),
+                None => prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()).err().unwrap_or_else(|| "Nothing changed. Try /level prestige again.".into()),
             };
             ctx.update(&call.interaction, Reply::text(text)).await?;
         }
@@ -532,7 +520,7 @@ fn prestige_offer(s: &Settings, m: Option<&Member>) -> std::result::Result<Strin
     }
     let bonus = if s.prestige_bonus > 0 { format!(", and you earn {}% more XP", s.prestige_pct(now + 1)) } else { String::new() };
     Ok(format!(
-        "Prestige {} puts your XP and level back to 0 and takes away your level reward roles until you earn them again. Your prestige shows on /rank and the leaderboard{bonus}. This can't be undone.",
+        "Prestige {} puts your XP and level back to 0 and takes away your level reward roles until you earn them again. Your prestige shows on /level rank and the leaderboard{bonus}. This can't be undone.",
         now + 1
     ))
 }
@@ -661,7 +649,142 @@ pub fn last_week(ctx: &Ctx, guild: u64) -> Result<Option<Winners>> {
     Ok(Some((week, rows.into_iter().map(|(_, u, x)| (u, x)).collect())))
 }
 
-fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64) -> Result<(bot_core::twilight_model::channel::message::Embed, Vec<bot_core::twilight_model::channel::message::component::Component>)> {
+/// `/level` for members: their rank, the leaderboard, and prestige where it's on.
+fn level_command(prestige: bool) -> Command {
+    let mut c = CommandBuilder::new("level", "Levels and XP", CommandType::ChatInput)
+        .option(SubCommandBuilder::new("rank", "Your level and XP, or someone else's").option(UserBuilder::new("member", "Whose rank to show")))
+        .option(
+            SubCommandBuilder::new("top", "The server's top members by XP")
+                .option(StringBuilder::new("board", "All time, or this week's XP").choices([("All time", "all"), ("This week", "week")])),
+        );
+    if prestige {
+        c = c.option(SubCommandBuilder::new("prestige", "Start over at level 0 for a prestige rank and more XP"));
+    }
+    c.build()
+}
+
+/// The colour of a member's highest coloured role, when the cache knows their roles.
+fn role_color(ctx: &Ctx, guild: u64, user: u64) -> Option<u32> {
+    let m = ctx.cache.member(Id::new(guild), Id::new(user))?;
+    let roles: Vec<(i64, u32)> = m.roles().iter().filter_map(|r| ctx.cache.role(*r).map(|r| (r.position, r.colors.primary_color))).collect();
+    roles.into_iter().filter(|r| r.1 != 0).max_by_key(|r| r.0).map(|r| r.1)
+}
+
+/// A name the card can draw: the display name, else the username, else "Member".
+fn card_name(ctx: &Ctx, name: &str, user: u64) -> String {
+    card::drawable(name)
+        .or_else(|| ctx.cache.user(Id::new(user)).and_then(|u| card::drawable(&u.name)))
+        .unwrap_or_else(|| "Member".into())
+}
+
+/// `/level rank`: the rank card, or the same facts as an embed when it can't be drawn.
+async fn send_rank(ctx: &Ctx, s: &Settings, call: &CommandCall, guild: u64, user: u64) -> Result<()> {
+    let m = member(ctx, guild, user)?.unwrap_or(Member { user_id: user, xp: 0, level: 0, messages: 0, voice_minutes: 0, prestige: 0, streak: 0 });
+    let p = s.progress(m.xp);
+    let place = rank_of(ctx, guild, user)?;
+    // Someone the cache doesn't hold still comes with the command, name and face.
+    let given = call.data.resolved.as_ref().and_then(|r| r.users.get(&Id::new(user))).cloned().or_else(|| call.user().filter(|u| u.id.get() == user).cloned());
+    let name = ctx
+        .known_name(guild, user)
+        .or_else(|| given.as_ref().map(|u| u.global_name.clone().unwrap_or_else(|| u.name.clone())))
+        .unwrap_or_else(|| "Unknown member".into());
+    let face = match (&given, ctx.cache.user(Id::new(user)).is_some()) {
+        (Some(u), false) => bot_core::discord::avatar_url(user, u.avatar.map(|a| a.to_string()).as_deref()),
+        _ => ctx.member_avatar(guild, user),
+    };
+    ctx.defer(&call.interaction, false).await?;
+    let drawn = async {
+        let rank = card::Rank {
+            name: given.as_ref().filter(|_| card::drawable(&name).is_none()).and_then(|u| card::drawable(&u.name)).unwrap_or_else(|| card_name(ctx, &name, user)),
+            avatar: card::avatar(ctx, &face, 256).await,
+            accent: card::accent(role_color(ctx, guild, user)),
+            level: p.level,
+            place,
+            xp: m.xp,
+            into: p.into,
+            needed: p.needed,
+            prestige: if s.prestige_on() { m.prestige } else { 0 },
+            streak: if s.streaks_on() { m.streak } else { 0 },
+            messages: m.messages,
+        };
+        let png = card::png(card::rank_svg(&rank)).await?;
+        let files = [Attachment::from_bytes("rank.png".into(), png, 1)];
+        ctx.interaction().update_response(&call.interaction.token).attachments(&files).await?;
+        Ok::<_, bot_core::anyhow::Error>(())
+    }
+    .await;
+    if let Err(e) = drawn {
+        bot_core::tracing::warn!(guild, error = %e, "couldn't draw the rank card");
+        ctx.edit_original(&call.interaction, Reply::embed(rank_embed(s, &m, place, &name))).await?;
+    }
+    Ok(())
+}
+
+/// The rank as an embed: what `/level rank` shows when the card can't be drawn.
+fn rank_embed(s: &Settings, m: &Member, place: Option<i64>, name: &str) -> Embed {
+    let p = s.progress(m.xp);
+    let mut embed = EmbedBuilder::new()
+        .title(format!("{name}, level {}", p.level))
+        .color(0xf0806a)
+        .description(format!("`{}`  {} / {} XP", curve::bar(p.into, p.needed, 18), text::num(p.into), text::num(p.needed)))
+        .field(EmbedFieldBuilder::new("Rank", place.map(|r| format!("#{r}")).unwrap_or_else(|| "Unranked".into())).inline())
+        .field(EmbedFieldBuilder::new("Total XP", text::num(m.xp)).inline());
+    if s.prestige_on() {
+        let bonus = s.prestige_pct(m.prestige);
+        let value = if bonus > 0 { format!("{}, +{bonus}% XP", m.prestige) } else { m.prestige.to_string() };
+        embed = embed.field(EmbedFieldBuilder::new("Prestige", value).inline());
+    }
+    if s.streaks_on() {
+        let streak = match (m.streak, s.streak_pct(m.streak)) {
+            (0, _) => "None".to_owned(),
+            (1, _) => "1 day".to_owned(),
+            (n, 0) => format!("{n} days"),
+            (n, pct) => format!("{n} days, +{pct}% XP"),
+        };
+        embed = embed.field(EmbedFieldBuilder::new("Streak", streak).inline());
+    }
+    embed
+        .field(EmbedFieldBuilder::new("Messages", text::num(m.messages)).inline())
+        .field(EmbedFieldBuilder::new("Voice", text::duration(m.voice_minutes * 60)).inline())
+        .build()
+}
+
+/// One page of the leaderboard: the picture's rows and their faces, the embed it falls back
+/// to, and the page buttons.
+struct LeaderboardPage {
+    board: card::Board,
+    faces: Vec<String>,
+    embed: Embed,
+    buttons: Vec<Component>,
+}
+
+/// Draw a leaderboard page and put it on the command's answer: as its first answer, or in
+/// place of the page before when `replace` (a page button).
+async fn send_board(ctx: &Ctx, token: &str, page: &LeaderboardPage, replace: bool) -> Result<()> {
+    let faces = card::avatars(ctx, page.faces.clone(), 128).await;
+    let board = card::Board {
+        rows: page
+            .board
+            .rows
+            .iter()
+            .zip(faces)
+            .map(|(r, avatar)| card::Row { place: r.place, name: r.name.clone(), avatar, level: r.level, figure: r.figure, prestige: r.prestige, you: r.you })
+            .collect(),
+        title: page.board.title.clone(),
+        ..page.board
+    };
+    let png = card::png(card::board_svg(&board)).await?;
+    let files = [Attachment::from_bytes("leaderboard.png".into(), png, 1)];
+    let client = ctx.interaction();
+    let req = client.update_response(token).attachments(&files).components(Some(&page.buttons));
+    // A page button swaps the picture: the old one goes, and so does the embed of a board
+    // posted before the pictures.
+    if replace { req.embeds(Some(&[])).keep_attachment_ids(&[]).await?; } else { req.await?; }
+    Ok(())
+}
+
+/// A page of the leaderboard, ten members to a page. `you` is picked out when they're on it.
+fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64, you: u64) -> Result<LeaderboardPage> {
     let per = 10;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let total = match board {
@@ -675,15 +798,26 @@ fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64) -> Result<(bot_co
         Board::Week => week_top(ctx, guild, page * per, per)?.into_iter().map(|(m, g)| (m, Some(g))).collect(),
     };
     let mut lines = Vec::new();
+    let mut card_rows = Vec::new();
     for (i, (m, gain)) in rows.iter().enumerate() {
         let place = page * per + i as i64 + 1;
+        let name = ctx.display_name(guild, m.user_id);
         let figure = match gain {
             Some(g) => format!("+{} XP", text::num(*g)),
             None => format!("{} XP", text::num(m.xp)),
         };
         let prestige = if s.prestige_on() && m.prestige > 0 { format!("prestige {}  ·  ", m.prestige) } else { String::new() };
         let streak = if s.streaks_on() && m.streak > 1 { format!("{}-day streak  ·  ", m.streak) } else { String::new() };
-        lines.push(format!("`{place:>2}`  {}  ·  {prestige}level {}  ·  {streak}{figure}", ctx.display_name(guild, m.user_id), m.level));
+        lines.push(format!("`{place:>2}`  {name}  ·  {prestige}level {}  ·  {streak}{figure}", m.level));
+        card_rows.push(card::Row {
+            place,
+            name: card_name(ctx, &name, m.user_id),
+            avatar: None,
+            level: m.level,
+            figure: gain.unwrap_or(m.xp),
+            prestige: if s.prestige_on() { m.prestige } else { 0 },
+            you: m.user_id == you,
+        });
     }
     let (title, nobody, prefix) = match board {
         Board::All => (format!("{} leaderboard", ctx.guild_name(guild)), "Nobody has XP yet.", "lb"),
@@ -701,7 +835,10 @@ fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64) -> Result<(bot_co
         let next = format!("{KEY}:{prefix}:{}", (page + 1).min(pages - 1));
         buttons.push(button_row(&[(&prev, "Previous", ButtonStyle::Secondary), (&next, "Next", ButtonStyle::Secondary)]));
     }
-    Ok((embed, buttons))
+    let faces = rows.iter().map(|(m, _)| ctx.member_avatar(guild, m.user_id)).collect();
+    let server = ctx.guild_name(guild);
+    let board = card::Board { title: card::drawable(&server).unwrap_or_else(|| "Leaderboard".into()), week: board == Board::Week, page, pages, rows: card_rows };
+    Ok(LeaderboardPage { board, faces, embed, buttons })
 }
 
 /// Whether `key` is past its cooldown; if so, the cooldown starts again now. Entries that have
@@ -1047,12 +1184,51 @@ async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
     }
 }
 
-async fn announce(ctx: &Ctx, s: &Settings, guild: u64, user: u64, level: u32, here: Option<u64>) {
-    let Some(channel) = s.announce_channel.or(here) else { return };
+/// A level-up message for `user`, with the mentions it may make: only that member, and only when
+/// the server pings.
+fn level_up_message(ctx: &Ctx, s: &Settings, guild: u64, user: u64, level: u32) -> (String, AllowedMentions) {
     let who = if s.announce_ping { format!("<@{user}>") } else { ctx.display_name(guild, user) };
     let template = if s.message.trim().is_empty() { DEFAULT_MESSAGE } else { s.message.as_str() };
     let content = text::fill(template, &[("user", &who), ("level", &level.to_string())]);
     let mentions = AllowedMentions { users: if s.announce_ping { vec![Id::new(user)] } else { vec![] }, ..Default::default() };
+    (content, mentions)
+}
+
+/// The dashboard's test: the saved level-up message for `user` at `level`, in the level-up
+/// channel. Mentions nobody but `user`.
+pub async fn test_level_up(ctx: &Ctx, s: &Settings, guild: u64, user: u64, level: u32) -> Result<()> {
+    let channel = s.announce_channel.ok_or_else(|| bot_core::anyhow::anyhow!("Pick a level-up channel first."))?;
+    let (content, mentions) = level_up_message(ctx, s, guild, user, level);
+    ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&mentions)).await?;
+    Ok(())
+}
+
+/// The dashboard's test of the weekly post: this week's top three so far, or last week's when
+/// nobody has XP yet this week, in the weekly channel. Names show without a ping.
+pub async fn test_weekly(ctx: &Ctx, s: &Settings, guild: u64) -> Result<bool> {
+    let channel = s.weekly_channel.ok_or_else(|| bot_core::anyhow::anyhow!("Pick a channel for the weekly top three first."))?;
+    let mut winners: Vec<(u64, i64)> = week_top(ctx, guild, 0, 3)?.into_iter().map(|(m, g)| (m.user_id, g)).collect();
+    let mut title = "Most XP this week so far";
+    if winners.is_empty() {
+        winners = last_week(ctx, guild)?.map(|(_, w)| w).unwrap_or_default();
+        title = "Most XP last week";
+    }
+    if winners.is_empty() {
+        return Ok(false);
+    }
+    let embed = EmbedBuilder::new()
+        .title(title)
+        .color(0xf0806a)
+        .description(winners_text(&winners))
+        .footer(bot_core::twilight_util::builder::embed::EmbedFooterBuilder::new("A test from the dashboard. The real post goes out when the week ends."))
+        .build();
+    ctx.http.create_message(Id::new(channel)).embeds(&[embed]).allowed_mentions(Some(&AllowedMentions::default())).await?;
+    Ok(true)
+}
+
+async fn announce(ctx: &Ctx, s: &Settings, guild: u64, user: u64, level: u32, here: Option<u64>) {
+    let Some(channel) = s.announce_channel.or(here) else { return };
+    let (content, mentions) = level_up_message(ctx, s, guild, user, level);
     if let Err(e) = ctx.http.create_message(Id::new(channel)).content(&content).allowed_mentions(Some(&mentions)).await {
         bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post a level-up");
         // Only the chosen channel is worth a notice; a member's own channel may simply be closed to the bot.
@@ -1198,14 +1374,21 @@ mod tests {
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
-    async fn prestige_is_a_command_only_where_it_is_on() {
+    async fn members_get_one_level_command_with_prestige_only_where_it_is_on() {
         let ctx = ctx();
-        let names = |ctx: &Ctx| Levels::default().guild_commands(ctx, 1).into_iter().map(|c| c.name).collect::<Vec<_>>();
-        assert!(names(&ctx).is_empty());
-        assert!(!Levels::default().commands().iter().any(|c| c.name == "prestige"));
+        let subs = |ctx: &Ctx, guild: u64| {
+            let c = Levels::default().guild_commands(ctx, guild);
+            assert_eq!(c.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), vec!["level"]);
+            c[0].options.iter().map(|o| o.name.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(subs(&ctx, 1), vec!["rank", "top"]);
+        // Staff keep /xp on its own, since Manage Server can only be asked of a whole command.
+        let fixed: Vec<String> = Levels::default().commands().into_iter().map(|c| c.name).collect();
+        assert_eq!(fixed, vec!["xp"]);
+        assert_eq!(Levels::default().reserved_command_names(), &["level"]);
         ctx.save_settings(1, KEY, &Settings { prestige_level: 50, ..Settings::default() }).unwrap();
-        assert_eq!(names(&ctx), vec!["prestige"]);
-        assert!(Levels::default().guild_commands(&ctx, 2).is_empty());
+        assert_eq!(subs(&ctx, 1), vec!["rank", "top", "prestige"]);
+        assert_eq!(subs(&ctx, 2), vec!["rank", "top"]);
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
