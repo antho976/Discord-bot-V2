@@ -424,8 +424,11 @@ pub fn defang(text: &str) -> String {
         let looks_like_link = word.contains("://") || host_of_token(&word.to_lowercase()).is_some();
         if looks_like_link {
             let mut w = word.replace('.', "[.]");
+            // Found on the original bytes: lowercasing can change a character's length (the
+            // Kelvin sign is 3 bytes, its "k" 1), so an index into a lowercased copy may land
+            // inside a character here and panic.
             if let Some(at) = w.find("://")
-                && let Some(t) = w[..at].to_lowercase().find("ttp")
+                && let Some(t) = w.as_bytes()[..at].windows(3).position(|b| b.eq_ignore_ascii_case(b"ttp"))
             {
                 w.replace_range(t..t + 3, "xxp");
             }
@@ -545,5 +548,13 @@ mod tests {
         assert_eq!(distance("dicsord", "discord"), 1);
         assert_eq!(distance("discord", "discord"), 0);
         assert_eq!(distance("steak", "steam"), 1);
+    }
+
+    #[test]
+    fn defang_survives_characters_that_change_length_when_lowercased() {
+        // U+212A (Kelvin sign) lowercases to a 1-byte "k"; this used to panic.
+        assert_eq!(defang("\u{212A}ttp://x.com"), "\u{212A}xxp://x[.]com");
+        assert_eq!(defang("free nitro HTTPS://x.com"), "free nitro HxxPS://x[.]com".replace("HxxPS", "HxxpS"));
+        assert_eq!(defang("İttp://a.b"), "İxxp://a[.]b");
     }
 }
