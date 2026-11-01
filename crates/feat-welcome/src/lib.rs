@@ -165,7 +165,14 @@ impl Feature for Welcome {
 
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
         for guild in ctx.enabled_guilds(KEY) {
-            let s = ctx.settings::<Settings>(guild, KEY)?;
+            // One server's error is logged and skipped, not the rest of the tick.
+            let s = match ctx.settings::<Settings>(guild, KEY) {
+                Ok(s) => s,
+                Err(e) => {
+                    bot_core::tracing::warn!(guild, error = %e, "couldn't read welcome settings");
+                    continue;
+                }
+            };
             // A slow answer from Discord mustn't hold up the tick, which every feature shares. It's
             // due again next minute.
             if s.track_invites
@@ -174,7 +181,9 @@ impl Feature for Welcome {
             {
                 bot_core::tracing::warn!(guild, "reading invites took over 10 seconds; trying again next minute");
             }
-            roles::prune(ctx, guild, s.rejoin_days.max(1))?;
+            if let Err(e) = roles::prune(ctx, guild, s.rejoin_days.max(1)) {
+                bot_core::tracing::warn!(guild, error = %e, "couldn't prune saved roles");
+            }
         }
         Ok(())
     }
