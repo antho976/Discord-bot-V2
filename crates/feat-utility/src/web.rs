@@ -429,8 +429,9 @@ async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, f
         prev_nick: None,
         prefixed: false,
         name: page.user.name.clone(),
+        set_nick: None,
     });
-    let line = format!("{}\n-# Test from the dashboard, sent by {}", notice_line(&name_of(&ctx, guild, page.user.id), &me), page.user.name);
+    let line = format!("{}\n-# Test from the dashboard, sent by {}", notice_line(&name_of(&ctx, guild, page.user.id), &me), text::escape_markdown(&page.user.name));
     if let Err(e) = ctx.say(channel, &line).await {
         return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
     }

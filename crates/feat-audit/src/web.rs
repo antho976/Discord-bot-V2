@@ -42,13 +42,6 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     // "Today" starts at midnight in the viewer's own timezone.
     let since = page.user.local(now_ms()).start_of_day()?.timestamp().as_millisecond();
     let today = store::today(&ctx, guild, since)?;
-    // Only the actions that can explain the entries shown: on their members, from a minute
-    // before the oldest.
-    let oldest = rows.last().map_or(now_ms(), |r| r.at);
-    let mut targets: Vec<u64> = rows.iter().filter_map(|r| r.user_id).collect();
-    targets.sort_unstable();
-    targets.dedup();
-    let mods = store::mod_actions_on(&ctx, guild, &targets, oldest - store::MATCH_MS)?;
     let week = store::moderator_counts(&ctx, guild, now_ms() - 7 * 86_400_000, ctx.bot_id())?;
     let daily = store::daily(&ctx, guild, now_ms(), 14)?;
     let has_channel = s.channel.is_some() || s.message_channel.is_some() || s.member_channel.is_some();
@@ -104,7 +97,7 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         (ui::empty(Icon::Log, "No log channel yet", "Pick one in Settings and events start appearing here and in Discord."))
                     }
                 } @else {
-                    (timeline(&ctx, &page, guild, &rows, &mods))
+                    (timeline(&ctx, &page, guild, &rows))
                     @if total > rows.len() as i64 {
                         p.muted.small { "Showing the latest " (rows.len()) " of " (text::num(total)) ". Filter to narrow it down." }
                     }
@@ -234,7 +227,7 @@ fn kind_icon(kind: Kind) -> Icon {
 }
 
 /// Entries grouped by day, in the viewer's own timezone, on a spine of faces.
-fn timeline(ctx: &Ctx, page: &Page, guild: u64, rows: &[Row], mods: &[store::ModAction]) -> Markup {
+fn timeline(ctx: &Ctx, page: &Page, guild: u64, rows: &[Row]) -> Markup {
     let today = page.user.local(now_ms()).date();
     let day_label = |at: i64| {
         let d = page.user.local(at).date();
@@ -262,7 +255,7 @@ fn timeline(ctx: &Ctx, page: &Page, guild: u64, rows: &[Row], mods: &[store::Mod
                     div.au-list {
                         @for r in list {
                             @let i = { n += 1; n };
-                            (entry(ctx, page, guild, r, mods, i))
+                            (entry(ctx, page, guild, r, i))
                         }
                     }
                 }
@@ -271,11 +264,12 @@ fn timeline(ctx: &Ctx, page: &Page, guild: u64, rows: &[Row], mods: &[store::Mod
     }
 }
 
-fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row, mods: &[store::ModAction], i: usize) -> Markup {
+fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row, i: usize) -> Markup {
     let time = page.user.local(r.at).strftime("%H:%M").to_string();
     let name = r.user_id.map(|u| member_name(ctx, guild, u, &r.user_name));
     let chan = r.channel_id.map(|c| channel_label(ctx, c)).unwrap_or_default();
-    let action = store::moderator_for(mods, r.kind, r.user_id, r.channel_id, r.at).filter(|a| Some(a.moderator) != r.user_id);
+    // The moderator the post named, decided when it was logged.
+    let by = r.moderator.filter(|m| Some(*m) != r.user_id);
     html! {
         div.au-entry style={ "--c:" (kind_color(r.kind)) ";--i:" (i.min(10)) } {
             time.au-time datetime=(r.at) title=(page.user.local(r.at).strftime("%b %-d, %H:%M").to_string()) { (time) }
@@ -289,10 +283,10 @@ fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row, mods: &[store::ModAction],
             }
             // What happened, then what it was: under each other in a narrow column, side by side in a
             // wide one so the details line up in a column of their own.
-            div.au-head { (headline(ctx, guild, r.kind, name.as_deref(), &chan, action.map(|a| a.moderator))) }
+            div.au-head { (headline(ctx, guild, r.kind, name.as_deref(), &chan, by)) }
             div.au-more {
                 (detail(r))
-                @if let Some(reason) = action.and_then(|a| a.reason.as_deref()) {
+                @if let Some(reason) = by.and(r.reason.as_deref()) {
                     p.au-reason { span.muted { "Reason " } (reason) }
                 }
             }
@@ -353,7 +347,7 @@ fn headline(ctx: &Ctx, guild: u64, kind: Kind, name: Option<&str>, chan: &str, b
 fn detail(r: &Row) -> Markup {
     match r.kind {
         Kind::MessageDelete => {
-            if matches!(r.summary.as_str(), "" | "Content not available" | "No text") {
+            if matches!(r.summary.as_str(), "" | "Content not available" | "No text" | crate::PRIVATE_NOTE) {
                 html! { p.muted.small { (if r.summary.is_empty() { "No text" } else { r.summary.as_str() }) } }
             } else {
                 html! { div.au-quote { (r.summary) } }
@@ -591,7 +585,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                         (ui::field_channel(&ctx, guild, "member_channel", "Member events", Some("Joins, leaves, roles, bans, timeouts and voice. None uses the log channel."), s.member_channel))
                     })))
                     (ui::section("Messages", None, ui::card(html! {
-                        (ui::field_toggle("message_delete", "Deleted", Some("The author, channel, text and file names, when the bot had seen the message."), s.message_delete))
+                        (ui::field_toggle("message_delete", "Deleted", Some("The author, channel, text and file names, when the bot had seen the message. Text from a channel some readers of the log can't see is left out."), s.message_delete))
                         (ui::field_toggle("message_edit", "Edited", Some("Before and after, with a link to the message."), s.message_edit))
                         (ui::field_toggle("bulk_delete", "Bulk deleted", Some("How many messages a purge removed, and where."), s.bulk_delete))
                     })))
