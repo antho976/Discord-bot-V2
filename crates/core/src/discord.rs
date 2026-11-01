@@ -452,6 +452,8 @@ impl CommandCall {
 pub fn why_refused(e: &twilight_http::Error) -> String {
     let status = match e.kind() {
         twilight_http::error::ErrorType::Response { status, .. } => Some(status.get()),
+        // After a first 401 the client refuses on its own, before asking Discord.
+        twilight_http::error::ErrorType::Unauthorized => Some(401),
         _ => None,
     };
     refusal(status, e)
@@ -480,6 +482,8 @@ fn refusal(status: Option<u16>, e: &dyn std::fmt::Display) -> String {
     match status {
         Some(403) => "The bot can't post in that channel. Check it can see the channel and send messages there, and attach files if it posts images.".into(),
         Some(404) => "The channel was deleted. Pick another one.".into(),
+        Some(401) => "Discord turned down the bot's token, so it can't post anything. Check DISCORD_TOKEN and restart the bot.".into(),
+        Some(429) => "Discord is slowing the bot down for sending too much. Try again in a minute.".into(),
         _ => format!("Discord refused the message: {e}"),
     }
 }
