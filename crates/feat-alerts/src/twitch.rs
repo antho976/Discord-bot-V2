@@ -224,9 +224,15 @@ pub async fn daily(ctx: &Ctx) -> Result<()> {
     if logins.is_empty() {
         return Ok(());
     }
-    resolve(ctx, &logins).await?;
-    if mode(ctx) == Mode::Push {
-        ensure_subscriptions(ctx).await?;
+    // Each step goes ahead when an earlier one fails, or one Twitch error would skip the
+    // subscription repair and follower totals for a whole day.
+    if let Err(e) = resolve(ctx, &logins).await {
+        tracing::warn!(error = %e, "couldn't refresh Twitch channels");
+    }
+    if mode(ctx) == Mode::Push
+        && let Err(e) = ensure_subscriptions(ctx).await
+    {
+        tracing::warn!(error = %e, "couldn't check Twitch subscriptions");
     }
     followers(ctx, &guilds).await;
     Ok(())
@@ -491,8 +497,9 @@ pub async fn webhook(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) ->
             let bid = v["event"]["broadcaster_user_id"].as_str().unwrap_or_default();
             let kind = v["subscription"]["type"].as_str().unwrap_or_default();
             state_set(&ctx, &format!("event:{bid}"), &format!("{now} {kind}"));
+            let sent = ts.parse::<jiff::Timestamp>().map(|t| t.as_millisecond()).unwrap_or(now);
             bot_core::tokio::spawn(async move {
-                if let Err(e) = handle_event(&ctx, &v).await {
+                if let Err(e) = handle_event(&ctx, &v, sent).await {
                     tracing::warn!(error = %e, "couldn't handle a Twitch event");
                 }
             });
@@ -502,7 +509,7 @@ pub async fn webhook(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) ->
     }
 }
 
-async fn handle_event(ctx: &Ctx, v: &Value) -> Result<()> {
+async fn handle_event(ctx: &Ctx, v: &Value, sent: i64) -> Result<()> {
     let e = &v["event"];
     let s = |k: &str| e[k].as_str().unwrap_or_default().to_owned();
     let bid = s("broadcaster_user_id");
@@ -517,7 +524,7 @@ async fn handle_event(ctx: &Ctx, v: &Value) -> Result<()> {
             let started = s("started_at").parse::<jiff::Timestamp>().map(|t| t.as_millisecond()).unwrap_or_else(|_| now_ms());
             on_online(ctx, &b, &s("id"), started, None).await
         }
-        "stream.offline" => on_offline(ctx, &bid, now_ms()).await,
+        "stream.offline" => on_offline(ctx, &bid, now_ms(), sent).await,
         "channel.update" => on_update(ctx, &bid, &s("title"), &s("category_name")).await,
         _ => Ok(()),
     }
@@ -553,6 +560,10 @@ pub struct StreamRow {
     /// The follower total when the stream started and when it ended, when Twitch said.
     pub followers_start: Option<i64>,
     pub followers_end: Option<i64>,
+    /// Clips made during the stream, counted when it ended and again a while after.
+    pub clips: i64,
+    /// When the stream last came back after a drop.
+    pub resumed_at: Option<i64>,
 }
 
 impl StreamRow {
@@ -593,7 +604,7 @@ pub fn sized(template: &str, w: u32, h: u32) -> String {
     template.replace("%{width}", "{width}").replace("%{height}", "{height}").replace("{width}", &w.to_string()).replace("{height}", &h.to_string())
 }
 
-const COLS: &str = "id, broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, last_sample, vod_url, thumbnail, games, viewer_sum, viewers, followers_start, followers_end";
+const COLS: &str = "id, broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, last_sample, vod_url, thumbnail, games, viewer_sum, viewers, followers_start, followers_end, clips, resumed_at";
 
 fn stream_row(r: &Row) -> bot_core::rusqlite::Result<StreamRow> {
     Ok(StreamRow {
@@ -616,6 +627,8 @@ fn stream_row(r: &Row) -> bot_core::rusqlite::Result<StreamRow> {
         viewers: r.get(16)?,
         followers_start: r.get(17)?,
         followers_end: r.get(18)?,
+        clips: r.get(19)?,
+        resumed_at: r.get(20)?,
     })
 }
 
@@ -702,8 +715,8 @@ fn resume_row(c: &Connection, prev: &StreamRow, stream_id: &str, title: &str, ga
     let title = if title.is_empty() { prev.title.as_str() } else { title };
     let game = if game.is_empty() { prev.game.as_str() } else { game };
     c.execute(
-        "UPDATE alerts_streams SET ended_at = NULL, duration_secs = 0, vod_url = NULL, stream_id = ?2, title = ?3, game = ?4, games = ?5,
-         thumbnail = ?6, last_sample = ?7 WHERE id = ?1",
+        "UPDATE alerts_streams SET ended_at = NULL, duration_secs = 0, vod_url = NULL, followers_end = NULL, clips = 0, stream_id = ?2,
+         title = ?3, game = ?4, games = ?5, thumbnail = ?6, last_sample = ?7, resumed_at = ?7 WHERE id = ?1",
         params![prev.id, stream_id, title, game, add_game(&prev.games, game), thumbnail, now],
     )?;
     Ok(())
@@ -770,8 +783,20 @@ pub async fn on_online(ctx: &Ctx, b: &Broadcaster, stream_id: &str, started_at: 
         }
     }
     // After the posts, so they don't wait on it. The ended post shows the gain.
+    note_followers_start(ctx, b, &row).await
+}
+
+/// A stream's gain is only honest from a total read near its start: a stream first seen late
+/// (the bot was down, or polling) gets none rather than part of one.
+const FOLLOWERS_START_WINDOW_MS: i64 = 15 * 60_000;
+
+/// Read and store the follower total a stream starts from, while it's still near the start.
+async fn note_followers_start(ctx: &Ctx, b: &Broadcaster, row: &StreamRow) -> Result<()> {
+    if row.followers_start.is_some() || now_ms() - row.started_at > FOLLOWERS_START_WINDOW_MS {
+        return Ok(());
+    }
     if let Some(total) = follower_total(ctx, b).await {
-        ctx.db.with(|c| c.execute("UPDATE alerts_streams SET followers_start = ?2 WHERE id = ?1", params![id, total]))?;
+        ctx.db.with(|c| c.execute("UPDATE alerts_streams SET followers_start = ?2 WHERE id = ?1 AND followers_start IS NULL", params![row.id, total]))?;
     }
     Ok(())
 }
@@ -786,8 +811,14 @@ async fn channel_info(ctx: &Ctx, bid: &str) -> Result<(String, String)> {
     Ok(list.and_then(|l| l.data.into_iter().next()).map(|c| (c.title, c.game_name)).unwrap_or_default())
 }
 
-pub async fn on_offline(ctx: &Ctx, bid: &str, ended: i64) -> Result<()> {
+/// `sent` is when Twitch sent the event. An offline sent before the stream last came back is
+/// about the drop, arriving late or retried, and mustn't end the stream that's on now.
+pub async fn on_offline(ctx: &Ctx, bid: &str, ended: i64, sent: i64) -> Result<()> {
     let Some(row) = open_streams(ctx)?.into_iter().find(|r| r.broadcaster_id == bid) else { return Ok(()) };
+    if row.resumed_at.is_some_and(|at| sent < at) {
+        tracing::info!(broadcaster = bid, "ignored an offline sent before the stream came back");
+        return Ok(());
+    }
     finish(ctx, row, ended).await
 }
 
@@ -807,6 +838,7 @@ async fn finish(ctx: &Ctx, row: StreamRow, ended: i64) -> Result<()> {
     });
     let (vod_url, thumbnail) = vod.map(|v| (Some(v.url), v.thumbnail_url)).unwrap_or_default();
     // Only worth asking when the start was read, since the post shows the difference.
+    let clips = clips_during(ctx, &StreamRow { ended_at: Some(ended), ..row.clone() }).unwrap_or(0);
     let followers_end = match row.followers_start {
         Some(_) => match broadcasters(ctx).into_iter().find(|b| b.user_id == row.broadcaster_id) {
             Some(b) => follower_total(ctx, &b).await,
@@ -818,9 +850,9 @@ async fn finish(ctx: &Ctx, row: StreamRow, ended: i64) -> Result<()> {
     // under a new stream id during the VOD lookup, and an end from elsewhere may have won.
     let n = ctx.db.with(|c| {
         c.execute(
-            "UPDATE alerts_streams SET ended_at = ?2, duration_secs = ?3, vod_url = ?4, thumbnail = ?5, followers_end = ?7
+            "UPDATE alerts_streams SET ended_at = ?2, duration_secs = ?3, vod_url = ?4, thumbnail = ?5, followers_end = ?7, clips = ?8
              WHERE id = ?1 AND stream_id = ?6 AND ended_at IS NULL",
-            params![row.id, ended, duration, vod_url, thumbnail, row.stream_id, followers_end],
+            params![row.id, ended, duration, vod_url, thumbnail, row.stream_id, followers_end, clips],
         )
     })?;
     MISSING.lock().unwrap().remove(&row.broadcaster_id);
@@ -882,6 +914,24 @@ pub async fn fill_thumbnails(ctx: &Ctx) -> Result<()> {
         }
         Ok(())
     })?;
+    Ok(())
+}
+
+/// Count again the clips of streams that ended in the last three hours, and edit their posts
+/// when the count changed: Twitch lists a clip from a stream's last minutes after it ends.
+pub async fn recount_clips(ctx: &Ctx) -> Result<()> {
+    let since = now_ms() - 3 * 3_600_000;
+    let rows: Vec<StreamRow> = ctx.db.with(|c| {
+        let mut s = c.prepare_cached(&format!("SELECT {COLS} FROM alerts_streams WHERE ended_at >= ?1"))?;
+        s.query_map([since], stream_row)?.collect()
+    })?;
+    for row in rows {
+        let n = clips_during(ctx, &row)?;
+        if n != row.clips {
+            ctx.db.with(|c| c.execute("UPDATE alerts_streams SET clips = ?2 WHERE id = ?1", params![row.id, n]))?;
+            edit_posts(ctx, row.id, false).await?;
+        }
+    }
     Ok(())
 }
 
@@ -951,11 +1001,19 @@ pub async fn poll(ctx: &Ctx, mode: Mode) -> Result<()> {
                 if read {
                     sample(ctx, row.id, st.viewer_count)?;
                 }
-                // The posts show the viewer count, so a new one is an edit too.
-                let info = note_info(ctx, row, &st.title, &st.game_name)?;
+                // In push mode title and game come from channel.update; /streams can lag behind
+                // it and would put the old ones back for a while.
+                let info = mode == Mode::Poll && note_info(ctx, row, &st.title, &st.game_name)?;
                 let viewers = read && (st.viewer_count != row.viewers || row.samples == 0);
+                // The posts show the viewer count, so a new one is an edit too.
                 if info || viewers {
                     edit_posts(ctx, row.id, !info).await?;
+                }
+                // The read at go-live may have failed.
+                if row.followers_start.is_none()
+                    && let Some(b) = all.iter().find(|b| b.user_id == row.broadcaster_id)
+                {
+                    note_followers_start(ctx, b, row).await?;
                 }
             }
         }
@@ -1057,8 +1115,9 @@ async fn followers(ctx: &Ctx, guilds: &[(u64, std::sync::Arc<Settings>)]) {
         }
     }
     for (guild, s) in guilds {
+        // All or nothing: a channel missing one day would read as followers lost, then gained.
         let found: Vec<i64> = s.twitch_logins.iter().filter_map(|l| totals.get(l).copied()).collect();
-        if !found.is_empty()
+        if !found.is_empty() && found.len() == s.twitch_logins.len()
             && let Err(e) = ctx.record_stat(*guild, "followers", found.iter().sum())
         {
             tracing::warn!(guild, error = %e, "couldn't store the follower total");
@@ -1136,7 +1195,7 @@ fn signed(n: i64) -> String {
 
 /// The post after the stream: how long, what was played, how many watched, followers gained,
 /// clips made, and the VOD.
-pub fn ended_post(b: &Broadcaster, st: &StreamRow, clips: i64) -> Post {
+pub fn ended_post(b: &Broadcaster, st: &StreamRow) -> Post {
     let length = text::duration(st.duration_secs);
     let games = st.games_line();
     let content = if games.is_empty() {
@@ -1164,8 +1223,8 @@ pub fn ended_post(b: &Broadcaster, st: &StreamRow, clips: i64) -> Post {
     if let Some(n) = st.followers_gained() {
         e = e.field(EmbedFieldBuilder::new("Followers", signed(n)).inline());
     }
-    if clips > 0 {
-        e = e.field(EmbedFieldBuilder::new("Clips", text::num(clips)).inline());
+    if st.clips > 0 {
+        e = e.field(EmbedFieldBuilder::new("Clips", text::num(st.clips)).inline());
     }
     Post {
         content,
@@ -1212,10 +1271,9 @@ async fn edit_posts(ctx: &Ctx, stream_id: i64, viewers_only: bool) -> Result<()>
     })?;
     let Some(b) = broadcasters(ctx).into_iter().find(|b| b.user_id == row.broadcaster_id) else { return Ok(()) };
     let none = AllowedMentions::default();
-    let clips = if row.ended_at.is_some() { clips_during(ctx, &row).unwrap_or(0) } else { 0 };
     for (guild, channel, message) in posts {
         let p = if row.ended_at.is_some() {
-            ended_post(&b, &row, clips)
+            ended_post(&b, &row)
         } else {
             match ctx.settings::<Settings>(guild as u64, KEY) {
                 Ok(s) if viewers_only && !s.live_viewers => continue,
@@ -1308,7 +1366,7 @@ mod tests {
     #[test]
     fn ended_post_has_numbers_and_vod() {
         let row = StreamRow { title: "Pets".into(), duration_secs: 8040, peak: 48, average: 31, samples: 20, ended_at: Some(1), vod_url: Some("https://www.twitch.tv/videos/9".into()), ..Default::default() };
-        let p = ended_post(&antho(), &row, 0);
+        let p = ended_post(&antho(), &row);
         assert_eq!(p.content, "Antho streamed for 2 h 14 min.");
         let fields: Vec<_> = p.embed.fields.iter().map(|f| (f.name.as_str(), f.value.as_str())).collect();
         assert!(fields.contains(&("Peak viewers", "48")));
@@ -1326,10 +1384,11 @@ mod tests {
             duration_secs: 3600,
             followers_start: Some(100),
             followers_end: Some(112),
+            clips: 3,
             ended_at: Some(1),
             ..Default::default()
         };
-        let p = ended_post(&antho(), &row, 3);
+        let p = ended_post(&antho(), &row);
         assert_eq!(p.content, "Antho streamed Hades II, Just Chatting for 1 h.");
         let fields: Vec<_> = p.embed.fields.iter().map(|f| (f.name.as_str(), f.value.as_str())).collect();
         assert!(fields.contains(&("Followers", "+12")));
@@ -1473,8 +1532,12 @@ mod tests {
         let r = &r[0];
         assert_eq!((r.stream_id.as_str(), r.ended_at, r.vod_url.as_deref(), r.title.as_str(), r.peak), ("b", None, None, "Pets", 40));
         assert_eq!(r.started_at, t - 122 * min);
+        assert!(r.resumed_at.is_some_and(|at| at >= t));
+        // The offline for the drop, arriving late, leaves the resumed stream on.
+        rt.block_on(async { on_offline(&ctx, "1", t, t - 2 * min).await.unwrap() });
+        assert_eq!(rows(&ctx)[0].ended_at, None);
         // The end that comes later closes it.
-        rt.block_on(async { on_offline(&ctx, "1", t).await.unwrap() });
+        rt.block_on(async { on_offline(&ctx, "1", t, now_ms()).await.unwrap() });
         let r = &rows(&ctx)[0];
         assert_eq!((r.ended_at, r.duration_secs), (Some(t), 122 * 60));
         // An hour later it's a new stream.

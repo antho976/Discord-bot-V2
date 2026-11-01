@@ -158,13 +158,16 @@ const MIGRATIONS: &[Migration] = &[Migration {
         CREATE INDEX alerts_video_claims_by_time ON alerts_video_claims(guild_id, at);
     ",
 }, Migration {
-    // The last viewer count read, for the live post, and the follower total when the stream
-    // started and ended, for the gain on the ended post. NULL when Twitch wouldn't say.
+    // The last viewer count read, for the live post; the follower total when the stream
+    // started and ended, for the gain on the ended post (NULL when Twitch wouldn't say); clips
+    // made during it; and when it last came back after a drop.
     name: "005_alerts_live_numbers",
     sql: "
         ALTER TABLE alerts_streams ADD COLUMN viewers INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE alerts_streams ADD COLUMN followers_start INTEGER;
         ALTER TABLE alerts_streams ADD COLUMN followers_end INTEGER;
+        ALTER TABLE alerts_streams ADD COLUMN clips INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE alerts_streams ADD COLUMN resumed_at INTEGER;
     ",
 }];
 
@@ -232,10 +235,14 @@ impl Feature for Alerts {
             {
                 bot_core::tracing::warn!(error = %e, "schedule refresh failed");
             }
-            if due(ctx, "thumbs", 15 * 60_000)
-                && let Err(e) = twitch::fill_thumbnails(ctx).await
-            {
-                bot_core::tracing::warn!(error = %e, "couldn't fill VOD pictures");
+            if due(ctx, "thumbs", 15 * 60_000) {
+                if let Err(e) = twitch::fill_thumbnails(ctx).await {
+                    bot_core::tracing::warn!(error = %e, "couldn't fill VOD pictures");
+                }
+                // Clips from a stream's last minutes are listed after it ends.
+                if let Err(e) = twitch::recount_clips(ctx).await {
+                    bot_core::tracing::warn!(error = %e, "couldn't recount clips");
+                }
             }
             clips::check(ctx, &guilds, last_tick).await;
         }
