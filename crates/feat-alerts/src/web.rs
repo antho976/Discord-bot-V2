@@ -272,7 +272,7 @@ fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broad
                     None => { div.sa-thumb { (ui::icon(Icon::Live)) span { "The stream's picture" } } }
                 }
             }
-            div.sa-foot { @if sample.viewers.is_some() { "Twitch · updated a minute ago" } @else { "Twitch" } }
+            div.sa-foot { @if sample.viewers.is_some() { "Twitch · updated • Today at " (page.user.local(now_ms()).strftime("%-I:%M %p")) } @else { "Twitch" } }
         }
         div.sa-buttons { a.sa-watch href=(b.url()) target="_blank" rel="noopener" { "Watch on Twitch" (ui::icon(Icon::External)) } }
     })
