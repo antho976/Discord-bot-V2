@@ -207,18 +207,17 @@ async fn tickets_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         style { (PreEscaped(CSS)) }
         (tabs)
         @if view == "settings" {
-            div.with-rail {
-                div.tk-main {
-                    (ui::settings_form(&page, &page.path("tickets/settings"), ui::card(html! {
-                        (ui::field_channel(&ctx, guild, "ticket_channel", "Ticket channel", Some("Tickets are private threads in this channel. The panel is posted here too."), s.ticket_channel))
-                        (ui::field_role(&ctx, guild, "staff_role", "Staff role", Some("Pinged once when a ticket opens, and allowed to close any ticket."), s.staff_role))
-                        (ui::field_number("max_open", "Open tickets per member", Some("A member must close one before opening another past this number."), s.max_open, 1, 10, None))
-                        (ui::field_number("auto_close_days", "Close idle tickets after", Some("Days with no messages in the thread. 0 leaves them open."), s.auto_close_days, 0, 90, Some("days")))
-                        (ui::field_text("panel_title", "Panel title", None, &s.panel_title, DEFAULT_PANEL_TITLE))
-                        (ui::field_textarea("panel_text", "Panel text", Some("Shown above the Open a ticket button."), &s.panel_text, DEFAULT_PANEL_TEXT))
-                    })))
-                }
-                aside.rail.tk-rail {
+            // The settings beside the panel they shape; sending it belongs to the panel.
+            div.compose.tk-compose {
+                (ui::settings_form(&page, &page.path("tickets/settings"), ui::card(html! {
+                    (ui::field_channel(&ctx, guild, "ticket_channel", "Ticket channel", Some("Tickets are private threads in this channel. The panel is posted here too."), s.ticket_channel))
+                    (ui::field_role(&ctx, guild, "staff_role", "Staff role", Some("Pinged once when a ticket opens, and allowed to close any ticket."), s.staff_role))
+                    (ui::field_number("max_open", "Open tickets per member", Some("A member must close one before opening another past this number."), s.max_open, 1, 10, None))
+                    (ui::field_number("auto_close_days", "Close idle tickets after", Some("Days with no messages in the thread. 0 leaves them open."), s.auto_close_days, 0, 90, Some("days")))
+                    (ui::field_text("panel_title", "Panel title", None, &s.panel_title, DEFAULT_PANEL_TITLE))
+                    (ui::field_textarea("panel_text", "Panel text", Some("Shown above the Open a ticket button."), &s.panel_text, DEFAULT_PANEL_TEXT))
+                })))
+                aside.rail.tk-rail.compose-preview {
                     div.rail-block {
                         h2 {
                             "The panel"
@@ -250,17 +249,18 @@ async fn tickets_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 }
             }
         } @else {
+            // The answer first, across the page: how many are open, how many wait on staff.
+            div.readings.tk-readings {
+                div.reading { b.mono data-count { (text::num(stats.open)) } span { "open now" } }
+                div.reading.tk-hot[stats.waiting > 0] {
+                    b.mono data-count { (text::num(stats.waiting)) }
+                    span { @if stats.waiting > 0 { span.dot.waiting {} } "waiting on staff" }
+                }
+                div.reading { b.mono data-count { (text::num(stats.this_week)) } span { "opened this week" } }
+                div.reading { b.mono { (stats.median_close_secs.map(span).unwrap_or_else(|| "none yet".into())) } span { "usual time to close" } }
+            }
             div.with-rail {
                 div.tk-main {
-                    div.readings.tk-readings {
-                        div.reading { b.mono data-count { (text::num(stats.open)) } span { "open now" } }
-                        div.reading.tk-hot[stats.waiting > 0] {
-                            b.mono data-count { (text::num(stats.waiting)) }
-                            span { @if stats.waiting > 0 { span.dot.waiting {} } "waiting on staff" }
-                        }
-                        div.reading { b.mono data-count { (text::num(stats.this_week)) } span { "opened this week" } }
-                        div.reading { b.mono { (stats.median_close_secs.map(span).unwrap_or_else(|| "none yet".into())) } span { "usual time to close" } }
-                    }
                     @if rows.is_empty() {
                         @if view == "closed" {
                             (ui::empty(Icon::Ticket, "Nothing closed yet", "Closed tickets stay here with who closed them and how long they took."))
@@ -302,6 +302,7 @@ fn ticket_card(ctx: &Ctx, page: &Page, guild: u64, t: &Ticket, now: i64, i: usiz
     // Staff wrote last but the words aren't cached: still say who answered, and when.
     let answered = (t.is_open() && act.staff_reply.is_none() && t.waiting_on() == Some(Turn::Member)).then_some(t.last_author).flatten();
     let took = t.closed_at.map(|at| span(((at - t.opened_at) / 1000).max(0)));
+    let has_convo = !t.is_open() || !t.details.is_empty() || act.staff_reply.is_some() || answered.is_some();
     html! {
         article.tk-card.wait[staff_turn] style={ "--i:" (i.min(10)) } {
             div.tk-face {
@@ -319,36 +320,41 @@ fn ticket_card(ctx: &Ctx, page: &Page, guild: u64, t: &Ticket, now: i64, i: usiz
                         @if let Some(at) = act.last_reply_at { " · last reply " (text::ago(at)) }
                     }
                 }
-                @if !t.details.is_empty() || act.staff_reply.is_some() || answered.is_some() {
-                    div.tk-thread {
-                        @if !t.details.is_empty() { p.tk-said { (text::clip(&t.details, 240)) } }
-                        @if let Some((who, said)) = &act.staff_reply {
-                            div.tk-reply {
-                                img.avatar src=(ctx.member_avatar(guild, *who)) alt="" width="24" height="24" loading="lazy";
-                                p.tk-said.staff { strong { (ctx.display_name(guild, *who)) } (said) }
+            }
+            // What was said and how it ended: its own column on a wide page.
+            @if has_convo {
+                div.tk-convo {
+                    @if !t.details.is_empty() || act.staff_reply.is_some() || answered.is_some() {
+                        div.tk-thread {
+                            @if !t.details.is_empty() { p.tk-said { (text::clip(&t.details, 240)) } }
+                            @if let Some((who, said)) = &act.staff_reply {
+                                div.tk-reply {
+                                    img.avatar src=(ctx.member_avatar(guild, *who)) alt="" width="24" height="24" loading="lazy";
+                                    p.tk-said.staff { strong { (ctx.display_name(guild, *who)) } (said) }
+                                }
                             }
-                        }
-                        @if let Some(who) = answered {
-                            div.tk-reply.quiet {
-                                img.avatar src=(ctx.member_avatar(guild, who)) alt="" width="24" height="24" loading="lazy";
-                                span {
-                                    strong { (ctx.display_name(guild, who)) } " answered"
-                                    @if let Some(at) = t.last_message_at { " " (text::ago(at)) }
+                            @if let Some(who) = answered {
+                                div.tk-reply.quiet {
+                                    img.avatar src=(ctx.member_avatar(guild, who)) alt="" width="24" height="24" loading="lazy";
+                                    span {
+                                        strong { (ctx.display_name(guild, who)) } " answered"
+                                        @if let Some(at) = t.last_message_at { " " (text::ago(at)) }
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                @if !t.is_open() {
-                    div.tk-ended {
-                        @if let Some(by) = t.closed_by {
-                            img.avatar src=(ctx.member_avatar(guild, by)) alt="" width="22" height="22" loading="lazy";
-                        }
-                        span {
-                            (label) " " (text::ago(t.closed_at.unwrap_or(now)))
-                            @if let Some(by) = t.closed_by { " by " strong { (ctx.display_name(guild, by)) } }
-                            @if let Some(took) = &took { " · took " (took) }
-                            @if let Some(reason) = t.reason.as_deref() { " · " (reason) }
+                    @if !t.is_open() {
+                        div.tk-ended {
+                            @if let Some(by) = t.closed_by {
+                                img.avatar src=(ctx.member_avatar(guild, by)) alt="" width="22" height="22" loading="lazy";
+                            }
+                            span {
+                                (label) " " (text::ago(t.closed_at.unwrap_or(now)))
+                                @if let Some(by) = t.closed_by { " by " strong { (ctx.display_name(guild, by)) } }
+                                @if let Some(took) = &took { " · took " (took) }
+                                @if let Some(reason) = t.reason.as_deref() { " · " (reason) }
+                            }
                         }
                     }
                 }
@@ -500,18 +506,17 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
         style { (PreEscaped(CSS)) }
         (tabs)
         @if view == "settings" {
-            div.with-rail {
-                div.tk-main {
-                    (ui::settings_form(&page, &page.path("tickets/starboard"), ui::card(html! {
-                        (ui::field_channel(&ctx, guild, "star_channel", "Starboard channel", Some("Where popular messages are reposted. None turns the starboard off."), s.star_channel))
-                        (ui::field_text("star_emoji", "Emoji", Some("Paste the emoji itself. For a custom one, paste it as <:name:id>."), &s.star_emoji, "⭐"))
-                        (ui::field_number("star_threshold", "Stars needed", Some("A message is reposted once it has this many."), s.star_threshold, 1, 100, Some("stars")))
-                        (ui::field_toggle("star_remove_below", "Remove when it drops below", Some("Takes the post down if stars fall under the number above. Off keeps it with the lower count."), s.star_remove_below))
-                        (ui::field_toggle("star_self", "Count the author's own star", Some("Off: a member starring their own message doesn't count."), s.star_self))
-                        (ui::field_channels(&ctx, guild, "star_ignored", "Ignored channels", Some("Stars in these channels never reach the starboard. The starboard channel is always ignored."), &s.star_ignored))
-                    })))
-                }
-                aside.rail.tk-rail {
+            // The settings beside the repost they shape.
+            div.compose.tk-compose {
+                (ui::settings_form(&page, &page.path("tickets/starboard"), ui::card(html! {
+                    (ui::field_channel(&ctx, guild, "star_channel", "Starboard channel", Some("Where popular messages are reposted. None turns the starboard off."), s.star_channel))
+                    (ui::field_text("star_emoji", "Emoji", Some("Paste the emoji itself. For a custom one, paste it as <:name:id>."), &s.star_emoji, "⭐"))
+                    (ui::field_number("star_threshold", "Stars needed", Some("A message is reposted once it has this many."), s.star_threshold, 1, 100, Some("stars")))
+                    (ui::field_toggle("star_remove_below", "Remove when it drops below", Some("Takes the post down if stars fall under the number above. Off keeps it with the lower count."), s.star_remove_below))
+                    (ui::field_toggle("star_self", "Count the author's own star", Some("Off: a member starring their own message doesn't count."), s.star_self))
+                    (ui::field_channels(&ctx, guild, "star_ignored", "Ignored channels", Some("Stars in these channels never reach the starboard. The starboard channel is always ignored."), &s.star_ignored))
+                })))
+                aside.rail.tk-rail.compose-preview {
                     div.rail-block {
                         h2 {
                             "How a repost looks"
@@ -653,22 +658,31 @@ const CSS: &str = r#"
 .tk-rail .rail-nums b { font-size: 24px; }
 .tk-readings .reading { flex: 1 1 140px; }
 .tk-readings .reading > span { display: inline-flex; align-items: center; gap: 7px; }
-.reading.tk-hot { background: radial-gradient(120% 140% at 0% 0%, color-mix(in oklab, var(--waiting) 16%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 34%, transparent); }
+.reading.tk-hot { background: radial-gradient(120% 140% at 0% 0%, color-mix(in oklab, var(--waiting) 9%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 34%, transparent); }
 .reading.tk-hot b { color: var(--waiting); }
 .reading.tk-hot .dot { width: 6px; height: 6px; }
+/* Settings beside the message they shape: the preview keeps about Discord's own width, the form
+   takes the rest. */
+@container col (min-width: 1000px) {
+  .compose.tk-compose { grid-template-columns: minmax(0, 1fr) min(600px, 42%); }
+}
 
-/* ---- a ticket, as a short conversation ---- */
+/* ---- a ticket, as a short conversation ----
+   Narrow: face, subject, what was said under it, badge and actions in a foot. From 600 px the
+   badge and actions sit at the right. From 1000 px what was said takes a column of its own, so a
+   row reads across: who and what, the conversation, where it stands. */
 .tk-list { display: flex; flex-direction: column; gap: 10px; }
-.tk-card { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 16px; align-items: start; padding: 16px 18px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 60ms + 200ms); }
+.tk-card { display: grid; grid-template-columns: 40px minmax(0, 1fr); grid-template-areas: "face body" "face convo" "side side"; gap: 10px 14px; align-items: start; padding: 14px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 60ms + 200ms); }
 .tk-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.tk-card.wait { background: radial-gradient(80% 140% at 0% 0%, color-mix(in oklab, var(--waiting) 7%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); }
-.tk-face { position: relative; width: 44px; height: 44px; }
-.tk-face .avatar { width: 44px; height: 44px; }
+.tk-card.wait { background: radial-gradient(80% 140% at 0% 0%, color-mix(in oklab, var(--waiting) 4%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); }
+.tk-face { grid-area: face; position: relative; width: 40px; height: 40px; }
+.tk-face .avatar { width: 40px; height: 40px; }
 .tk-turn { position: absolute; right: -2px; bottom: -2px; width: 14px; height: 14px; border-radius: 50%; box-shadow: 0 0 0 3px var(--page); }
 .tk-turn.staff { background: var(--waiting); }
 .tk-turn.staff::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--waiting); animation: ping 2.2s ease-out 4; }
 .tk-turn.member { background: var(--live); }
-.tk-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tk-body { grid-area: body; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tk-convo { grid-area: convo; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .tk-top { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
 .tk-num { flex: none; padding: 1px 7px; border-radius: 6px; background: color-mix(in oklab, var(--hue) 14%, transparent); color: var(--hue); font: 600 11.5px var(--mono); }
 .tk-subject { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; min-width: 0; overflow-wrap: anywhere; }
@@ -676,7 +690,7 @@ const CSS: &str = r#"
 .tk-by strong { color: var(--ink-2); font-weight: 500; }
 .tk-thread { display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
 .tk-said { align-self: flex-start; padding: 8px 12px; border-radius: 4px 14px 14px 14px; background: rgba(243, 242, 248, 0.055); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink-2); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.tk-reply { display: flex; align-items: flex-start; gap: 8px; padding-left: 18px; }
+.tk-reply { display: flex; align-items: flex-start; gap: 8px; }
 .tk-reply .avatar { width: 24px; height: 24px; margin-top: 3px; }
 .tk-reply.quiet { align-items: center; font-size: 12.5px; color: var(--ink-3); }
 .tk-reply.quiet .avatar { margin-top: 0; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px color-mix(in oklab, var(--accent) 60%, transparent); }
@@ -686,13 +700,23 @@ const CSS: &str = r#"
 .tk-ended { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-3); }
 .tk-ended .avatar { width: 22px; height: 22px; }
 .tk-ended strong { color: var(--ink-2); font-weight: 500; }
-.tk-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.tk-side { grid-area: side; display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .tk-side .tk-acts { flex-wrap: nowrap; }
+@container col (min-width: 600px) {
+  .tk-card { grid-template-columns: 44px minmax(0, 1fr) auto; grid-template-areas: "face body side" "face convo side"; gap: 8px 16px; padding: 16px 18px; }
+  .tk-face, .tk-face .avatar { width: 44px; height: 44px; }
+  .tk-side { flex-direction: column; flex-wrap: nowrap; align-items: flex-end; justify-content: flex-start; }
+  .tk-reply { padding-left: 18px; }
+}
+@container col (min-width: 1000px) {
+  .tk-card { grid-template-columns: 44px minmax(0, 0.85fr) minmax(0, 1.15fr) auto; grid-template-areas: "face body convo side"; column-gap: 28px; }
+  .tk-convo { padding-top: 1px; }
+}
 
 .tk-who { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: end; }
 .tk-who-one { display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; text-align: center; font-size: 12.5px; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 300ms); }
 .tk-who-one .avatar { width: 44px; height: 44px; margin-bottom: 5px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--edge-3); }
-.tk-who-one.first .avatar { width: 54px; height: 54px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--hue), 0 10px 26px -8px var(--hue); }
+.tk-who-one.first .avatar { width: 54px; height: 54px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--hue); }
 .tk-who-one strong { max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tk-who-one span { font-size: 11.5px; color: var(--ink-3); }
 
@@ -708,7 +732,7 @@ const CSS: &str = r#"
 .tk-dc-time { color: #949ba4; font-size: 11.5px; }
 .tk-dc-line { font-size: 14px; }
 .tk-dc-ping { padding: 0 2px; border-radius: 3px; background: rgba(88, 101, 242, 0.3); color: #c9cdfb; font-weight: 500; }
-.tk-dc-embed { align-self: stretch; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-left: 4px solid var(--embed, #1e1f22); border-radius: 4px; background: #2b2d31; font-size: 13px; min-width: 0; }
+.tk-dc-embed { align-self: stretch; display: flex; flex-direction: column; gap: 8px; max-width: 520px; padding: 10px 12px 12px; border-left: 4px solid var(--embed, #1e1f22); border-radius: 4px; background: #2b2d31; font-size: 13px; min-width: 0; }
 .tk-dc-author { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: #f2f3f5; }
 .tk-dc-author img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
 .tk-dc-title { color: #f2f3f5; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
@@ -722,17 +746,18 @@ const CSS: &str = r#"
 .tk-rail .tk-dc + p { margin-top: -2px; }
 
 /* ---- starboard: the posts as pictures and quotes ---- */
-.sb-grid { columns: 2 280px; column-gap: 14px; }
+/* A gallery that gains columns with the width; posts differ in height, so they pack. */
+.sb-grid { columns: 300px; column-gap: 14px; }
 .sb-card { position: relative; break-inside: avoid; display: flex; flex-direction: column; margin: 0 0 14px; border-radius: 18px; overflow: hidden; isolation: isolate; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: sb-in 0.75s var(--ease) both; animation-delay: calc(var(--i, 0) * 80ms + 150ms); transition: box-shadow 0.25s; }
 .sb-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.sb-card.lead { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 45%, transparent), 0 22px 46px -28px color-mix(in oklab, var(--hue) 75%, transparent); background: radial-gradient(100% 70% at 0% 0%, color-mix(in oklab, var(--hue) 12%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); }
+.sb-card.lead { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 45%, transparent); background: radial-gradient(100% 70% at 0% 0%, color-mix(in oklab, var(--hue) 7%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); }
 .sb-pic { position: relative; margin: 0; overflow: hidden; background: var(--well); }
 .sb-pic img { display: block; width: 100%; height: auto; max-height: 340px; object-fit: cover; transition: transform 1.1s var(--ease), filter 0.4s; }
 .sb-card:hover .sb-pic img { transform: scale(1.05); filter: saturate(1.12); }
 .sb-count { position: absolute; top: 10px; right: 10px; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px 0 8px; border-radius: 13px; background: rgba(7, 7, 11, 0.62); backdrop-filter: blur(10px); color: #fff; font: 600 12.5px var(--sans); font-variant-numeric: tabular-nums; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14); animation: pop-in 0.55s var(--spring) both; animation-delay: calc(var(--i, 0) * 80ms + 650ms); }
 .sb-count .sb-star { color: var(--hue); width: 14px; height: 14px; }
 .sb-count.inline { position: static; flex: none; background: color-mix(in oklab, var(--hue) 14%, transparent); color: var(--hue); backdrop-filter: none; box-shadow: none; }
-.sb-card.lead .sb-count { background: var(--hue); color: #1c1305; box-shadow: 0 6px 18px -6px var(--hue); }
+.sb-card.lead .sb-count { background: var(--hue); color: #1c1305; box-shadow: none; }
 .sb-card.lead .sb-count .sb-star { color: inherit; }
 .sb-body { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px 10px; }
 .sb-text { font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; color: var(--ink); }
@@ -758,11 +783,4 @@ const CSS: &str = r#"
 @keyframes tk-arrive { from { opacity: 0; transform: translateY(16px) scale(0.97); filter: blur(4px); } }
 @keyframes sb-in { from { opacity: 0; transform: translateY(18px) scale(0.96); filter: blur(6px); } }
 
-@media (max-width: 920px) {
-  .tk-card { grid-template-columns: 40px minmax(0, 1fr); gap: 12px 14px; padding: 14px; }
-  .tk-face, .tk-face .avatar { width: 40px; height: 40px; }
-  .tk-side { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-  .tk-reply { padding-left: 0; }
-  .sb-grid { columns: 1; }
-}
 "#;

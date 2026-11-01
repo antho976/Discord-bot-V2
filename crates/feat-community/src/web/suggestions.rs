@@ -67,11 +67,10 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             active,
         ))
         @if tab == "settings" {
-            div.with-rail {
-                div.cm-main {
-                    (ui::settings_form(&page, &page.path("community/suggestions"), ui::card(settings_fields(&ctx, guild, &s))))
-                }
-                aside.rail.cm-rail {
+            // The settings beside the post they shape.
+            div.compose.cm-compose {
+                (ui::settings_form(&page, &page.path("community/suggestions"), ui::card(settings_fields(&ctx, guild, &s))))
+                aside.rail.cm-rail.compose-preview {
                     div.rail-block {
                         h2 { "How one posts" }
                         @match &newest {
@@ -158,6 +157,9 @@ fn card(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, t: &Tally, i: usize,
                     span { strong { (ctx.display_name(guild, r.author_id)) } " · " (text::ago(r.created_at)) }
                     @if r.anonymous { span { "· posted anonymously" } }
                 }
+            }
+            // How it's going: the votes, and staff's answer once there is one.
+            div.sg-state {
                 @if votes > 0 {
                     div.sg-tally style={ "--i:" (i.min(10)) } {
                         span.sg-split role="img" aria-label=(tally_text(t)) {

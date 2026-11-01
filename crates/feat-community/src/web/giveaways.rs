@@ -7,7 +7,7 @@ use bot_core::{Ctx, Icon, now_ms, text};
 
 use super::{
     TabQuery, channel_in, channel_name, channel_select, countdown, discord_message, discord_relative, face_row, header_pop, month_start, open_link, plural,
-    rail_figures, role_name, script, style, until, when,
+    post_block, rail_figures, role_name, script, style, until, when,
 };
 use crate::giveaways::{self as gw, EditOutcome, EndOutcome, Giveaway, RerollOutcome};
 use crate::{CORAL, KEY, NEUTRAL};
@@ -28,12 +28,10 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         Ok((running, gw::list(c, guild, true, 25)?, gw::counts(c, guild)?, gw::since_totals(c, guild, since)?, faces, last_hour))
     })?;
     let winners: Vec<(u64, &Giveaway, i64)> = ended.iter().flat_map(|(g, n)| g.winner_ids.iter().map(move |w| (*w, g, *n))).take(5).collect();
+    // More than one running: the others fill the main column under the hero. With none, the
+    // recent winners take it over and the rail keeps the month.
+    let others = running.len() > 1;
 
-    let main = if ended_tab {
-        ended_list(&ctx, &page, guild, &ended, edit)
-    } else {
-        running_view(&ctx, &page, guild, &running, &faces, last_hour, edit)
-    };
     let month = rail_figures(&[("giveaways", totals.0), ("entries", totals.1), ("members", totals.2)]);
     let actions = edit.then(|| header_pop("Start a giveaway", start_form(&ctx, &page, guild)));
 
@@ -43,10 +41,10 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             &[("Running", page.path("community/giveaways"), Some(n_running)), ("Ended", page.path("community/giveaways?tab=ended"), None)],
             if ended_tab { "Ended" } else { "Running" },
         ))
-        div.with-rail {
-            div.cm-main { (main) }
-            aside.rail.cm-rail {
-                @if ended_tab {
+        @if ended_tab {
+            div.with-rail {
+                div.cm-main { (ended_list(&ctx, &page, guild, &ended, edit)) }
+                aside.rail.cm-rail {
                     div.rail-block {
                         h2 { "This month" }
                         (month)
@@ -57,27 +55,37 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                             (discord_message(&ctx, &page, g.finished_at(), post_preview(&ctx, guild, g, *n)))
                         }
                     }
-                } @else {
-                    @if let Some((g, n)) = running.first() {
-                        div.rail-block {
-                            h2 { "The post" span.muted { (channel_name(&ctx, guild, g.channel_id)) } }
-                            (discord_message(&ctx, &page, g.created_at, post_preview(&ctx, guild, g, *n)))
-                        }
-                    }
-                    div.rail-block {
-                        h2 { "Recent winners" }
-                        @if winners.is_empty() {
-                            (ui::empty(Icon::Trophy, "No winners yet", "Winners show up here once a giveaway ends."))
-                        } @else {
-                            @for (w, g, n) in &winners {
-                                div.mini.cm-winner {
-                                    img.avatar src=(ctx.member_avatar(guild, *w)) alt="" width="32" height="32" loading="lazy";
-                                    div.grow {
-                                        span { strong { (ctx.display_name(guild, *w)) } " won " (g.prize) }
-                                        span.muted { (text::ago(g.finished_at())) " · out of " (entries_text(*n)) }
-                                    }
+                }
+            }
+        } @else {
+            @if let Some(((g, n), people)) = running.first().zip(faces.first()) {
+                (hero(&ctx, &page, guild, g, *n, people, last_hour, edit))
+            } @else {
+                (ui::empty(Icon::Gift, "Nothing running", "Start one with the button above or /giveaway start. Members enter with the button on the message."))
+            }
+            div.with-rail {
+                div.cm-main {
+                    @if others {
+                        section.cm-block {
+                            h2 { "Also running" }
+                            div.tiles.gv-grid {
+                                @for (i, ((g, n), people)) in running.iter().zip(&faces).skip(1).enumerate() {
+                                    (card(&ctx, &page, guild, g, *n, people, i, edit))
                                 }
                             }
+                        }
+                    } @else {
+                        section.cm-block {
+                            h2 { "Recent winners" }
+                            (winner_lines(&ctx, guild, &winners, true))
+                        }
+                    }
+                }
+                aside.rail.cm-rail {
+                    @if others {
+                        div.rail-block {
+                            h2 { "Recent winners" }
+                            (winner_lines(&ctx, guild, &winners, false))
                         }
                     }
                     div.rail-block {
@@ -92,28 +100,32 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     Ok(ui::layout(&ctx, &page, "Giveaways", actions, body).into_response())
 }
 
-fn running_view(ctx: &Ctx, page: &Page, guild: u64, running: &[(Giveaway, i64)], faces: &[Vec<u64>], last_hour: i64, edit: bool) -> Markup {
-    html! {
-        @if let Some(((g, n), people)) = running.first().zip(faces.first()) {
-            (hero(ctx, page, guild, g, *n, people, last_hour, edit))
-        } @else {
-            (ui::empty(Icon::Gift, "Nothing running", "Start one with the button above or /giveaway start. Members enter with the button on the message."))
-        }
-        @if running.len() > 1 {
-            section.cm-block {
-                h2 { "Also running" }
-                div.gv-grid {
-                    @for (i, ((g, n), people)) in running.iter().zip(faces).skip(1).enumerate() {
-                        (card(ctx, page, guild, g, *n, people, i, edit))
-                    }
+/// The latest winners, one line each: in the rail, or as tiles when they fill the main column.
+fn winner_lines(ctx: &Ctx, guild: u64, winners: &[(u64, &Giveaway, i64)], tiles: bool) -> Markup {
+    let lines = html! {
+        @for (w, g, n) in winners {
+            div.mini.cm-winner {
+                img.avatar src=(ctx.member_avatar(guild, *w)) alt="" width="32" height="32" loading="lazy";
+                div.grow {
+                    span { strong { (ctx.display_name(guild, *w)) } " won " (g.prize) }
+                    span.muted { (text::ago(g.finished_at())) " · out of " (entries_text(*n)) }
                 }
             }
+        }
+    };
+    html! {
+        @if winners.is_empty() {
+            (ui::empty(Icon::Trophy, "No winners yet", "Winners show up here once a giveaway ends."))
+        } @else if tiles {
+            div.tiles.cm-tiles.gv-winners { (lines) }
+        } @else {
+            (lines)
         }
     }
 }
 
-/// The giveaway ending soonest: its prize, a clock counting down to the draw, how far along it
-/// is, and the latest faces to enter.
+/// The giveaway ending soonest, across the page: its prize, a clock counting down to the draw,
+/// how far along it is, the latest faces to enter, and its post as members see it.
 #[allow(clippy::too_many_arguments)]
 fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64], last_hour: i64, edit: bool) -> Markup {
     let secs = ((g.ends_at - now_ms()) / 1000).max(0);
@@ -165,6 +177,7 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64]
                     (open_link(page, g.channel_id, g.message_id, false))
                 }
             }
+            (post_block("The post", &channel_name(ctx, guild, g.channel_id), discord_message(ctx, page, g.created_at, post_preview(ctx, guild, g, n))))
         }
     }
 }
@@ -212,27 +225,32 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
         @if ended.is_empty() {
             (ui::empty(Icon::Trophy, "Nothing ended yet", "Finished giveaways and their winners show up here."))
         } @else {
-            div.gv-done-list {
+            // Cards in a grid that gains columns with the width: the prize, who won, the totals
+            // and the reroll in the card's own foot.
+            div.tiles.gv-done-grid {
                 @for (i, (g, n)) in ended.iter().enumerate() {
-                    article.gv-done style={ "--i:" (i.min(8)) } {
-                        (art(g, "ended"))
-                        div.gv-done-main {
-                            strong title=(g.prize) { (g.prize) }
-                            span.muted { "Ended " (text::ago(g.finished_at())) " · " (channel_name(ctx, guild, g.channel_id)) " · " (winners_text(g)) " · " (entries_text(*n)) }
-                            @if g.winner_ids.is_empty() {
-                                span.gv-nobody { "Nobody entered" }
-                            } @else {
-                                div.gv-won {
-                                    (ui::icon(Icon::Trophy))
-                                    (face_row(ctx, guild, &g.winner_ids, 5))
-                                    span { strong { (names(ctx, guild, &g.winner_ids)) } " won" }
-                                }
+                    article.gv-card.done style={ "--i:" (i.min(8)) } {
+                        div.gv-card-top {
+                            (art(g, "ended"))
+                            div.grow {
+                                strong title=(g.prize) { (g.prize) }
+                                span.muted { "Ended " (text::ago(g.finished_at())) " · " (channel_name(ctx, guild, g.channel_id)) }
+                            }
+                            (open_link(page, g.channel_id, g.message_id, true))
+                        }
+                        @if g.winner_ids.is_empty() {
+                            span.gv-nobody { "Nobody entered" }
+                        } @else {
+                            div.gv-won {
+                                (ui::icon(Icon::Trophy))
+                                (face_row(ctx, guild, &g.winner_ids, 5))
+                                span { strong { (names(ctx, guild, &g.winner_ids)) } " won" }
                             }
                         }
-                        div.gv-done-side {
-                            (open_link(page, g.channel_id, g.message_id, true))
+                        div.gv-card-foot {
+                            span { (winners_text(g)) " · " (entries_text(*n)) }
                             @if edit && *n > (g.winner_ids.len() + g.passed_ids.len()) as i64 {
-                                (ui::action_button(&page.path(&format!("community/giveaways/{}/reroll", g.id)), "Reroll", Tone::Muted, false))
+                                div.cm-actions { (ui::action_button(&page.path(&format!("community/giveaways/{}/reroll", g.id)), "Reroll", Tone::Muted, false)) }
                             }
                         }
                     }

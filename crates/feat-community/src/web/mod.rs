@@ -172,6 +172,17 @@ fn discord_message(ctx: &Ctx, page: &Page, at: i64, body: Markup) -> Markup {
 }
 
 /// Discord's relative timestamp, as a member sees `<t:…:R>`: "in 39 minutes", "5 hours ago".
+/// The message a hero is about, as members see it, under what it is and where it was posted:
+/// "The post · #announcements". Sits beside the hero's body on a wide page, under it on a narrow one.
+fn post_block(label: &str, channel: &str, message: Markup) -> Markup {
+    html! {
+        div.cm-post {
+            h3.cm-post-h { (label) span.muted { (channel) } }
+            (message)
+        }
+    }
+}
+
 fn discord_relative(at: i64) -> String {
     let secs = (at - now_ms()) / 1000;
     let a = secs.abs();
@@ -257,6 +268,20 @@ const STYLE: &str = r#"
 .cm-edit .pop-body .card { padding: 0 14px; }
 .cm-review .pop-body { width: 290px; }
 .cm-review .stack { gap: 8px; }
+/* A block with an open form lifts above the blocks after it, so the form isn't painted under them. */
+.gv-hero:has(.pop[open]), .gv-card:has(.pop[open]), .sg-card:has(.pop[open]) { position: relative; z-index: 5; }
+/* Settings beside the post they shape: the preview keeps about Discord's own width, the form
+   takes the rest. */
+@container col (min-width: 1000px) {
+  .compose.cm-compose { grid-template-columns: minmax(0, 1fr) min(600px, 42%); }
+}
+/* The post a hero is about, beside it on a wide page. */
+.cm-post { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.cm-post-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.cm-post-h .muted { font-size: 12px; font-weight: 400; }
+/* A rail line standing on its own as a tile, when the rail's list moves into the main column. */
+.cm-tiles > .mini, .cm-tiles > .pl-recent { padding: 12px 14px; border-radius: 14px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.cm-tiles > .pl-recent + .pl-recent { padding-top: 12px; border-top: 0; }
 
 /* A message as Discord draws it. Discord's own greys, since this is Discord. */
 .cm-dc { display: flex; gap: 12px; padding: 14px 14px 16px; border-radius: 14px; background: #313338; color: #dbdee1; font: 14px/1.375 var(--sans); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 18px 40px -24px rgba(0, 0, 0, 0.9); animation: cm-arrive 0.8s var(--ease) both 0.35s; }
@@ -268,7 +293,7 @@ const STYLE: &str = r#"
 .cm-dc-name { color: #f2f3f5; font-weight: 500; }
 .cm-dc-app { display: inline-grid; place-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; }
 .cm-dc-time { color: #949ba4; font-size: 11.5px; }
-.cm-dc-embed { align-self: stretch; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px; border-left: 4px solid var(--embed, #1e1f22); border-radius: 4px; background: #2b2d31; font-size: 13px; min-width: 0; }
+.cm-dc-embed { align-self: stretch; display: flex; flex-direction: column; gap: 6px; max-width: 520px; padding: 10px 12px 12px; border-left: 4px solid var(--embed, #1e1f22); border-radius: 4px; background: #2b2d31; font-size: 13px; min-width: 0; }
 .cm-dc-author { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: #f2f3f5; }
 .cm-dc-author img { width: 22px; height: 22px; border-radius: 50%; object-fit: cover; }
 .cm-dc-title { color: #f2f3f5; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
@@ -298,13 +323,16 @@ const STYLE: &str = r#"
 .gv-art .icon { width: 24px; height: 24px; }
 .gv-emoji { font-size: 28px; line-height: 1; filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.45)); }
 .gv-art.ended { filter: saturate(0.6) brightness(0.85); }
-.gv-art.big { width: 188px; height: 188px; border-radius: 30px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 26px 50px -24px color-mix(in oklab, var(--hue) 80%, transparent); animation: gv-pop 0.9s var(--spring) both 0.12s; }
+.gv-art.big { width: 188px; height: 188px; border-radius: 30px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2); animation: gv-pop 0.9s var(--spring) both 0.12s; }
 .gv-art.big::before { content: ""; position: absolute; inset: -45%; z-index: -1; background: conic-gradient(from 0deg, transparent 0 18%, rgba(255, 255, 255, 0.13) 24%, transparent 30% 68%, rgba(255, 255, 255, 0.09) 74%, transparent 80%); animation: gv-spin 16s linear 4; }
 .gv-art.big .gv-emoji { font-size: 96px; animation: gv-float 3.2s ease-in-out 0.9s 10 alternate; }
 .gv-art.big .icon { width: 72px; height: 72px; stroke-width: 1.4; }
 
-.gv-hero { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 26px; align-items: center; padding: 24px; border-radius: 24px; overflow: hidden; isolation: isolate;
-  background: radial-gradient(60% 120% at 0% 0%, color-mix(in oklab, var(--hue) 15%, transparent), transparent 62%), radial-gradient(50% 90% at 100% 100%, color-mix(in oklab, var(--accent) 8%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
+/* The giveaway ending soonest, across the page: the prize art, the prize with its clock, and
+   the post as members see it. Two columns (art, body; the post under the body) from 600 px,
+   three from 1000. */
+.gv-hero { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px 26px; align-items: center; padding: 18px; border-radius: 24px; isolation: isolate;
+  background: radial-gradient(60% 120% at 0% 0%, color-mix(in oklab, var(--hue) 8%, transparent), transparent 62%), radial-gradient(50% 90% at 100% 100%, color-mix(in oklab, var(--accent) 4%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 22%, var(--edge-1)); }
 .gv-hero-body { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; min-width: 0; }
 .gv-prize { font-size: 27px; line-height: 1.15; letter-spacing: -0.03em; overflow-wrap: anywhere; }
@@ -319,14 +347,30 @@ const STYLE: &str = r#"
 .gv-unit b { display: inline-block; font: 600 28px/1.1 var(--mono); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .gv-unit b.tick { animation: gv-tick 0.5s var(--ease); }
 .gv-unit span { font-size: 11px; color: var(--ink-3); }
-.gv-time { display: flex; flex-direction: column; gap: 7px; width: 100%; max-width: 520px; }
+.gv-time { display: flex; flex-direction: column; gap: 7px; width: 100%; }
+@container col (min-width: 600px) {
+  .gv-hero { grid-template-columns: auto minmax(0, 1fr); padding: 24px; }
+  .gv-hero > .cm-post { grid-column: 2; }
+}
+@container col (min-width: 1000px) {
+  .gv-hero { grid-template-columns: auto minmax(0, 1fr) min(560px, 38%); }
+  .gv-hero > .cm-post { grid-column: 3; grid-row: 1; }
+}
+@container col (min-width: 1500px) {
+  .gv-hero { gap: 18px 36px; padding: 28px; }
+  .gv-prize { font-size: 32px; }
+  .gv-unit { min-width: 80px; padding: 12px 12px 9px; }
+  .gv-unit b { font-size: 34px; }
+}
 .gv-time-cap { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--ink-3); }
 .gv-time-cap strong { color: var(--ink-2); font-weight: 500; }
 .gv-people { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--ink-3); }
 .gv-people .avatars .avatar { width: 32px; height: 32px; }
 .gv-people b { color: var(--ink); font-weight: 600; }
 
-.gv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+.gv-grid { --tile: 310px; }
+.gv-done-grid { --tile: 340px; }
+.gv-winners { --tile: 280px; }
 .gv-card { display: flex; flex-direction: column; gap: 14px; padding: 16px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s, background 0.25s; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 250ms); }
 .gv-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .gv-card-top { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -344,27 +388,31 @@ const STYLE: &str = r#"
 .gv-card-foot .gv-people { font-size: 12.5px; }
 .gv-card-foot .gv-people .avatars .avatar { width: 26px; height: 26px; }
 
-.gv-done-list { display: flex; flex-direction: column; gap: 10px; }
-.gv-done { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 14px 16px; border-radius: 18px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 60ms + 150ms); }
-.gv-done-main { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.gv-done-main > strong { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gv-done-main > .muted { font-size: 12px; margin-top: -5px; }
+/* An ended giveaway: the same card, with who won in the middle and the totals in the foot. */
+.gv-card.done { gap: 12px; }
+.gv-card.done .gv-card-foot { min-height: 29px; font-size: 12.5px; color: var(--ink-3); }
 .gv-won { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13px; color: var(--ink-2); }
+.gv-won .avatars { flex: none; }
 .gv-won .avatars .avatar { width: 30px; height: 30px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px color-mix(in oklab, var(--hue) 85%, transparent); }
 .gv-won .avatars .avatar + .avatar { margin-left: -6px; }
-.gv-won > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gv-won > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 .gv-won strong { color: var(--ink); font-weight: 600; }
 .gv-won > .icon { width: 16px; height: 16px; color: var(--hue); }
 .gv-nobody { font-size: 12.5px; color: var(--ink-3); }
-.gv-done-side { display: flex; align-items: center; gap: 6px; }
 
 .cm-winner .avatar { box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px color-mix(in oklab, var(--hue) 80%, transparent); }
 .cm-winner strong { font-weight: 600; }
 
 /* ---- polls ---- */
-.pl-hero { display: flex; flex-direction: column; gap: 18px; padding: 22px 24px 20px; border-radius: 24px;
-  background: radial-gradient(60% 100% at 0% 0%, color-mix(in oklab, var(--data) 10%, transparent), transparent 62%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
+/* The newest open poll, across the page: the results, and beside them (under them when narrow)
+   the poll as members see it in Discord. */
+.pl-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px 36px; align-items: start; padding: 22px 24px 20px; border-radius: 24px;
+  background: radial-gradient(60% 100% at 0% 0%, color-mix(in oklab, var(--data) 6%, transparent), transparent 62%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 18%, var(--edge-1)); }
+.pl-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+@container col (min-width: 1000px) {
+  .pl-hero { grid-template-columns: minmax(0, 1fr) min(520px, 36%); padding: 24px 26px 22px; }
+}
 .pl-ask { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-3); }
 .pl-ask .avatar { width: 34px; height: 34px; }
 .pl-ask strong { color: var(--ink-2); font-weight: 600; }
@@ -375,7 +423,7 @@ const STYLE: &str = r#"
 .pl-ans.bare { grid-template-columns: minmax(0, 1fr) 64px; }
 .pl-bar { position: relative; display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 6px 14px; border-radius: 12px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; isolation: isolate; }
 .pl-fill { position: absolute; inset: 0 auto 0 0; z-index: -1; background: color-mix(in oklab, var(--data) 20%, transparent); transform-origin: left; animation: fill 1.2s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 280ms); }
-.pl-ans.lead .pl-fill { background: linear-gradient(90deg, color-mix(in oklab, var(--data-2) 62%, transparent), color-mix(in oklab, var(--data) 50%, transparent)); box-shadow: 0 0 24px -6px var(--data-2); }
+.pl-ans.lead .pl-fill { background: linear-gradient(90deg, color-mix(in oklab, var(--data-2) 62%, transparent), color-mix(in oklab, var(--data) 50%, transparent)); box-shadow: none; }
 .pl-ans.lead .pl-bar { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 40%, transparent); }
 .pl-label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--ink-2); overflow-wrap: anywhere; }
 .pl-label .icon { width: 15px; height: 15px; flex: none; }
@@ -388,7 +436,11 @@ const STYLE: &str = r#"
 .pl-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
 .pl-foot b { color: var(--ink-2); font-weight: 600; }
 
-.pl-list { display: flex; flex-direction: column; gap: 10px; }
+.pl-grid { --tile: 400px; }
+/* Ended polls differ in height (two answers or ten), so they pack into columns. */
+.pl-cols { columns: 420px; column-gap: 12px; }
+.pl-cols > .pl-card { break-inside: avoid; margin-bottom: 12px; }
+.pl-recents { --tile: 300px; }
 .pl-card { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 200ms); }
 .pl-card-top { display: flex; align-items: flex-start; gap: 12px; }
 .pl-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
@@ -417,7 +469,7 @@ const STYLE: &str = r#"
 .pl-busy .meter { height: 4px; }
 
 /* Discord's own poll. */
-.cm-dc-poll { align-self: stretch; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 8px; background: #2b2d31; box-shadow: inset 0 0 0 1px #3f4147; }
+.cm-dc-poll { align-self: stretch; max-width: 520px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 8px; background: #2b2d31; box-shadow: inset 0 0 0 1px #3f4147; }
 .cm-dc-poll > strong { color: #f2f3f5; font-size: 14.5px; font-weight: 600; overflow-wrap: anywhere; }
 .cm-dc-poll > small { color: #949ba4; font-size: 12px; margin-top: -6px; }
 .cm-dc-opt { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 6px 12px; border-radius: 8px; background: #383a40; font-size: 13.5px; color: #dbdee1; }
@@ -429,16 +481,21 @@ const STYLE: &str = r#"
 
 /* ---- suggestions ---- */
 .sg-list { display: flex; flex-direction: column; gap: 10px; }
-.sg-card { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; gap: 16px; align-items: start; padding: 16px 18px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 55ms + 150ms); }
+/* One suggestion. Narrow: score and words, the votes and reply under them, status and actions in
+   a foot. From 600 px the status sits at the right. From 1000 px the votes and the reply take a
+   column of their own, so a row reads across: score, suggestion, how it went, status. */
+.sg-card { display: grid; grid-template-columns: 46px minmax(0, 1fr); grid-template-areas: "score body" "score state" "side side"; gap: 10px 14px; align-items: start; padding: 14px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 55ms + 150ms); }
 .sg-card:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .sg-score { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; height: 66px; border-radius: 15px; color: var(--data);
   background: radial-gradient(100% 100% at 50% 0%, var(--data-wash), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 28%, transparent); }
 .sg-score .icon { width: 15px; height: 15px; }
 .sg-score b { font: 650 20px/1.1 var(--sans); letter-spacing: -0.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
-.sg-score.down { color: var(--held); background: radial-gradient(100% 100% at 50% 100%, color-mix(in oklab, var(--held) 15%, transparent), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--held) 28%, transparent); }
+.sg-score.down { color: var(--held); background: radial-gradient(100% 100% at 50% 100%, color-mix(in oklab, var(--held) 8%, transparent), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--held) 28%, transparent); }
 .sg-score.flat { color: var(--ink-3); background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
-.sg-body { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.sg-text { font-size: 15px; font-weight: 550; line-height: 1.45; text-wrap: pretty; overflow-wrap: anywhere; }
+.sg-score { grid-area: score; }
+.sg-body { grid-area: body; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.sg-state { grid-area: state; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.sg-text { max-width: 70ch; font-size: 15px; font-weight: 550; line-height: 1.45; text-wrap: pretty; overflow-wrap: anywhere; }
 .sg-by { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12.5px; color: var(--ink-3); }
 .sg-by .avatar { width: 22px; height: 22px; }
 .sg-by strong { color: var(--ink-2); font-weight: 500; }
@@ -455,12 +512,21 @@ const STYLE: &str = r#"
 .sg-reply.ok { --tone: var(--live); }
 .sg-reply.warn { --tone: var(--waiting); }
 .sg-reply.bad { --tone: var(--held); }
-.sg-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.sg-side { grid-area: side; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
 .sg-side .cm-actions { flex-wrap: nowrap; gap: 4px; }
+@container col (min-width: 600px) {
+  .sg-card { grid-template-columns: 58px minmax(0, 1fr) auto; grid-template-areas: "score body side" "score state side"; gap: 8px 16px; padding: 16px 18px; }
+  .sg-side { flex-direction: column; align-items: flex-end; justify-content: flex-start; }
+}
+@container col (min-width: 1000px) {
+  .sg-card { grid-template-columns: 58px minmax(0, 1.15fr) minmax(0, 1fr) auto; grid-template-areas: "score body state side"; column-gap: 28px; }
+  .sg-state { padding-top: 3px; }
+  .sg-tally { max-width: none; }
+}
 .sg-top { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: end; }
 .sg-voter { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; text-align: center; font-size: 12.5px; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 300ms); }
 .sg-voter .avatar { width: 44px; height: 44px; margin-bottom: 4px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--edge-3); }
-.sg-voter.first .avatar { width: 54px; height: 54px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--data), 0 10px 26px -8px var(--data-2); }
+.sg-voter.first .avatar { width: 54px; height: 54px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--data); }
 .sg-voter strong { max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sg-voter span { font-size: 11.5px; color: var(--ink-3); }
 
@@ -478,7 +544,6 @@ const STYLE: &str = r#"
   .gv-unit b { font-size: 24px; }
 }
 @media (max-width: 920px) {
-  .gv-hero { grid-template-columns: 1fr; gap: 18px; padding: 18px; }
   .gv-art.big { width: 112px; height: 112px; border-radius: 24px; }
   .gv-art.big .gv-emoji { font-size: 56px; }
   .gv-art.big .icon { width: 48px; height: 48px; }
@@ -486,21 +551,14 @@ const STYLE: &str = r#"
   .gv-clock { gap: 6px; width: 100%; }
   .gv-unit { flex: 1; min-width: 0; padding: 8px 4px 7px; }
   .gv-unit b { font-size: 22px; }
-  .gv-done { grid-template-columns: auto minmax(0, 1fr); gap: 12px 14px; padding: 14px; }
-  .gv-done-side { grid-column: 1 / -1; justify-content: flex-end; }
-  .gv-won { align-items: flex-start; }
-  .gv-won > span:last-child { white-space: normal; padding-top: 5px; }
-  .gv-won > .icon { margin-top: 7px; }
   .pl-hero { padding: 18px 16px; gap: 16px; }
   .pl-q { font-size: 20px; }
   .pl-ask .status { margin-left: 0; }
   .pl-ans { grid-template-columns: minmax(0, 1fr) 58px; }
   .pl-voters { display: none; }
   .pl-card { padding: 14px; }
-  .sg-card { grid-template-columns: 46px minmax(0, 1fr); gap: 12px 14px; padding: 14px; }
   .sg-score { height: 56px; border-radius: 13px; }
   .sg-score b { font-size: 17px; }
-  .sg-side { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; }
   .cm-edit[open] { flex-basis: 100%; order: 10; }
   .cm-edit .pop-body { position: static; width: 100%; margin-top: 8px; }
 }

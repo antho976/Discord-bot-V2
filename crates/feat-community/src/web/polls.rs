@@ -5,7 +5,10 @@ use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 
-use super::{TabQuery, channel_in, channel_name, channel_select, countdown, discord_message, header_pop, month_start, open_link, plural, rail_figures, script, style};
+use super::{
+    TabQuery, channel_in, channel_name, channel_select, countdown, discord_message, header_pop, month_start, open_link, plural, post_block, rail_figures, script,
+    style,
+};
 use crate::KEY;
 use crate::polls::{self as pl, Poll};
 
@@ -29,8 +32,17 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     busiest.truncate(4);
     let most = busiest.first().map(|b| b.1).unwrap_or(1).max(1);
 
-    let main = if ended_tab { ended_list(&ctx, &page, guild, &over) } else { open_view(&ctx, &page, guild, &open, edit) };
     let actions = edit.then(|| header_pop("Post a poll", post_form(&ctx, &page, guild)));
+    let this_month = html! {
+        div.rail-block {
+            h2 { "This month" }
+            (rail_figures(&[("closed", month.0), ("votes", month.1), ("open now", open.len() as i64)]))
+        }
+    };
+    let nothing_ended = html! { (ui::empty(Icon::Poll, "Nothing ended yet", "Closed polls and their winning answers show up here.")) };
+    // More than one open: the others fill the main column under the hero. With none, the recently
+    // ended ones take it over.
+    let others = open.len() > 1;
 
     let body = html! {
         (style())
@@ -38,14 +50,11 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             &[("Open", page.path("community/polls"), Some(open.len() as i64)), ("Ended", page.path("community/polls?tab=ended"), None)],
             if ended_tab { "Ended" } else { "Open" },
         ))
-        div.with-rail {
-            div.cm-main { (main) }
-            aside.rail.cm-rail {
-                @if ended_tab {
-                    div.rail-block {
-                        h2 { "This month" }
-                        (rail_figures(&[("closed", month.0), ("votes", month.1), ("open now", open.len() as i64)]))
-                    }
+        @if ended_tab {
+            div.with-rail {
+                div.cm-main { (ended_list(&ctx, &page, guild, &over)) }
+                aside.rail.cm-rail {
+                    (this_month)
                     div.rail-block {
                         h2 { "Most votes" }
                         @if busiest.is_empty() {
@@ -58,21 +67,48 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                             }
                         }
                     }
-                } @else {
-                    @if let Some(p) = open.first() {
+                }
+            }
+        } @else {
+            @if let Some(p) = open.first() {
+                (hero(&ctx, &page, guild, p, edit))
+            } @else {
+                (ui::empty(Icon::Poll, "No open polls", "Post one with the button above or /poll. Open polls wait here until they close."))
+            }
+            div.with-rail {
+                div.cm-main {
+                    @if others {
+                        section.cm-block {
+                            h2 { "Also open" }
+                            div.tiles.pl-grid {
+                                @for (i, p) in open[1..].iter().enumerate() { (open_card(&ctx, &page, guild, p, i, edit)) }
+                            }
+                        }
+                    } @else {
+                        section.cm-block {
+                            h2 { "Recently ended" }
+                            @if over.is_empty() {
+                                (nothing_ended)
+                            } @else {
+                                div.tiles.cm-tiles.pl-recents {
+                                    @for p in over.iter().take(4) { (recent_item(p)) }
+                                }
+                            }
+                        }
+                    }
+                }
+                aside.rail.cm-rail {
+                    @if others {
                         div.rail-block {
-                            h2 { "The poll" span.muted { (channel_name(&ctx, guild, p.channel_id)) } }
-                            (discord_message(&ctx, &page, p.created_at, poll_preview(&ctx, p)))
+                            h2 { "Recently ended" }
+                            @if over.is_empty() {
+                                (nothing_ended)
+                            } @else {
+                                @for p in over.iter().take(3) { (recent_item(p)) }
+                            }
                         }
                     }
-                    div.rail-block {
-                        h2 { "Recently ended" }
-                        @if over.is_empty() {
-                            (ui::empty(Icon::Poll, "Nothing ended yet", "Closed polls and their winning answers show up here."))
-                        } @else {
-                            @for p in over.iter().take(3) { (recent_item(p)) }
-                        }
-                    }
+                    (this_month)
                 }
             }
         }
@@ -90,68 +126,53 @@ fn votes(n: i64) -> String {
     format!("{} {}", text::num(n), plural(n, "vote", "votes"))
 }
 
-fn open_view(ctx: &Ctx, page: &Page, guild: u64, open: &[Poll], edit: bool) -> Markup {
-    html! {
-        @if let Some(p) = open.first() {
-            (hero(ctx, page, guild, p, edit))
-        } @else {
-            (ui::empty(Icon::Poll, "No open polls", "Post one with the button above or /poll. Open polls wait here until they close."))
-        }
-        @if open.len() > 1 {
-            section.cm-block {
-                h2 { "Also open" }
-                div.pl-list {
-                    @for (i, p) in open[1..].iter().enumerate() { (open_card(ctx, page, guild, p, i, edit)) }
-                }
-            }
-        }
-    }
-}
-
 /// Live counts for an open poll, with every answer present even when nothing was read.
 fn live_answers(ctx: &Ctx, p: &Poll) -> pl::Live {
     ctx.db.with(|c| pl::live(c, p)).unwrap_or_else(|_| pl::Live { answers: p.answers.iter().map(|a| (a.clone(), 0, 0, Vec::new())).collect(), voters: 0 })
 }
 
-/// The newest open poll: who asked, the question, and each answer's bar filling to its share,
-/// with the latest voters' faces.
+/// The newest open poll, across the page: who asked, the question, and each answer's bar filling
+/// to its share, with the latest voters' faces; beside it, the poll as members see it.
 fn hero(ctx: &Ctx, page: &Page, guild: u64, p: &Poll, edit: bool) -> Markup {
     let pl::Live { answers, voters } = live_answers(ctx, p);
     let top = answers.iter().map(|a| a.1).max().unwrap_or(0);
     let total: i64 = answers.iter().map(|a| a.1).sum();
     html! {
         article.pl-hero {
-            div.pl-ask {
-                img.avatar src=(ctx.member_avatar(guild, p.created_by)) alt="" width="34" height="34" loading="lazy";
-                span { strong { (ctx.display_name(guild, p.created_by)) } " asked in " (channel_name(ctx, guild, p.channel_id)) " · " (text::ago(p.created_at)) }
-                span.status { span.dot.live {} (countdown("Closes in", p.ends_at)) }
-            }
-            h2.pl-q { (p.question) }
-            div.pl-answers {
-                @for (i, (answer, n, pct, who)) in answers.iter().enumerate() {
-                    div.pl-ans.lead[*n == top && top > 0] style={ "--i:" (i) } {
-                        div.pl-bar {
-                            span.pl-fill style={ "width:" (pct) "%" } {}
-                            span.pl-label { @if *n == top && top > 0 { (ui::icon(Icon::Check)) } (answer) }
-                            b.pl-pct data-count { (pct) "%" }
+            div.pl-main {
+                div.pl-ask {
+                    img.avatar src=(ctx.member_avatar(guild, p.created_by)) alt="" width="34" height="34" loading="lazy";
+                    span { strong { (ctx.display_name(guild, p.created_by)) } " asked in " (channel_name(ctx, guild, p.channel_id)) " · " (text::ago(p.created_at)) }
+                    span.status { span.dot.live {} (countdown("Closes in", p.ends_at)) }
+                }
+                h2.pl-q { (p.question) }
+                div.pl-answers {
+                    @for (i, (answer, n, pct, who)) in answers.iter().enumerate() {
+                        div.pl-ans.lead[*n == top && top > 0] style={ "--i:" (i) } {
+                            div.pl-bar {
+                                span.pl-fill style={ "width:" (pct) "%" } {}
+                                span.pl-label { @if *n == top && top > 0 { (ui::icon(Icon::Check)) } (answer) }
+                                b.pl-pct data-count { (pct) "%" }
+                            }
+                            span.pl-voters { (ui::avatars(&who.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), 3)) }
+                            span.pl-n { (votes(*n)) }
                         }
-                        span.pl-voters { (ui::avatars(&who.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), 3)) }
-                        span.pl-n { (votes(*n)) }
+                    }
+                }
+                div.pl-foot {
+                    span {
+                        @if total == 0 { "No votes yet" } @else {
+                            b { (votes(total)) } " from " b { (text::num(voters)) " " (plural(voters, "member", "members")) }
+                        }
+                        " · " (if p.multi { "several answers allowed" } else { "one answer each" })
+                    }
+                    div.cm-actions {
+                        (open_link(page, p.channel_id, Some(p.message_id), false))
+                        @if edit { (ui::action_button(&page.path(&format!("community/polls/{}/end", p.id)), "End now", Tone::Muted, true)) }
                     }
                 }
             }
-            div.pl-foot {
-                span {
-                    @if total == 0 { "No votes yet" } @else {
-                        b { (votes(total)) } " from " b { (text::num(voters)) " " (plural(voters, "member", "members")) }
-                    }
-                    " · " (if p.multi { "several answers allowed" } else { "one answer each" })
-                }
-                div.cm-actions {
-                    (open_link(page, p.channel_id, Some(p.message_id), false))
-                    @if edit { (ui::action_button(&page.path(&format!("community/polls/{}/end", p.id)), "End now", Tone::Muted, true)) }
-                }
-            }
+            (post_block("The poll", &channel_name(ctx, guild, p.channel_id), discord_message(ctx, page, p.created_at, poll_preview(ctx, p))))
         }
     }
 }
@@ -235,7 +256,7 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, over: &[Poll]) -> Markup {
         @if over.is_empty() {
             (ui::empty(Icon::Poll, "Nothing ended yet", "Closed polls show their final results here."))
         } @else {
-            div.pl-list {
+            div.pl-cols {
                 @for (i, p) in over.iter().enumerate() { (ended_card(ctx, page, guild, p, i)) }
             }
         }
