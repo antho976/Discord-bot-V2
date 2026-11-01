@@ -1,11 +1,11 @@
 use bot_core::axum::Router;
 use bot_core::axum::extract::{Path, Query, State};
-use bot_core::axum::response::IntoResponse;
-use bot_core::axum::routing::get;
+use bot_core::axum::response::{IntoResponse, Redirect};
+use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_model::id::Id;
 use bot_core::web::ui;
-use bot_core::web::{FormData, Level, Page, User, WebResult, saved};
+use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 use serde::Deserialize;
 
@@ -18,6 +18,7 @@ pub fn routes() -> Router<Ctx> {
     Router::new()
         .route("/g/{guild}/audit", get(recent_page))
         .route("/g/{guild}/audit/settings", get(settings_page).post(save_settings))
+        .route("/g/{guild}/audit/test", post(send_test))
 }
 
 fn tabs(page: &Page, active: &str) -> Markup {
@@ -146,7 +147,7 @@ fn mods_block(ctx: &Ctx, guild: u64, week: &[(u64, i64)]) -> Markup {
                                 span { (ctx.display_name(guild, *m)) }
                                 span.meter { span style={ "width:" ((n * 100 / max).max(6)) "%" } {} }
                             }
-                            b.mono data-count { (n) }
+                            b data-count { (n) }
                         }
                     }
                 }
@@ -272,8 +273,8 @@ fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row, mods: &[store::ModAction],
     let chan = r.channel_id.map(|c| channel_label(ctx, c)).unwrap_or_default();
     let action = store::moderator_for(mods, r.kind, r.user_id, r.channel_id, r.at).filter(|a| Some(a.moderator) != r.user_id);
     html! {
-        div.au-entry style={ "--c:" (kind_color(r.kind)) ";--i:" (i.min(14)) } {
-            time.mono.au-time datetime=(r.at) title=(page.user.local(r.at).strftime("%b %-d, %H:%M").to_string()) { (time) }
+        div.au-entry style={ "--c:" (kind_color(r.kind)) ";--i:" (i.min(10)) } {
+            time.au-time datetime=(r.at) title=(page.user.local(r.at).strftime("%b %-d, %H:%M").to_string()) { (time) }
             div.au-face {
                 @if let Some(u) = r.user_id {
                     img.avatar src=(ctx.member_avatar(guild, u)) alt="" width="36" height="36" loading="lazy";
@@ -368,7 +369,7 @@ fn detail(r: &Row) -> Markup {
         },
         // A young account is flagged when it joins.
         Kind::Join if r.summary.starts_with("New account") => html! {
-            p.au-plain { span.badge.warn { "New account" } " " (r.summary.trim_start_matches("New account").trim_start_matches(',').trim()) }
+            p.au-plain { span.au-new { "New account" } ", " (r.summary.trim_start_matches("New account").trim_start_matches(',').trim()) }
         },
         _ => plain_detail(&r.summary),
     }
@@ -441,7 +442,7 @@ fn style() -> Markup {
 
 const STYLE: &str = r#"
 .au-main { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
-.au-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 3px; background: var(--c); box-shadow: none; flex: none; }
+.au-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: none; flex: none; }
 .au-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .au-readings .reading { min-width: 0; }
 .au-readings .reading span { display: inline-flex; align-items: center; gap: 7px; }
@@ -457,21 +458,23 @@ const STYLE: &str = r#"
 /* The timeline: days, then entries on a spine that runs through the faces. */
 .au-timeline { display: flex; flex-direction: column; gap: 22px; }
 .au-day { display: flex; flex-direction: column; gap: 4px; }
-.au-day-head { position: sticky; top: 8px; z-index: 2; align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 6px 0 12px; border-radius: 14px; font-size: 12.5px; font-weight: 600; background: color-mix(in oklab, var(--page) 80%, transparent); backdrop-filter: blur(10px); box-shadow: inset 0 0 0 1px var(--edge-1); margin-bottom: 6px; }
-.au-day-head span { min-width: 22px; height: 18px; padding: 0 6px; border-radius: 9px; background: color-mix(in oklab, var(--hue) 20%, transparent); color: var(--hue); font: 600 11px/18px var(--mono); text-align: center; }
+.au-day-head { position: sticky; top: 8px; z-index: 2; align-self: flex-start; display: inline-flex; align-items: baseline; gap: 8px; height: 28px; line-height: 28px; padding: 0 12px; margin-left: -12px; border-radius: 14px; font-size: 13.5px; font-weight: 600; background: color-mix(in oklab, var(--page) 85%, transparent); backdrop-filter: blur(10px); margin-bottom: 4px; }
+.au-day-head span { color: var(--ink-3); font-weight: 400; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .au-list { position: relative; display: flex; flex-direction: column; }
-.au-list::before { content: ""; position: absolute; left: 77px; top: 18px; bottom: 18px; width: 2px; border-radius: 1px; background: linear-gradient(180deg, var(--edge-2), var(--edge-1)); }
-.au-entry { position: relative; display: grid; grid-template-columns: 42px 36px minmax(0, 1fr); column-gap: 18px; align-items: start; padding: 9px 10px 9px 0; border-radius: 14px; transition: background 0.18s; animation: au-in 0.5s var(--ease) both; animation-delay: calc(var(--i, 0) * 35ms + 150ms); }
+.au-list::before { content: ""; position: absolute; left: 78px; top: 18px; bottom: 18px; width: 1px; background: var(--edge-2); }
+.au-entry { position: relative; display: grid; grid-template-columns: 42px 36px minmax(0, 1fr); column-gap: 18px; align-items: start; padding: 9px 10px 9px 0; border-radius: 14px; transition: background 0.18s; animation: au-in 0.24s var(--ease) both; animation-delay: calc(var(--i, 0) * 12ms); }
 .au-entry > .au-time, .au-entry > .au-face { grid-row: 1 / span 2; }
-.au-entry:hover { background: linear-gradient(90deg, transparent 50px, color-mix(in oklab, var(--c) 7%, transparent) 90px, transparent 70%); }
-@keyframes au-in { from { opacity: 0; transform: translateX(-8px); } }
-.au-time { padding-top: 10px; font-size: 12px; color: var(--ink-3); text-align: right; }
+.au-entry:hover { background: linear-gradient(90deg, transparent 50px, var(--well) 90px); }
+@keyframes au-in { from { opacity: 0; transform: translateY(4px); } }
+/* Another filter or search is the same page: the rows are simply there. */
+html.same .au-entry, html.same .au-mod, html.same .au-mod .meter > span { animation: none; }
+.au-time { padding-top: 9px; font-size: 12.5px; color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; }
 .au-face { position: relative; width: 36px; height: 36px; }
 .au-face .avatar { width: 36px; height: 36px; box-shadow: 0 0 0 3px var(--page); }
 .au-noface { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--raised); color: var(--ink-2); box-shadow: 0 0 0 3px var(--page), inset 0 0 0 1px var(--edge-2); }
 .au-noface .icon { width: 16px; height: 16px; }
 /* The kind, in its colour, pinned to the face. */
-.au-kind { position: absolute; right: -6px; bottom: -4px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--c); color: #0b0b10; box-shadow: 0 0 0 2.5px var(--page); animation: pop-in 0.45s var(--spring) both; animation-delay: calc(var(--i, 0) * 35ms + 380ms); }
+.au-kind { position: absolute; right: -6px; bottom: -4px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--c); color: #0b0b10; box-shadow: 0 0 0 2.5px var(--page); }
 .au-kind .icon { width: 11px; height: 11px; stroke-width: 2.4; }
 .au-head { grid-column: 3; min-width: 0; padding-top: 8px; }
 .au-more { grid-column: 3; display: flex; flex-direction: column; gap: 6px; min-width: 0; margin-top: 6px; }
@@ -479,12 +482,13 @@ const STYLE: &str = r#"
 .au-plain, .au-reason { max-width: 70ch; }
 .au-line { font-size: 13.5px; color: var(--ink-2); line-height: 1.45; }
 .au-line strong { font-weight: 600; color: var(--ink); }
-.au-by { display: inline-flex; align-items: center; gap: 5px; vertical-align: -4px; padding: 1px 8px 1px 2px; border-radius: 11px; background: var(--control); }
+.au-by { display: inline-flex; align-items: center; gap: 6px; vertical-align: -4px; }
 .au-by .avatar { width: 18px; height: 18px; }
-.au-plain { font-size: 12.5px; color: var(--ink-3); }
+.au-plain { font-size: 12.5px; color: var(--ink-2); }
+.au-new { color: var(--waiting); font-weight: 500; }
 .au-reason { font-size: 12.5px; color: var(--ink-2); }
-/* A deleted message, on Discord's grey, struck with the deletion colour. */
-.au-quote { align-self: flex-start; max-width: 100%; padding: 7px 12px; border-radius: 4px 12px 12px 12px; background: #2b2d31; color: #dbdee1; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--signal) 30%, transparent); }
+/* A deleted message, on Discord's grey. */
+.au-quote { align-self: flex-start; max-width: 100%; padding: 7px 12px; border-radius: 4px 12px 12px 12px; background: #2b2d31; color: #dbdee1; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .au-diff { display: flex; flex-direction: column; gap: 3px; align-self: flex-start; max-width: 100%; font-size: 13px; }
 .au-diff del, .au-diff ins { display: flex; gap: 8px; padding: 4px 10px 4px 8px; border-radius: 8px; text-decoration: none; overflow-wrap: anywhere; white-space: pre-wrap; }
 .au-diff del { background: color-mix(in oklab, var(--held) 11%, transparent); color: color-mix(in oklab, var(--ink) 70%, var(--held)); }
@@ -508,17 +512,18 @@ const STYLE: &str = r#"
 
 /* The rail. */
 .au-mods { display: flex; flex-direction: column; gap: 6px; }
-.au-mod { animation: rise 0.45s var(--ease) both; animation-delay: calc(var(--s, 0) * 70ms + 250ms); }
+.au-mod { animation: rise 0.3s var(--ease) both; animation-delay: calc(var(--s, 0) * 30ms + 100ms); }
 .au-mod .grow { gap: 5px; }
 .au-mod .meter { height: 4px; }
-.au-mod .meter > span { animation-delay: calc(var(--s, 0) * 70ms + 400ms); }
-.au-mod > b { font-size: 15px; font-weight: 600; color: var(--ink); min-width: 22px; text-align: right; }
-.au-axis { display: flex; justify-content: space-between; margin-top: -4px; color: var(--ink-3); font: 11px var(--mono); }
+.au-mod .meter > span { background: var(--data); animation-duration: 0.6s; animation-delay: calc(var(--s, 0) * 30ms + 150ms); }
+.au-mod > b { font-size: 15px; font-weight: 600; color: var(--ink); min-width: 22px; text-align: right; font-variant-numeric: tabular-nums; }
+.au-axis { display: flex; justify-content: space-between; margin-top: -4px; color: var(--ink-3); font-size: 11.5px; }
 
-.au-lane-ic { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 10px; background: color-mix(in oklab, var(--c) 18%, transparent); color: var(--c); }
+.au-lane-ic { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--edge-2); color: var(--c); }
 .au-lane-ic .icon { width: 15px; height: 15px; }
+.au-send { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 4px; }
 .au-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
-.au-kindchip { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border-radius: 13px; font-size: 12px; color: var(--ink-2); background: color-mix(in oklab, var(--c) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--c) 22%, transparent); }
+.au-kindchip { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border-radius: 13px; font-size: 12.5px; color: var(--ink-2); background: var(--control); }
 
 /* A wide column: what happened on the left, what it was in a column of its own beside it, so a
    line of the log reads across once instead of leaving most of the width empty. */
@@ -541,7 +546,7 @@ const STYLE: &str = r#"
   .au-time { display: none; }
   .au-entry > .au-face { grid-column: 1; }
   .au-head, .au-more { grid-column: 2; }
-  .au-list::before { left: 17px; }
+  .au-list::before { left: 18px; }
   .au-entry:hover { background: none; }
 }
 
@@ -557,11 +562,20 @@ const STYLE: &str = r#"
 }
 "#;
 
-async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+#[derive(Deserialize)]
+struct SentQuery {
+    sent: Option<String>,
+}
+
+async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<SentQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let body = html! {
         (style())
+        @if q.sent.is_some() {
+            @let to: Vec<String> = crate::test_destinations(&s).iter().map(|(c, _)| channel_label(&ctx, *c)).collect();
+            (sent_toast(&format!("Test entry sent to {}", to.join(" and "))))
+        }
         (tabs(&page, "Settings"))
         div.with-rail {
             (ui::settings_form(&page, &page.path("audit/settings"), html! {
@@ -594,14 +608,15 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     })))
                 }
             }))
-            aside.rail { (routing(&ctx, &s)) }
+            aside.rail { (routing(&ctx, &page, &s)) }
         }
     };
     Ok(ui::layout(&ctx, &page, "Audit log", None, body).into_response())
 }
 
-/// Where each kind of entry is posted, as the saved settings have it, in the timeline's colours.
-fn routing(ctx: &Ctx, s: &Settings) -> Markup {
+/// Where each kind of entry is posted, as the saved settings have it, in the timeline's colours,
+/// and a test entry to see a post land there.
+fn routing(ctx: &Ctx, page: &Page, s: &Settings) -> Markup {
     let on: Vec<Kind> = Kind::ALL.into_iter().filter(|k| s.on(*k)).collect();
     // The switches: timeouts and voice each turn on several kinds at once.
     let switches = [s.message_delete, s.message_edit, s.bulk_delete, s.join, s.leave, s.nickname, s.roles, s.ban, s.unban, s.timeout, s.boost, s.voice];
@@ -619,6 +634,17 @@ fn routing(ctx: &Ctx, s: &Settings) -> Markup {
                     }
                 }
             }
+            @if page.can_edit() {
+                div.au-send {
+                    form.inline method="post" action=(page.path("audit/test")) {
+                        button.btn.small.outline type="submit" { (ui::icon(Icon::Log)) "Send a test entry" }
+                    }
+                    p.muted.small {
+                        @if crate::test_destinations(s).is_empty() { "Pick a log channel and save, then send a test." }
+                        @else { "Posts a test entry where entries go, as saved. Nothing is added to the log." }
+                    }
+                }
+            }
         }
         div.rail-block {
             h2 { "Logging" span.muted.small { (switches.iter().filter(|x| **x).count()) " of " (switches.len()) } }
@@ -633,6 +659,36 @@ fn routing(ctx: &Ctx, s: &Settings) -> Markup {
             }
             p.muted.small { "Entries stay on the Recent tab for 14 days." }
         }
+    }
+}
+
+/// Post a test entry in each log channel, as saved.
+async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    if crate::test_destinations(&s).is_empty() {
+        return Err(WebError::Bad("Pick a log channel and save first.".into()));
+    }
+    let sent = match crate::send_test(&ctx, guild, &s, page.user.id).await {
+        Ok(sent) => sent,
+        Err(e) => {
+            bot_core::tracing::warn!(guild, error = %e, "test audit entry failed");
+            return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
+        }
+    };
+    let names: Vec<String> = sent.iter().map(|c| channel_label(&ctx, *c)).collect();
+    ctx.audit(&page.user, Some(guild), KEY, format!("Sent a test audit log entry to {}", names.join(" and ")));
+    Ok(Redirect::to(&format!("{}?sent=1", page.path("audit/settings"))).into_response())
+}
+
+/// A toast once the page is back, then the flag leaves the address.
+fn sent_toast(msg: &str) -> Markup {
+    // A JS string; `<` escaped so the text can't close the script.
+    let msg = format!("{msg:?}").replace('<', "\\u003c");
+    html! {
+        script { (PreEscaped(format!(
+            "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg});const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go,{{once:true}}):setTimeout(go)}})()"
+        ))) }
     }
 }
 

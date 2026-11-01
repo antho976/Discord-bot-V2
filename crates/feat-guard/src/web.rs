@@ -1,10 +1,10 @@
 use bot_core::axum::Router;
 use bot_core::axum::extract::{Path, Query, State};
-use bot_core::axum::response::IntoResponse;
+use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_model::id::Id;
-use bot_core::web::ui::{self, Tone};
+use bot_core::web::ui;
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 use serde::Deserialize;
@@ -18,6 +18,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/guard/settings", get(settings_page).post(save))
         .route("/g/{guild}/guard/catches/{id}/release", post(release))
         .route("/g/{guild}/guard/catches/{id}/ban", post(ban))
+        .route("/g/{guild}/guard/test", post(send_test))
 }
 
 /// The two tabs, with how many catches wait on a decision.
@@ -181,7 +182,7 @@ fn need(alert: bool, ic: Icon, title: &str, line: &str, href: &str, action: &str
 fn readings(week: &Week, waiting: i64) -> Markup {
     html! {
         div.readings.gd-readings {
-            div.reading.gd-lead {
+            div.reading {
                 b data-count { (text::num(week.caught)) }
                 span { "Caught this week" }
             }
@@ -236,15 +237,10 @@ fn and_list(names: &[String], total: usize) -> String {
 fn catch_card(ctx: &Ctx, page: &Page, guild: u64, c: &Catch, threshold: i64, new_days: i64, i: usize) -> Markup {
     let name = member_name(ctx, guild, c.user_id, &c.user_name);
     let (shown, cut) = shown_part(&c.content);
-    let class = match c.outcome {
-        Outcome::TimedOut | Outcome::NotTimedOut => "gd-catch open",
-        Outcome::Released => "gd-catch released",
-        Outcome::Banned => "gd-catch banned",
-    };
-    let tone = match c.outcome {
-        Outcome::TimedOut | Outcome::NotTimedOut => Tone::Warn,
-        Outcome::Released => Tone::Muted,
-        Outcome::Banned => Tone::Bad,
+    let (class, state) = match c.outcome {
+        Outcome::TimedOut | Outcome::NotTimedOut => ("gd-catch open", "gd-state open"),
+        Outcome::Released => ("gd-catch released", "gd-state released"),
+        Outcome::Banned => ("gd-catch banned", "gd-state banned"),
     };
     let young = new_days > 0 && now_ms() - crate::account_created_ms(c.user_id) < new_days * 86_400_000;
     html! {
@@ -255,7 +251,6 @@ fn catch_card(ctx: &Ctx, page: &Page, guild: u64, c: &Catch, threshold: i64, new
                         (ui::icon(Icon::Hash))
                         span { (channel_name(ctx, c.channel_id).trim_start_matches('#')) }
                         @if c.honeypot { span.gd-chan-tag { "honeypot" } }
-                        @if c.deleted > 0 { span.gd-gone { (ui::icon(Icon::Trash)) "Deleted by the bot" } }
                     }
                     div.gd-dmsg {
                         img.avatar src=(ctx.member_avatar(guild, c.user_id)) alt="" width="40" height="40" loading="lazy";
@@ -276,9 +271,9 @@ fn catch_card(ctx: &Ctx, page: &Page, guild: u64, c: &Catch, threshold: i64, new
                     }
                 }
                 @if !c.signals.is_empty() {
-                    div.gd-sigs aria-label="Why it was caught" {
+                    ul.gd-sigs aria-label="Why it was caught" {
                         @for s in &c.signals {
-                            span.gd-sig { @if s.weight > 0 { b { "+" (s.weight) } } (s.text) }
+                            li.plain[s.weight <= 0] { @if s.weight > 0 { b { "+" (s.weight) } } span { (s.text) } }
                         }
                     }
                 }
@@ -286,7 +281,7 @@ fn catch_card(ctx: &Ctx, page: &Page, guild: u64, c: &Catch, threshold: i64, new
                     (steps(ctx, page, guild, c))
                 }
                 @if let Some(reason) = &c.acted_reason {
-                    p.gd-why { span.muted { "Reason " } (reason) }
+                    p.gd-why { span { "Reason" } (reason) }
                 }
             }
             div.gd-verdict {
@@ -294,14 +289,14 @@ fn catch_card(ctx: &Ctx, page: &Page, guild: u64, c: &Catch, threshold: i64, new
                     div.gd-hp {
                         span.gd-hp-ic { (ui::icon(Icon::Hash)) }
                         strong { "Honeypot" }
-                        span.muted.small { "Anything written there is a catch" }
+                        span { "Anything written there is a catch" }
                     }
                 } @else {
                     (gauge(c.score, threshold, false))
                 }
                 div.gd-out {
-                    (ui::badge(c.outcome.label(), tone))
-                    span.muted.small.gd-age.new[young] { "Account made " (crate::account_made(c.user_id)) }
+                    span class=(state) { span.dot {} (c.outcome.label()) }
+                    span.gd-age.new[young] { "Account made " (crate::account_made(c.user_id)) }
                 }
                 @if page.can_edit() && c.outcome.open() {
                     div.gd-acts {
@@ -367,26 +362,21 @@ fn segments(text: &str, spans: &[(usize, usize)]) -> Vec<(String, bool)> {
     out
 }
 
-/// What the bot did about the catch, then who decided, as steps that arrive one after another.
+/// What the bot did about the catch, then who decided, on one line under a hairline.
 fn steps(ctx: &Ctx, page: &Page, guild: u64, c: &Catch) -> Markup {
-    let mut n = 0usize;
-    let mut next = || {
-        n += 1;
-        format!("--s:{n}")
-    };
     html! {
         @if c.deleted > 0 {
-            li.gd-step style=(next()) { span.gd-ic { (ui::icon(Icon::Trash)) } "Removed " (plural(c.deleted, "message")) }
+            li.gd-step { (ui::icon(Icon::Trash)) "Removed " (plural(c.deleted, "message")) }
         }
         @if c.outcome == Outcome::NotTimedOut {
-            li.gd-step.bad style=(next()) { span.gd-ic { (ui::icon(Icon::Clock)) } "Couldn't time them out" }
+            li.gd-step.bad { (ui::icon(Icon::Clock)) "Couldn't time them out" }
         } @else if let Some(until) = c.timeout_until {
-            li.gd-step style=(next()) { span.gd-ic { (ui::icon(Icon::Clock)) } "Timed out for " (timeout_for(c.at, until)) }
+            li.gd-step { (ui::icon(Icon::Clock)) "Timed out for " (timeout_for(c.at, until)) }
         }
         @if let Some((channel, _)) = c.alert {
-            li.gd-step style=(next()) { span.gd-ic { (ui::icon(Icon::Bell)) } "Alerted " (channel_name(ctx, channel)) }
+            li.gd-step { (ui::icon(Icon::Bell)) "Alerted " (channel_name(ctx, channel)) }
         }
-        (decided(ctx, page, guild, c, &next()))
+        (decided(ctx, page, guild, c))
     }
 }
 
@@ -419,7 +409,7 @@ fn decide_pop(page: &Page, c: &Catch, outcome: Outcome) -> Markup {
 }
 
 /// The last step: who released or banned the member, when and where, or that it waits.
-fn decided(ctx: &Ctx, page: &Page, guild: u64, c: &Catch, style: &str) -> Markup {
+fn decided(ctx: &Ctx, page: &Page, guild: u64, c: &Catch) -> Markup {
     let verb = match c.outcome {
         Outcome::Released if c.acted_in_discord => "removed the timeout in Discord",
         Outcome::Released => "released them as a mistake",
@@ -431,25 +421,23 @@ fn decided(ctx: &Ctx, page: &Page, guild: u64, c: &Catch, style: &str) -> Markup
         _ => "Banned in Discord",
     };
     let when = c.acted_at.map(text::ago);
-    let class = match c.outcome {
-        Outcome::Banned => "gd-step gd-by banned",
-        _ => "gd-step gd-by",
-    };
+    let exact = c.acted_at.map(|at| page.user.local(at).strftime("%b %-d, %H:%M").to_string());
     html! {
         @if c.outcome.open() {
-            li.gd-step.gd-waiting style=(style) {
+            li.gd-step.gd-waiting {
                 span.dot.waiting {}
                 @if page.can_edit() { "Waiting on you" } @else { "Waiting on a moderator" }
             }
         } @else {
-            li class=(class) style=(style) {
+            li.gd-step.gd-by {
                 @if let (Some(id), Some(by)) = (c.acted_by, &c.acted_by_name) {
                     img.avatar src=(ctx.member_avatar(guild, id)) alt="" width="20" height="20" loading="lazy";
-                    span { strong { (member_name(ctx, guild, id, by)) } " " (verb) @if let Some(w) = &when { span.muted { " · " (w) } } }
+                    span { strong { (member_name(ctx, guild, id, by)) } " " (verb) }
                 } @else {
-                    span.gd-ic { (ui::icon(if c.outcome == Outcome::Banned { Icon::Close } else { Icon::Check })) }
-                    span { (nameless) @if let Some(w) = &when { span.muted { " · " (w) } } }
+                    (ui::icon(if c.outcome == Outcome::Banned { Icon::Close } else { Icon::Check }))
+                    span { (nameless) }
                 }
+                @if let (Some(w), Some(x)) = (&when, &exact) { time.gd-when title=(x) { (w) } }
             }
         }
     }
@@ -467,7 +455,7 @@ fn gauge(score: i64, threshold: i64, big: bool) -> Markup {
         let a = std::f64::consts::PI * (1.0 - f);
         (60.0 + r * a.cos(), 58.0 - r * a.sin())
     };
-    let (t1, t2) = (at(line, 38.0), at(line, 58.0));
+    let (t1, t2) = (at(line, 41.0), at(line, 55.0));
     html! {
         div.gd-gauge.caught[caught].big[big] role="img" aria-label={ "Score " (score) ", catches at " (threshold) } {
             svg viewBox="0 0 120 66" aria-hidden="true" {
@@ -520,9 +508,9 @@ fn test_rail(page: &Page, s: &Settings, show: Option<&str>, test: Option<&str>, 
                     (gauge(i64::from(v.score), i64::from(threshold), true))
                     div.gd-result-say {
                         @if v.caught(s.strictness) {
-                            (ui::badge("Would catch", Tone::Bad))
+                            span.gd-state.banned { span.dot {} "Would catch" }
                         } @else {
-                            (ui::badge("Not caught", Tone::Muted))
+                            span.gd-state.released { span.dot {} "Not caught" }
                         }
                         p.muted.small { "The tick is where a message gets caught at " (s.strictness.key()) " strictness." }
                     }
@@ -532,7 +520,7 @@ fn test_rail(page: &Page, s: &Settings, show: Option<&str>, test: Option<&str>, 
                         div.gd-tsigs {
                             @for (i, sig) in v.signals.iter().enumerate() {
                                 div.gd-tsig style={ "--s:" (i) } {
-                                    b.mono { "+" (sig.weight) }
+                                    b { "+" (sig.weight) }
                                     span { (sig.text) }
                                     span.meter { span style={ "width:" ((sig.weight * 100 / v.score.max(1)).clamp(4, 100)) "%" } {} }
                                 }
@@ -545,7 +533,12 @@ fn test_rail(page: &Page, s: &Settings, show: Option<&str>, test: Option<&str>, 
     }
 }
 
-async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+#[derive(Deserialize, Default)]
+struct SentQuery {
+    sent: Option<String>,
+}
+
+async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<SentQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let waiting = crate::count_open(&ctx, guild)?;
@@ -576,6 +569,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     }));
     let body = html! {
         (style())
+        @if q.sent.is_some() { (sent_toast(&format!("Test alert sent to {}", s.log_channel.map(|c| channel_name(&ctx, c)).unwrap_or_default()))) }
         (tabs(&page, waiting, "Settings"))
         div.with-rail {
             (ui::settings_form(&page, &page.path("guard/settings"), html! {
@@ -585,7 +579,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     div.gd-set-col { (caught) (never) }
                 }
             }))
-            aside.rail { (flow(&ctx, guild, &s)) }
+            aside.rail { (flow(&ctx, &page, guild, &s)) }
         }
     };
     Ok(ui::layout(&ctx, &page, "Scam protection", Some(status(&ctx, guild, &s)), body).into_response())
@@ -605,8 +599,9 @@ fn strictness(on: Strictness) -> Markup {
     }
 }
 
-/// What happens to someone who is caught, step by step, as the saved settings have it.
-fn flow(ctx: &Ctx, guild: u64, s: &Settings) -> Markup {
+/// What happens to someone who is caught, step by step, as the saved settings have it, and a
+/// test alert to see the post for yourself.
+fn flow(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
     let honeypot = s.honeypot_channel.filter(|_| !deleted(ctx, guild, s.honeypot_channel)).map(|c| channel_name(ctx, c));
     let log = s.log_channel.filter(|_| !deleted(ctx, guild, s.log_channel)).map(|c| channel_name(ctx, c));
     let roles = ctx.roles(guild);
@@ -639,13 +634,26 @@ fn flow(ctx: &Ctx, guild: u64, s: &Settings) -> Markup {
                     div { strong { "Member told" } span { @if s.dm_member { "A DM on how to get the timeout lifted" } @else { "No DM is sent" } } }
                 }
             }
+            @if page.can_edit() {
+                div.gd-send {
+                    form.inline method="post" action=(page.path("guard/test")) {
+                        button.btn.small.outline type="submit" { (ui::icon(Icon::Bell)) "Send a test alert" }
+                    }
+                    p.muted.small {
+                        @match &log {
+                            Some(l) => { "Posts a sample alert in " (l) ", marked as a test. Nobody is timed out or banned." },
+                            None => { "Pick an alert channel and save, then send a test." },
+                        }
+                    }
+                }
+            }
         }
         div.rail-block {
             h2 { "Never checked" }
             @if exempt.is_empty() {
                 p.muted.small { "Staff with Manage Messages or Administrator. Add roles or channels on the left." }
             } @else {
-                div.gd-exempt { @for e in &exempt { span.gd-sig { (e) } } }
+                div.gd-exempt { @for e in &exempt { span { (e) } } }
                 p.muted.small { "Plus staff with Manage Messages or Administrator." }
             }
         }
@@ -673,6 +681,35 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed scam protection settings");
     Ok(saved(&page.path("guard/settings")))
+}
+
+/// Post a sample alert in the alert channel, as saved, so staff can see one without a scam.
+async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let Some(channel) = s.log_channel else {
+        return Err(WebError::Bad("Pick an alert channel and save first.".into()));
+    };
+    if deleted(&ctx, guild, s.log_channel) {
+        return Err(WebError::Bad("The alert channel was deleted. Pick another one and save first.".into()));
+    }
+    if let Err(e) = crate::send_test_alert(&ctx, &s, channel, page.user.id, &page.user.name).await {
+        bot_core::tracing::warn!(guild, error = %e, "test scam alert failed");
+        return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
+    }
+    ctx.audit(&page.user, Some(guild), KEY, format!("Sent a test scam alert to {}", channel_name(&ctx, channel)));
+    Ok(Redirect::to(&format!("{}?sent=1", page.path("guard/settings"))).into_response())
+}
+
+/// "Test sent" once the page is back, then the flag leaves the address.
+fn sent_toast(msg: &str) -> Markup {
+    // A JS string; `<` escaped so a name can't close the script.
+    let msg = format!("{msg:?}").replace('<', "\\u003c");
+    html! {
+        script { (PreEscaped(format!(
+            "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg});const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go,{{once:true}}):setTimeout(go)}})()"
+        ))) }
+    }
 }
 
 async fn release(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {
@@ -737,11 +774,9 @@ const STYLE: &str = r#"
 .gd-main { display: flex; flex-direction: column; gap: 26px; min-width: 0; }
 .gd-needs { display: flex; flex-direction: column; gap: 8px; }
 
-/* Readings: the week, with what waits on you lit amber. */
+/* Readings: the week, with what waits on you in amber. */
 .gd-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .gd-readings .reading { min-width: 0; }
-.gd-readings .gd-lead { background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent); }
-.gd-readings .gd-lead::before { width: 100%; opacity: 1; }
 .gd-readings .gd-wait b { color: var(--waiting); }
 .gd-readings .gd-wait::before { background: linear-gradient(90deg, var(--waiting), transparent); }
 
@@ -749,119 +784,124 @@ const STYLE: &str = r#"
 .gd-catches { display: flex; flex-direction: column; gap: 14px; }
 .gd-list-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
 .gd-list-head h2 { font-size: 15px; }
-.gd-list-head p { margin-top: 3px; max-width: 60ch; }
+.gd-list-head p { margin-top: 3px; max-width: 60ch; color: var(--ink-2); }
 .gd-show a { text-decoration: none; }
-.gd-count { color: var(--waiting); font-family: var(--mono); font-weight: 600; }
+.gd-count { color: var(--waiting); font-weight: 600; font-variant-numeric: tabular-nums; }
 /* Catches sit two across once each still has room for the message beside its dial, so a wide
    screen shows more of them instead of one long card. One catch fills the row. */
 .gd-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); gap: 14px; }
 
-/* One catch. */
-.gd-catch { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 176px; gap: 18px 22px; padding: 16px 18px 18px 16px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 180ms); transition: box-shadow 0.25s, transform 0.35s var(--ease); }
-.gd-catch:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
+/* One catch: the evidence on the left, the verdict in a column of its own. */
+.gd-catch { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 168px; gap: 0 24px; padding: 18px 20px 18px 18px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.4s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms + 100ms); }
 /* An open Release or Ban popover stays above the card under it. */
 .gd-catch:has(.gd-pop[open]) { z-index: 4; }
-.gd-catch.open { background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 32%, transparent); }
-.gd-what { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.gd-catch.open { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 24%, transparent); }
+.gd-what { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
 /* The message as Discord drew it. Discord's own colours: its chat grey, its name white. */
-.gd-discord { border-radius: 12px; background: #313338; overflow: hidden; box-shadow: 0 14px 30px -18px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.05); }
-.gd-chan { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px 0 12px; background: #2b2d31; border-bottom: 1px solid rgba(0, 0, 0, 0.28); color: #b5bac1; font-size: 12.5px; font-weight: 600; }
+.gd-discord { border-radius: 12px; background: #313338; overflow: hidden; }
+.gd-chan { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px 0 12px; background: #2b2d31; color: #b5bac1; font-size: 12.5px; font-weight: 600; }
 .gd-chan .icon { width: 15px; height: 15px; color: #80848e; }
-.gd-chan-tag { height: 18px; padding: 0 7px; border-radius: 9px; font: 600 10.5px/18px var(--sans); background: color-mix(in oklab, var(--hue) 22%, transparent); color: var(--hue); }
-.gd-gone { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: #f57f8b; font-weight: 500; font-size: 11.5px; }
-.gd-gone .icon { width: 13px; height: 13px; color: inherit; }
+.gd-chan-tag { margin-left: 4px; color: #949ba4; font-weight: 500; }
 .gd-dmsg { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 14px; padding: 12px 16px 14px 14px; }
 .gd-dmsg > .avatar { width: 40px; height: 40px; }
 .gd-dbody { min-width: 0; }
 .gd-dhead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
 .gd-dhead strong { color: #f2f3f5; font-weight: 600; font-size: 14.5px; }
-.gd-dtime { color: #949ba4; font-size: 11.5px; }
-.gd-dtext { margin-top: 2px; color: #dbdee1; font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gd-dtime { color: #949ba4; font-size: 12px; }
+.gd-dtext { margin-top: 2px; color: #dbdee1; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .gd-dtext .gd-none { color: #949ba4; }
-/* The bait: a red wash that sweeps across once the card has landed, over a wavy underline. */
-.gd-dtext mark { color: #ffe3e6; padding: 1px 2px; margin: 0 -1px; border-radius: 3px; background: linear-gradient(90deg, color-mix(in oklab, var(--held) 34%, transparent), color-mix(in oklab, var(--held) 22%, transparent)) no-repeat 0 0 / 0% 100%; -webkit-box-decoration-break: clone; box-decoration-break: clone; text-decoration: underline wavy color-mix(in oklab, var(--held) 85%, transparent); text-decoration-thickness: 1.5px; text-underline-offset: 4px; text-decoration-skip-ink: none; animation: gd-bait 0.8s var(--ease) forwards; animation-delay: calc(var(--i, 0) * 90ms + 620ms); }
+/* The bait: a red wash that sweeps across the words the score counted. */
+.gd-dtext mark { color: #ffe1e4; padding: 1px 3px; margin: 0 -1px; border-radius: 4px; background: linear-gradient(var(--gd-bait), var(--gd-bait)) no-repeat 0 0 / 0% 100%; --gd-bait: color-mix(in oklab, var(--held) 30%, transparent);-webkit-box-decoration-break: clone; box-decoration-break: clone; animation: gd-bait 0.5s var(--ease) forwards; animation-delay: calc(var(--i, 0) * 45ms + 380ms); }
 @keyframes gd-bait { to { background-size: 100% 100%; } }
 
-/* Why it was caught. */
-.gd-sigs, .gd-exempt { display: flex; flex-wrap: wrap; gap: 6px; }
-.gd-sig { display: inline-flex; align-items: center; gap: 7px; min-height: 26px; padding: 3px 10px 3px 4px; border-radius: 13px; background: var(--control); color: var(--ink-2); font-size: 12px; line-height: 1.3; }
-.gd-sig b { flex: none; font: 600 11px/18px var(--mono); padding: 0 6px; border-radius: 9px; background: color-mix(in oklab, var(--hue) 20%, transparent); color: var(--hue); }
-.gd-sig:not(:has(b)) { padding-left: 10px; }
+/* Why it was caught: the points in a column of their own, then the reason. Two columns once the
+   card is wide enough for both to stay on one line. */
+.gd-sigs { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 5px 24px; font-size: 13px; line-height: 1.4; }
+.gd-sigs li { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: baseline; color: var(--ink-2); }
+.gd-sigs li.plain { grid-template-columns: minmax(0, 1fr); }
+.gd-sigs b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 
-/* What happened, one step after another. */
-.gd-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); }
-.gd-step { position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 4px 12px 4px 5px; border-radius: 15px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); animation: gd-step 0.5s var(--spring) both; animation-delay: calc(var(--i, 0) * 90ms + var(--s, 0) * 120ms + 560ms); }
-.gd-ic { display: grid; place-items: center; width: 21px; height: 21px; flex: none; border-radius: 50%; background: color-mix(in oklab, var(--hue) 16%, transparent); color: var(--hue); }
-.gd-ic .icon { width: 12px; height: 12px; }
-.gd-step.bad { color: var(--held); }
-.gd-step.bad .gd-ic { background: color-mix(in oklab, var(--held) 18%, transparent); color: var(--held); }
-.gd-step > .avatar { width: 21px; height: 21px; }
+/* What happened, on one line under a hairline. */
+.gd-steps { list-style: none; margin: 0; padding: 12px 0 0; border-top: 1px solid var(--edge-1); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; font-size: 12.5px; color: var(--ink-2); }
+.gd-step { display: inline-flex; align-items: center; gap: 6px; min-height: 22px; }
+.gd-step > .icon { width: 14px; height: 14px; color: var(--ink-3); flex: none; }
+.gd-step.bad, .gd-step.bad > .icon { color: var(--held); }
+.gd-step > .avatar { width: 20px; height: 20px; }
 .gd-step strong { color: var(--ink); font-weight: 600; }
-.gd-waiting { color: var(--waiting); font-weight: 500; padding-left: 12px; background: color-mix(in oklab, var(--waiting) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 30%, transparent); }
-.gd-waiting .dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--waiting); animation: ping 2s ease-out infinite 1.6s; }
-.gd-by.banned { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--held) 26%, transparent); }
-.gd-by .gd-ic { background: var(--control); color: var(--ink-2); }
-@keyframes gd-step { from { opacity: 0; transform: translateX(-6px) scale(0.92); } }
-.gd-why { font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
+.gd-waiting { color: var(--waiting); font-weight: 500; gap: 8px; }
+.gd-waiting .dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--waiting); animation: ping 2s ease-out infinite 1s; }
+.gd-by { color: var(--ink-2); }
+.gd-when { margin-left: 2px; color: var(--ink-3); }
+.gd-why { font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; margin-top: -4px; }
+.gd-why > span { color: var(--ink-3); margin-right: 6px; }
 
 /* The verdict: the dial, the outcome, the decision. */
-.gd-verdict { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; padding-top: 2px; }
-.gd-out { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+.gd-verdict { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; padding-top: 4px; }
+.gd-out { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.gd-state { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--ink); }
+.gd-state.open .dot { background: var(--waiting); }
+.gd-state.banned .dot { background: var(--held); }
+.gd-state.released { color: var(--ink-2); }
+.gd-age { font-size: 12px; color: var(--ink-3); }
 .gd-age.new { color: var(--waiting); }
 .gd-acts { position: relative; display: flex; flex-direction: column; gap: 6px; align-self: stretch; }
 .gd-acts .gd-pop > summary { width: 100%; }
 .gd-pop .pop-body { right: 0; left: auto; width: 320px; }
 .gd-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
 .gd-pop-foot .btn.danger { background: var(--held); color: #1a0507; font-weight: 600; }
-.gd-hp { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 0 2px; }
-.gd-hp-ic { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 4px; border-radius: 16px; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 60%, color-mix(in oklab, var(--hue), black 20%)); box-shadow: none; animation: pop-in 0.6s var(--spring) both; animation-delay: calc(var(--i, 0) * 90ms + 500ms); }
-.gd-hp-ic .icon { width: 24px; height: 24px; }
+.gd-hp { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 0 0; }
+.gd-hp-ic { display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 6px; border-radius: 50%; color: var(--hue); box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--hue) 55%, transparent); }
+.gd-hp-ic .icon { width: 20px; height: 20px; }
 .gd-hp strong { font-size: 14px; font-weight: 600; }
+.gd-hp span:last-child { font-size: 12px; color: var(--ink-3); max-width: 18ch; }
 
 /* The dial. */
-.gd-gauge { position: relative; width: 150px; }
-.gd-gauge.big { width: 196px; margin: 4px auto 0; }
+.gd-gauge { position: relative; width: 140px; }
+.gd-gauge.big { width: 184px; margin: 4px auto 0; }
 .gd-gauge svg { display: block; width: 100%; height: auto; overflow: visible; }
-.gd-track, .gd-arc { fill: none; stroke-width: 9; stroke-linecap: round; }
+.gd-track, .gd-arc { fill: none; stroke-width: 7; stroke-linecap: round; }
 .gd-track { stroke: var(--edge-1); }
-.gd-arc { stroke: var(--waiting); stroke-dasharray: 100 200; animation: gd-arc 1.4s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 420ms); }
+.gd-arc { stroke: var(--waiting); stroke-dasharray: 100 200; animation: gd-arc 0.9s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms + 200ms); }
 .gd-gauge.caught .gd-arc { stroke: var(--held); }
-.gd-tick { stroke: var(--ink); stroke-width: 2.5; stroke-linecap: round; }
+.gd-tick { stroke: var(--ink-2); stroke-width: 2; stroke-linecap: round; }
 @keyframes gd-arc { from { stroke-dashoffset: 100; } }
-.gd-num { position: absolute; left: 0; right: 0; bottom: -3px; display: flex; flex-direction: column; align-items: center; }
-.gd-num b { font: 650 30px/1 var(--sans); letter-spacing: -0.035em; font-variant-numeric: tabular-nums; }
-.gd-gauge.caught .gd-num b { color: #ffd9dd; }
-.gd-num span { margin-top: 4px; font-size: 11px; color: var(--ink-3); }
-.gd-gauge.big .gd-num b { font-size: 40px; }
+.gd-num { position: absolute; left: 0; right: 0; bottom: -2px; display: flex; flex-direction: column; align-items: center; }
+.gd-num b { font: 600 28px/1 var(--sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.gd-num span { margin-top: 4px; font-size: 11.5px; color: var(--ink-3); }
+.gd-gauge.big .gd-num b { font-size: 36px; }
 
 /* The rail. */
-.gd-axis { display: flex; justify-content: space-between; margin-top: -4px; color: var(--ink-3); font: 11px var(--mono); }
+.gd-axis { display: flex; justify-content: space-between; margin-top: -4px; color: var(--ink-3); font-size: 11.5px; }
 .gd-handlers { display: flex; align-items: center; gap: 10px; }
 .gd-handlers .avatar { width: 30px; height: 30px; }
 .gd-handlers p { color: var(--ink-2); }
 .gd-test textarea { min-height: 84px; }
-.gd-result { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; animation: rise 0.5s var(--ease) both; }
+.gd-result { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
 .gd-result-say { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
 .gd-tsigs { display: flex; flex-direction: column; }
-.gd-tsig { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 4px 10px; align-items: baseline; padding: 9px 0; font-size: 13px; border-top: 1px solid var(--edge-1); animation: rise 0.45s var(--ease) both; animation-delay: calc(var(--s, 0) * 80ms + 300ms); }
-.gd-tsig b { font-weight: 600; color: var(--hue); }
+.gd-tsig { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 6px 8px; align-items: baseline; padding: 9px 0; font-size: 13px; border-top: 1px solid var(--edge-1); }
+.gd-tsig b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 .gd-tsig > span:not(.meter) { color: var(--ink-2); }
 .gd-tsig .meter { grid-column: 2; height: 4px; }
-.gd-tsig .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--hue), black 20%), var(--hue)); box-shadow: none; animation-delay: calc(var(--s, 0) * 80ms + 450ms); }
+.gd-tsig .meter > span { background: var(--data); animation-delay: calc(var(--s, 0) * 60ms + 150ms); }
 
-/* Settings: what a catch does, in order. */
+/* Settings: what a catch does, in order, on a thin line. */
 .gd-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
-.gd-flow::before { content: ""; position: absolute; left: 17px; top: 20px; bottom: 20px; width: 2px; border-radius: 1px; background: linear-gradient(180deg, var(--hue), color-mix(in oklab, var(--hue) 15%, transparent)); transform-origin: top; animation: grow 1.1s var(--ease) both 0.3s; }
-.gd-flow li { position: relative; display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; animation: rise 0.5s var(--ease) both; animation-delay: calc(var(--s, 0) * 110ms + 250ms); }
-.gd-flow-ic { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 12px; color: #0b0b10; background: var(--hue); box-shadow: 0 0 0 4px var(--raised); }
-.gd-flow-ic .icon { width: 17px; height: 17px; }
-.gd-flow li div { display: flex; flex-direction: column; gap: 1px; padding-top: 1px; min-width: 0; }
+.gd-flow::before { content: ""; position: absolute; left: 14px; top: 22px; bottom: 22px; width: 1px; background: var(--edge-2); }
+.gd-flow li { position: relative; display: flex; gap: 12px; align-items: flex-start; padding: 7px 0; }
+.gd-flow-ic { display: grid; place-items: center; width: 29px; height: 29px; flex: none; border-radius: 50%; color: var(--hue); background: var(--raised); box-shadow: inset 0 0 0 1px var(--edge-2); }
+.gd-flow-ic .icon { width: 14px; height: 14px; }
+.gd-flow li div { display: flex; flex-direction: column; gap: 1px; padding-top: 4px; min-width: 0; }
 .gd-flow strong { font-size: 13.5px; font-weight: 600; }
-.gd-flow span { font-size: 12.5px; color: var(--ink-3); }
-.gd-flow li.muted .gd-flow-ic { color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, var(--raised)); box-shadow: 0 0 0 4px var(--raised); }
+.gd-flow li > div > span { font-size: 12.5px; color: var(--ink-2); }
+.gd-flow li.muted .gd-flow-ic { color: var(--ink-3); }
 .gd-flow li.muted strong { color: var(--ink-2); }
-.gd-flow.off .gd-flow-ic { filter: grayscale(1); opacity: 0.6; }
+.gd-flow li.muted > div > span { color: var(--ink-3); }
+.gd-flow.off .gd-flow-ic { color: var(--ink-3); }
+.gd-send { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 4px; }
+.gd-exempt { display: flex; flex-wrap: wrap; gap: 6px; }
+.gd-exempt span { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 13px; background: var(--control); color: var(--ink-2); font-size: 12.5px; }
 
 /* Settings: the sections in two columns once each column can hold a label beside its control. */
 .gd-sets { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px 24px; align-items: start; }
@@ -869,6 +909,10 @@ const STYLE: &str = r#"
 @container col (min-width: 1060px) {
   .gd-sets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Coming back to the page after a release, a ban or another filter: no entrance again. */
+html.same .gd-catch, html.same .gd-arc, html.same .gd-dtext mark { animation: none; }
+html.same .gd-dtext mark { background-size: 100% 100%; }
 
 /* Laid out for the column's own width, so the sidebar and rail are already counted. */
 @container col (max-width: 700px) {
@@ -879,10 +923,10 @@ const STYLE: &str = r#"
   .gd-strict-row .row-control { justify-content: flex-start; }
 }
 @container col (max-width: 599px) {
-  .gd-catch { grid-template-columns: minmax(0, 1fr); padding: 12px; }
-  .gd-verdict { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; text-align: left; gap: 12px 16px; padding-top: 0; border-top: 1px solid var(--edge-1); padding-top: 14px; }
-  .gd-gauge { width: 112px; }
-  .gd-gauge .gd-num b { font-size: 24px; }
+  .gd-catch { grid-template-columns: minmax(0, 1fr); padding: 14px; }
+  .gd-verdict { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; text-align: left; gap: 12px 16px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--edge-1); }
+  .gd-gauge { width: 108px; }
+  .gd-gauge .gd-num b { font-size: 23px; }
   .gd-out { align-items: flex-start; }
   .gd-acts { flex-direction: row; flex-wrap: wrap; flex-basis: 100%; }
   .gd-acts .gd-pop { position: static; }
@@ -890,9 +934,9 @@ const STYLE: &str = r#"
   .gd-dmsg { grid-template-columns: 34px minmax(0, 1fr); gap: 10px; padding: 10px 12px 12px 10px; }
   .gd-dmsg > .avatar { width: 34px; height: 34px; }
   .gd-dtext { font-size: 13.5px; }
-  .gd-hp { flex-direction: row; gap: 10px; }
-  .gd-hp-ic { width: 40px; height: 40px; margin: 0; }
-  .gd-hp .muted { display: none; }
+  .gd-hp { flex-direction: row; gap: 10px; padding: 0; }
+  .gd-hp-ic { width: 38px; height: 38px; margin: 0; }
+  .gd-hp span:last-child { display: none; }
   .gd-list-head { align-items: flex-start; }
 }
 "#;

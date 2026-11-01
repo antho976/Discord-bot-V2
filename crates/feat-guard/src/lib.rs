@@ -709,6 +709,62 @@ async fn close_open(ctx: &Ctx, guild: u64, user: u64, outcome: Outcome, by: Opti
     Ok(())
 }
 
+/// The bait in a test alert: a gift link that imitates Discord, as scam bots post it.
+const TEST_MESSAGE: &str = "free nitro for everyone, claim it before it runs out https://discord-gift.ru/claim";
+
+/// A sample alert in `channel`, marked as a test: the person who sent it stands in for the member,
+/// nothing is stored, nobody is timed out, banned or messaged, and it has no buttons.
+pub async fn send_test_alert(ctx: &Ctx, s: &Settings, channel: u64, by: u64, by_name: &str) -> Result<()> {
+    let e = test_alert_embed(s, channel, by, by_name);
+    let none = bot_core::twilight_model::channel::message::AllowedMentions::default();
+    ctx.http.create_message(Id::new(channel)).embeds(&[e]).allowed_mentions(Some(&none)).await?;
+    Ok(())
+}
+
+/// The test alert: a real alert's layout for [`TEST_MESSAGE`], titled and footed as a test, and
+/// saying nothing was done.
+fn test_alert_embed(s: &Settings, channel: u64, by: u64, by_name: &str) -> Embed {
+    let facts = Facts { account_age_days: Some(365.0), new_account_days: s.new_account_days, repeat_channels: 1, has_attachments: false, catch_ads: s.catch_ads };
+    let v = score::score(TEST_MESSAGE, &facts);
+    let c = Catch {
+        id: 0,
+        at: now_ms(),
+        user_id: by,
+        user_name: by_name.to_owned(),
+        honeypot: false,
+        score: i64::from(v.score),
+        reason: v.reason(),
+        signals: v.signals,
+        content: TEST_MESSAGE.to_owned(),
+        channel_id: channel,
+        deleted: 0,
+        timeout_until: None,
+        outcome: Outcome::NotTimedOut,
+        acted_by: None,
+        acted_by_name: None,
+        acted_at: None,
+        acted_reason: None,
+        acted_in_discord: false,
+        alert: None,
+    };
+    let mut e = alert_embed(&c);
+    e.title = Some("Test: scam caught".to_owned());
+    for f in &mut e.fields {
+        if f.name == "Done" {
+            f.value = format!(
+                "Nothing, this is a test. A real catch deletes their messages from the last ten minutes and times them out for {}.",
+                timeout_label(s.timeout_minutes)
+            );
+        }
+    }
+    e.footer = Some(bot_core::twilight_model::channel::message::embed::EmbedFooter {
+        icon_url: None,
+        proxy_icon_url: None,
+        text: format!("Test sent from the dashboard by {by_name}. Real alerts have Release and Ban buttons."),
+    });
+    e
+}
+
 fn alert_buttons(c: &Catch) -> Vec<Component> {
     if !c.outcome.open() {
         return Vec::new();
@@ -1101,5 +1157,17 @@ mod tests {
         c.acted_by = None;
         c.acted_reason = None;
         assert_eq!(outcome_line(&c), "Banned in Discord.");
+    }
+
+    #[test]
+    fn a_test_alert_says_it_is_one_and_that_nothing_was_done() {
+        let e = test_alert_embed(&Settings::default(), 7, U, "Antho");
+        assert_eq!(e.title.as_deref(), Some("Test: scam caught"));
+        let done = e.fields.iter().find(|f| f.name == "Done").map(|f| f.value.as_str()).unwrap_or_default();
+        assert!(done.starts_with("Nothing, this is a test."), "{done}");
+        assert!(e.footer.is_some_and(|f| f.text.starts_with("Test sent from the dashboard by Antho")));
+        // The sample is a real catch at the default strictness, so the reasons aren't empty.
+        let why = e.fields.iter().find(|f| f.name == "Why").map(|f| f.value.as_str()).unwrap_or_default();
+        assert!(why.starts_with("- "), "{why}");
     }
 }

@@ -1,6 +1,6 @@
 use bot_core::axum::Router;
 use bot_core::axum::extract::{Path, Query, State};
-use bot_core::axum::response::IntoResponse;
+use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::web::ui::{self, Tone};
@@ -20,6 +20,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/modmail", get(page))
         .route("/g/{guild}/modmail/settings", post(save))
         .route("/g/{guild}/modmail/{id}/close", post(close))
+        .route("/g/{guild}/modmail/test", post(send_test))
 }
 
 fn thread_url(guild: u64, thread: u64) -> String {
@@ -68,6 +69,7 @@ fn everyone_sees(base: Permissions, overwrites: &[PermissionOverwrite], guild: u
 #[derive(Deserialize)]
 struct ViewQuery {
     view: Option<String>,
+    sent: Option<String>,
 }
 
 async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<ViewQuery>) -> WebResult {
@@ -96,6 +98,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
 
     let body = html! {
         style { (PreEscaped(CSS)) }
+        @if q.sent.is_some() { (sent_toast("Test sent to your DMs")) }
         (tabs)
         @if view == "settings" {
             @if let Some(ch) = s.channel.filter(|c| everyone_can_view(&ctx, guild, *c)) {
@@ -178,50 +181,48 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
 }
 
 /// One conversation: who, how long it's waited and on whom, and its latest message as a chat
-/// bubble, the member's on the left and staff's on the right.
+/// bubble, the member's on the left and staff's on the right with their face.
 fn conversation(ctx: &Ctx, page: &Page, guild: u64, c: &Conv, now: i64, i: usize) -> Markup {
     let name = c.name(ctx, guild);
     let staff_wrote = !c.waiting_on_staff();
-    let author = if staff_wrote { ctx.display_name(guild, c.last_author) } else { name.clone() };
     let stamp = |ms: i64| page.user.local(ms).strftime("%b %-d, %H:%M").to_string();
     let earlier = (c.messages - 1).max(0);
     let waiting = c.is_open() && c.waiting_on_staff();
     html! {
-        article.mm-conv.waiting[waiting].closed[!c.is_open()] style={ "--i:" (i.min(8)) } {
+        article.mm-conv.closed[!c.is_open()] style={ "--i:" (i.min(6)) } {
             header.mm-head {
-                img.avatar.mm-face src=(ctx.member_avatar(guild, c.user_id)) alt="" width="44" height="44" loading="lazy";
+                img.avatar.mm-face src=(ctx.member_avatar(guild, c.user_id)) alt="" width="40" height="40" loading="lazy";
                 div.grow.mm-who {
                     strong.clip { (name) }
-                    span.muted.small {
-                        "Opened " span title=(stamp(c.opened_at)) { (text::ago(c.opened_at)) }
-                        " · " (c.messages) @if c.messages == 1 { " message" } @else { " messages" }
-                    }
+                    span title=(stamp(c.opened_at)) { "Opened " (text::ago(c.opened_at)) }
                 }
                 @if waiting {
-                    span.mm-state.wait title={ "Last message " (stamp(c.last_at)) } { span.dot.waiting {} "Waiting " (mail::span((now - c.last_at) / 1000)) }
+                    span.mm-state.wait title={ "Waiting " (mail::span((now - c.last_at) / 1000)) ", since " (stamp(c.last_at)) } {
+                        span.dot.waiting {} "Waiting " (short_wait((now - c.last_at) / 1000))
+                    }
                 } @else if c.is_open() {
                     span.mm-state { "Waiting on " (name) }
                 } @else {
-                    span.mm-state.done { (ui::icon(Icon::Check)) "Closed" }
+                    span.mm-state { (ui::icon(Icon::Check)) "Closed" }
                 }
             }
             div.mm-thread {
                 @if earlier > 0 {
-                    div.mm-earlier {
-                        span.mm-ghosts aria-hidden="true" { span {} span {} }
-                        (earlier) @if earlier == 1 { " earlier message" } @else { " earlier messages" } " in the thread"
-                    }
+                    p.mm-earlier { (earlier) @if earlier == 1 { " earlier message" } @else { " earlier messages" } }
                 }
                 @if !c.preview.is_empty() {
                     div.mm-msg.staff[staff_wrote] {
-                        img.avatar src=(ctx.member_avatar(guild, c.last_author)) alt="" width="30" height="30" loading="lazy";
+                        @if staff_wrote {
+                            img.avatar src=(ctx.member_avatar(guild, c.last_author)) alt="" width="28" height="28" loading="lazy";
+                        }
                         div.mm-bubble {
-                            div.mm-by {
-                                strong { (author) }
-                                @if staff_wrote { span.mm-tag { "Staff" } }
-                                span title=(stamp(c.last_at)) { (text::ago(c.last_at)) }
+                            @if staff_wrote {
+                                div.mm-by { strong { (ctx.display_name(guild, c.last_author)) } span { "staff" } }
                             }
-                            p { (c.preview) }
+                            p {
+                                (c.preview)
+                                time.mm-time datetime=(c.last_at) title=(stamp(c.last_at)) { (text::ago(c.last_at)) }
+                            }
                         }
                     }
                 }
@@ -232,10 +233,11 @@ fn conversation(ctx: &Ctx, page: &Page, guild: u64, c: &Conv, now: i64, i: usize
                         @match c.closed_by {
                             Some(by) => {
                                 img.avatar src=(ctx.member_avatar(guild, by)) alt="" width="20" height="20" loading="lazy";
-                                span { "Closed by " strong { (ctx.display_name(guild, by)) } " · " (text::ago(c.closed_at.unwrap_or(now))) }
+                                span { "Closed by " strong { (ctx.display_name(guild, by)) } }
                             },
-                            None => { span { "Closed in Discord · " (text::ago(c.closed_at.unwrap_or(now))) } },
+                            None => { span { "Closed in Discord" } },
                         }
+                        @if let Some(at) = c.closed_at { time datetime=(at) title=(stamp(at)) { (text::ago(at)) } }
                     }
                 }
                 div.mm-acts {
@@ -244,6 +246,16 @@ fn conversation(ctx: &Ctx, page: &Page, guild: u64, c: &Conv, now: i64, i: usize
                 }
             }
         }
+    }
+}
+
+/// How long a member has waited, in its largest unit ("26 h", "3 days"). The exact span is in
+/// the tooltip.
+fn short_wait(secs: i64) -> String {
+    match secs.max(0) {
+        s if s >= 2 * 86_400 => format!("{} days", s / 86_400),
+        s if s >= 3600 => format!("{} h", s / 3600),
+        s => format!("{} min", (s / 60).max(1)),
     }
 }
 
@@ -272,10 +284,9 @@ fn closed_recently(ctx: &Ctx, page: &Page, guild: u64) -> Markup {
                                 Some(by) => { "by " (ctx.display_name(guild, by)) },
                                 None => { "in Discord" },
                             }
-                            " · " (c.messages) " messages"
                         }
                     }
-                    @if let Some(at) = c.closed_at { span.mono.small title=(page.user.local(at).strftime("%b %-d, %H:%M").to_string()) { (text::ago(at)) } }
+                    @if let Some(at) = c.closed_at { time.mm-ago datetime=(at) title=(page.user.local(at).strftime("%b %-d, %H:%M").to_string()) { (text::ago(at)) } }
                 }
             }
         }
@@ -284,8 +295,7 @@ fn closed_recently(ctx: &Ctx, page: &Page, guild: u64) -> Markup {
 
 /// The greeting and the closing text as the member gets them: DMs from the bot, as saved.
 fn dm_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
-    let server = ctx.guild_name(guild);
-    let fill = |t: &str, default: &str| text::fill(if t.trim().is_empty() { default } else { t.trim() }, &[("server", &server)]);
+    let [(_, greeting), (_, closing)] = mail::member_texts(s, &ctx.guild_name(guild));
     let bot = ctx.bot_id().and_then(|b| ctx.known_name(guild, b)).unwrap_or_else(|| "The bot".to_owned());
     let line = |label: &str, body: String, i: usize| {
         html! {
@@ -306,11 +316,20 @@ fn dm_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
             }
             div.mm-dms {
                 div.mm-dms-head { span.mm-at { "@" } strong { (bot) } }
-                (line("when it opens", fill(&s.greeting, DEFAULT_GREETING), 0))
+                (line("when it opens", greeting, 0))
                 div.mm-dms-gap { span { "Staff answer in the thread, and their replies arrive here" } }
-                (line("when staff close it", fill(&s.closing, DEFAULT_CLOSING), 1))
+                (line("when staff close it", closing, 1))
             }
-            @if !page.can_edit() { p.muted.small { "Ask an admin to change these texts." } }
+            @if page.can_edit() {
+                div.mm-send {
+                    form.inline method="post" action=(page.path("modmail/test")) {
+                        button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send to my DMs" }
+                    }
+                    span.muted.small { "Both texts, as saved, in your own DMs from the bot." }
+                }
+            } @else {
+                p.muted.small { "Ask an admin to change these texts." }
+            }
         }
     }
 }
@@ -380,6 +399,26 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     Ok(saved(&page.path("modmail?view=settings")))
 }
 
+/// The greeting and the closing text in the viewer's own DMs, as saved.
+async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    mail::send_test(&ctx, guild, &s, page.user.id).await.map_err(WebError::Bad)?;
+    ctx.audit(&page.user, Some(guild), KEY, "Sent the modmail greeting and closing text to their own DMs as a test");
+    Ok(Redirect::to(&format!("{}&sent=1", page.path("modmail?view=settings"))).into_response())
+}
+
+/// A toast once the page is back, then the flag leaves the address.
+fn sent_toast(msg: &str) -> Markup {
+    // A JS string; `<` escaped so the text can't close the script.
+    let msg = format!("{msg:?}").replace('<', "\\u003c");
+    html! {
+        script { (PreEscaped(format!(
+            "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg});const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go,{{once:true}}):setTimeout(go)}})()"
+        ))) }
+    }
+}
+
 async fn close(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     if let Some(c) = ctx.db.with(|c| mail::by_id(c, guild, id))?
@@ -394,65 +433,59 @@ const CSS: &str = r#"
 .mm-main { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 .mm-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .mm-readings .reading { min-width: 0; }
-.mm-readings .reading:first-child { background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 28%, transparent); }
-.mm-readings .reading:first-child::before { width: 100%; opacity: 1; }
 .mm-readings .mm-wait b { color: var(--waiting); }
 .mm-readings .mm-wait::before { background: linear-gradient(90deg, var(--waiting), transparent); }
 
-/* A conversation: who, then its latest message as a bubble. */
-/* Conversations sit two or three across on a wide screen instead of one stretched card each.
+/* A conversation: who and how long they've waited, then its latest message as a bubble.
+   Conversations sit two or three across on a wide screen instead of one stretched card each.
    One conversation fills the row. */
 .mm-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; }
-.mm-conv { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 80ms + 160ms); transition: box-shadow 0.25s, transform 0.35s var(--ease); }
-.mm-conv:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.mm-conv.waiting { background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 28%, transparent); }
-.mm-head { display: flex; align-items: center; gap: 13px; min-width: 0; }
-.mm-face { width: 44px; height: 44px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--edge-2); }
-.mm-conv.waiting .mm-face { box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px color-mix(in oklab, var(--waiting) 70%, transparent); }
+.mm-conv { display: flex; flex-direction: column; gap: 14px; padding: 18px 20px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.4s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms + 100ms); }
+.mm-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.mm-face { width: 40px; height: 40px; }
 .mm-who { display: flex; flex-direction: column; gap: 1px; }
-.mm-who strong { font-size: 14.5px; font-weight: 600; }
-.mm-state { flex: none; display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px; border-radius: 13px; background: var(--control); color: var(--ink-2); font-size: 12px; font-weight: 500; }
-.mm-state.wait { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 13%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 30%, transparent); }
+.mm-who strong { font-size: 15px; font-weight: 600; }
+.mm-who span { font-size: 12.5px; color: var(--ink-3); }
+.mm-state { flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-3); }
+.mm-state .icon { width: 14px; height: 14px; }
+.mm-state.wait { color: var(--waiting); font-weight: 600; gap: 8px; }
 .mm-state.wait .dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--waiting); animation: ping 2.2s ease-out infinite 1s; }
-.mm-state.done .icon { width: 13px; height: 13px; }
-.mm-thread { display: flex; flex-direction: column; gap: 8px; padding-left: 57px; }
-.mm-earlier { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--ink-3); }
-.mm-ghosts { position: relative; width: 30px; height: 16px; flex: none; }
-.mm-ghosts span { position: absolute; left: 0; height: 7px; border-radius: 4px; background: var(--control); }
-.mm-ghosts span:first-child { top: 1px; width: 26px; }
-.mm-ghosts span:last-child { top: 9px; width: 18px; background: var(--hover); }
-.mm-msg { display: flex; align-items: flex-end; gap: 9px; max-width: min(560px, 100%); }
-.mm-msg > .avatar { width: 30px; height: 30px; }
-.mm-bubble { min-width: 0; padding: 9px 13px 10px; border-radius: 16px 16px 16px 5px; background: #2b2d31; color: #dbdee1; box-shadow: 0 10px 24px -16px rgba(0, 0, 0, 0.9); transform-origin: 0% 100%; animation: mm-pop 0.55s var(--spring) both; animation-delay: calc(var(--i, 0) * 80ms + 480ms); }
+/* The thread sits under the name, on the same left edge. */
+.mm-thread { display: flex; flex-direction: column; gap: 8px; padding-left: 52px; }
+.mm-earlier { font-size: 12.5px; color: var(--ink-3); }
+.mm-msg { display: flex; align-items: flex-end; gap: 8px; max-width: min(560px, 100%); }
+.mm-msg > .avatar { width: 28px; height: 28px; }
+.mm-bubble { min-width: 0; padding: 9px 13px; border-radius: 14px 14px 14px 4px; background: #2b2d31; color: #dbdee1; }
 .mm-bubble p { font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; }
-.mm-by { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; font-size: 11.5px; color: #949ba4; }
-.mm-by strong { color: #f2f3f5; font-size: 12.5px; font-weight: 600; }
-.mm-tag { height: 16px; padding: 0 5px; border-radius: 4px; font: 700 9.5px/16px var(--sans); letter-spacing: 0.02em; background: var(--accent); color: var(--accent-ink); }
+.mm-time { float: right; margin: 4px 0 0 12px; font-size: 11.5px; line-height: 1.5; color: #949ba4; }
+.mm-by { display: flex; align-items: baseline; gap: 6px; margin-bottom: 1px; font-size: 12px; color: var(--ink-3); }
+.mm-by strong { color: var(--ink); font-size: 13px; font-weight: 600; }
 .mm-msg.staff { flex-direction: row-reverse; align-self: flex-end; }
-.mm-msg.staff .mm-bubble { border-radius: 16px 16px 5px 16px; background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 26%, var(--solid)), color-mix(in oklab, var(--accent) 16%, var(--raised))); color: var(--ink); transform-origin: 100% 100%; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 30%, transparent); }
-.mm-msg.staff .mm-by { justify-content: flex-end; color: var(--ink-3); }
-@keyframes mm-pop { from { opacity: 0; transform: scale(0.6); } }
-.mm-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; padding-left: 57px; margin-top: auto; }
+.mm-msg.staff .mm-bubble { border-radius: 14px 14px 4px 14px; background: color-mix(in oklab, var(--accent) 16%, var(--raised)); color: var(--ink); }
+.mm-msg.staff .mm-time { color: var(--ink-3); }
+.mm-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; padding-left: 52px; margin-top: auto; }
 .mm-closer { display: inline-flex; align-items: center; gap: 7px; margin-right: auto; font-size: 12.5px; color: var(--ink-2); }
 .mm-closer .avatar { width: 20px; height: 20px; }
 .mm-closer strong { color: var(--ink); font-weight: 600; }
+.mm-closer time { margin-left: 3px; color: var(--ink-3); }
 .mm-acts { display: flex; gap: 6px; align-items: center; }
-.mm-conv.closed .mm-bubble { animation: none; }
+/* Back on the same page after a close or another tab: no entrance again. */
+html.same .mm-conv { animation: none; }
 
 /* The rail. */
-.mm-rail-ic { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 10px; background: color-mix(in oklab, var(--role, var(--hue)) 16%, transparent); color: var(--role, var(--hue)); }
+.mm-rail-ic { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--edge-2); color: var(--role, var(--hue)); }
 .mm-rail-ic .icon { width: 15px; height: 15px; }
 .mm-pair { position: relative; flex: none; width: 30px; height: 30px; }
 .mm-pair > .avatar:first-child { width: 30px; height: 30px; }
 .mm-by-face { position: absolute; right: -5px; bottom: -4px; width: 18px; height: 18px; box-shadow: 0 0 0 2px var(--raised); }
-.mm-closed-line .mono { color: var(--ink-3); }
+.mm-ago { flex: none; font-size: 12px; color: var(--ink-3); }
 .rail-block h2 a { font-weight: 400; }
 
 /* The member's DMs from the bot, on Discord's own colours. */
-.mm-dms { display: flex; flex-direction: column; gap: 12px; padding: 0 0 14px; border-radius: 12px; background: #313338; overflow: hidden; box-shadow: 0 14px 30px -18px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.05); }
+.mm-dms { display: flex; flex-direction: column; gap: 12px; padding: 0 0 14px; border-radius: 12px; background: #313338; overflow: hidden; }
 .mm-dms-head { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; background: #2b2d31; border-bottom: 1px solid rgba(0, 0, 0, 0.28); color: #f2f3f5; font-size: 13px; }
 .mm-at { color: #80848e; font-weight: 600; }
-.mm-dm { display: flex; gap: 11px; padding: 0 14px; animation: rise 0.5s var(--ease) both; animation-delay: calc(var(--s, 0) * 260ms + 300ms); }
+.mm-dm { display: flex; gap: 11px; padding: 0 14px; animation: rise 0.4s var(--ease) both; animation-delay: calc(var(--s, 0) * 120ms + 200ms); }
 .mm-bot { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 50%; color: #fff; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
 .mm-bot .icon { width: 20px; height: 20px; }
 .mm-dm-by { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -463,6 +496,7 @@ const CSS: &str = r#"
 .mm-dms-gap { display: flex; align-items: center; gap: 10px; padding: 0 14px; color: #949ba4; font-size: 11px; }
 .mm-dms-gap::before, .mm-dms-gap::after { content: ""; flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08); }
 .mm-dms-gap span { text-align: center; max-width: 70%; }
+.mm-send { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; }
 /* The staff thread: its channel and name, Discord's mentions, the bot's note and its button. */
 .mm-previews { display: flex; flex-direction: column; gap: 26px; }
 .mm-dms-head .icon { width: 13px; height: 13px; color: #80848e; transform: rotate(-90deg); }
@@ -477,10 +511,10 @@ const CSS: &str = r#"
   .mm-readings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @container col (max-width: 560px) {
-  .mm-conv { padding: 14px; }
-  .mm-head { flex-wrap: wrap; row-gap: 8px; }
-  .mm-head .mm-who { flex: 1 1 calc(100% - 60px); }
-  .mm-state { margin-left: 57px; }
+  .mm-conv { padding: 14px 16px; }
+  .mm-head { flex-wrap: wrap; row-gap: 4px; }
+  .mm-head .mm-who { flex: 1 1 calc(100% - 52px); }
+  .mm-state { margin-left: 52px; }
   .mm-thread, .mm-foot { padding-left: 0; }
   .mm-foot { justify-content: flex-start; }
 }

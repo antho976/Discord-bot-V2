@@ -607,6 +607,36 @@ async fn attribute(ctx: &Ctx, batcher: &Batcher, channel: u64) {
     }
 }
 
+/// Where the log posts, as saved: each channel once, with what goes there. Message events go to
+/// their own channel or the log channel, member events the same, whatever the switches say.
+pub fn test_destinations(s: &Settings) -> Vec<(u64, &'static str)> {
+    let messages = s.message_channel.or(s.channel);
+    let members = s.member_channel.or(s.channel);
+    match (messages, members) {
+        (Some(a), Some(b)) if a == b => vec![(a, "Message and member events are posted here.")],
+        _ => messages
+            .map(|c| (c, "Message events are posted here: edits and deletes."))
+            .into_iter()
+            .chain(members.map(|c| (c, "Member events are posted here: joins, leaves, roles, bans, timeouts and voice.")))
+            .collect(),
+    }
+}
+
+/// A test entry in each channel the log posts in, with the person who sent it as the member.
+/// Nothing is stored and nothing happened in the server. Returns the channels posted in.
+pub async fn send_test(ctx: &Ctx, guild: u64, s: &Settings, by: u64) -> Result<Vec<u64>> {
+    let mut sent = Vec::new();
+    for (channel, what) in test_destinations(s) {
+        let e = embed(ctx, guild, "Test entry", GREY, Some(by))
+            .description(format!("{what}\nSent from the dashboard to check the bot can post in this channel."))
+            .footer(EmbedFooterBuilder::new("A test. Nothing happened in the server."))
+            .build();
+        ctx.http.create_message(Id::new(channel)).embeds(&[e]).allowed_mentions(Some(&AllowedMentions::default())).await?;
+        sent.push(channel);
+    }
+    Ok(sent)
+}
+
 /// "By @Mira" and the reason on a posted entry. A leave with a kick behind it becomes a kick.
 pub fn add_moderator(e: &mut Embed, kind: Kind, moderator: u64, reason: Option<&str>) {
     if kind == Kind::Leave {
@@ -1021,5 +1051,18 @@ mod tests {
         s.ban = false;
         assert_eq!(s.route(Kind::Ban), None);
         assert!(s.skips_channel(20));
+    }
+
+    #[test]
+    fn a_test_goes_to_each_channel_once() {
+        let mut s = Settings::default();
+        assert!(test_destinations(&s).is_empty());
+        s.channel = Some(10);
+        assert_eq!(test_destinations(&s), vec![(10, "Message and member events are posted here.")]);
+        s.message_channel = Some(20);
+        let to: Vec<u64> = test_destinations(&s).into_iter().map(|(c, _)| c).collect();
+        assert_eq!(to, vec![20, 10]);
+        s.member_channel = Some(20);
+        assert_eq!(test_destinations(&s).len(), 1);
     }
 }
