@@ -65,6 +65,8 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let clock = format!("{}:{:02} {}", if now.hour() % 12 == 0 { 12 } else { now.hour() % 12 }, now.minute(), if now.hour() < 12 { "AM" } else { "PM" });
 
     let form = ui::settings_form(&page, &page.path("levels/settings"), html! {
+        // Two columns of sections once the column is wide enough (CSS, .lv-cols).
+        div.lv-cols {
             (section(Icon::Star, "Earning XP", None, ui::card(html! {
                 (ui::field_number("xp_min", "XP per message, lowest", None, s.xp_min, 0, 1000, Some("XP")))
                 (ui::field_number("xp_max", "XP per message, highest", Some("Each message earns a random amount between the two."), s.xp_max, 0, 1000, Some("XP")))
@@ -108,6 +110,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_roles(&ctx, guild, "no_xp_roles", "Roles", Some("Members with any of these roles earn nothing."), &s.no_xp_roles))
                 (ui::field_toggle("stack_rewards", "Keep earlier reward roles", Some("Off: members only keep the reward role for their highest level."), s.stack_rewards))
             })))
+        }
     });
     let max = climb.iter().copied().max().unwrap_or(1).max(1) as f64;
     let rail = html! {
@@ -227,8 +230,23 @@ const CSS: &str = r#"
 .lv-board { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .lv-prestige { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .big-num b { font: inherit; }
-/* Room for "Level 17 · Prestige 1 · 27-day streak" on one line. */
+/* Room for "Level 17 · Prestige 1 · 27-day streak" on one line. The meter takes the middle. */
 @media (min-width: 821px) { .lb .rank { grid-template-columns: 28px 28px minmax(100px, 250px) minmax(0, 1fr) auto auto; } }
+.lb .rank .progress { max-width: none; }
+/* A wide column holds the list twice over: places run down the left half, then the right. */
+@container col (min-width: 1300px) {
+  .lb .ranks { display: grid; grid-auto-flow: column; grid-template-rows: repeat(var(--rows, 1), auto); grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 36px; }
+  .lb .rank.col2 { border-top: 0; }
+}
+/* Readings stretch to share their row, so the page's answer spans the column. */
+.readings.lv-readings > .reading { flex: 1 1 160px; }
+
+/* Settings: sections in two columns once there's room for both. */
+.lv-cols { display: flex; flex-direction: column; gap: 18px; }
+@container col (min-width: 1080px) {
+  .lv-cols { display: block; columns: 2; column-gap: 24px; }
+  .lv-cols > .lv-sec { break-inside: avoid; margin-bottom: 18px; }
+}
 
 /* Section heads carry the group's icon tile. */
 .lv-sec { gap: 14px; }
@@ -242,25 +260,31 @@ const CSS: &str = r#"
 .lv-ladder { position: relative; display: flex; flex-direction: column; gap: 12px; }
 .lv-ladder::before { content: ""; position: absolute; left: 27px; top: 34px; bottom: 34px; width: 2px; border-radius: 2px; background: linear-gradient(180deg, var(--hue), var(--data-2)); opacity: 0.6; transform-origin: top; animation: lv-draw 1.1s var(--ease) both 0.15s; }
 .lv-rung { --role: var(--hue); position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 16px; align-items: center; }
-.lv-node { position: relative; z-index: 1; display: grid; place-content: center; justify-items: center; width: 56px; height: 56px; border-radius: 50%; background: radial-gradient(circle at 50% 28%, color-mix(in oklab, var(--role) 34%, var(--page)), var(--page) 78%); box-shadow: 0 0 0 2px color-mix(in oklab, var(--role) 75%, transparent), 0 0 0 6px var(--page), 0 12px 28px -10px var(--role); animation: pop-in 0.55s var(--spring) both; animation-delay: calc(0.3s + var(--i, 0) * 110ms); }
+.lv-node { position: relative; z-index: 1; display: grid; place-content: center; justify-items: center; width: 56px; height: 56px; border-radius: 50%; background: radial-gradient(circle at 50% 28%, color-mix(in oklab, var(--role) 34%, var(--page)), var(--page) 78%); box-shadow: 0 0 0 2px color-mix(in oklab, var(--role) 75%, transparent), 0 0 0 6px var(--page); animation: pop-in 0.55s var(--spring) both; animation-delay: calc(0.3s + var(--i, 0) * 110ms); }
 .lv-node b { font: 650 19px/1 var(--sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
 .lv-node small { font-size: 10px; color: var(--ink-2); margin-top: 3px; }
-.lv-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 16px 15px; border-radius: 14px; background: linear-gradient(90deg, color-mix(in oklab, var(--role) 9%, transparent), rgba(243, 242, 248, 0.015) 70%); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; animation: rise 0.5s var(--ease) both; animation-delay: calc(0.36s + var(--i, 0) * 110ms); }
+.lv-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "top acts" "reach reach"; align-items: center; gap: 10px 12px; min-width: 0; padding: 14px 16px 15px; border-radius: 14px; background: linear-gradient(90deg, color-mix(in oklab, var(--role) 9%, transparent), rgba(243, 242, 248, 0.015) 70%); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; animation: rise 0.5s var(--ease) both; animation-delay: calc(0.36s + var(--i, 0) * 110ms); }
 .lv-rung:hover .lv-card { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.lv-card-top { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
+.lv-card-top { grid-area: top; display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; min-width: 0; }
+.lv-reach { grid-area: reach; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .lv-pill { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 7px; font-weight: 600; font-size: 14px; color: color-mix(in oklab, var(--role), white 40%); background: color-mix(in oklab, var(--role) 17%, transparent); white-space: nowrap; }
 .lv-card-top .muted { font-size: 12.5px; }
-.lv-acts { display: flex; gap: 6px; margin-left: auto; }
+.lv-acts { grid-area: acts; display: flex; gap: 6px; justify-content: flex-end; }
+/* On a wide column each rung reads as one line: the role, who reached it, then its actions. */
+@container col (min-width: 1100px) {
+  .lv-card { grid-template-columns: minmax(180px, 0.6fr) minmax(0, 1.6fr) auto; grid-template-areas: "top reach acts"; column-gap: 28px; }
+  .lv-reach { gap: 8px; }
+}
 .lv-acts .pop-body { width: 250px; }
 .lv-acts .pop-body .stack { gap: 10px; }
 .lv-who { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); flex-wrap: wrap; }
 .lv-who .avatar { width: 26px; height: 26px; }
 .lv-who b { color: var(--ink); font-weight: 600; }
 .lv-card .meter { height: 5px; }
-.lv-card .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--role) 60%, var(--data-2)), color-mix(in oklab, var(--role), white 20%)); box-shadow: 0 0 10px color-mix(in oklab, var(--role) 50%, transparent); }
+.lv-card .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--role) 60%, var(--data-2)), color-mix(in oklab, var(--role), white 20%)); box-shadow: none; }
 .lv-add .lv-node { background: var(--page); box-shadow: 0 0 0 6px var(--page); border: 1.5px dashed var(--edge-3); color: var(--ink-3); }
 .lv-add .lv-node .icon { width: 18px; height: 18px; }
-.lv-add .lv-card { background: none; box-shadow: inset 0 0 0 1px var(--edge-1); flex-direction: row; align-items: center; flex-wrap: wrap; }
+.lv-add .lv-card { display: flex; gap: 10px; background: none; box-shadow: inset 0 0 0 1px var(--edge-1); flex-direction: row; align-items: center; flex-wrap: wrap; }
 .lv-add .lv-card .input.num { width: 96px; }
 .lv-add .lv-card .select-wrap { flex: 1; min-width: 160px; max-width: 280px; }
 .lv-warn { font-size: 12.5px; color: var(--ink-2); }
@@ -288,12 +312,12 @@ span.lv-dc-av img { width: 22px; height: 22px; }
 .lv-curve .rail-nums b { font-size: 21px; }
 
 /* Import: a drop zone that takes the whole card. */
-.lv-drop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 20px 30px; border-radius: 16px; text-align: center; border: 1.5px dashed var(--edge-3); background: radial-gradient(70% 120% at 50% 0%, color-mix(in oklab, var(--hue) 11%, transparent), transparent 70%); transition: border-color 0.2s, background 0.3s, transform 0.3s var(--ease); }
-.lv-drop:hover, .lv-drop.over { border-color: var(--hue); background: radial-gradient(80% 130% at 50% 0%, color-mix(in oklab, var(--hue) 20%, transparent), transparent 75%); }
+.lv-drop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 20px 30px; border-radius: 16px; text-align: center; border: 1.5px dashed var(--edge-3); background: radial-gradient(70% 120% at 50% 0%, color-mix(in oklab, var(--hue) 6%, transparent), transparent 70%); transition: border-color 0.2s, background 0.3s, transform 0.3s var(--ease); }
+.lv-drop:hover, .lv-drop.over { border-color: var(--hue); background: radial-gradient(80% 130% at 50% 0%, color-mix(in oklab, var(--hue) 11%, transparent), transparent 75%); }
 .lv-drop.over { transform: scale(1.01); }
 .lv-drop:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 3px; }
 .lv-drop input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
-.lv-drop-ic { display: grid; place-items: center; width: 54px; height: 54px; margin-bottom: 6px; border-radius: 17px; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 25%)); box-shadow: 0 14px 30px -12px var(--hue), inset 0 1px 0 rgba(255, 255, 255, 0.35); animation: float 5s ease-in-out infinite; }
+.lv-drop-ic { display: grid; place-items: center; width: 54px; height: 54px; margin-bottom: 6px; border-radius: 17px; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 25%)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); animation: float 5s ease-in-out infinite; }
 .lv-drop-ic .icon { width: 26px; height: 26px; }
 .lv-drop strong { font-size: 15px; font-weight: 600; }
 .lv-drop .muted { font-size: 12.5px; }
@@ -311,9 +335,15 @@ span.lv-dc-av img { width: 22px; height: 22px; }
 .lv-local .grow p { font-size: 12.5px; margin-top: 2px; overflow-wrap: anywhere; }
 .lv-local code { color: var(--ink-2); }
 .lv-main { gap: 30px; }
+/* Import: the upload beside what happens, once the page is wide enough for both. */
+.lv-import { display: flex; flex-direction: column; gap: 30px; }
+@container col (min-width: 1000px) {
+  .lv-import { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: 30px 36px; align-items: start; }
+}
 .lv-steps { display: flex; flex-direction: column; gap: 12px; }
 .lv-steps .mini { align-items: flex-start; }
 .lv-steps .mini .lvl { flex: none; }
+.lv-steps .mini .grow > * { white-space: normal; }
 @keyframes lv-draw { from { transform: scaleY(0); } }
 @media (max-width: 920px) {
   .lv-ladder::before { left: 21px; }
@@ -321,7 +351,8 @@ span.lv-dc-av img { width: 22px; height: 22px; }
   .lv-node { width: 44px; height: 44px; }
   .lv-node b { font-size: 16px; }
   .lv-node small { display: none; }
-  .lv-acts { margin-left: 0; }
+  .lv-card { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "reach" "acts"; }
+  .lv-acts { justify-content: flex-start; }
 }
 "#;
 
@@ -340,7 +371,7 @@ fn section(ic: Icon, title: &str, hint: Option<&str>, body: Markup) -> Markup {
 
 /// Reading cards whose figures count up as they scroll into view.
 fn readings(items: &[(&str, String)]) -> Markup {
-    html! { div.readings { @for (label, value) in items { div.reading { b data-count { (value) } span { (label) } } } } }
+    html! { div.readings.lv-readings { @for (label, value) in items { div.reading { b data-count { (value) } span { (label) } } } } }
 }
 
 /// "740", "25.9k", "1.2M": XP short enough for a rail figure.
@@ -739,10 +770,12 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         } @else if rows.is_empty() && search.is_none() {
             p.muted.small { @if board == Board::Week { "Everyone who earned XP this week is on the podium so far." } @else { "Everyone with XP is on the podium so far." } }
         } @else {
-            div.ranks {
-                @for (place, m, gain) in &rows {
+            // Two columns on a wide screen, filled top to bottom: the first half, then the rest.
+            @let half = rows.len().div_ceil(2);
+            div.ranks style={ "--rows:" (half.max(1)) } {
+                @for (i, (place, m, gain)) in rows.iter().enumerate() {
                     @let p = s.progress(m.xp);
-                    div.rank {
+                    div.rank.col2[i == half] {
                         span.mono.muted.pos { (place) }
                         img.avatar src=(avatar(m.user_id)) alt="" width="28" height="28" loading="lazy";
                         @let more = extras(m);
@@ -921,30 +954,32 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                 div.lv-card-top {
                                     span.lv-pill { (role_name(&ctx, guild, *role)) }
                                     @if let Some(why) = problem { (ui::badge("Can't give", Tone::Warn)) span.lv-warn { (why) } }
-                                    @if page.can_edit() {
-                                        div.lv-acts {
-                                            details.pop {
-                                                summary.btn.small.outline { "Change" }
-                                                div.pop-body {
-                                                    form.stack method="post" action=(page.path(&format!("levels/rewards/{level}/edit"))) {
-                                                        input.input.num type="number" name="level" min="1" max="500" value=(level) aria-label="Level" required;
-                                                        (ui::select(&format!("role-{level}"), &options, &role.to_string()))
-                                                        button.btn.primary type="submit" { "Save" }
-                                                    }
-                                                }
-                                            }
-                                            (ui::action_button(&page.path(&format!("levels/rewards/{level}/delete")), "Remove", Tone::Bad, true))
+                                }
+                                div.lv-reach {
+                                    div.lv-who {
+                                        @if !faces.is_empty() { (ui::avatars(&faces, 5)) }
+                                        span {
+                                            @if n == 0 { "Nobody has reached it yet" }
+                                            @else { b { (text::num(n)) } (if n == 1 { " member reached it" } else { " members reached it" }) span.muted { " · " (pct) "% of the board" } }
                                         }
                                     }
+                                    span.meter { span style={ "width:" (pct) "%" } {} }
                                 }
-                                div.lv-who {
-                                    @if !faces.is_empty() { (ui::avatars(&faces, 5)) }
-                                    span {
-                                        @if n == 0 { "Nobody has reached it yet" }
-                                        @else { b { (text::num(n)) } (if n == 1 { " member reached it" } else { " members reached it" }) span.muted { " · " (pct) "% of the board" } }
+                                @if page.can_edit() {
+                                    div.lv-acts {
+                                        details.pop {
+                                            summary.btn.small.outline { "Change" }
+                                            div.pop-body {
+                                                form.stack method="post" action=(page.path(&format!("levels/rewards/{level}/edit"))) {
+                                                    input.input.num type="number" name="level" min="1" max="500" value=(level) aria-label="Level" required;
+                                                    (ui::select(&format!("role-{level}"), &options, &role.to_string()))
+                                                    button.btn.primary type="submit" { "Save" }
+                                                }
+                                            }
+                                        }
+                                        (ui::action_button(&page.path(&format!("levels/rewards/{level}/delete")), "Remove", Tone::Bad, true))
                                     }
                                 }
-                                span.meter { span style={ "width:" (pct) "%" } {} }
                             }
                         }
                     }
@@ -1065,6 +1100,7 @@ async fn import_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>)
                 }
             }))
         }
+        div.lv-import {
         (section(Icon::Log, if local.is_some() { "Or upload a file" } else { "Bring XP over from antho-s-bot" }, Some("Use a backup of its database, or the JSON the Render Shell command prints. Only members of this server are imported. Reward roles and XP settings come too."), html! {
             div.card style="padding:18px" {
                 label.lv-drop #import-drop {
@@ -1091,6 +1127,7 @@ async fn import_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>)
                 div.mini { span.lvl { "3" } div.grow { span { "Reward roles and XP settings come along" } span.muted { "Roles with moderation or admin power come only when an admin imports." } } }
             }
         }))
+        }
         script { (PreEscaped(format!(r#"
 (() => {{
   const $ = (id) => document.getElementById(id);

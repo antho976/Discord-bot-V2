@@ -312,7 +312,7 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
                             @if edit { label.pets-check { input #sel-all type="checkbox"; "Select all" } }
                             span.muted.small { "Approved pets join the collection, credited to whoever submitted them." }
                         }
-                        div.pets-rows {
+                        div.pets-rows.pets-tiles.wide {
                             @for p in &pending {
                                 @let pet = find(&p.pet_id);
                                 div class={ "pets-row r-" (store::clean_rarity(&pet.rarity)) } {
@@ -721,14 +721,14 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
                             (ui::empty(Icon::Gift, "No giveaways waiting", "Giveaways staff record wait here until they're confirmed or expire."))
                         }
                     } @else {
-                        div.pets-gvs { @for g in &active { (giveaway_item(&ctx, &page, g, image(&g.pet_id).as_deref(), comments.get(&g.id).map(Vec::as_slice).unwrap_or(&[]))) } }
+                        div.pets-gvs.pets-tiles.wide { @for g in &active { (giveaway_item(&ctx, &page, g, image(&g.pet_id).as_deref(), comments.get(&g.id).map(Vec::as_slice).unwrap_or(&[]))) } }
                     }
                 }))
                 (view::section(Icon::Log, "History", None, None, html! {
                     @if past.is_empty() {
                         (ui::empty(Icon::Log, "No history yet", "Confirmed, expired and cancelled giveaways are kept here."))
                     } @else {
-                        div.pets-gvs { @for g in &past { (giveaway_item(&ctx, &page, g, image(&g.pet_id).as_deref(), comments.get(&g.id).map(Vec::as_slice).unwrap_or(&[]))) } }
+                        div.pets-gvs.pets-tiles.wide { @for g in &past { (giveaway_item(&ctx, &page, g, image(&g.pet_id).as_deref(), comments.get(&g.id).map(Vec::as_slice).unwrap_or(&[]))) } }
                     }
                 }))
                 (ui::settings_form(&page, &page.path("pets"), html! {
@@ -954,7 +954,7 @@ async fn bans(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                             (ui::empty(Icon::Shield, "Nobody is banned", "Members staff ban from giving pets show here."))
                         }
                     } @else {
-                        div.pets-rows {
+                        div.pets-rows.pets-tiles.wide {
                             @for b in &list {
                                 @let n = given.get(&b.user_id).copied().unwrap_or(0);
                                 div.pets-row {

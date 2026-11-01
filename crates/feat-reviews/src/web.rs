@@ -230,8 +230,9 @@ fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, num
                     span title=(page.user.local(r.requested_at).strftime("%b %-d, %H:%M").to_string()) { "asked " (text::ago(r.requested_at)) }
                     @if let Some(t) = r.thread_id { a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { (ui::icon(Icon::External)) "Open post" } }
                 }
-                @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
             }
+            // Under the name on a narrow row, a column of its own on a wide one (CSS).
+            @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
             div.rv-side {
                 span.rv-wait title="How long they've waited in the queue" { b { (wait_words(now - since)) } span { "waiting" } }
                 @if page.can_edit() {
@@ -436,7 +437,7 @@ async fn done_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&ctx, &page, &s, "Done")?)
-        div.rv-main.rv-narrow {
+        div.rv-main {
             div.readings.rv-readings.three {
                 div.reading.rv-lead { b data-count { (text::num(done_week)) } span { "Done this week" } }
                 div.reading { b data-count { (typical) } span { "Typical wait before a review" } }
@@ -643,10 +644,12 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 (ui::field_channel(&ctx, guild, "channel", "Review channel", Some("Each new post in this forum joins the queue, named after its title. A text channel works too: each new thread joins. Scan posts on the Queue tab picks up open posts and archived ones from the last 30 days."), s.channel))
                 (ui::field_number("wait_days", "Wait before another review", Some("Someone who asks again this soon after their last review waits on the waitlist, then joins the queue on their own. 0 turns the waitlist off."), s.wait_days, 0, 365, Some("days")))
             })))
-            (ui::section("Messages", Some("{mention} pings the member, or names them when there's no member. {name} is the request's name."), ui::card(html! {
-                (ui::field_textarea("ping_message", "Ping", Some("Posted in their post when you press Ping."), &s.ping_message, DEFAULT_PING))
-                (ui::field_textarea("done_message", "Closing message", Some("Filled in when you complete a request. You can change or clear it each time."), &s.done_message, DEFAULT_DONE))
-            })))
+            div.rv-msgs {
+                (ui::section("Messages", Some("{mention} pings the member, or names them when there's no member. {name} is the request's name."), ui::card(html! {
+                    (ui::field_textarea("ping_message", "Ping", Some("Posted in their post when you press Ping."), &s.ping_message, DEFAULT_PING))
+                    (ui::field_textarea("done_message", "Closing message", Some("Filled in when you complete a request. You can change or clear it each time."), &s.done_message, DEFAULT_DONE))
+                })))
+            }
         }))
         (ui::section("Twitch channel points", Some("Redemptions of a channel points reward join the queue ahead of everyone else. Completing one marks it fulfilled on Twitch; removing one cancels it and refunds the points."), twitch_block(&ctx, &page, &s, conn.as_ref(), rewards, q.twitch.as_deref())))
         }
@@ -949,7 +952,7 @@ const CSS: &str = r#"
 .rv-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .rv-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .rv-readings .reading { min-width: 0; }
-.rv-readings .rv-lead { background: radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--hue) 16%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent), 0 16px 34px -22px var(--hue); }
+.rv-readings .rv-lead { background: radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--hue) 9%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent); }
 .rv-readings .rv-lead::before { width: 100%; opacity: 1; }
 /* Twitch's own purple for anything channel points. */
 .rv-readings .rv-points::before { background: linear-gradient(90deg, #9146ff, transparent); }
@@ -964,17 +967,17 @@ const CSS: &str = r#"
 /* The queue: numbered places on a line, the first one drawn larger. */
 .rv-queue { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; position: relative; }
 .rv-queue.numbered::before { content: ""; position: absolute; left: 31px; top: 40px; bottom: 30px; width: 2px; border-radius: 1px; background: linear-gradient(180deg, color-mix(in oklab, var(--hue) 60%, transparent), var(--edge-1) 40%, transparent); transform-origin: top; animation: grow 1.2s var(--ease) both 0.3s; }
-.rv-row { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 14px 16px; border-radius: 14px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rv-in 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 150ms); transition: transform 0.35s var(--ease), box-shadow 0.25s, background 0.25s; }
+.rv-row { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 8px 14px; align-items: start; padding: 14px 16px; border-radius: 14px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rv-in 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 150ms); transition: transform 0.35s var(--ease), box-shadow 0.25s, background 0.25s; }
 .rv-queue.numbered .rv-row { grid-template-columns: 30px 40px minmax(0, 1fr) auto; }
 .rv-row:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 @keyframes rv-in { from { opacity: 0; transform: translateX(-14px); filter: blur(3px); } }
 .rv-place { position: relative; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; margin-top: 5px; border-radius: 10px; font: 600 12.5px var(--mono); color: var(--ink-2); background: var(--raised); box-shadow: inset 0 0 0 1px var(--edge-2), 0 0 0 4px var(--page); }
-.rv-row.next { padding: 18px 18px 18px 16px; align-items: center; background: radial-gradient(90% 140% at 0% 0%, color-mix(in oklab, var(--hue) 14%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 34%, transparent), 0 22px 46px -28px var(--hue); }
+.rv-row.next { padding: 18px 18px 18px 16px; align-items: center; background: radial-gradient(90% 140% at 0% 0%, color-mix(in oklab, var(--hue) 8%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 34%, transparent); }
 .rv-queue.numbered .rv-row.next { grid-template-columns: 30px 60px minmax(0, 1fr) auto; }
-.rv-row.next .rv-place { margin-top: 0; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue)); box-shadow: 0 0 0 4px var(--page), 0 8px 18px -6px var(--hue); animation: pop-in 0.6s var(--spring) both 0.35s; }
+.rv-row.next .rv-place { margin-top: 0; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue)); box-shadow: 0 0 0 4px var(--page); animation: pop-in 0.6s var(--spring) both 0.35s; }
 .rv-next { height: 20px; padding: 0 8px; border-radius: 10px; font: 600 11px/20px var(--sans); color: var(--hue); background: color-mix(in oklab, var(--hue) 16%, transparent); }
 .rv-face { width: 40px; height: 40px; }
-.rv-face.big { width: 60px; height: 60px; box-shadow: 0 0 0 3px var(--page), 0 0 0 5px color-mix(in oklab, var(--hue) 70%, transparent), 0 14px 30px -10px var(--hue); }
+.rv-face.big { width: 60px; height: 60px; box-shadow: 0 0 0 3px var(--page), 0 0 0 5px color-mix(in oklab, var(--hue) 70%, transparent); }
 .rv-face.small { width: 30px; height: 30px; font-size: 12px; }
 .rv-letter { display: grid; place-items: center; border-radius: 50%; color: #fff; font-weight: 650; font-size: 16px; background: linear-gradient(145deg, #a970ff, #6c2bd9); }
 .rv-letter.big { font-size: 24px; }
@@ -983,14 +986,27 @@ const CSS: &str = r#"
 .rv-title strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .rv-row.next .rv-title strong { font-size: 17px; letter-spacing: -0.015em; }
 .rv-cp { display: inline-flex; align-items: center; gap: 6px; height: 21px; padding: 0 9px; border-radius: 11px; font-size: 11px; font-weight: 600; color: #c9a8ff; background: rgba(145, 70, 255, 0.18); }
-.rv-cp-dot { width: 7px; height: 7px; border-radius: 50%; background: #9146ff; box-shadow: 0 0 8px #9146ff; }
+.rv-cp-dot { width: 7px; height: 7px; border-radius: 50%; background: #9146ff; box-shadow: none; }
 .rv-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; font-size: 12.5px; color: var(--ink-3); }
 .rv-meta > :not(:last-child)::after { content: "·"; margin: 0 7px; color: var(--ink-3); }
 .rv-link { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); transition: color 0.18s; }
 .rv-link .icon { width: 12px; height: 12px; }
 .rv-link:hover { color: var(--ink); }
 .rv-notes { margin-top: 4px; padding: 8px 11px; border-radius: 10px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); font-size: 12.5px; color: var(--ink-2); white-space: pre-line; overflow-wrap: anywhere; max-width: 62ch; }
-.rv-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.rv-side { grid-column: -2 / -1; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+/* A request's notes sit under its name, beside the face and the actions. */
+.rv-row > .rv-notes { grid-column: -3 / -2; grid-row: 2; margin-top: 0; }
+.rv-row:has(> .rv-notes) > :is(.rv-place, .rv-face, .rv-side) { grid-row: 1 / span 2; }
+/* On a wide column the queue reads like a table: who asked, their notes, the wait and actions. */
+@container col (min-width: 1200px) {
+  .rv-row, .rv-queue.numbered .rv-row { grid-template-columns: 40px minmax(0, 0.85fr) minmax(0, 1.15fr) auto; column-gap: 24px; }
+  .rv-queue.numbered .rv-row { grid-template-columns: 30px 40px minmax(0, 0.85fr) minmax(0, 1.15fr) auto; }
+  .rv-queue.numbered .rv-row.next { grid-template-columns: 30px 60px minmax(0, 0.85fr) minmax(0, 1.15fr) auto; }
+  .rv-row > .rv-notes { grid-row: 1; align-self: center; }
+  /* The same width for the actions on every row, so the notes start on one line. */
+  .rv-row > .rv-side { min-width: 210px; }
+  .rv-row:has(> .rv-notes) > :is(.rv-place, .rv-face, .rv-side) { grid-row: 1; }
+}
 .rv-wait { display: flex; align-items: baseline; gap: 5px; font-size: 11.5px; color: var(--ink-3); }
 .rv-wait b { font-size: 13.5px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .rv-row.next .rv-wait b { font-size: 15px; color: var(--ink); }
@@ -1001,9 +1017,9 @@ const CSS: &str = r#"
 /* The rail. */
 .rv-src { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 10px; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); }
 .rv-src .icon { width: 15px; height: 15px; }
-.rv-src.on { color: #0b0b10; background: var(--hue); box-shadow: 0 6px 16px -6px var(--hue); }
+.rv-src.on { color: #0b0b10; background: var(--hue); box-shadow: none; }
 .rv-src.twitch { color: #b38bff; background: rgba(145, 70, 255, 0.16); }
-.rv-src.twitch.on { color: #fff; background: #9146ff; box-shadow: 0 6px 16px -6px #9146ff; }
+.rv-src.twitch.on { color: #fff; background: #9146ff; box-shadow: none; }
 .rail-block h2 a { font-weight: 400; }
 
 /* Waitlist and done. */
@@ -1011,7 +1027,7 @@ const CSS: &str = r#"
 .rv-intro strong { color: var(--ink); font-weight: 600; }
 .rv-intro-ic { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 11px; color: var(--hue); background: color-mix(in oklab, var(--hue) 15%, transparent); }
 .rv-intro-ic .icon { width: 17px; height: 17px; }
-.rv-wl { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.rv-wl { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
 .rv-card { display: flex; flex-direction: column; gap: 14px; padding: 18px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 80ms + 150ms); }
 .rv-card-head { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .rv-card-head .grow { display: flex; flex-direction: column; gap: 4px; }
@@ -1019,14 +1035,24 @@ const CSS: &str = r#"
 .rv-countdown { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
 .rv-cd-text { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-2); }
 .rv-cd-text strong { color: var(--hue); font-weight: 600; }
-.rv-countdown .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--hue), black 25%), var(--hue)); box-shadow: 0 0 10px color-mix(in oklab, var(--hue) 55%, transparent); animation-delay: calc(var(--i, 0) * 80ms + 450ms); }
+.rv-countdown .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--hue), black 25%), var(--hue)); box-shadow: none; animation-delay: calc(var(--i, 0) * 80ms + 450ms); }
 .rv-card .rv-acts { justify-content: flex-start; }
 .rv-card .rv-acts .pop-body { left: 0; right: auto; }
-.rv-narrow { max-width: 940px; }
+/* A wide page lists the waitlist as rows: who, their countdown, then the actions at the end. */
+@container col (min-width: 900px) {
+  .rv-wl { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .rv-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 1fr) auto; grid-template-areas: "head cd acts"; align-items: center; gap: 10px 28px; padding: 16px 18px; }
+  .rv-card:has(> .rv-notes) { grid-template-areas: "head cd acts" "notes cd acts"; }
+  .rv-card > .rv-card-head { grid-area: head; }
+  .rv-card > .rv-countdown { grid-area: cd; }
+  .rv-card > .rv-notes { grid-area: notes; margin-top: 0; }
+  .rv-card > .rv-acts { grid-area: acts; }
+}
 .rv-readings.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.rv-done { display: flex; flex-direction: column; }
-.rv-drow { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 10px; border-radius: 12px; animation: rise 0.45s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms + 150ms); transition: background 0.18s; }
-.rv-drow + .rv-drow { border-top: 1px solid var(--edge-1); }
+/* Finished requests in as many columns as fit. Every row carries its hairline; the list hides
+   its top pixel so the first row of each column starts clean. */
+.rv-done { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 520px), 1fr)); column-gap: 32px; margin-top: -1px; clip-path: inset(1px -16px -40px -16px); }
+.rv-drow { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 12px 10px; border-radius: 12px; border-top: 1px solid var(--edge-1); animation: rise 0.45s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms + 150ms); transition: background 0.18s; }
 .rv-drow:hover { background: var(--well); }
 .rv-dface { position: relative; width: 40px; height: 40px; }
 .rv-dmark { position: absolute; right: -4px; bottom: -3px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--live); color: #062014; box-shadow: 0 0 0 2.5px var(--page); }
@@ -1035,12 +1061,18 @@ const CSS: &str = r#"
 .rv-drow.removed .rv-face { filter: saturate(0.4); opacity: 0.75; }
 .rv-drow.removed .rv-title strong { color: var(--ink-2); }
 
+/* Settings: the two messages side by side once the column is wide. */
+@container col (min-width: 1100px) {
+  .rv-msgs .card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; }
+  .rv-msgs .row + .row { border-top: 0; }
+}
+
 /* Settings: how a request moves. */
 .rv-settings { gap: 30px; }
 .rv-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
 .rv-flow::before { content: ""; position: absolute; left: 17px; top: 20px; bottom: 20px; width: 2px; border-radius: 1px; background: linear-gradient(180deg, var(--hue), color-mix(in oklab, var(--hue) 15%, transparent)); transform-origin: top; animation: grow 1.1s var(--ease) both 0.3s; }
 .rv-flow li { position: relative; display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; animation: rise 0.5s var(--ease) both; animation-delay: calc(var(--s, 0) * 110ms + 250ms); }
-.rv-flow-ic { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 12px; color: #0b0b10; background: var(--hue); box-shadow: 0 0 0 4px var(--raised), 0 8px 18px -8px var(--hue); }
+.rv-flow-ic { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 12px; color: #0b0b10; background: var(--hue); box-shadow: 0 0 0 4px var(--raised); }
 .rv-flow-ic .icon { width: 17px; height: 17px; }
 .rv-flow li div { display: flex; flex-direction: column; gap: 1px; padding-top: 1px; min-width: 0; }
 .rv-flow strong { font-size: 13.5px; font-weight: 600; }
@@ -1067,6 +1099,8 @@ const CSS: &str = r#"
   .rv-queue.numbered::before { display: none; }
   .rv-row.next .rv-face.big { width: 40px; height: 40px; }
   .rv-side { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; }
+  .rv-row > .rv-notes { grid-column: 2 / -1; }
+  .rv-row:has(> .rv-notes) > :is(.rv-place, .rv-face, .rv-side) { grid-row: auto; }
   .rv-acts { flex-wrap: wrap; }
   .rv-acts .pop { position: static; }
   .rv-side { position: relative; }

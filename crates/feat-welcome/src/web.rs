@@ -99,6 +99,9 @@ fn clock(page: &Page, ms: i64) -> String {
     format!("{}:{m:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" })
 }
 
+/// How many of today's faces a column shows: narrow, wider, widest (CSS, .wl-faces).
+const FACES: [usize; 3] = [5, 8, 11];
+
 const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 /// "October 31, 2026": the line Discord draws between days.
@@ -109,7 +112,7 @@ fn long_date(page: &Page, ms: i64) -> String {
 
 /// Reading cards whose figures count up as they come into view.
 fn readings(items: &[(&str, String)]) -> Markup {
-    html! { div.readings { @for (label, value) in items { div.reading { b data-count { (value) } span { (label) } } } } }
+    html! { div.readings.wl-readings { @for (label, value) in items { div.reading { b data-count { (value) } span { (label) } } } } }
 }
 
 /// A section headed by an icon tile in the group's hue.
@@ -201,12 +204,29 @@ const CSS: &str = r#"
 .wl-sec-head h2 { padding-top: 6px; }
 .wl-sec-head p { font-size: 13px; margin-top: 3px; max-width: 68ch; }
 
-/* Joined today: one card per face. */
-.wl-faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 10px; }
+/* Readings stretch to share their row, so the page's answer spans the column. */
+.readings.wl-readings > .reading { flex: 1 1 160px; }
+
+/* Joined today: one card per face, as many as the column holds in one row. A wider column shows
+   more faces and swaps in the "more" tile that counts the rest. */
+.wl-faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+.wl-face.x8, .wl-face.x11, .wl-face.m8, .wl-face.m11 { display: none; }
+@container col (min-width: 1016px) {
+  .wl-face.x8, .wl-face.m8 { display: flex; }
+  .wl-face.m5 { display: none; }
+}
+@container col (min-width: 1280px) {
+  .wl-faces { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
+  .wl-face .avatar, .wl-more { width: 64px; height: 64px; }
+}
+@container col (min-width: 1700px) {
+  .wl-face.x11, .wl-face.m11 { display: flex; }
+  .wl-face.m8 { display: none; }
+}
 .wl-face { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 16px 8px 13px; border-radius: 14px; text-align: center; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
 .wl-face:hover { transform: translateY(-3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.wl-face .avatar { width: 56px; height: 56px; margin-bottom: 9px; box-shadow: 0 0 0 2px var(--page), 0 0 0 4px color-mix(in oklab, var(--hue) 60%, transparent), 0 10px 22px -10px var(--hue); }
-.wl-face.back .avatar { box-shadow: 0 0 0 2px var(--page), 0 0 0 4px color-mix(in oklab, var(--data) 70%, transparent), 0 10px 22px -10px var(--data); }
+.wl-face .avatar { width: 56px; height: 56px; margin-bottom: 9px; box-shadow: 0 0 0 2px var(--page), 0 0 0 4px color-mix(in oklab, var(--hue) 60%, transparent); }
+.wl-face.back .avatar { box-shadow: 0 0 0 2px var(--page), 0 0 0 4px color-mix(in oklab, var(--data) 70%, transparent); }
 .wl-face strong { font-weight: 600; font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wl-face .muted { font-size: 11.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wl-face.back .muted { color: var(--data); }
@@ -252,7 +272,7 @@ span.wl-dc-av img { width: 22px; height: 22px; }
 .wl-back .avatars .avatar { width: 32px; height: 32px; }
 .wl-roles { display: flex; flex-wrap: wrap; gap: 6px; }
 .wl-role { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px; border-radius: 13px; background: color-mix(in oklab, var(--c) 13%, transparent); color: var(--ink); font-size: 12.5px; font-weight: 500; white-space: nowrap; }
-.wl-role i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+.wl-role i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: none; }
 .wl-big { display: flex; flex-direction: column; gap: 4px; }
 
 /* Roles: two profile cards, a newcomer's and a returning member's. */
@@ -262,6 +282,14 @@ span.wl-dc-av img { width: 22px; height: 22px; }
 .wl-cap b { color: var(--ink); font-weight: 600; }
 .wl-pop { position: relative; border-radius: 12px; overflow: hidden; background: #232428; color: #dbdee1; box-shadow: 0 26px 50px -24px rgba(0, 0, 0, 0.95), inset 0 0 0 1px rgba(255, 255, 255, 0.06); animation: wl-arrive 0.8s var(--ease) both 0.3s; }
 .wl-pair > div + div .wl-pop { animation-delay: 0.45s; }
+/* Roles: the two profiles above the form, or beside it at Discord's own popout width once the
+   column has room, each next to the settings that decide it. */
+.wl-roles-set { display: flex; flex-direction: column; gap: 30px; }
+@container col (min-width: 1000px) {
+  .wl-roles-set { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 30px 28px; align-items: start; }
+  .wl-roles-set > .wl-pair { grid-column: 2; grid-row: 1; grid-template-columns: minmax(0, 1fr); gap: 22px; position: sticky; top: 16px; }
+  .wl-roles-set > form { grid-column: 1; grid-row: 1; }
+}
 .wl-pop-banner { height: 64px; background: linear-gradient(120deg, color-mix(in oklab, var(--hue) 75%, #000), color-mix(in oklab, var(--hue) 35%, #000)); }
 .wl-pop-banner.back { background: linear-gradient(120deg, color-mix(in oklab, var(--data-2) 80%, #000), color-mix(in oklab, var(--data) 40%, #000)); }
 .wl-pop-av { position: absolute; top: 22px; left: 14px; width: 76px; height: 76px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 6px #232428; }
@@ -275,6 +303,8 @@ span.wl-dc-av img { width: 22px; height: 22px; }
 .wl-pop-role i { width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
 .wl-pop-none { font-size: 12px; color: #949ba4; }
 .wl-rows { display: flex; flex-direction: column; gap: 8px; }
+/* Up to three across, so a short list doesn't sit in a corner of a wide column. */
+.wl-rows.wl-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(min(100%, 340px), calc((100% - 16px) / 3)), 1fr)); }
 .wl-row { display: flex; align-items: center; gap: 13px; padding: 11px 14px; border-radius: 14px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; min-width: 0; }
 .wl-row:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .wl-row > .avatar { width: 38px; height: 38px; }
@@ -286,6 +316,13 @@ span.wl-dc-av img { width: 22px; height: 22px; }
 .wl-list .wl-row:hover { transform: none; box-shadow: none; }
 .wl-list .wl-row + .wl-row { border-top: 1px solid var(--edge-1); }
 .wl-list .wl-row > .avatar { width: 34px; height: 34px; }
+/* Recent joins run down two or three columns on a wide card. Every row carries its hairline, and
+   the list hides the top pixel so the first row of each column starts clean. */
+@container col (min-width: 1000px) {
+  .wl-list-in { columns: 2; column-gap: 36px; margin-top: -1px; clip-path: inset(1px -16px -40px -16px); }
+  .wl-list .wl-row { break-inside: avoid; border-top: 1px solid var(--edge-1); }
+}
+@container col (min-width: 1500px) { .wl-list-in { columns: 3; } }
 .wl-row.gone > .avatar { filter: grayscale(1); opacity: 0.6; }
 .wl-row.gone strong { color: var(--ink-2); font-weight: 500; }
 .wl-via { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 12.5px; min-width: 0; flex-wrap: wrap; }
@@ -297,6 +334,8 @@ span.wl-dc-av img { width: 22px; height: 22px; }
 .wl-status .status { background: var(--control); backdrop-filter: none; }
 .wl-links { padding: 4px 18px; }
 .wl-link { display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(120px, 200px) 220px; gap: 14px; align-items: center; padding: 13px 0; }
+/* A wide card spreads each link like a table: the code, its uses on a long meter, its name. */
+@container col (min-width: 1100px) { .wl-link { grid-template-columns: 40px minmax(180px, 1fr) minmax(200px, 1.4fr) minmax(220px, 300px); gap: 14px 28px; } }
 .wl-link + .wl-link { border-top: 1px solid var(--edge-1); }
 .wl-link-ic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; color: var(--hue); background: color-mix(in oklab, var(--hue) 13%, transparent); }
 .wl-link-ic .icon { width: 18px; height: 18px; }
@@ -316,7 +355,6 @@ span.wl-dc-av img { width: 22px; height: 22px; }
   .wl-pair { grid-template-columns: 1fr; }
   .wl-link { grid-template-columns: 40px minmax(0, 1fr); }
   .wl-link .input { grid-column: 1 / -1; }
-  .wl-faces { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
   .wl-row { flex-wrap: wrap; }
 }
 "#;
@@ -367,14 +405,14 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let count = ctx.member_count(guild).map(|n| text::num(n as i64)).unwrap_or_else(|| "1".into());
     let today = day_start(&page);
     let (joins, _) = invites::join_counts(&ctx, guild, today)?;
-    let shown = invites::joins_since(&ctx, guild, today, 5)?;
+    // Up to eleven faces: a wider column shows more of them in its one row (CSS, .wl-faces).
+    let shown = invites::joins_since(&ctx, guild, today, FACES[2] as i64)?;
     let left = left_since(&ctx, guild, today);
     let top: Vec<(u64, i64, i64)> = invites::top_inviters(&ctx, guild, now - 30 * DAY_MS, 6)?.into_iter().filter(|t| t.1 > 0).take(4).collect();
     let back: Vec<roles::Restored> = roles::recently_restored(&ctx, guild, 25)?.into_iter().filter(|r| r.at >= now - 7 * DAY_MS).collect();
     let given = role_list(&ctx, guild, &s.autoroles);
     let bot = bot_identity(&ctx);
     let max_recent = top.iter().map(|t| t.1).max().unwrap_or(1).max(1);
-    let more = joins - shown.len() as i64;
     let names = invites::names(&ctx, guild)?;
     let server = ctx.guild_name(guild);
     let faces: Vec<(u64, String, String, bool)> = shown
@@ -414,78 +452,84 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                         (ui::empty(Icon::Door, "Nobody has joined yet today", "New members show up here with how long ago they came in and who invited them."))
                     } @else {
                         div.wl-faces {
-                            @for (user_id, name, detail, came_back) in &faces {
-                                div.wl-face.back[*came_back] {
+                            @for (i, (user_id, name, detail, came_back)) in faces.iter().enumerate() {
+                                div.wl-face.back[*came_back].x8[(FACES[0]..FACES[1]).contains(&i)].x11[i >= FACES[1]] {
                                     img.avatar src=(ctx.member_avatar(guild, *user_id)) alt="" loading="lazy";
                                     strong { (name) }
                                     span.muted { (detail) }
                                 }
                             }
-                            @if more > 0 {
-                                div.wl-face {
-                                    span.wl-more { "+" (more) }
-                                    strong { (more) " more" }
-                                    span.muted { "earlier today" }
+                            // One "more" tile per width, counting the faces that width leaves out.
+                            @for (tier, n) in ["m5", "m8", "m11"].iter().zip(FACES) {
+                                @let more = joins - (faces.len().min(n)) as i64;
+                                @if more > 0 {
+                                    div class={ "wl-face " (tier) } {
+                                        span.wl-more { "+" (more) }
+                                        strong { (more) " more" }
+                                        span.muted { "earlier today" }
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                div.wl-block {
-                    div.wl-head {
-                        h2 { "What new members see" }
-                        span.muted.small { "Your own name and card, as a newcomer gets theirs" }
+                // The settings beside what members will see, the preview staying in view.
+                div.compose {
+                    div.wl-settings {
+                        (ui::settings_form(&page, &page.path("welcome"), html! {
+                            (section(Icon::Wave, "Welcome", None, ui::card(html! {
+                                (ui::field_toggle("welcome_on", "Welcome new members", None, s.welcome_on))
+                                (ui::field_channel(&ctx, guild, "welcome_channel", "Post in", None, s.welcome_channel))
+                                (ui::field_textarea("welcome_text", "Message", Some("{user} mentions them, {name} is their name, {server} the server and {count} their member number. Only they are mentioned."), &s.welcome_text, DEFAULT_WELCOME))
+                                (ui::field_toggle("welcome_card", "Attach the welcome card", Some("An image with their avatar, name and member number."), s.welcome_card))
+                            })))
+                            (section(Icon::Door, "Goodbye", None, ui::card(html! {
+                                (ui::field_toggle("goodbye_on", "Say goodbye", Some("Posts when someone leaves."), s.goodbye_on))
+                                (ui::field_channel(&ctx, guild, "goodbye_channel", "Goodbye in", None, s.goodbye_channel))
+                                (ui::field_textarea("goodbye_text", "Goodbye message", Some("{name}, {server} and {count} work here. Nobody is mentioned."), &s.goodbye_text, DEFAULT_GOODBYE))
+                            })))
+                        }))
                     }
-                    div #wl-preview data-name=(user.name) data-server=(server) data-members=(count)
-                        data-default-welcome=(DEFAULT_WELCOME) data-default-goodbye=(DEFAULT_GOODBYE) {
-                        div.wl-dc {
-                            (channel_bar("wl-chan-welcome", &channel(s.welcome_channel)))
-                            div.wl-dc-body {
-                                div.wl-dc-day { span { (long_date(&page, now)) } }
-                                (bot_message(&bot, &clock(&page, now), "wl-welcome", !s.welcome_on, html! {
-                                    div.wl-dc-text #wl-welcome-text { (preview_text(welcome_tpl, &user.name, &server, &count, true)) }
-                                    span.wl-card #wl-card hidden[!s.welcome_card] {
-                                        img src=(page.path("welcome/card.png")) alt="The welcome card, drawn for you" width="960" height="320";
-                                    }
-                                }))
+                    div.wl-block.compose-preview {
+                        div.wl-head {
+                            h2 { "What new members see" }
+                            span.muted.small { "Your own name and card, as a newcomer gets theirs" }
+                        }
+                        div #wl-preview data-name=(user.name) data-server=(server) data-members=(count)
+                            data-default-welcome=(DEFAULT_WELCOME) data-default-goodbye=(DEFAULT_GOODBYE) {
+                            div.wl-dc {
+                                (channel_bar("wl-chan-welcome", &channel(s.welcome_channel)))
+                                div.wl-dc-body {
+                                    div.wl-dc-day { span { (long_date(&page, now)) } }
+                                    (bot_message(&bot, &clock(&page, now), "wl-welcome", !s.welcome_on, html! {
+                                        div.wl-dc-text #wl-welcome-text { (preview_text(welcome_tpl, &user.name, &server, &count, true)) }
+                                        span.wl-card #wl-card hidden[!s.welcome_card] {
+                                            img src=(page.path("welcome/card.png")) alt="The welcome card, drawn for you" width="960" height="320";
+                                        }
+                                    }))
+                                }
+                            }
+                            div.wl-dc {
+                                (channel_bar("wl-chan-goodbye", &channel(s.goodbye_channel)))
+                                div.wl-dc-body {
+                                    (bot_message(&bot, &clock(&page, now), "wl-goodbye", !s.goodbye_on, html! {
+                                        div.wl-dc-text #wl-goodbye-text { (preview_text(goodbye_tpl, &user.name, &server, &count, false)) }
+                                    }))
+                                }
                             }
                         }
-                        div.wl-dc {
-                            (channel_bar("wl-chan-goodbye", &channel(s.goodbye_channel)))
-                            div.wl-dc-body {
-                                (bot_message(&bot, &clock(&page, now), "wl-goodbye", !s.goodbye_on, html! {
-                                    div.wl-dc-text #wl-goodbye-text { (preview_text(goodbye_tpl, &user.name, &server, &count, false)) }
-                                }))
+                        @if page.can_edit() && s.welcome_channel.is_some() {
+                            div.wl-send {
+                                form.inline method="post" action=(page.path("welcome/test")) {
+                                    button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send a test" }
+                                }
+                                span.muted.small { "Posts the welcome for you in " (channel_name(&ctx, guild, s.welcome_channel)) ", using the saved settings." }
                             }
+                        } @else if page.can_edit() {
+                            p.muted.small { "Pick a welcome channel and save to send a test." }
                         }
                     }
-                    @if page.can_edit() && s.welcome_channel.is_some() {
-                        div.wl-send {
-                            form.inline method="post" action=(page.path("welcome/test")) {
-                                button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send a test" }
-                            }
-                            span.muted.small { "Posts the welcome for you in " (channel_name(&ctx, guild, s.welcome_channel)) ", using the saved settings." }
-                        }
-                    } @else if page.can_edit() {
-                        p.muted.small { "Pick a welcome channel and save to send a test." }
-                    }
-                }
-
-                div.wl-settings {
-                    (ui::settings_form(&page, &page.path("welcome"), html! {
-                        (section(Icon::Wave, "Welcome", None, ui::card(html! {
-                            (ui::field_toggle("welcome_on", "Welcome new members", None, s.welcome_on))
-                            (ui::field_channel(&ctx, guild, "welcome_channel", "Post in", None, s.welcome_channel))
-                            (ui::field_textarea("welcome_text", "Message", Some("{user} mentions them, {name} is their name, {server} the server and {count} their member number. Only they are mentioned."), &s.welcome_text, DEFAULT_WELCOME))
-                            (ui::field_toggle("welcome_card", "Attach the welcome card", Some("An image with their avatar, name and member number."), s.welcome_card))
-                        })))
-                        (section(Icon::Door, "Goodbye", None, ui::card(html! {
-                            (ui::field_toggle("goodbye_on", "Say goodbye", Some("Posts when someone leaves."), s.goodbye_on))
-                            (ui::field_channel(&ctx, guild, "goodbye_channel", "Goodbye in", None, s.goodbye_channel))
-                            (ui::field_textarea("goodbye_text", "Goodbye message", Some("{name}, {server} and {count} work here. Nobody is mentioned."), &s.goodbye_text, DEFAULT_GOODBYE))
-                        })))
-                    }))
                 }
                 script { (PreEscaped(SCRIPT)) }
             }
@@ -630,40 +674,43 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                         }
                     }
                 }
-                div.wl-pair {
-                    div {
-                        p.wl-cap { b { "A new member" } " gets these when they join" }
-                        (popout(&new_face, &new_name, &new_user, &given, ""))
-                    }
-                    div {
-                        @match restored.first() {
-                            Some(r) => {
-                                p.wl-cap { b { (ctx.display_name(guild, r.user)) } " came back " (text::ago(r.at)) }
-                                (popout(&ctx.member_avatar(guild, r.user), &ctx.display_name(guild, r.user), &username(&ctx, r.user), &role_list(&ctx, guild, &r.roles), "back"))
-                            },
-                            None => {
-                                p.wl-cap { b { "A member coming back" } " gets the roles they left with" }
-                                (ui::empty(Icon::Users, "Nobody has come back yet", "When someone leaves and returns, their profile shows here with the roles they got back."))
-                            },
+                // The profiles members will see, beside the settings that decide them on a wide column.
+                div.wl-roles-set {
+                    div.wl-pair {
+                        div {
+                            p.wl-cap { b { "A new member" } " gets these when they join" }
+                            (popout(&new_face, &new_name, &new_user, &given, ""))
+                        }
+                        div {
+                            @match restored.first() {
+                                Some(r) => {
+                                    p.wl-cap { b { (ctx.display_name(guild, r.user)) } " came back " (text::ago(r.at)) }
+                                    (popout(&ctx.member_avatar(guild, r.user), &ctx.display_name(guild, r.user), &username(&ctx, r.user), &role_list(&ctx, guild, &r.roles), "back"))
+                                },
+                                None => {
+                                    p.wl-cap { b { "A member coming back" } " gets the roles they left with" }
+                                    (ui::empty(Icon::Users, "Nobody has come back yet", "When someone leaves and returns, their profile shows here with the roles they got back."))
+                                },
+                            }
                         }
                     }
+                    (ui::settings_form(&page, &page.path("welcome/roles"), html! {
+                        (section(Icon::Users, "Auto-roles", None, ui::card(html! {
+                            (ui::field_roles(&ctx, guild, "autoroles", "Roles for new members", Some("The bot can only give roles below its own role."), &s.autoroles))
+                            (ui::field_toggle("autorole_bots", "Include bots", Some("Off: bots that join get no auto-roles."), s.autorole_bots))
+                        })))
+                        (section(Icon::Door, "Roles back on rejoin", None, ui::card(html! {
+                            (ui::field_toggle("rejoin_on", "Give roles back", Some("A member who leaves and returns gets the roles they left with."), s.rejoin_on))
+                            (ui::field_number("rejoin_days", "Keep for", Some("After this long, a leaver's saved roles are deleted."), days, 1, 3650, Some("days")))
+                            (ui::field_roles(&ctx, guild, "rejoin_exclude", "Never give back", Some("Useful for staff or punishment roles."), &s.rejoin_exclude))
+                        })))
+                    }))
                 }
-                (ui::settings_form(&page, &page.path("welcome/roles"), html! {
-                    (section(Icon::Users, "Auto-roles", None, ui::card(html! {
-                        (ui::field_roles(&ctx, guild, "autoroles", "Roles for new members", Some("The bot can only give roles below its own role."), &s.autoroles))
-                        (ui::field_toggle("autorole_bots", "Include bots", Some("Off: bots that join get no auto-roles."), s.autorole_bots))
-                    })))
-                    (section(Icon::Door, "Roles back on rejoin", None, ui::card(html! {
-                        (ui::field_toggle("rejoin_on", "Give roles back", Some("A member who leaves and returns gets the roles they left with."), s.rejoin_on))
-                        (ui::field_number("rejoin_days", "Keep for", Some("After this long, a leaver's saved roles are deleted."), days, 1, 3650, Some("days")))
-                        (ui::field_roles(&ctx, guild, "rejoin_exclude", "Never give back", Some("Useful for staff or punishment roles."), &s.rejoin_exclude))
-                    })))
-                }))
                 (section(Icon::Activity, "Recently restored", Some("Members who came back and got their roles."), html! {
                     @if restored.is_empty() {
                         (ui::empty(Icon::Users, "Nobody restored yet", "Members who leave and return show up here with the roles they got back."))
                     } @else {
-                        div.wl-rows {
+                        div.wl-rows.wl-tiles {
                             @for r in &restored {
                                 div.wl-row {
                                     img.avatar src=(ctx.member_avatar(guild, r.user)) alt="" loading="lazy";
@@ -846,7 +893,7 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     @if recent.is_empty() {
                         (ui::empty(Icon::Door, "No joins recorded", "New members appear here with the invite they came through."))
                     } @else {
-                        div.card.wl-list {
+                        div.card.wl-list { div.wl-list-in {
                             @for j in &recent {
                                 @let here = ctx.known_name(guild, j.user);
                                 div.wl-row.gone[here.is_none()] {
@@ -866,7 +913,7 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                     span.meta { (text::ago(j.at)) }
                                 }
                             }
-                        }
+                        } }
                     }
                 }))
             }

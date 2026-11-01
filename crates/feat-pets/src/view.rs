@@ -12,21 +12,21 @@ use bot_core::web::ui::{self, Tone};
 
 pub const STYLE: &str = r#"
 .rar { display: inline-flex; align-items: center; gap: 6px; height: 21px; padding: 0 9px; border-radius: 11px; font-size: 11px; font-weight: 600; white-space: nowrap; color: color-mix(in oklab, var(--rar), white 22%); background: color-mix(in oklab, var(--rar) 14%, transparent); }
-.rar::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--rar); box-shadow: 0 0 6px var(--rar); }
+.rar::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--rar); box-shadow: none; }
 .rar.r-common { color: var(--ink-2); background: var(--control); }
 .rar.r-common::before { box-shadow: none; }
 
 /* A pet's picture on a tile lit from behind in its rarity's colour. */
-.pa { --s: 40px; position: relative; display: inline-grid; place-items: center; width: var(--s); height: var(--s); flex: none; overflow: hidden; border-radius: calc(var(--s) * 0.3); font-size: calc(var(--s) * 0.56); line-height: 1; background: radial-gradient(circle at 50% 36%, color-mix(in oklab, var(--rar) 34%, transparent), color-mix(in oklab, var(--rar) 6%, transparent) 72%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 28%, transparent); }
+.pa { --s: 40px; position: relative; display: inline-grid; place-items: center; width: var(--s); height: var(--s); flex: none; overflow: hidden; border-radius: calc(var(--s) * 0.3); font-size: calc(var(--s) * 0.56); line-height: 1; background: radial-gradient(circle at 50% 36%, color-mix(in oklab, var(--rar) 34%, transparent), color-mix(in oklab, var(--rar) 3%, transparent) 72%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 28%, transparent); }
 .pa > span { filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.45)); }
 .pa img { width: 84%; height: 84%; object-fit: contain; }
 .pa.sm { --s: 30px; } .pa.md { --s: 44px; } .pa.lg { --s: 58px; } .pa.xl { --s: 88px; }
-.pa.r-legendary { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 55%, transparent), 0 10px 24px -12px var(--rar); }
+.pa.r-legendary { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 55%, transparent); }
 
 /* The collection: a grid of tiles that arrives as a wave. Missing pets wait in grey. */
 .pets-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 10px; }
-.pets-tile { --rar: var(--ink-2); position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; padding: 18px 8px 12px; overflow: hidden; border-radius: 16px; text-align: center; background: radial-gradient(90% 70% at 50% 16%, color-mix(in oklab, var(--rar) 17%, transparent), rgba(243, 242, 248, 0.02) 72%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 24%, var(--edge-1)); transition: transform 0.35s var(--ease), box-shadow 0.25s; animation: pets-in 0.6s var(--spring) both; animation-delay: calc(min(var(--i, 0), 48) * 16ms + 120ms); }
-.pets-tile:hover { transform: translateY(-4px); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 50%, transparent), 0 18px 32px -18px var(--rar); }
+.pets-tile { --rar: var(--ink-2); position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; padding: 18px 8px 12px; overflow: hidden; border-radius: 16px; text-align: center; background: radial-gradient(90% 70% at 50% 16%, color-mix(in oklab, var(--rar) 9%, transparent), rgba(243, 242, 248, 0.02) 72%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 24%, var(--edge-1)); transition: transform 0.35s var(--ease), box-shadow 0.25s; animation: pets-in 0.6s var(--spring) both; animation-delay: calc(min(var(--i, 0), 48) * 16ms + 120ms); }
+.pets-tile:hover { transform: translateY(-4px); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 50%, transparent); }
 .pets-art { display: grid; place-items: center; height: 54px; font-size: 40px; line-height: 1; filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.5)); transition: transform 0.45s var(--spring), filter 0.3s; }
 .pets-tile:hover .pets-art { transform: scale(1.14) rotate(-5deg); }
 .pets-art img { width: 50px; height: 50px; object-fit: contain; }
@@ -44,11 +44,11 @@ pub const STYLE: &str = r#"
 .pets-tile.r-legendary:not(.missing)::after { content: ""; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, rgba(255, 220, 140, 0.28) 50%, transparent 65%); transform: translateX(-110%); animation: pets-sheen 1.4s var(--ease) both; animation-delay: calc(min(var(--i, 0), 48) * 16ms + 700ms); pointer-events: none; }
 
 /* The collection's progress: a ring that draws in, numbers that count, a meter per category. */
-.pets-hero { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 40px; align-items: center; padding: 22px 26px; border-radius: 20px; background: radial-gradient(70% 140% at 0% 50%, color-mix(in oklab, var(--hue) 13%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.pets-hero { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 40px; align-items: center; padding: 22px 26px; border-radius: 20px; background: radial-gradient(70% 140% at 0% 50%, color-mix(in oklab, var(--hue) 7%, transparent), transparent 70%), linear-gradient(180deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); }
 .pets-ring-wrap { display: flex; align-items: center; gap: 22px; }
 .pets-ring { position: relative; width: 118px; height: 118px; flex: none; }
 .pets-ring svg { display: block; width: 100%; height: 100%; transform: rotate(-90deg); overflow: visible; }
-.pets-ring .fill { filter: drop-shadow(0 0 8px color-mix(in oklab, var(--hue) 60%, transparent)); animation: pets-ring 1.6s var(--ease) both 0.25s; }
+.pets-ring .fill { animation: pets-ring 1.6s var(--ease) both 0.25s; }
 .pets-ring span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 24px; font-weight: 650; letter-spacing: -0.03em; }
 .pets-count { display: flex; flex-direction: column; gap: 3px; }
 .pets-count .big-num { font-size: 34px; }
@@ -57,7 +57,7 @@ pub const STYLE: &str = r#"
 .pets-cats { display: flex; flex-direction: column; gap: 13px; min-width: 0; }
 .pets-cat { display: grid; grid-template-columns: minmax(96px, 170px) minmax(0, 1fr) minmax(44px, auto); align-items: center; gap: 16px; font-size: 13px; }
 .pets-cat .meter { height: 6px; }
-.pets-cat .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--hue) 70%, var(--data-2)), var(--hue)); box-shadow: 0 0 10px color-mix(in oklab, var(--hue) 50%, transparent); }
+.pets-cat .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--hue) 70%, var(--data-2)), var(--hue)); box-shadow: none; }
 .pets-cat .mono { text-align: right; color: var(--ink-2); }
 
 /* Giveaways: the pet passes from the giver's face to the winner's. */
@@ -68,6 +68,11 @@ pub const STYLE: &str = r#"
 .pets-flow.live .pets-arrow { color: var(--waiting); }
 .pets-flow.live .pets-arrow path:first-child { stroke-dasharray: 2.4 2.2; animation: pets-dash 0.9s linear infinite; }
 .pets-gvs { display: flex; flex-direction: column; gap: 10px; }
+/* Lists of cards take as many columns as the width holds. */
+.pets-gvs.pets-tiles, .pets-rows.pets-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); }
+.pets-gvs.pets-tiles.wide, .pets-rows.pets-tiles.wide { grid-template-columns: repeat(auto-fill, minmax(min(100%, 480px), 1fr)); }
+/* Readings stretch to share their row, so the page's answer spans the column. */
+.readings.pets-readings > .reading { flex: 1 1 160px; }
 .pets-gv { --rar: var(--ink-2); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 16px; align-items: center; padding: 14px 16px; border-radius: 16px; background: linear-gradient(90deg, color-mix(in oklab, var(--rar) 10%, transparent), rgba(243, 242, 248, 0.014) 60%); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; min-width: 0; }
 .pets-gv:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .pets-gv.past { background: linear-gradient(90deg, color-mix(in oklab, var(--rar) 5%, transparent), transparent 50%); padding: 11px 16px; }
@@ -93,7 +98,7 @@ pub const STYLE: &str = r#"
 .hbar { --rar: var(--data); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; align-items: center; font-size: 13px; }
 .hbar .v { font: 600 12px var(--mono); color: var(--ink-2); }
 .hbar .track { display: block; grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--edge-1); overflow: hidden; }
-.hbar .fill { display: block; height: 100%; min-width: 3px; border-radius: 3px; background: linear-gradient(90deg, color-mix(in oklab, var(--rar) 55%, var(--data-2)), var(--rar)); box-shadow: 0 0 10px color-mix(in oklab, var(--rar) 50%, transparent); transform-origin: left; animation: fill 1s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 200ms); }
+.hbar .fill { display: block; height: 100%; min-width: 3px; border-radius: 3px; background: linear-gradient(90deg, color-mix(in oklab, var(--rar) 55%, var(--data-2)), var(--rar)); box-shadow: none; transform-origin: left; animation: fill 1s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 200ms); }
 .pc { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
 .pc .avatar { width: 26px; height: 26px; }
 
@@ -176,8 +181,8 @@ a.pets-edit:hover strong { text-decoration: underline; text-underline-offset: 3p
 
 /* The public pages open on the server's banner. */
 .podium .step.p1 { grid-column: 2; grid-row: 1; } .podium .step.p2 { grid-column: 1; grid-row: 1; } .podium .step.p3 { grid-column: 3; grid-row: 1; }
-.pets-spot { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
-.pets-star { --rar: var(--ink-2); position: relative; display: flex; align-items: center; gap: 16px; padding: 16px 18px; overflow: hidden; border-radius: 18px; background: radial-gradient(90% 120% at 0% 50%, color-mix(in oklab, var(--rar) 22%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 32%, transparent), 0 18px 40px -26px var(--rar); animation: pets-in 0.7s var(--spring) both; animation-delay: calc(var(--i, 0) * 90ms + 200ms); transition: transform 0.35s var(--ease); }
+.pets-spot { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(220px, calc((100% - 36px) / 4)), 1fr)); gap: 12px; }
+.pets-star { --rar: var(--ink-2); position: relative; display: flex; align-items: center; gap: 16px; padding: 16px 18px; overflow: hidden; border-radius: 18px; background: radial-gradient(90% 120% at 0% 50%, color-mix(in oklab, var(--rar) 12%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 32%, transparent); animation: pets-in 0.7s var(--spring) both; animation-delay: calc(var(--i, 0) * 90ms + 200ms); transition: transform 0.35s var(--ease); }
 .pets-star:hover { transform: translateY(-3px); }
 .pets-star .pa { font-size: 46px; }
 .pets-star .t { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
@@ -201,7 +206,7 @@ a.pets-edit:hover strong { text-decoration: underline; text-underline-offset: 3p
   .pets-row { flex-wrap: wrap; row-gap: 10px; }
   .pets-row .pa.lg { --s: 44px; }
   .pets-row-main { flex: 1 1 150px; }
-  .pets-row-side { order: 3; flex: 1; align-items: flex-start; text-align: left; }
+  .pets-row-side { order: 3; flex: 1 1 160px; align-items: flex-start; text-align: left; }
   .pets-row-acts { order: 4; margin-left: auto; }
   .pets-gv { grid-template-columns: auto minmax(0, 1fr); }
   .pets-gv-side { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; text-align: left; }
@@ -233,7 +238,7 @@ pub fn groups(catalog: &[Pet]) -> Vec<(String, Vec<&Pet>)> {
 
 /// Reading cards whose figures count up as they come into view.
 pub fn readings(items: &[(&str, String)]) -> Markup {
-    html! { div.readings { @for (label, value) in items { div.reading { b data-count { (value) } span { (label) } } } } }
+    html! { div.readings.pets-readings { @for (label, value) in items { div.reading { b data-count { (value) } span { (label) } } } } }
 }
 
 /// A section headed by an icon tile in the group's hue, with `side` at the right of the title.

@@ -36,9 +36,11 @@ fn check(ctx: &Ctx, guild: u64) -> WebResult<()> {
 /// the page's title, then the three tabs.
 const PUBLIC_CSS: &str = r#"
 body.pets-pub { background: var(--page); }
-.pets-pub-hero { min-height: 310px; border-radius: 0; padding: 20px max(20px, calc((100% - 1040px) / 2)) 30px; }
+/* The page is as wide as a row of a dozen pets, centred under the banner; the hero's text lines
+   up with the page's edge. */
+.pets-pub-hero { min-height: 310px; border-radius: 0; padding: 20px max(var(--gutter), calc((100% - 1600px) / 2)) 30px; }
 .pets-pub-hero .ov-hello h1 { font-size: 42px; }
-.pets-pub-page { max-width: 1080px; margin: 0 auto; padding: 0 20px 72px; display: flex; flex-direction: column; gap: 34px; }
+.pets-pub-page { max-width: calc(1600px + 2 * var(--gutter)); margin: 0 auto; padding: 0 var(--gutter) 72px; display: flex; flex-direction: column; gap: 34px; container: col / inline-size; }
 .pets-pub-page > * { animation: rise 0.55s var(--ease) both; }
 .pets-pub-page > :nth-child(2) { animation-delay: 60ms; }
 .pets-pub-page > :nth-child(3) { animation-delay: 120ms; }
@@ -47,10 +49,18 @@ body.pets-pub { background: var(--page); }
 .pets-pub-foot a { color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
 .pets-pub-foot a:hover { color: var(--ink); }
 .pets-pub .chart-card { padding: 20px 22px 16px; }
+/* Stats: the chart beside the podium, then the breakdowns three across, each wrapping under the
+   other when the page is narrow. */
+.pets-duo, .pets-trio { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 34px 40px; }
+.pets-duo > * { flex: 1 1 440px; min-width: 0; }
+.pets-duo > :first-child { flex-grow: 1.4; }
+.pets-trio > * { flex: 1 1 300px; min-width: 0; }
+@container col (min-width: 1000px) { .pets-duo .chart svg { height: 200px; } }
 @media (max-width: 920px) {
   .pets-pub-hero { min-height: 240px; padding: 14px 18px 24px; }
   .pets-pub-hero .ov-hello h1 { font-size: 28px; }
-  .pets-pub-page { padding: 0 16px 56px; gap: 28px; }
+  /* The dashboard's side padding, which the tabs' scroll edge on a phone expects. */
+  .pets-pub-page { padding: 0 18px 56px; gap: 28px; }
 }
 "#;
 
@@ -208,14 +218,14 @@ async fn giveaways(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<
             @if active.is_empty() {
                 (ui::empty(Icon::Gift, "Nothing waiting", "Giveaways show here from the moment staff record them until they're confirmed."))
             } @else {
-                div.pets-gvs { @for g in &active { (giveaway_row(&ctx, guild, g, image(&g.pet_id).as_deref())) } }
+                div.pets-gvs.pets-tiles.wide { @for g in &active { (giveaway_row(&ctx, guild, g, image(&g.pet_id).as_deref())) } }
             }
         }))
         (view::section(Icon::Log, "Recent", None, None, html! {
             @if past.is_empty() {
                 (ui::empty(Icon::Log, "No finished giveaways yet", "Confirmed, expired and cancelled giveaways are listed here."))
             } @else {
-                div.pets-gvs { @for g in &past { (giveaway_row(&ctx, guild, g, image(&g.pet_id).as_deref())) } }
+                div.pets-gvs.pets-tiles.wide { @for g in &past { (giveaway_row(&ctx, guild, g, image(&g.pet_id).as_deref())) } }
             }
         }))
     };
@@ -248,28 +258,32 @@ async fn stats(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>
     let pet_rarity = |name: &str| catalog.iter().find(|p| p.name == name).map(|p| p.rarity.clone()).unwrap_or_else(|| "common".into());
     let body = html! {
         (view::readings(&readings))
+        @let by_rarity = view::section(Icon::Paw, "The collection, by rarity", Some("Copies the server holds of each rarity."), None, view::hbars(&collection_rarity));
         @if s.confirmed == 0 {
             (ui::empty(Icon::Chart, "No confirmed giveaways yet", "Stats fill in as staff confirm pet giveaways."))
+            (by_rarity)
         } @else {
-            (view::section(Icon::Chart, "Confirmed giveaways", Some("Each day of the last 30, in UTC."), None, html! {
-                div.card.chart-card { (ui::bar_chart(&series, "var(--data)", "giveaways")) }
-            }))
-            (view::section(Icon::Trophy, "Top givers", Some("Members whose giveaways went through."), None, html! {
-                div.podium {
-                    @for (place, (u, n)) in &podium {
-                        div class={ "step p" (place) } {
-                            img.avatar src=(ctx.member_avatar(guild, *u)) alt="" loading="lazy";
-                            strong { (ctx.display_name(guild, *u)) }
-                            span.muted.small { (text::num(*n)) (if *n == 1 { " pet given" } else { " pets given" }) }
-                            div.block { (place) }
+            div.pets-duo {
+                (view::section(Icon::Chart, "Confirmed giveaways", Some("Each day of the last 30, in UTC."), None, html! {
+                    div.card.chart-card { (ui::bar_chart(&series, "var(--data)", "giveaways")) }
+                }))
+                (view::section(Icon::Trophy, "Top givers", Some("Members whose giveaways went through."), None, html! {
+                    div.podium {
+                        @for (place, (u, n)) in &podium {
+                            div class={ "step p" (place) } {
+                                img.avatar src=(ctx.member_avatar(guild, *u)) alt="" loading="lazy";
+                                strong { (ctx.display_name(guild, *u)) }
+                                span.muted.small { (text::num(*n)) (if *n == 1 { " pet given" } else { " pets given" }) }
+                                div.block { (place) }
+                            }
                         }
                     }
-                }
-                @if s.top_givers.len() > 3 {
-                    (view::hbars(&s.top_givers.iter().skip(3).map(|(u, n)| (view::person(&ctx, guild, *u), *n, "")).collect::<Vec<_>>()))
-                }
-            }))
-            div.split {
+                    @if s.top_givers.len() > 3 {
+                        (view::hbars(&s.top_givers.iter().skip(3).map(|(u, n)| (view::person(&ctx, guild, *u), *n, "")).collect::<Vec<_>>()))
+                    }
+                }))
+            }
+            div.pets-trio {
                 (view::section(Icon::Gift, "Most given", None, None, view::hbars(&s.top_pets.iter().map(|(name, emoji, n)| {
                     let r = pet_rarity(name);
                     (html! { span.pc { (view::art(emoji, None, &r, "sm")) span { (name) } } }, *n, "")
@@ -277,9 +291,9 @@ async fn stats(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>
                 @if !s.rarities.is_empty() {
                     (view::section(Icon::Star, "Given, by rarity", None, None, view::hbars(&s.rarities.iter().map(|(r, n)| (view::rarity(r), *n, r.as_str())).collect::<Vec<_>>())))
                 }
+                (by_rarity)
             }
         }
-        (view::section(Icon::Paw, "The collection, by rarity", Some("Copies the server holds of each rarity."), None, view::hbars(&collection_rarity)))
         @if s.expired + s.cancelled > 0 {
             p.muted.small { (text::num(s.expired)) " expired and " (text::num(s.cancelled)) " cancelled. The rate counts finished giveaways only." }
         }
