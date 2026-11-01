@@ -458,16 +458,60 @@ pub async fn send_panel(ctx: &Ctx, guild: u64) -> Result<u64, String> {
             return Err(format!("Couldn't post in {}. The bot needs to see it and send embeds there.", channel_label(ctx, guild, channel)));
         }
     };
-    if let Some((old_channel, old_message)) = s.panel {
-        ctx.deleting_own_message(old_message);
-        let _ = ctx.http.delete_message(Id::new(old_channel), Id::new(old_message)).await;
-    }
+    let old: Vec<(u64, u64)> = s.stale_panels.iter().copied().chain(s.panel).collect();
+    let stale = delete_panels(ctx, guild, &old).await;
     // Read again: a save on the dashboard while this was posting is kept, and only the panel
     // changes.
     let mut next = (*ctx.settings::<Settings>(guild, KEY).map_err(|e| e.to_string())?).clone();
     next.panel = Some((channel, message.id.get()));
+    next.stale_panels = stale;
     ctx.save_settings(guild, KEY, &next).map_err(|e| e.to_string())?;
     Ok(channel)
+}
+
+/// Old panels kept to try again, at most: past this the oldest are let go.
+const STALE_PANELS_MAX: usize = 10;
+
+/// Delete old panels. The ones Discord didn't delete come back, to try again later; one that's
+/// already gone (404) is done with.
+async fn delete_panels(ctx: &Ctx, guild: u64, panels: &[(u64, u64)]) -> Vec<(u64, u64)> {
+    let mut left = Vec::new();
+    for &(channel, message) in panels {
+        let (Some(c), Some(m)) = (Id::new_checked(channel), Id::new_checked(message)) else { continue };
+        ctx.deleting_own_message(message);
+        match ctx.http.delete_message(c, m).await {
+            Err(e) if !is_not_found(&e) => {
+                bot_core::tracing::warn!(guild, channel, message, error = %e, "couldn't take down an old ticket panel");
+                left.push((channel, message));
+            }
+            _ => {}
+        }
+    }
+    keep_newest(left)
+}
+
+fn keep_newest(mut panels: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    panels.dedup();
+    let extra = panels.len().saturating_sub(STALE_PANELS_MAX);
+    panels.drain(..extra);
+    panels
+}
+
+/// Try again to take down old panels a send couldn't. In the hourly sweep.
+async fn retry_stale_panels(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
+    if ctx.settings::<Settings>(guild, KEY)?.stale_panels.is_empty() {
+        return Ok(());
+    }
+    let lock = PANEL_LOCKS.get(guild);
+    let _one_at_a_time = lock.lock().await;
+    let stale = ctx.settings::<Settings>(guild, KEY)?.stale_panels.clone();
+    let left = delete_panels(ctx, guild, &stale).await;
+    if left != stale {
+        let mut next = (*ctx.settings::<Settings>(guild, KEY)?).clone();
+        next.stale_panels = left;
+        ctx.save_settings(guild, KEY, &next)?;
+    }
+    Ok(())
 }
 
 // ---- commands, buttons, modals ----
@@ -736,6 +780,9 @@ pub async fn sweep_idle(feature: &Tickets, ctx: &Ctx) -> bot_core::anyhow::Resul
             continue;
         }
         ctx.db.with(|c| release_abandoned(c, guild, None, now_ms()))?;
+        if let Err(e) = retry_stale_panels(ctx, guild).await {
+            bot_core::tracing::warn!(guild, error = %e, "couldn't retry old ticket panels");
+        }
         let s = ctx.settings::<Settings>(guild, KEY)?;
         let open: Vec<Ticket> = ctx.db.with(|c| list(c, guild, Filter::Open, 500))?.into_iter().filter(|t| t.thread_id != 0).collect();
         let limit = s.auto_close_days * DAY_MS;
@@ -856,6 +903,18 @@ mod tests {
         let db = Db::memory().unwrap();
         db.migrate(KEY, crate::MIGRATIONS).unwrap();
         db
+    }
+
+    #[test]
+    fn old_panels_kept_to_retry_are_bounded() {
+        assert_eq!(keep_newest(vec![(1, 2), (1, 2), (1, 3)]), vec![(1, 2), (1, 3)]);
+        let many: Vec<(u64, u64)> = (1..=15).map(|m| (1, m)).collect();
+        let kept = keep_newest(many);
+        assert_eq!(kept.len(), STALE_PANELS_MAX);
+        assert_eq!((kept[0], kept[kept.len() - 1]), ((1, 6), (1, 15)), "the newest are kept");
+        // Settings saved before the list existed read as none.
+        let s: Settings = bot_core::serde_json::from_str(r#"{"panel": [1, 2]}"#).unwrap();
+        assert!(s.stale_panels.is_empty());
     }
 
     #[test]

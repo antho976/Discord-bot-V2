@@ -243,6 +243,11 @@ const MIGRATIONS: &[Migration] = &[Migration {
         ALTER TABLE audit_events ADD COLUMN moderator_id INTEGER;
         ALTER TABLE audit_events ADD COLUMN reason TEXT;
     ",
+}, Migration {
+    // Discord's id for each audit entry, to find it again when Discord raises its count without
+    // sending it anew.
+    name: "005_audit_entry_ids",
+    sql: "ALTER TABLE audit_mod_actions ADD COLUMN entry_id INTEGER;",
 }];
 
 #[derive(Default)]
@@ -647,29 +652,136 @@ async fn attribute(ctx: &Ctx, batcher: &Batcher, channel: u64) {
         }
         let waiting = batcher.waiting(channel);
         let Some(first) = waiting.iter().map(|(_, w)| w.at).min() else { return };
-        let mut actions = match store::mod_actions(ctx, waiting[0].1.guild, first - store::MATCH_BEFORE_MS) {
+        let guild = waiting[0].1.guild;
+        let mut actions = match store::mod_actions(ctx, guild, first - store::MATCH_BEFORE_MS) {
             Ok(a) => a,
             Err(e) => {
                 bot_core::tracing::warn!(error = %e, "couldn't read moderator actions");
                 return;
             }
         };
-        for (i, who) in waiting {
-            let Some(a) = store::claim(&mut actions, who.kind, who.target, who.channel, who.at) else { continue };
-            // A member's own change (to their own roles) is explained, but names nobody.
-            let named = a.moderator != who.target;
-            match store::use_action(ctx, &a, who.row, named) {
-                Ok(true) => batcher.settle(channel, i, |e| {
-                    if named {
-                        add_moderator(e, who.kind, a.moderator, a.reason.as_deref());
-                    }
-                }),
-                // Another event took it first.
-                Ok(false) => {}
-                Err(e) => bot_core::tracing::warn!(error = %e, "couldn't use a moderator action"),
+        let events: Vec<store::Logged> = waiting.iter().map(|(_, w)| store::Logged { kind: w.kind, target: w.target, channel: w.channel, at: w.at }).collect();
+        let found = store::assign(&mut actions, &events);
+        let mut unexplained = Vec::new();
+        for ((i, who), a) in waiting.into_iter().zip(found) {
+            match a {
+                Some(a) => explain(ctx, batcher, channel, i, &who, &a),
+                None if who.kind == Kind::MessageDelete && who.channel.is_some() => unexplained.push((i, who)),
+                None => {}
+            }
+        }
+        if !unexplained.is_empty() {
+            for (i, who, a) in merged_deletes(ctx, guild, unexplained).await {
+                explain(ctx, batcher, channel, i, &who, &a);
             }
         }
     }
+}
+
+/// Use up one event of an action for queued post `i`, and name its moderator on the post and the
+/// stored entry.
+fn explain(ctx: &Ctx, batcher: &Batcher, channel: u64, i: usize, who: &Who, a: &store::ModAction) {
+    // A member's own change (to their own roles) is explained, but names nobody.
+    let named = a.moderator != who.target;
+    match store::use_action(ctx, a, who.row, named) {
+        Ok(true) => batcher.settle(channel, i, |e| {
+            if named {
+                add_moderator(e, who.kind, a.moderator, a.reason.as_deref());
+            }
+        }),
+        // Another event took it first.
+        Ok(false) => {}
+        Err(e) => bot_core::tracing::warn!(error = %e, "couldn't use a moderator action"),
+    }
+}
+
+/// How often a server's audit log may be read for [`merged_deletes`], so a mass delete can't
+/// send a request per message.
+const AUDIT_READ_EVERY: Duration = Duration::from_secs(5);
+
+/// Deletes no entry explains, put down to an entry Discord added them to. Discord adds a
+/// moderator's further deletes of one member's messages in one channel to the entry it sent for
+/// the first, raising its count without sending it again; so when such an entry is used up, its
+/// count is read again from the audit log and the new uses go to these deletes, in order. At
+/// most one read a server every [`AUDIT_READ_EVERY`], and only when the bot may view the audit
+/// log; anything that goes wrong just leaves the deletes unexplained.
+async fn merged_deletes(ctx: &Ctx, guild: u64, unexplained: Vec<(usize, Who)>) -> Vec<(usize, Who, store::ModAction)> {
+    let mut out = Vec::new();
+    let mut used_up = match store::used_up_deletes(ctx, guild, now_ms() - store::MERGE_MS) {
+        Ok(u) => u,
+        Err(e) => {
+            bot_core::tracing::warn!(guild, error = %e, "couldn't read used-up delete entries");
+            return out;
+        }
+    };
+    used_up.retain(|(a, _)| unexplained.iter().any(|(_, w)| merges_into(a, w)));
+    if used_up.is_empty() || !may_read_audit_log(ctx, guild) {
+        return out;
+    }
+    let Some(g) = Id::new_checked(guild) else { return out };
+    use bot_core::twilight_model::guild::audit_log::AuditLogEventType;
+    let entries = match ctx.http.audit_log(g).action_type(AuditLogEventType::MessageDelete).limit(10).await {
+        Ok(r) => match r.model().await {
+            Ok(log) => log.entries,
+            Err(_) => return out,
+        },
+        Err(e) => {
+            bot_core::tracing::debug!(guild, error = %e, "couldn't read the audit log");
+            return out;
+        }
+    };
+    for (a, entry) in &mut used_up {
+        let count = entries
+            .iter()
+            .find(|e| e.id.get() == *entry)
+            .and_then(|e| e.options.as_ref()?.count.as_deref()?.parse::<i64>().ok());
+        if let Some(count) = count.filter(|n| *n > a.covers) {
+            match store::raise_covers(ctx, a.id, count) {
+                Ok(()) => a.covers = count,
+                Err(e) => bot_core::tracing::warn!(guild, error = %e, "couldn't raise an entry's count"),
+            }
+        }
+    }
+    for (i, who) in unexplained {
+        let Some((a, _)) = used_up.iter_mut().find(|(a, _)| a.used < a.covers && merges_into(a, &who)) else { continue };
+        a.used += 1;
+        out.push((i, who, a.clone()));
+    }
+    out
+}
+
+/// Whether Discord could have added a delete to a delete entry: the same member's message in the
+/// same channel, after the entry.
+fn merges_into(a: &store::ModAction, who: &Who) -> bool {
+    who.kind == Kind::MessageDelete && a.target == Some(who.target) && who.channel.is_some() && a.channel == who.channel && a.at <= who.at + store::MATCH_AFTER_MS
+}
+
+/// Whether to read a server's audit log now: the bot may view it, and it wasn't read for this in
+/// the last [`AUDIT_READ_EVERY`].
+fn may_read_audit_log(ctx: &Ctx, guild: u64) -> bool {
+    static READ: std::sync::LazyLock<Mutex<HashMap<u64, Instant>>> = std::sync::LazyLock::new(Default::default);
+    if !bot_views_audit_log(ctx, guild) {
+        return false;
+    }
+    let mut read = READ.lock().unwrap();
+    read.retain(|_, t| t.elapsed() < AUDIT_READ_EVERY);
+    if read.contains_key(&guild) {
+        return false;
+    }
+    read.insert(guild, Instant::now());
+    true
+}
+
+/// Whether the bot has View Audit Log in a server, from the cache: its roles and @everyone, or
+/// owning the server. Not known means no.
+fn bot_views_audit_log(ctx: &Ctx, guild: u64) -> bool {
+    let (Some(g), Some(bot)) = (Id::new_checked(guild), ctx.bot_id().and_then(Id::new_checked)) else { return false };
+    if ctx.cache.guild(g).is_some_and(|x| x.owner_id() == bot) {
+        return true;
+    }
+    let Some(roles) = ctx.cache.member(g, bot).map(|m| m.roles().to_vec()) else { return false };
+    let perms = roles.into_iter().chain([g.cast()]).filter_map(|r| ctx.cache.role(r).map(|r| r.permissions)).fold(Permissions::empty(), |p, r| p | r);
+    perms.intersects(Permissions::ADMINISTRATOR | Permissions::VIEW_AUDIT_LOG)
 }
 
 /// Where the log posts, as saved: each channel once, with what goes there. Message events go to
@@ -1098,6 +1210,65 @@ mod tests {
         assert_eq!(claim_by(&mut actions, Kind::Roles, 5, None, at + 8_500), Some(2));
         assert_eq!(claim_by(&mut actions, Kind::Ban, 6, None, at), Some(3));
         assert_eq!(claim_by(&mut actions, Kind::Ban, 7, None, at), Some(3));
+    }
+
+    #[test]
+    fn each_entry_goes_to_its_nearest_event_whatever_the_queue_order() {
+        let at = 1_000_000;
+        // The author deletes a message of theirs at t-1s, queued first; a moderator deletes
+        // another of theirs at t, and its entry comes at t+0.3s.
+        let mut actions = [action(at + 300, 9, "delete", 5, Some(20))];
+        let own = store::Logged { kind: Kind::MessageDelete, target: 5, channel: Some(20), at: at - 1_000 };
+        let moderators = store::Logged { at, ..own };
+        let found: Vec<Option<u64>> = store::assign(&mut actions, &[own, moderators]).into_iter().map(|a| a.map(|a| a.moderator)).collect();
+        assert_eq!(found, [None, Some(9)]);
+        assert_eq!(actions[0].used, 1);
+        // An entry covering two goes to both, and one event never takes two entries.
+        let mut actions = [store::ModAction { covers: 2, ..action(at + 300, 9, "delete", 5, Some(20)) }, action(at + 200, 8, "delete", 5, Some(20))];
+        let found: Vec<Option<u64>> = store::assign(&mut actions, &[own, moderators]).into_iter().map(|a| a.map(|a| a.moderator)).collect();
+        assert_eq!(found, [Some(9), Some(8)]);
+        assert_eq!((actions[0].used, actions[1].used), (1, 1));
+    }
+
+    #[test]
+    fn later_deletes_can_merge_into_an_earlier_entry() {
+        let at = 1_000_000;
+        let entry = action(at, 9, "delete", 5, Some(20));
+        let who = |target, channel, at| Who { guild: 1, kind: Kind::MessageDelete, target, channel, at, row: None };
+        assert!(merges_into(&entry, &who(5, Some(20), at + 120_000)));
+        // Another member, another channel, or before the entry.
+        assert!(!merges_into(&entry, &who(6, Some(20), at + 120_000)));
+        assert!(!merges_into(&entry, &who(5, Some(21), at + 120_000)));
+        assert!(!merges_into(&entry, &who(5, None, at + 120_000)));
+        assert!(!merges_into(&entry, &who(5, Some(20), at - 60_000)));
+        assert!(!merges_into(&entry, &Who { kind: Kind::Ban, ..who(5, Some(20), at + 1_000) }));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_used_up_delete_entry_can_be_raised_to_discords_count() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![Arc::new(Audit::default())]).unwrap();
+        let entry = |id: u64, count: &str| -> bot_core::twilight_model::guild::audit_log::AuditLogEntry {
+            bot_core::serde_json::from_value(bot_core::serde_json::json!({
+                "id": id.to_string(), "guild_id": "1", "user_id": "9", "target_id": "5", "action_type": 72,
+                "options": {"channel_id": "20", "count": count}, "changes": []
+            }))
+            .unwrap()
+        };
+        store::record_moderator(&ctx, &entry(777, "1")).unwrap();
+        let since = now_ms() - store::MERGE_MS;
+        assert!(store::used_up_deletes(&ctx, 1, since).unwrap().is_empty(), "it has a use left");
+        let a = store::mod_actions(&ctx, 1, since).unwrap().remove(0);
+        assert!(store::use_action(&ctx, &a, None, true).unwrap());
+        let used_up = store::used_up_deletes(&ctx, 1, since).unwrap();
+        assert_eq!(used_up.iter().map(|(a, e)| (a.id, *e)).collect::<Vec<_>>(), [(a.id, 777)]);
+        // Discord's count went to 3: two more deletes are explained, and it's never lowered.
+        store::raise_covers(&ctx, a.id, 3).unwrap();
+        store::raise_covers(&ctx, a.id, 2).unwrap();
+        let again = store::mod_actions(&ctx, 1, since).unwrap();
+        assert_eq!((again[0].covers, again[0].used), (3, 1));
+        // Without the bot's own id the audit log isn't read.
+        assert!(!may_read_audit_log(&ctx, 1));
     }
 
     #[test]

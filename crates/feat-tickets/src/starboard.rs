@@ -212,12 +212,10 @@ pub async fn on_message_delete(
         }
         return Ok(());
     }
-    let posts = ctx.db.with(|c| messages.iter().filter_map(|m| get(c, guild, m.get()).transpose()).collect::<bot_core::rusqlite::Result<Vec<Post>>>())?;
-    if posts.is_empty() {
-        return Ok(());
-    }
+    // Read under the lock: a post being made right now is stored before this looks for it.
     let lock = feature.star_lock(guild);
     let _one_at_a_time = lock.lock().await;
+    let posts = ctx.db.with(|c| messages.iter().filter_map(|m| get(c, guild, m.get()).transpose()).collect::<bot_core::rusqlite::Result<Vec<Post>>>())?;
     for post in posts {
         if !post.removed
             && let Err(e) = take_down(ctx, &post).await
@@ -236,9 +234,9 @@ pub async fn on_message_update(feature: &Tickets, ctx: &Ctx, guild: u64, message
     if message.edited_timestamp.is_none() {
         return Ok(());
     }
-    let Some(post) = ctx.db.with(|c| get(c, guild, message.id.get()))?.filter(|p| !p.removed) else { return Ok(()) };
     let lock = feature.star_lock(guild);
     let _one_at_a_time = lock.lock().await;
+    let Some(post) = ctx.db.with(|c| get(c, guild, message.id.get()))?.filter(|p| !p.removed) else { return Ok(()) };
     let embed = build_embed(guild, message);
     match ctx.http.update_message(Id::new(post.post_channel_id), Id::new(post.post_id)).embeds(Some(&[embed])).await {
         Ok(_) => ctx.db.with(|c| set_content(c, guild, post.message_id, &preview_of(message), &image_of(message).unwrap_or_default()))?,
@@ -291,10 +289,37 @@ pub async fn on_reaction(
     }
     let lock = feature.star_lock(guild);
     let _one_at_a_time = lock.lock().await;
-    if let Err(e) = refresh(ctx, guild, channel.get(), message.get(), &s, &wanted, star_channel).await {
-        bot_core::tracing::warn!(guild, message = message.get(), error = %e, "couldn't update the starboard");
+    match refresh(ctx, guild, channel.get(), message.get(), &s, &wanted, star_channel).await {
+        Ok(Some(at)) => recheck_at(ctx, lock.clone(), guild, channel.get(), message.get(), at),
+        Ok(None) => {}
+        Err(e) => bot_core::tracing::warn!(guild, message = message.get(), error = %e, "couldn't update the starboard"),
     }
     Ok(())
+}
+
+/// Look at a post again once it's no longer young (see [`KEEP_MS`]), so one kept up under the
+/// threshold comes down even if nobody reacts again. One look per post at a time, each at most
+/// [`KEEP_MS`] away; the look only updates or takes down a post that's still there.
+fn recheck_at(ctx: &Ctx, lock: std::sync::Arc<bot_core::tokio::sync::Mutex<()>>, guild: u64, channel: u64, message: u64, at: i64) {
+    static PENDING: LazyLock<Mutex<std::collections::HashSet<(u64, u64)>>> = LazyLock::new(Default::default);
+    if !PENDING.lock().unwrap().insert((guild, message)) {
+        return;
+    }
+    let ctx = ctx.clone();
+    bot_core::tokio::spawn(async move {
+        let wait = (at - now_ms()).clamp(0, KEEP_MS) as u64 + 1_000;
+        bot_core::tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+        PENDING.lock().unwrap().remove(&(guild, message));
+        let _one_at_a_time = lock.lock().await;
+        let Ok(s) = ctx.settings::<Settings>(guild, KEY) else { return };
+        let (Some(star_channel), Some(wanted)) = (s.star_channel, parse_emoji(&s.star_emoji)) else { return };
+        if !ctx.db.with(|c| get(c, guild, message)).ok().flatten().is_some_and(|p| !p.removed) {
+            return;
+        }
+        if let Err(e) = refresh(&ctx, guild, channel, message, &s, &wanted, star_channel).await {
+            bot_core::tracing::warn!(guild, message, error = %e, "couldn't update the starboard");
+        }
+    });
 }
 
 /// A star in a channel the starboard won't repost from. At most one look a channel each 10
@@ -405,40 +430,47 @@ fn role_sees(roles: &[(u64, Permissions)], guild: u64, role: u64, overwrites: &[
 }
 
 /// Fetch the message and its star count, then post, update or take down its starboard post.
-async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Settings, emoji: &Emoji, star_channel: u64) -> bot_core::anyhow::Result<()> {
+/// Returns when to look again: a post kept up under the threshold only because it's young.
+async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Settings, emoji: &Emoji, star_channel: u64) -> bot_core::anyhow::Result<Option<i64>> {
+    let (Some(channel_id), Some(message_key)) = (Id::new_checked(channel), Id::new_checked(message_id)) else { return Ok(None) };
     let existing = ctx.db.with(|c| get(c, guild, message_id))?;
     if existing.as_ref().is_some_and(|p| p.removed) {
-        return Ok(());
+        return Ok(None);
     }
-    let message = match ctx.http.message(Id::new(channel), Id::new(message_id)).await {
+    let message = match ctx.http.message(channel_id, message_key).await {
         Ok(r) => r.model().await?,
-        Err(e) if is_not_found(&e) => return Ok(()),
+        Err(e) if is_not_found(&e) => return Ok(None),
         Err(e) => return Err(e.into()),
     };
     let threshold = s.star_threshold.max(1);
-    let raw = message.reactions.iter().find(|r| emoji.matches(&r.emoji)).map(|r| r.count as i64).unwrap_or(0);
+    let reaction = message.reactions.iter().find(|r| emoji.matches(&r.emoji));
+    // Normal reactions and super reactions together.
+    let raw = reaction.map_or(0, |r| r.count as i64);
+    let burst = reaction.map_or(0, |r| r.count_details.burst as i64);
     // Who starred it only needs reading when it could change what happens, and then only one
     // page: past a page of reactors a bot or the author's own star changes nothing.
     let matters = raw > 0 && (raw >= threshold || existing.is_some()) && raw <= REACTORS_PAGE as i64;
-    let stars = if matters { counted_stars(ctx, &message, emoji, s.star_self).await.unwrap_or(raw) } else { raw };
-    // A post this new stays up when the count dips, so one member taking a star back and
-    // giving it again doesn't delete and repost it each time.
-    let young = existing.as_ref().is_some_and(|p| now_ms() - p.created_at < KEEP_MS);
+    let stars = if matters { counted_stars(ctx, &message, emoji, s.star_self, burst > 0).await.unwrap_or(raw) } else { raw };
     let line = format!("{} {} in <#{}>", s.star_emoji.trim(), stars, channel);
     let none = AllowedMentions::default();
 
     match existing {
-        Some(post) if stars >= threshold || !s.star_remove_below || young => {
+        Some(post) if stays_up(stars, threshold, s.star_remove_below, now_ms() - post.created_at) => {
+            let recheck = (stars < threshold && s.star_remove_below).then_some(post.created_at + KEEP_MS);
             if post.stars == stars {
-                return Ok(());
+                return Ok(recheck);
             }
             let edited = ctx.http.update_message(Id::new(post.post_channel_id), Id::new(post.post_id)).content(Some(&line)).allowed_mentions(Some(&none)).await;
             match edited {
                 Ok(_) => ctx.db.with(|c| set_stars(c, guild, message_id, stars))?,
                 // Someone deleted the post by hand: leave it deleted.
-                Err(e) if is_not_found(&e) => ctx.db.with(|c| mark_removed(c, guild, post.post_id).map(|_| ()))?,
+                Err(e) if is_not_found(&e) => {
+                    ctx.db.with(|c| mark_removed(c, guild, post.post_id).map(|_| ()))?;
+                    return Ok(None);
+                }
                 Err(e) => return Err(e.into()),
             }
+            return Ok(recheck);
         }
         Some(post) => {
             // Forgotten only once it's gone, so a failed delete can't leave a post the next
@@ -478,7 +510,15 @@ async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Setti
         }
         None => {}
     }
-    Ok(())
+    Ok(None)
+}
+
+/// Whether a post stays up at this count: at or over the threshold, when posts aren't taken down
+/// under it, or while it's young (`age` under [`KEEP_MS`]) so one member taking a star back and
+/// giving it again doesn't delete and repost it each time. Not at no stars at all, which is
+/// reactions cleared, not a dip.
+fn stays_up(stars: i64, threshold: i64, remove_below: bool, age: i64) -> bool {
+    stars >= threshold || !remove_below || (stars > 0 && age < KEEP_MS)
 }
 
 fn is_not_found(e: &bot_core::twilight_http::Error) -> bool {
@@ -522,15 +562,22 @@ const REACTORS_PAGE: u16 = 100;
 const KEEP_MS: i64 = 10 * 60_000;
 
 /// The stars that count, from one page of reactors: people, not bots, and the author only when
-/// `with_author`. None when the list can't be read.
-async fn counted_stars(ctx: &Ctx, message: &Message, emoji: &Emoji, with_author: bool) -> Option<i64> {
+/// `with_author`. Discord lists normal and super reactions apart; with `burst` the super ones are
+/// read too, and someone who gave both counts once. None when a list can't be read.
+async fn counted_stars(ctx: &Ctx, message: &Message, emoji: &Emoji, with_author: bool, burst: bool) -> Option<i64> {
+    use bot_core::twilight_model::channel::message::ReactionType;
     let request = emoji.request();
-    let users = ctx.http.reactions(message.channel_id, message.id, &request).limit(REACTORS_PAGE).await.ok()?.models().await.ok()?;
+    let mut users = ctx.http.reactions(message.channel_id, message.id, &request).limit(REACTORS_PAGE).await.ok()?.models().await.ok()?;
+    if burst {
+        let supers = ctx.http.reactions(message.channel_id, message.id, &request).kind(ReactionType::Burst).limit(REACTORS_PAGE).await.ok()?.models().await.ok()?;
+        users.extend(supers);
+    }
     Some(count_stars(&users, message.author.id, with_author))
 }
 
 fn count_stars(users: &[bot_core::twilight_model::user::User], author: Id<bot_core::twilight_model::id::marker::UserMarker>, with_author: bool) -> i64 {
-    users.iter().filter(|u| !u.bot && (with_author || u.id != author)).count() as i64
+    let mut seen = std::collections::HashSet::new();
+    users.iter().filter(|u| !u.bot && (with_author || u.id != author) && seen.insert(u.id)).count() as i64
 }
 
 // ---- the post ----
@@ -913,6 +960,20 @@ mod tests {
         assert_eq!(count_stars(&users, Id::new(4), false), 2);
         assert_eq!(count_stars(&users, Id::new(4), true), 3);
         assert_eq!(count_stars(&[], Id::new(4), true), 0);
+        // Normal and super reactors read one after the other: 2 normal and 1 super make 3, and
+        // someone who gave both counts once.
+        let both = [user(1, false), user(2, false), user(5, false), user(2, false)];
+        assert_eq!(count_stars(&both, Id::new(4), false), 3);
+    }
+
+    #[test]
+    fn young_posts_ride_out_a_dip_but_not_a_clear() {
+        let young = KEEP_MS - 1;
+        assert!(stays_up(3, 3, true, KEEP_MS * 10));
+        assert!(stays_up(2, 3, true, young), "a dip while young");
+        assert!(!stays_up(2, 3, true, KEEP_MS), "a dip once it's settled");
+        assert!(!stays_up(0, 3, true, young), "reactions cleared");
+        assert!(stays_up(0, 3, false, KEEP_MS), "posts aren't taken down under the threshold");
     }
 
     #[test]

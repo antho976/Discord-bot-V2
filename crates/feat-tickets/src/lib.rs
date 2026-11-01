@@ -38,6 +38,9 @@ pub struct Settings {
     pub panel_text: String,
     /// The last panel posted: `(channel, message)`. Sending a new one removes this one.
     pub panel: Option<(u64, u64)>,
+    /// Earlier panels Discord didn't delete when asked (an error other than already gone):
+    /// `(channel, message)`. Tried again on the next send and in the hourly sweep.
+    pub stale_panels: Vec<(u64, u64)>,
 
     /// The starboard is off until a channel is picked.
     pub star_channel: Option<u64>,
@@ -62,6 +65,7 @@ impl Default for Settings {
             panel_title: DEFAULT_PANEL_TITLE.into(),
             panel_text: DEFAULT_PANEL_TEXT.into(),
             panel: None,
+            stale_panels: Vec::new(),
             star_channel: None,
             star_emoji: "⭐".into(),
             star_threshold: 3,

@@ -38,6 +38,22 @@ pub fn find_used(old: &[Inv], new: &[Inv]) -> Option<Inv> {
     }
 }
 
+/// Like [`find_used`], and the use found is taken out of `before`, so the next join sharing the
+/// same two readings finds only the rises that are left: two joins and one rise credit one join,
+/// not both.
+pub fn take_used(before: &mut Vec<Inv>, now: &[Inv]) -> Option<Inv> {
+    let used = find_used(before, now)?;
+    let still_there = now.iter().any(|n| n.code == used.code);
+    match before.iter_mut().find(|o| o.code == used.code) {
+        Some(o) if still_there => o.uses += 1,
+        // A used-up invite: its last use is taken, so it's no longer one use from its limit.
+        Some(_) => before.retain(|o| o.code != used.code),
+        // A new invite: its first use.
+        None => before.push(Inv { uses: 1, ..used.clone() }),
+    }
+    Some(used)
+}
+
 #[derive(Debug, Clone)]
 pub struct State {
     pub checked_at: i64,
@@ -184,19 +200,33 @@ impl Readings {
     }
 
     /// Read the server's invites, or share a reading that started after this call did: that one
-    /// already sees whatever happened before the call, such as the join it's for.
-    async fn read(&self, ctx: &Ctx, guild: u64) -> Option<Stored> {
+    /// already sees whatever happened before the call, such as the join it's for. `then` runs on
+    /// the reading while it's still held, so joins sharing it take their turns one at a time.
+    async fn read_then<T>(&self, ctx: &Ctx, guild: u64, then: impl FnOnce(Option<&mut Stored>) -> T) -> T {
         let arrived = self.started.load(Ordering::SeqCst);
         let flight = self.flights.lock().unwrap().entry(guild).or_default().clone();
         let mut last = flight.lock().await;
-        if last.0 > arrived {
-            return last.1.clone();
+        if last.0 <= arrived {
+            let n = self.start();
+            let fetched = fetch(ctx, guild).await;
+            let stored = self.settle(ctx, guild, n, fetched);
+            *last = (n, stored);
         }
-        let n = self.start();
-        let fetched = fetch(ctx, guild).await;
-        let stored = self.settle(ctx, guild, n, fetched);
-        *last = (n, stored.clone());
-        stored
+        then(last.1.as_mut())
+    }
+
+    async fn read(&self, ctx: &Ctx, guild: u64) -> Option<Stored> {
+        self.read_then(ctx, guild, |s| s.cloned()).await
+    }
+
+    /// The invite a join came through, from a reading that sees it. The use is taken from the
+    /// reading, so a join sharing it after this one isn't put down to the same use.
+    async fn attribute(&self, ctx: &Ctx, guild: u64) -> Option<Inv> {
+        self.read_then(ctx, guild, |s| match s {
+            Some((Some(before), now)) => take_used(before, now),
+            _ => None,
+        })
+        .await
     }
 }
 
@@ -246,12 +276,8 @@ pub fn on_invite_delete(ctx: &Ctx, guild: u64, code: &str) {
 /// either way it's recorded without an invite.
 pub async fn record_join(ctx: &Ctx, readings: &Readings, guild: u64, user: u64, bot: bool, track: bool) {
     let mut used: Option<Inv> = None;
-    if track
-        && !bot
-        && !refused(ctx, guild)
-        && let Ok(Some((Some(before), now))) = bot_core::tokio::time::timeout(Duration::from_secs(15), readings.read(ctx, guild)).await
-    {
-        used = find_used(&before, &now);
+    if track && !bot && !refused(ctx, guild) {
+        used = bot_core::tokio::time::timeout(Duration::from_secs(15), readings.attribute(ctx, guild)).await.ok().flatten();
     }
     let res = ctx.db.with(|c| {
         c.execute(
@@ -484,6 +510,48 @@ mod tests {
         assert_eq!(join.await.unwrap(), stored);
         assert_eq!(r.started.load(Ordering::SeqCst), n, "the join didn't ask Discord again");
         assert_eq!(r.flights.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn joins_sharing_a_reading_each_take_their_own_use() {
+        // Two joins share one reading in which one invite went up once: one is credited, not both.
+        let mut before = vec![inv("a", 3, 0), inv("b", 1, 0)];
+        let now = [inv("a", 3, 0), inv("b", 2, 0)];
+        assert_eq!(take_used(&mut before, &now).unwrap().code, "b");
+        assert!(take_used(&mut before, &now).is_none());
+        // It went up twice: both are.
+        let mut before = vec![inv("b", 1, 0)];
+        let now = [inv("b", 3, 0)];
+        assert_eq!(take_used(&mut before, &now).unwrap().code, "b");
+        assert_eq!(take_used(&mut before, &now).unwrap().code, "b");
+        assert!(take_used(&mut before, &now).is_none());
+        // A new invite used twice.
+        let mut before = vec![inv("a", 3, 0)];
+        let now = [inv("a", 3, 0), inv("fresh", 2, 0)];
+        assert_eq!(take_used(&mut before, &now).unwrap().code, "fresh");
+        assert_eq!(take_used(&mut before, &now).unwrap().code, "fresh");
+        assert!(take_used(&mut before, &now).is_none());
+        // A single-use invite that's now gone is one join's.
+        let mut before = vec![inv("a", 3, 0), inv("once", 0, 1)];
+        let now = [inv("a", 3, 0)];
+        assert_eq!(take_used(&mut before, &now).unwrap().code, "once");
+        assert!(take_used(&mut before, &now).is_none());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn joins_sharing_a_reading_arent_credited_the_same_use() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Welcome::default())]).unwrap();
+        let r = Readings::default();
+        store(&ctx, 1, &[inv("a", 1, 0)]).unwrap();
+        // A reading saw one use of "a" since the baseline; two joins share it.
+        let n = r.start();
+        let stored = r.settle(&ctx, 1, n, Ok(vec![inv("a", 2, 0)]));
+        // Numbered past the counter, so these joins count as arriving before it started.
+        let flight = r.flights.lock().unwrap().entry(1).or_default().clone();
+        *flight.lock().await = (n + 1, stored);
+        assert_eq!(r.attribute(&ctx, 1).await.unwrap().code, "a");
+        assert!(r.attribute(&ctx, 1).await.is_none());
     }
 
     #[test]
