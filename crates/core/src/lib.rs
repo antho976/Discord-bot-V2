@@ -519,20 +519,32 @@ impl Ctx {
         if drained.is_empty() && active.is_empty() {
             return Ok(());
         }
+        let res = self.write_counters(&day, &drained, &active);
+        if res.is_err() {
+            // Keep the counts for the next flush instead of losing the minute.
+            let mut c = self.counters.lock().unwrap();
+            for (k, n) in drained {
+                *c.entry(k).or_default() += n;
+            }
+        }
+        res
+    }
+
+    fn write_counters(&self, day: &str, drained: &[((u64, &'static str), i64)], active: &[(String, u64, i64)]) -> Result<()> {
         let mut conn = self.db.lock();
         let tx = conn.transaction()?;
         for ((guild, key), n) in drained {
             tx.execute(
                 "INSERT INTO daily_stats (guild_id, day, key, value) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT (guild_id, key, day) DO UPDATE SET value = value + excluded.value",
-                params![guild as i64, day, key, n],
+                params![*guild as i64, day, key, n],
             )?;
         }
         for (d, guild, n) in active {
             tx.execute(
                 "INSERT INTO daily_stats (guild_id, day, key, value) VALUES (?1, ?2, 'active', ?3)
                  ON CONFLICT (guild_id, key, day) DO UPDATE SET value = MAX(value, excluded.value)",
-                params![guild as i64, d, n],
+                params![*guild as i64, d, n],
             )?;
         }
         tx.commit()?;

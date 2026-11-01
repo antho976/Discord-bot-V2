@@ -923,6 +923,10 @@ async fn copy_access(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>, fo
     if from.id == id || id == ctx.cfg.owner_id {
         return Err(WebError::Bad("Pick someone else to copy from.".into()));
     }
+    // Same rule as saving their access by hand: an Admin+ person's grants are the owner's to set.
+    if target.admin_plus && user.id != ctx.cfg.owner_id {
+        return Err(WebError::Bad("Only the owner changes an Admin+ person's access.".into()));
+    }
     let mut conn = ctx.db.lock();
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM dash_perms WHERE user_id = ?1", [id as i64])?;

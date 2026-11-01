@@ -4,8 +4,8 @@
 //! the server icon.
 
 use axum::Router;
-use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::body::Body;
+use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -20,7 +20,7 @@ const MAX_BYTES: usize = 6 * 1024 * 1024;
 
 pub(super) fn routes() -> Router<Ctx> {
     Router::new()
-        .route("/g/{guild}/banner", get(serve).post(upload).layer(DefaultBodyLimit::max(MAX_BYTES)))
+        .route("/g/{guild}/banner", get(serve).post(upload))
         .route("/g/{guild}/banner/remove", post(remove))
 }
 
@@ -57,17 +57,18 @@ async fn serve(State(ctx): State<Ctx>, Path(guild): Path<u64>) -> WebResult {
     Ok(([(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, "public, max-age=31536000, immutable".to_owned())], data).into_response())
 }
 
-/// The body is the image itself (app.js sends the resized file), not a form.
-async fn upload(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, body: Bytes) -> WebResult {
+/// The body is the image itself (app.js sends the resized file), not a form. It's read only
+/// after the access check, so someone without access can't make the bot buffer uploads.
+async fn upload(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, body: Body) -> WebResult {
     if !user.admin || !ctx.guilds_for(&user).contains(&guild) {
         return Err(WebError::Forbidden);
     }
+    let Ok(body) = axum::body::to_bytes(body, MAX_BYTES).await else {
+        return Err(WebError::Bad("That image is too large. Pick one under 6 MB.".into()));
+    };
     let Some(mime) = sniff(&body) else {
         return Err(WebError::Bad("That file isn't a PNG, JPEG, WebP or GIF image.".into()));
     };
-    if body.len() > MAX_BYTES {
-        return Err(WebError::Bad("That image is too large. Pick one under 6 MB.".into()));
-    }
     ctx.db.with(|c| {
         c.execute(
             "INSERT INTO guild_banners (guild_id, mime, data, updated_at) VALUES (?1, ?2, ?3, ?4)

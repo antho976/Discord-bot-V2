@@ -299,7 +299,8 @@ async fn preview_login(State(ctx): State<Ctx>, Query(q): Query<PreviewQuery>) ->
             params![hash_token(&session), ctx.cfg.owner_id as i64, now, now + 86_400_000],
         )
     })?;
-    let to = q.to.filter(|t| t.starts_with('/')).unwrap_or_else(|| "/".into());
+    // A path on this site only: "//host" and "/\\host" would leave it.
+    let to = q.to.filter(|t| t.starts_with('/') && !t.starts_with("//") && !t.starts_with("/\\")).unwrap_or_else(|| "/".into());
     Ok(([(header::SET_COOKIE, set_cookie(&ctx, SESSION_COOKIE, &session, 86_400))], Redirect::to(&to)).into_response())
 }
 
