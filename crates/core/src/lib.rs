@@ -4,6 +4,7 @@
 pub mod config;
 pub mod db;
 pub mod discord;
+pub mod perms;
 pub mod preview;
 pub mod scheduler;
 pub mod text;
