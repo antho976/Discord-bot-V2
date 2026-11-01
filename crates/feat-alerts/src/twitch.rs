@@ -1191,7 +1191,7 @@ async fn send(ctx: &Ctx, channel: u64, p: &Post) -> Result<u64> {
 
 /// Clips of the stream's channel made while it was on. Only counted when some server posts
 /// clips, since only then are they stored.
-fn clips_during(ctx: &Ctx, st: &StreamRow) -> Result<i64> {
+pub fn clips_during(ctx: &Ctx, st: &StreamRow) -> Result<i64> {
     let end = st.ended_at.unwrap_or_else(now_ms);
     ctx.db.with(|c| {
         c.query_row(

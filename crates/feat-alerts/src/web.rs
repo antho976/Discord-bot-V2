@@ -278,6 +278,26 @@ fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broad
     })
 }
 
+/// The post a live post becomes when the stream ends, drawn from the post the bot would send so
+/// the two can't drift apart.
+fn ended_preview(ctx: &Ctx, page: &Page, b: &Broadcaster, row: &StreamRow, clips: i64) -> Markup {
+    let p = twitch::ended_post(b, row, clips);
+    let link = row.vod_url.clone().unwrap_or_else(|| b.url());
+    bot_message(ctx, page, None, html! {
+        div.sa-line { (p.content) }
+        div.sa-embed style="--embed:#3a3a3a" {
+            div.sa-author { (b.name) }
+            a.sa-title href=(link) target="_blank" rel="noopener" { (p.embed.title.unwrap_or_default()) }
+            div { "Ended " span.sa-ts { (text::ago(row.ended_at.unwrap_or_else(now_ms))) } "." }
+            div.sa-fields { @for f in &p.embed.fields { div { b { (f.name) } span { (f.value) } } } }
+            div.sa-foot { "Twitch" }
+        }
+        div.sa-buttons {
+            a.sa-watch href=(link) target="_blank" rel="noopener" { (if row.vod_url.is_some() { "Watch the VOD" } else { "Twitch channel" }) (ui::icon(Icon::External)) }
+        }
+    })
+}
+
 /// The closest reminder before a stream, as Discord shows it. Discord fills the start time in for
 /// each reader; the preview gives it in the schedule's zone, like the rest of the tab.
 fn reminder_post(ctx: &Ctx, page: &Page, tz: &TimeZone, role: Option<String>, b: &Broadcaster, seg: Option<&schedule::Segment>, minutes: i64) -> Markup {
@@ -575,6 +595,25 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         }),
     };
     let line = twitch::fill_live(&s.live_message, &sample, preview.title, preview.game);
+    // The last stream as its post shows it now, else made-up numbers.
+    let (ended, ended_clips) = match last {
+        Some(r) => (r.clone(), twitch::clips_during(&ctx, r).unwrap_or(0)),
+        None => (
+            StreamRow {
+                title: "Your stream title".into(),
+                game: "Just Chatting".into(),
+                duration_secs: 3 * 3600 + 12 * 60,
+                peak: 31,
+                average: 24,
+                samples: 38,
+                followers_start: Some(100),
+                followers_end: Some(106),
+                ended_at: Some(now - 20 * 60_000),
+                ..Default::default()
+            },
+            2,
+        ),
+    };
     // Push mode with nothing arriving looks like it works. One Helix call says whether Twitch
     // has a stream the bot never heard about.
     let missed = match (mode, bs.first()) {
@@ -708,6 +747,13 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         @if mode != Mode::Off && !missing.is_empty() {
                             p.small { (ui::badge("Not found", Tone::Warn)) " Twitch hasn't confirmed " (missing.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(", ")) " yet. Check the spelling." }
                         }
+                        div.sa-sechead.sa-after {
+                            div {
+                                h2 { "When the stream ends" }
+                                p.muted { "The same post is edited to this, with the VOD once Twitch has it." }
+                            }
+                        }
+                        (discord(channel_name(&ctx, guild, s.live_channel), "No channel picked", ended_preview(&ctx, &page, &sample, &ended, ended_clips)))
                     }
                     (ui::settings_form(&page, &page.path("alerts"), ui::section("Settings", None, ui::card(html! {
                         (ui::field_text("twitch_logins", "Twitch channel", Some("The name in twitch.tv/name. Separate several with commas."), &s.twitch_logins.join(", "), "yourname"))
@@ -1705,7 +1751,7 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                         }
                     }
                     @if table.is_empty() {
-                        (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: date, length, categories, peak and average viewers."))
+                        (ui::empty(Icon::Live, "No streams yet", "Each stream is recorded when it ends: date, length, categories, viewers, hours watched and followers gained."))
                     } @else {
                         div.sa-rows.sa-streams {
                             @for r in &table {
@@ -1725,6 +1771,15 @@ async fn stats_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                                             (zoned(r.started_at, &tz).map(|z| z.strftime("%b %-d").to_string()).unwrap_or_default())
                                             " · " @if live { "live for " (text::duration((now - r.started_at) / 1000)) } @else { (text::duration(r.duration_secs)) }
                                             @if !games.is_empty() { " · " (games) }
+                                        }
+                                        @let hours = if live { None } else { r.hours_watched() };
+                                        @let gained = r.followers_gained();
+                                        @if live && r.samples > 0 || hours.is_some() || gained.is_some() {
+                                            span.small.muted {
+                                                @if live && r.samples > 0 { (text::num(r.viewers)) " watching now" }
+                                                @if let Some(h) = hours { (text::num(h)) " hours watched" }
+                                                @if let Some(g) = gained { @if hours.is_some() { " · " } (if g > 0 { format!("+{}", text::num(g)) } else { text::num(g) }) " followers" }
+                                            }
                                         }
                                     }
                                     div.sa-peak.wide-only {

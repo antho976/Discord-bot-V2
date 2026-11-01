@@ -383,8 +383,8 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
         let all_games = if i % 3 == 0 && game != "Just Chatting" { format!("{game}\nJust Chatting") } else { game.to_owned() };
         let samples = secs / 300;
         tx.execute(
-            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, vod_url, viewer_sum, games, thumbnail)
-             VALUES ('41234567', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO alerts_streams (broadcaster_id, stream_id, started_at, ended_at, duration_secs, title, game, peak, average, samples, vod_url, viewer_sum, games, thumbnail, viewers, followers_start, followers_end)
+             VALUES ('41234567', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?8, ?14, ?15)",
             params![
                 format!("4{i:010}"),
                 started,
@@ -399,6 +399,9 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
                 peak * 2 / 3 * samples,
                 all_games,
                 pictures[i as usize % pictures.len()],
+                // Follower gains on the recent ones, as when the broadcaster signed in.
+                (i < 8).then_some(1_240 - i * 6),
+                (i < 8).then_some(1_240 - i * 6 + (peak % 9) + 2),
             ],
         )?;
     }
