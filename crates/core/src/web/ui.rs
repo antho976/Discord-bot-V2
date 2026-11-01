@@ -462,7 +462,13 @@ fn unread_by_feature(ctx: &Ctx, page: &Page) -> HashMap<String, i64> {
     let levels = ctx.levels(&page.user, page.guild_id);
     let mut out = HashMap::new();
     for (feature, global) in rows {
-        if if global { page.user.admin_plus } else { levels.get(&feature) >= Level::View } {
+        let kept = ctx.feature(&feature).is_some_and(|f| f.admin_plus_only());
+        let sees = match (global, kept) {
+            (true, true) => page.user.admin_plus,
+            (true, false) => page.user.admin || levels.get(&feature) >= Level::View,
+            (false, _) => levels.get(&feature) >= Level::View,
+        };
+        if sees {
             *out.entry(if global { String::new() } else { feature }).or_insert(0) += 1;
         }
     }

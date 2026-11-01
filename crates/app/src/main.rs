@@ -75,9 +75,25 @@ async fn serve() -> Result<()> {
     }
 
     let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
-    let web = tokio::spawn(bot_core::web::serve(ctx.clone(), stop_rx.clone()));
-    let timer = tokio::spawn(bot_core::scheduler::run(ctx.clone(), stop_rx.clone()));
-    let gateway = tokio::spawn(bot_core::discord::run(ctx.clone(), stop_rx));
+    // A task that ends on its own (the web port can't be bound, the gateway gives up) is
+    // logged, and the process exits so the host restarts it, instead of running half-alive.
+    let watch = |name: &'static str, fut: std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>>, stop: tokio::sync::watch::Receiver<bool>| {
+        tokio::spawn(async move {
+            let res = fut.await;
+            if !*stop.borrow() {
+                match &res {
+                    Err(e) => tracing::error!(task = name, error = %e, "a core task stopped; exiting"),
+                    Ok(()) => tracing::error!(task = name, "a core task stopped on its own; exiting"),
+                }
+                std::process::exit(1);
+            }
+            res
+        })
+    };
+    let web = watch("web", Box::pin(bot_core::web::serve(ctx.clone(), stop_rx.clone())), stop_rx.clone());
+    let sched = bot_core::scheduler::run(ctx.clone(), stop_rx.clone());
+    let timer = watch("scheduler", Box::pin(async move { sched.await; Ok(()) }), stop_rx.clone());
+    let gateway = watch("gateway", Box::pin(bot_core::discord::run(ctx.clone(), stop_rx.clone())), stop_rx);
 
     shutdown_signal().await;
     tracing::info!("shutting down");

@@ -628,7 +628,8 @@
   };
   const visit = async (href, opts = {}) => {
     const u = new URL(href, location.href);
-    if (!boostable(u) || (u.pathname.startsWith("/g/") && !u.pathname.startsWith(`/g/${guild}`))) { location.href = u.href; return; }
+    // Only from a dashboard page (not the public pets pages), to a page of this server.
+    if (!$("main.page") || !boostable(u) || (u.pathname.startsWith("/g/") && !u.pathname.startsWith(`/g/${guild}`))) { location.href = u.href; return; }
     inflight?.abort();
     const ctl = (inflight = new AbortController());
     const main = $("main.page");
@@ -636,16 +637,27 @@
     try {
       const res = await fetch(u.href, { method: opts.method || "GET", body: opts.body, headers: opts.headers, credentials: "same-origin", signal: ctl.signal });
       const type = res.headers.get("content-type") || "";
+      const posted = (opts.method || "GET") !== "GET";
+      // A post that didn't go through says why by its button, whatever the status. Loading the
+      // post's own address instead would ask for it with GET, which it doesn't answer.
+      if (posted && !res.ok && !type.includes("text/html")) {
+        unbusy();
+        const text = (await res.text()).trim().slice(0, 300);
+        refuse("That didn't go through", text || `The server answered ${res.status}.`, opts.from);
+        return;
+      }
       if (!type.includes("text/html")) { location.href = res.url; return; }
       const html = await res.text();
       const doc = new DOMParser().parseFromString(html, "text/html");
       const next = doc.querySelector("main.page");
+      // A page built for another server (People and Activity use the first one): its sidebar
+      // isn't this one, so load it whole.
+      if (next && doc.body.dataset.guild !== guild) { location.href = res.url; return; }
       if (!next) {
-        // A refusal comes back as a notice: say it by the button instead of leaving the page.
         const why = doc.querySelector(".notice p")?.textContent;
-        if (res.status === 400 && why) {
+        if (posted && (!res.ok || why)) {
           unbusy();
-          refuse(doc.querySelector(".notice h1")?.textContent || "That didn't go through", why, opts.from);
+          refuse(doc.querySelector(".notice h1")?.textContent || "That didn't go through", why || `The server answered ${res.status}.`, opts.from);
           return;
         }
         location.href = res.url;
@@ -653,8 +665,10 @@
       }
       // A post answered with a page of its own (not a redirect) keeps the current address: the
       // post's address can't be loaded again with a reload.
-      const stay = (opts.method || "GET") !== "GET" && !res.redirected;
+      const stay = posted && !res.redirected;
       const to = stay ? new URL(location.href) : new URL(res.url);
+      // fetch drops the fragment; a link's own (#pet-12) is put back and scrolled to.
+      if (!posted && u.hash && to.pathname === u.pathname) to.hash = u.hash;
       const same = to.pathname === location.pathname;
       const swap = () => {
         closeRefusal();
@@ -671,7 +685,9 @@
         }
         root.classList.toggle("same", same);
         if (same || calm || !document.startViewTransition) root.classList.remove("vt");
-        const kept = same ? carry(dirty) : null;
+        // Edits survive the page coming back to itself, except after that form's own save:
+        // then the page shows what was saved.
+        const kept = same && !opts.saving ? carry(dirty) : null;
         dirty = null;
         const fresh = document.importNode(next, true);
         main.replaceWith(fresh);
@@ -682,6 +698,7 @@
         run(fresh);
         if (kept) restore(fresh, kept);
         syncBar();
+        if (to.hash) document.getElementById(decodeURIComponent(to.hash.slice(1)))?.scrollIntoView({ block: "start" });
         if (!same) fresh.focus({ preventScroll: true });
       };
       unbusy();
@@ -755,7 +772,7 @@
     const body = $(".peek", d);
     try {
       const res = await fetch(d.dataset.peek, { credentials: "same-origin" });
-      if (!res.ok) throw new Error();
+      if (!res.ok || res.redirected) throw new Error();
       body.innerHTML = await res.text();
       $$(".bell .count").forEach((c) => { c.classList.add("leaving"); setTimeout(() => c.remove(), 250); });
     } catch (_) {
@@ -806,8 +823,8 @@
     const f = e.target;
     const b = e.submitter;
     if (b && b.classList.contains("btn")) busyTimers.push(setTimeout(() => b.classList.add("busy"), 120));
-    // A test button posts the form elsewhere (formaction); only a real save clears "unsaved".
-    if (f === dirty && !b?.hasAttribute("formaction")) { dirty = null; syncBar(); }
+    // A real save of the changed form (not a test posting it elsewhere with formaction).
+    // "Unsaved" clears when the save's answer arrives, not before: a refusal keeps it.
     const method = (b?.getAttribute("formmethod") || f.getAttribute("method") || "get").toUpperCase();
     const action = new URL(b?.getAttribute("formaction") || f.getAttribute("action") || location.href, location.href);
     if (f.target || f.hasAttribute("data-full") || !boostable(action) || f.closest(".account-menu")) return;
@@ -815,13 +832,14 @@
     const data = new FormData(f, b || undefined);
     // The button that asked, or the form's own Save, anchors a refusal popup.
     const from = b || $(".save-bar .btn", f) || f;
+    const saving = f === dirty && !b?.hasAttribute("formaction");
     if (method === "GET") {
       action.search = new URLSearchParams(data).toString();
-      visit(action.href, { from });
+      visit(action.href, { from, saving });
     } else if ((f.enctype || "").includes("multipart")) {
-      visit(action.href, { method, body: data, from });
+      visit(action.href, { method, body: data, from, saving });
     } else {
-      visit(action.href, { method, body: new URLSearchParams(data), headers: { "content-type": "application/x-www-form-urlencoded" }, from });
+      visit(action.href, { method, body: new URLSearchParams(data), headers: { "content-type": "application/x-www-form-urlencoded" }, from, saving });
     }
   });
   addEventListener("pageshow", () => $$(".btn.busy").forEach((b) => b.classList.remove("busy")));

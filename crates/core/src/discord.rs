@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use twilight_gateway::{CloseFrame, Config as GatewayConfig, Event, EventTypeFlags, Intents, Shard, StreamExt as _};
 use twilight_model::application::command::CommandOptionChoice;
 use twilight_model::application::interaction::application_command::{
@@ -39,13 +39,23 @@ pub fn intents() -> Intents {
 
 /// Connect and run until `shutdown` fires. Reconnects are handled inside twilight.
 pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> Result<()> {
-    let app = ctx
-        .http
-        .current_user_application()
-        .await
-        .context("fetching the bot's application (is DISCORD_TOKEN right?)")?
-        .model()
-        .await?;
+    // Discord down, the network not up yet, or a wrong token: say so and keep trying, rather
+    // than ending this task silently with the dashboard stuck on "Connecting".
+    let mut wait = std::time::Duration::from_secs(5);
+    let app = loop {
+        let fetched = async { ctx.http.current_user_application().await?.model().await.map_err(anyhow::Error::from) }.await;
+        match fetched {
+            Ok(app) => break app,
+            Err(e) => {
+                tracing::error!(error = %e, retry_in_secs = wait.as_secs(), "couldn't fetch the bot's application (is DISCORD_TOKEN right?)");
+                tokio::select! {
+                    _ = shutdown.changed() => return Ok(()),
+                    _ = tokio::time::sleep(wait) => {}
+                }
+                wait = (wait * 2).min(std::time::Duration::from_secs(300));
+            }
+        }
+    };
     ctx.set_app_id(app.id);
 
     let config = GatewayConfig::new(ctx.cfg.discord_token.clone(), intents());
@@ -284,6 +294,9 @@ fn track_member_count(ctx: &Ctx, event: &Event) {
 pub async fn register_commands(ctx: &Ctx, guild_id: u64) -> Result<()> {
     if ctx.cfg.preview {
         return Ok(());
+    }
+    if !ctx.has_app_id() {
+        anyhow::bail!("not connected to Discord yet; commands are registered once it is");
     }
     static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let _turn = ONE_AT_A_TIME.lock().await;

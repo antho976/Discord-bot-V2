@@ -316,7 +316,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                             div.inline-form {
                                 button.btn.small.primary type="button" data-banner-pick { (ui::icon(Icon::Image)) "Upload a picture" }
                                 @if uploaded {
-                                    form.inline method="post" action={ "/g/" (guild) "/banner/remove" } {
+                                    form.inline method="post" action={ "/g/" (guild) "/banner/remove" } data-full {
                                         button.btn.small.ghost type="submit" { "Remove upload" }
                                     }
                                 }
@@ -403,7 +403,12 @@ fn recent_notifications(ctx: &Ctx, user: &User, guild: u64, limit: i64) -> Vec<N
     let mut notes = all_notifications(ctx, guild, limit * 4);
     let levels = ctx.levels(user, guild);
     notes.retain(|n| match n.global {
-        true => user.admin_plus,
+        // A notice with no server (app connections, Twitch losing its subscription) follows the
+        // feature that posted it: Admin+ for kept features, else admins and its editors.
+        true => match ctx.feature(&n.feature) {
+            Some(f) if f.admin_plus_only() => user.admin_plus,
+            _ => user.admin || levels.get(&n.feature) >= Level::View,
+        },
         false => levels.get(&n.feature) >= Level::View,
     });
     notes.truncate(limit as usize);
@@ -566,7 +571,8 @@ fn day_label(user: &User, at: i64) -> String {
 
 async fn features_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = admin_page(&ctx, &user, guild, "features")?;
-    let mut feats: Vec<_> = ctx.features().iter().map(|f| f.meta()).collect();
+    // A feature kept for Admin+ (App approvals) isn't listed for a plain admin to switch.
+    let mut feats: Vec<_> = ctx.features().iter().filter(|f| user.admin_plus || !f.admin_plus_only()).map(|f| f.meta()).collect();
     feats.sort_by_key(|m| m.group);
     let mut groups: Vec<(crate::Group, Vec<crate::FeatureMeta>)> = Vec::new();
     for m in feats {
@@ -593,7 +599,8 @@ async fn features_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     h2.fgroup-label { (group.label()) }
                     @for m in list {
                         @let on = ctx.enabled(guild, m.key);
-                        form.frow.off[!on] method="post" action={ "/g/" (guild) "/features/" (m.key) } {
+                        // A full load: switching a feature changes the sidebar itself.
+                        form.frow.off[!on] method="post" action={ "/g/" (guild) "/features/" (m.key) } data-full {
                             @if let Some(n) = m.nav.first() { (ui::icon(n.icon)) }
                             label.grow for={ "on-" (m.key) } { strong { (m.name) } span.help { (m.description) } }
                             label.switch {
@@ -612,6 +619,9 @@ async fn features_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
 async fn toggle_feature(State(ctx): State<Ctx>, user: User, Path((guild, key)): Path<(u64, String)>, form: FormData) -> WebResult {
     admin_page(&ctx, &user, guild, "features")?;
     let feature = ctx.feature(&key).ok_or(WebError::NotFound)?;
+    if feature.admin_plus_only() && !user.admin_plus {
+        return Err(WebError::Forbidden);
+    }
     let meta = feature.meta();
     let on = form.bool(&format!("on-{key}"));
     ctx.set_enabled(guild, meta.key, on)?;
@@ -802,7 +812,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                 } @else {
                     (ui::field_toggle("admin", "Admin", Some("Everything on every server, including features, people and the activity log, except App approvals."), person.admin))
                     @if viewer_is_owner {
-                        (ui::field_toggle("admin_plus", "Admin+", Some("An admin who also sees App approvals, which is otherwise yours alone. Only you can give it."), person.admin_plus))
+                        (ui::field_toggle("admin_plus", "Admin+", Some("Admin, plus App approvals, which is otherwise yours alone. On, it keeps them an admin whatever the switch above says. Only you can give it."), person.admin_plus))
                     }
                 }
             }))
@@ -990,6 +1000,8 @@ async fn activity(State(ctx): State<Ctx>, user: User) -> WebResult<Response> {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     })?;
+    // App approvals' own actions are for the owner and Admin+ only, like the page.
+    let rows: Vec<Change> = rows.into_iter().filter(|r| user.admin_plus || !ctx.feature(&r.feature).is_some_and(|f| f.admin_plus_only())).collect();
     let week_ago = crate::now_ms() - 7 * 86_400_000;
     let mut week: Vec<(u64, String, Option<String>, i64)> = Vec::new();
     for r in rows.iter().filter(|r| r.at >= week_ago) {
