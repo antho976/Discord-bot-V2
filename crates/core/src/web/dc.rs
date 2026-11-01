@@ -53,6 +53,7 @@ pub struct Message<'a> {
     avatar: Option<String>,
     app: bool,
     time: String,
+    stamp: Option<String>,
     used: Option<(&'a Page, &'a str)>,
     id: Option<&'a str>,
     off: bool,
@@ -61,7 +62,7 @@ pub struct Message<'a> {
 /// A message from the bot, sent now.
 pub fn message<'a>(ctx: &Ctx, page: &'a Page) -> Message<'a> {
     let (name, avatar) = bot_identity(ctx);
-    Message { name, avatar, app: true, time: time(page, now_ms()), used: None, id: None, off: false }
+    Message { name, avatar, app: true, time: time(page, now_ms()), stamp: None, used: None, id: None, off: false }
 }
 
 impl<'a> Message<'a> {
@@ -71,9 +72,15 @@ impl<'a> Message<'a> {
         self
     }
 
-    /// The time exactly as given ("Today at 4:05 PM").
+    /// The time exactly as given ("Today at 4:05 PM"); empty for none.
     pub fn time_text(mut self, t: impl Into<String>) -> Self {
         self.time = t.into();
+        self
+    }
+
+    /// The full date and time, shown when the pointer rests on the time.
+    pub fn stamp(mut self, full: impl Into<String>) -> Self {
+        self.stamp = Some(full.into());
         self
     }
 
@@ -118,7 +125,7 @@ impl<'a> Message<'a> {
                         div.dp-head {
                             b.dp-name { (self.name) }
                             @if self.app { span.dp-app { "APP" } }
-                            span.dp-time { (self.time) }
+                            @if !self.time.is_empty() { span.dp-time title=[self.stamp] { (self.time) } }
                         }
                         (body)
                     }

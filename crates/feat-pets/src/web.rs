@@ -10,6 +10,7 @@ use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_model::channel::message::AllowedMentions;
 use bot_core::twilight_model::id::Id;
+use bot_core::web::dc;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
@@ -66,23 +67,10 @@ fn tabs(page: &Page, active: &str, waiting: i64) -> Markup {
 
 /// Styles only the dashboard's pet pages use.
 const DASH_CSS: &str = r#"
-/* Discord's look for the announcement preview. */
-.pets-dc { border-radius: 12px; overflow: hidden; background: #313338; color: #dbdee1; font-size: 14.5px; box-shadow: 0 22px 44px -24px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
-.pets-dc-head { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 14px; color: #f2f3f5; font-weight: 600; font-size: 14px; box-shadow: 0 1px 0 rgba(4, 4, 5, 0.25); }
-.pets-dc-head .icon { color: #80848e; width: 18px; height: 18px; }
-.pets-dc-msg { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 0 14px; padding: 12px 14px 16px; }
-.pets-dc-av { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
-span.pets-dc-av { display: grid; place-items: center; background: var(--accent-lo); }
-span.pets-dc-av img { width: 22px; height: 22px; }
-.pets-dc-name { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; line-height: 1.375; }
-.pets-dc-name strong { color: #f2f3f5; font-weight: 600; }
-.pets-dc-app { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font: 600 10px/1 var(--sans); }
-.pets-dc-time { color: #949ba4; font-size: 12px; }
-.pets-dc-text { line-height: 1.375; overflow-wrap: anywhere; }
-.pets-dc-text b { color: #f2f3f5; }
-.pets-dc-mention { background: rgba(88, 101, 242, 0.3); color: #c9cdfb; border-radius: 3px; padding: 0 2px; font-weight: 500; }
 .pets-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 24px; align-items: start; }
+/* The announcement, in Discord (web/dc.rs). */
 .pets-preview { display: flex; flex-direction: column; gap: 10px; }
+.pets-preview .dp-line b { color: #f2f3f5; }
 .pets-cap { font-size: 12.5px; color: var(--ink-2); }
 .pets-preview .btn { align-self: flex-start; }
 @container col (max-width: 940px) { .pets-split { grid-template-columns: 1fr; } .pets-preview { max-width: 480px; } }
@@ -190,19 +178,6 @@ span.pets-dc-av img { width: 22px; height: 22px; }
   .pets-search { max-width: none; }
 }
 "#;
-
-/// The bot as members see it: its name, and its avatar or the dashboard's mark while it isn't
-/// connected.
-fn bot_face(ctx: &Ctx) -> (String, Markup) {
-    let user = ctx.bot_id().and_then(|b| ctx.cache.user(Id::new(b)).map(|u| (b, u)));
-    match user {
-        Some((id, u)) => (
-            u.global_name.clone().unwrap_or_else(|| u.name.clone()),
-            html! { img.pets-dc-av src=(bot_core::discord::avatar_url(id, u.avatar.map(|a| a.to_string()).as_deref())) alt=""; },
-        ),
-        None => ("Bot".into(), html! { span.pets-dc-av { img src="/static/icon.svg" alt=""; } }),
-    }
-}
 
 fn shell(ctx: &Ctx, page: &Page, actions: Option<Markup>, body: Markup) -> WebResult {
     Ok(ui::layout(ctx, page, "Pets", actions, body).into_response())
@@ -1200,7 +1175,6 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
     });
     // The announcement preview shows the latest confirmed giveaway, or a waiting one.
     let example = past.iter().find(|g| g.status == Status::Confirmed).or(active.first());
-    let bot = bot_face(&ctx);
     let channel = s.announce_channel.and_then(|c| ctx.text_channels(guild).into_iter().find(|x| x.0 == c)).map(|(_, n)| n);
     let sent = match q.sent.as_deref() {
         Some("post") => Some("Test post sent"),
@@ -1249,26 +1223,19 @@ async fn giveaways(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
                             }))
                             div.pets-preview {
                                 p.pets-cap { @if channel.is_some() { "Posted when you confirm one" } @else { "Posted when you confirm one, once a channel is picked" } }
-                                div.pets-dc {
-                                    div.pets-dc-head { (ui::icon(Icon::Hash)) span { (channel.as_deref().unwrap_or("pick a channel")) } }
-                                    div.pets-dc-msg {
-                                        (bot.1)
-                                        div {
-                                            div.pets-dc-name { strong { (bot.0) } span.pets-dc-app { "APP" } span.pets-dc-time { "Today" } }
-                                            div.pets-dc-text {
-                                                @match example {
-                                                    Some(g) => {
-                                                        span.pets-dc-mention { "@" (ctx.display_name(guild, g.giver_id)) } " gave "
-                                                        span.pets-dc-mention { "@" (ctx.display_name(guild, g.winner_id)) } " " (g.icon()) " " b { (g.pet_name) } "."
-                                                    }
-                                                    None => {
-                                                        span.pets-dc-mention { "@giver" } " gave " span.pets-dc-mention { "@winner" } " 🐾 " b { "a pet" } "."
-                                                    }
-                                                }
+                                (dc::channel(channel.as_deref(), "pick a channel", dc::message(&ctx, &page).time_text("Today").render(html! {
+                                    div.dp-line {
+                                        @match example {
+                                            Some(g) => {
+                                                span.dp-ping { "@" (ctx.display_name(guild, g.giver_id)) } " gave "
+                                                span.dp-ping { "@" (ctx.display_name(guild, g.winner_id)) } " " (g.icon()) " " b { (g.pet_name) } "."
+                                            }
+                                            None => {
+                                                span.dp-ping { "@giver" } " gave " span.dp-ping { "@winner" } " 🐾 " b { "a pet" } "."
                                             }
                                         }
                                     }
-                                }
+                                })))
                                 // The button belongs to the form after this one: a test isn't a save.
                                 @if edit { button.btn.small.outline type="submit" form="pets-test-post" { "Send a test post" } }
                             }
