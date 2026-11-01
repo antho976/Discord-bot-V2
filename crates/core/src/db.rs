@@ -176,4 +176,10 @@ const CORE_MIGRATIONS: &[Migration] = &[
             updated_at INTEGER NOT NULL);
     ",
     },
+    // Admin+: an admin who also sees the pages kept for the owner (App approvals). Only the
+    // owner grants it.
+    Migration {
+        name: "004_admin_plus",
+        sql: "ALTER TABLE dash_users ADD COLUMN admin_plus INTEGER NOT NULL DEFAULT 0;",
+    },
 ];

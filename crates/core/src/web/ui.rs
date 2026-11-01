@@ -62,6 +62,8 @@ pub enum Icon {
     Enter,
     /// People online, members.
     Member,
+    /// Levels: a rank badge, a hexagon with two chevrons.
+    Level,
 }
 
 impl Icon {
@@ -111,6 +113,7 @@ impl Icon {
             Icon::Gear => (24, r#"<path d="M9.6 4.2 10.2 2h3.6l.6 2.2 1.9 1.1 2.2-.6 1.8 3.1-1.6 1.6v2.2l1.6 1.6-1.8 3.1-2.2-.6-1.9 1.1-.6 2.2h-3.6l-.6-2.2-1.9-1.1-2.2.6-1.8-3.1 1.6-1.6v-2.2L3.7 8.4l1.8-3.1 2.2.6zM9.25 12a2.75 2.75 0 1 0 5.5 0 2.75 2.75 0 1 0-5.5 0"/>"#),
             Icon::Enter => (16, r#"<path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/>"#),
             Icon::Member => (16, r#"<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.5-2.5 2.5-4 5-4s4.5 1.5 5 4"/>"#),
+            Icon::Level => (24, r#"<path d="M12 2.75 19.75 7.25v9.5L12 21.25 4.25 16.75v-9.5zM8.5 12.25 12 9.5l3.5 2.75M8.5 16 12 13.25 15.5 16"/>"#),
         }
     }
 }
@@ -158,7 +161,6 @@ pub fn layout(ctx: &Ctx, page: &Page, title: &str, actions: Option<Markup>, body
     let (ic, line, hue) = identity(ctx, page, title);
     let unread = unread_by_feature(ctx, page);
     let head = html! {
-        div.page-glow aria-hidden="true" {}
         header.page-head {
             span.head-icon { (icon(ic)) }
             div.head-text {
@@ -285,13 +287,12 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                             }
                         }
                         div.guilds-foot {
-                            (bell_count(page, total_unread, "rail-btn bell"))
                             details.pop.account {
                                 summary aria-label="Your account" { img src=(me) alt="" width="38" height="38"; }
                                 div.pop-body.account-menu {
                                     div.account-who {
                                         img src=(me) alt="";
-                                        div { strong { (page.user.name) } span.muted.small { @if page.user.admin { "Admin" } @else { "Member of the team" } } }
+                                        div { strong { (page.user.name) } span.muted.small { @if page.user.id == ctx.cfg.owner_id { "Owner" } @else if page.user.admin_plus { "Admin+" } @else if page.user.admin { "Admin" } @else { "Member of the team" } } }
                                     }
                                     @if page.user.admin {
                                         a.menu-item.on[key == "features"] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
@@ -353,6 +354,16 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                         }
                     }
                     main.page #main tabindex="-1" data-hue=(hue) {
+                        // The bell, top right of every page: a dropdown of the newest notices.
+                        div.page-corner {
+                            details.pop.bell-pop data-peek={ "/g/" (guild) "/notifications/peek" } {
+                                summary.bell aria-label={ "Notifications, " (total_unread) " new" } {
+                                    (icon(Icon::Bell))
+                                    @if total_unread > 0 { span.count { (if total_unread > 99 { "99+".to_owned() } else { total_unread.to_string() }) } }
+                                }
+                                div.pop-body.peek-pop { div.peek { p.peek-none { "Loading" } } }
+                            }
+                        }
                         (top)
                         (body)
                     }
@@ -451,7 +462,13 @@ fn unread_by_feature(ctx: &Ctx, page: &Page) -> HashMap<String, i64> {
     let levels = ctx.levels(&page.user, page.guild_id);
     let mut out = HashMap::new();
     for (feature, global) in rows {
-        if if global { page.user.admin } else { levels.get(&feature) >= Level::View } {
+        let kept = ctx.feature(&feature).is_some_and(|f| f.admin_plus_only());
+        let sees = match (global, kept) {
+            (true, true) => page.user.admin_plus,
+            (true, false) => page.user.admin || levels.get(&feature) >= Level::View,
+            (false, _) => levels.get(&feature) >= Level::View,
+        };
+        if sees {
             *out.entry(if global { String::new() } else { feature }).or_insert(0) += 1;
         }
     }
@@ -735,6 +752,12 @@ pub fn action_button(action: &str, label: &str, tone: Tone, destructive: bool) -
     }
 }
 
+/// After a test post the page comes back with `?sent=…`: pass whether the flag is there and
+/// what to say. app.js shows it as a toast and takes only `sent` out of the address.
+pub fn sent_toast(sent: bool, msg: &str) -> Markup {
+    html! { @if sent { span hidden data-toast=(msg) {} } }
+}
+
 /// Sub-page switcher inside a feature: `(label, href)`.
 pub fn tabs(items: &[(&str, String)], active: &str) -> Markup {
     let items: Vec<_> = items.iter().map(|(l, h)| (*l, h.clone(), None)).collect();
@@ -836,17 +859,11 @@ fn bars_svg(series: &[(String, Option<i64>)], unit: &str, about: &str) -> Markup
     let n = series.len();
     html! {
         svg viewBox={ "0 0 " ((n * 10).saturating_sub(4)) " 48" } preserveAspectRatio="none" role="img" aria-label=(about) {
-            defs {
-                linearGradient id="bars-hi" x1="0" y1="0" x2="0" y2="1" {
-                    stop offset="0" stop-color="var(--data)" {}
-                    stop offset="1" stop-color="var(--data-2)" {}
-                }
-            }
             @for (i, (label, v)) in series.iter().enumerate() {
                 @let v = *v;
                 @let h = v.map_or(0.0, |v| (v as f64 / max * 46.0).max(if v > 0 { 2.0 } else { 0.0 }));
                 @let tip = match v { Some(v) => format!("{label}: {} {unit}", crate::text::num(v)), None => format!("{label}: nothing read") };
-                rect.bar x=(i * 10) y=(48.0 - h) width="6" height=(h) rx="1.2" style={ "--i:" (i) } fill=(if i + 1 == n { "url(#bars-hi)" } else { "var(--data-dim)" }) data-tip=(tip) {}
+                rect.bar x=(i * 10) y=(48.0 - h) width="6" height=(h) rx="1.2" style={ "--i:" (i) } fill=(if i + 1 == n { "var(--data)" } else { "var(--data-dim)" }) data-tip=(tip) {}
             }
         }
     }
@@ -921,22 +938,17 @@ pub fn area_chart(series: &[(String, i64)], unit: &str) -> Markup {
             div.area-plot {
                 svg viewBox={ "0 0 " (w) " " (h) } preserveAspectRatio="none" role="img" aria-label={ (crate::text::num(total)) " " (unit) " in " (n) " days" } {
                     defs {
+                        // One colour: the line solid lilac, the area under it fading out.
                         linearGradient id="area-fill" x1="0" y1="0" x2="0" y2="1" {
-                            stop offset="0" stop-color="var(--data)" stop-opacity="0.42" {}
-                            stop offset="0.6" stop-color="var(--data-2)" stop-opacity="0.1" {}
-                            stop offset="1" stop-color="var(--data-2)" stop-opacity="0" {}
-                        }
-                        linearGradient id="area-line" x1="0" y1="0" x2="1" y2="0" {
-                            stop offset="0" stop-color="var(--data-2)" {}
-                            stop offset="0.7" stop-color="var(--data)" {}
-                            stop offset="1" stop-color="#e9ddff" {}
+                            stop offset="0" stop-color="var(--data)" stop-opacity="0.24" {}
+                            stop offset="1" stop-color="var(--data)" stop-opacity="0" {}
                         }
                     }
                     @for f in [0.25, 0.5, 0.75] {
                         line.grid x1="0" x2=(w) y1=(h * f) y2=(h * f) vector-effect="non-scaling-stroke" {}
                     }
                     path.fill d=(area) fill="url(#area-fill)" {}
-                    path.line d=(line) fill="none" stroke="url(#area-line)" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" {}
+                    path.line d=(line) fill="none" stroke="var(--data)" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" {}
                 }
                 span.area-cursor {}
                 span.area-dot {}

@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use bot_core::axum::Router;
 use bot_core::axum::extract::{Path, Query, State};
-use bot_core::axum::response::IntoResponse;
+use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::rusqlite::{Connection, params};
 use bot_core::twilight_model::channel::ChannelType;
+use bot_core::twilight_model::channel::message::AllowedMentions;
 use bot_core::twilight_model::id::Id;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
@@ -24,6 +25,14 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/rules", get(list_page))
         .route("/g/{guild}/rules/edit", get(edit_page).post(save))
         .route("/g/{guild}/rules/{channel}/remove", post(remove))
+        .route("/g/{guild}/rules/{channel}/test-notice", post(test_notice))
+        .route("/g/{guild}/rules/{channel}/repost", post(repost))
+}
+
+#[derive(Deserialize)]
+struct ListQuery {
+    /// After a test: which one went out, for the toast.
+    sent: Option<String>,
 }
 
 /// Channels that can take rules: text and announcement channels. Forums hold posts, not
@@ -234,7 +243,7 @@ fn thread_template(r: &Rule) -> &str {
     if r.thread_name.trim().is_empty() { DEFAULT_THREAD_NAME } else { r.thread_name.trim() }
 }
 
-async fn list_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+async fn list_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<ListQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let days = week_days();
@@ -244,21 +253,36 @@ async fn list_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     let actions = (page.can_edit() && s.channels.len() < MAX_CHANNELS).then(|| {
         html! { a.btn.primary href=(page.path("rules/edit")) { (ui::icon(Icon::Plus)) "Add a channel" } }
     });
+    let toast = match q.sent.as_deref() {
+        Some("notice") => Some("Test notice sent"),
+        Some("sticky") => Some("Sticky message reposted"),
+        _ => None,
+    };
     let body = html! {
         style { (PreEscaped(CSS)) }
+        @if let Some(toast) = toast { (ui::sent_toast(true, toast)) }
         div.ru-week {
-            div.readings.ru-stats {
+            div.ru-stats {
                 @for (key, label, unit, about) in STATS {
                     @let by_day = week.get(key);
-                    @let series: Vec<(String, Option<i64>)> = days.iter().enumerate().map(|(i, d)| {
-                        let n = by_day.and_then(|m| m.get(&d.to_string())).copied().unwrap_or(0);
-                        (if i + 1 == days.len() { "Today".to_owned() } else { d.strftime("%a %-d").to_string() }, Some(n))
-                    }).collect();
-                    @let total: i64 = series.iter().filter_map(|(_, v)| *v).sum();
-                    div.reading {
-                        b data-count { (text::num(total)) }
-                        span { (label) }
-                        (ui::mini_bars(&series, unit, about))
+                    @let counts: Vec<i64> = days.iter().map(|d| by_day.and_then(|m| m.get(&d.to_string())).copied().unwrap_or(0)).collect();
+                    @let total: i64 = counts.iter().sum();
+                    @let top = counts.iter().copied().max().unwrap_or(0).max(1);
+                    div.ru-stat {
+                        div.ru-stat-head {
+                            b data-count { (text::num(total)) }
+                            span { (label) }
+                        }
+                        div.ru-bars role="img" aria-label={ (about) ": " (counts.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")) } {
+                            @for (i, (d, n)) in days.iter().zip(&counts).enumerate() {
+                                @let today = i + 1 == days.len();
+                                @let when = if today { "Today".to_owned() } else { d.strftime("%a %b %-d").to_string() };
+                                span.ru-col data-tip={ (when) ": " (text::num(*n)) " " (unit) } {
+                                    span.ru-bar.today[today].zero[*n == 0] style={ "--v:" (format!("{:.1}", *n as f64 / top as f64 * 100.0)) ";--i:" (i) } {}
+                                    span.ru-day.today[today] { (d.strftime("%a").to_string().chars().next().unwrap_or(' ')) }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -280,7 +304,6 @@ fn rule_card(ctx: &Ctx, page: &Page, guild: u64, r: &Rule, posted: Option<i64>, 
     html! {
         article.ru-card {
             header.ru-head {
-                span.ru-hash { (ui::icon(Icon::Hash)) }
                 div.ru-name {
                     strong { (channel_name(ctx, guild, r.channel)) }
                     span { (on) @if on == 1 { " rule on" } @else { " rules on" } }
@@ -296,7 +319,14 @@ fn rule_card(ctx: &Ctx, page: &Page, guild: u64, r: &Rule, posted: Option<i64>, 
             @if r.media_only || r.purge_after_mins > 0 || r.thread {
                 div.ru-notes {
                     @if r.media_only {
-                        p.ru-note { "Removes messages without a file or link" @if r.media_notice { ", with a short notice" } "." }
+                        div.ru-note-row {
+                            p.ru-note { "Removes messages without a file or link" @if r.media_notice { ", with a short notice" } "." }
+                            @if r.media_notice && page.can_edit() {
+                                form.inline method="post" action=(page.path(&format!("rules/{}/test-notice", r.channel))) {
+                                    button.btn.small type="submit" data-tip="Posts the notice in this channel, marked as a test" { "Send a test" }
+                                }
+                            }
+                        }
                     }
                     @if r.purge_after_mins > 0 {
                         p.ru-note { "Deletes messages older than " (limit_words(r.purge_after_mins)) ". Pinned ones stay." }
@@ -309,12 +339,19 @@ fn rule_card(ctx: &Ctx, page: &Page, guild: u64, r: &Rule, posted: Option<i64>, 
             @if r.has_sticky() {
                 div.ru-sticky {
                     (bot_message(ctx, &posted.map(|at| message_time(page, at)).unwrap_or_else(|| "Not posted yet".into()), &text::clip(r.sticky.trim(), 300), None))
-                    p.ru-sticky-cap {
-                        (rule_icon(Kind::Sticky))
-                        span {
-                            (sticky_when(r))
-                            @if let Some(at) = posted {
-                                " · " span data-tip={ "Reposted: " (page.user.local(at).strftime("%b %-d at %-I:%M %p")) } { "reposted " (text::ago(at)) }
+                    div.ru-sticky-foot {
+                        p.ru-sticky-cap {
+                            (rule_icon(Kind::Sticky))
+                            span {
+                                (sticky_when(r))
+                                @if let Some(at) = posted {
+                                    " · " span data-tip={ "Reposted: " (page.user.local(at).strftime("%b %-d at %-I:%M %p")) } { "reposted " (text::ago(at)) }
+                                }
+                            }
+                        }
+                        @if page.can_edit() {
+                            form.inline method="post" action=(page.path(&format!("rules/{}/repost", r.channel))) {
+                                button.btn.small type="submit" data-tip="Posts it at the bottom now and deletes the copy above" { "Repost now" }
                             }
                         }
                     }
@@ -418,7 +455,6 @@ async fn edit_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
                 div.rail-block {
                     h2 { "Preview" }
                     div.ru-head {
-                        span.ru-hash { (ui::icon(Icon::Hash)) }
                         div.ru-name {
                             strong #ru-pv-name { (shown_name) }
                             span { "What the channel does" }
@@ -485,7 +521,7 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     }
     let changed = old.as_ref().is_none_or(|o| o.channel != channel || o.sticky.trim() != rule.sticky.trim());
     if rule.has_sticky() && changed && ctx.enabled(guild, KEY) {
-        sticky::post(&ctx, guild, channel, &rule.sticky).await;
+        let _ = sticky::post(&ctx, guild, channel, &rule.sticky).await;
     }
     Ok(saved(&page.path("rules")))
 }
@@ -501,6 +537,51 @@ async fn remove(State(ctx): State<Ctx>, user: User, Path((guild, channel)): Path
         sticky::remove(&ctx, channel).await;
     }
     Ok(saved(&page.path("rules")))
+}
+
+/// Post the media-only notice in the rule's channel, to the person testing, marked as a test.
+async fn test_notice(State(ctx): State<Ctx>, user: User, Path((guild, channel)): Path<(u64, u64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let rule = s.rule(channel).ok_or(WebError::NotFound)?;
+    let name = channel_name(&ctx, guild, channel);
+    if !rule.media_only {
+        return Err(WebError::Bad(format!("{name} isn't media only, so there's no notice to test.")));
+    }
+    if !rule.media_notice {
+        return Err(WebError::Bad(format!("{name} removes messages silently. Turn on Say why and save to post a notice.")));
+    }
+    let me = page.user.id;
+    let mentions = AllowedMentions { users: vec![Id::new(me)], ..Default::default() };
+    let sent = ctx
+        .http
+        .create_message(Id::new(channel))
+        .content(&format!("{}\n-# Test from the dashboard, sent by {}", crate::media_notice(me), page.user.name))
+        .allowed_mentions(Some(&mentions))
+        .await;
+    if let Err(e) = sent {
+        return Err(WebError::Bad(bot_core::discord::why_refused(&e)));
+    }
+    ctx.audit(&page.user, Some(guild), KEY, format!("Sent a test media-only notice to {name}"));
+    Ok(Redirect::to(&page.path("rules?sent=notice")).into_response())
+}
+
+/// Repost a channel's sticky message now, as the bot would after its count: at the bottom, with
+/// the copy above deleted.
+async fn repost(State(ctx): State<Ctx>, user: User, Path((guild, channel)): Path<(u64, u64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let rule = s.rule(channel).ok_or(WebError::NotFound)?;
+    let name = channel_name(&ctx, guild, channel);
+    if !rule.has_sticky() {
+        return Err(WebError::Bad(format!("{name} has no sticky message. Write one and save first.")));
+    }
+    if !ctx.enabled(guild, KEY) {
+        return Err(WebError::Bad("Channel rules are off for this server, so nothing is reposted. Turn them on first.".into()));
+    }
+    sticky::post(&ctx, guild, channel, &rule.sticky).await.map_err(WebError::Bad)?;
+    ctx.audit(&page.user, Some(guild), KEY, format!("Reposted the sticky message in {name}"));
+    Ok(Redirect::to(&page.path("rules?sent=sticky")).into_response())
 }
 
 // ---- preview ----
@@ -553,28 +634,40 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
 }
 
 const CSS: &str = r#"
+/* The week: one panel, four counters split by hairlines, each with its seven days as bars. */
 .ru-week { display: flex; flex-direction: column; gap: 10px; }
-.ru-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.ru-stats .reading { min-width: 0; padding: 14px 16px 12px; }
-.ru-stats .mini-bars { margin-top: 12px; }
-.ru-stats .mini-bars svg { height: 34px; }
+.ru-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.ru-stat { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 18px 22px 14px; }
+.ru-stat + .ru-stat { border-left: 1px solid var(--edge-1); }
+.ru-stat-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; min-width: 0; }
+.ru-stat-head b { font: 600 26px/1.1 var(--sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.ru-stat-head span { font-size: 13px; color: var(--ink-2); }
+.ru-bars { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.ru-col { display: flex; flex-direction: column; align-items: stretch; gap: 7px; min-width: 0; cursor: default; }
+.ru-bar { order: 1; display: block; width: 100%; max-width: 32px; height: 40px; margin: 0 auto; border-radius: 3px; background: var(--data-dim); transform-origin: 50% 100%; clip-path: inset(calc(100% - max(var(--v) * 1%, 3px)) 0 0 0 round 3px); animation: ru-grow 0.8s var(--ease) both; animation-delay: calc(var(--i, 0) * 40ms + 200ms); transition: background 0.15s; }
+.ru-bar.today { background: var(--data); }
+.ru-bar.zero { background: var(--edge-2); }
+.ru-col:hover .ru-bar { background: color-mix(in oklab, var(--data), white 15%); }
+.ru-col:hover .ru-bar.zero { background: var(--edge-3); }
+.ru-day { order: 2; font-size: 11px; line-height: 1; text-align: center; color: var(--ink-3); }
+.ru-day.today { color: var(--ink); font-weight: 600; }
+@keyframes ru-grow { from { transform: scaleY(0); } }
+html.same .ru-bar { animation: none; }
 
 .ru-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: 16px; align-items: stretch; }
 .ru-card { display: flex; flex-direction: column; gap: 16px; min-width: 0; padding: 18px; border-radius: var(--r-card); background: linear-gradient(180deg, var(--veil), var(--well)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
 .ru-card:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
 .ru-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.ru-hash { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 12px; color: var(--ground); background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 25%)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); }
-.ru-hash .icon { width: 19px; height: 19px; stroke-width: 1.6; }
-.ru-name { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ru-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .ru-name strong { font-size: 16px; font-weight: 600; letter-spacing: -0.015em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ru-name span { font-size: 12px; color: var(--ink-3); }
+.ru-name span { font-size: 12.5px; color: var(--ink-2); }
 .ru-acts { display: flex; gap: 6px; flex: none; }
 
 /* The four rules at a glance. A lit tile is a rule that's on. */
 .ru-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-.ru-tile { display: flex; flex-direction: column; gap: 9px; min-width: 0; padding: 10px 11px 11px; border-radius: 12px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); transition: background 0.35s var(--ease), box-shadow 0.35s var(--ease); }
-.ru-tile.on { background: color-mix(in oklab, var(--hue) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 32%, transparent); }
-.ru-ti { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: var(--ink-3); background: var(--control); transition: background 0.3s, color 0.3s, box-shadow 0.3s; }
+.ru-tile { display: flex; flex-direction: column; gap: 9px; min-width: 0; padding: 10px 11px 11px; border-radius: 12px; background: var(--well); transition: background 0.35s var(--ease), box-shadow 0.35s var(--ease); }
+.ru-tile.on { background: color-mix(in oklab, var(--hue) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent); }
+.ru-ti { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: var(--ink-3); transition: background 0.3s, color 0.3s, box-shadow 0.3s; }
 .ru-ti .icon { width: 16px; height: 16px; }
 .ru-tile.on .ru-ti { color: var(--ground); background: var(--hue); box-shadow: none; }
 .ru-tt { display: flex; flex-direction: column; min-width: 0; }
@@ -589,6 +682,10 @@ const CSS: &str = r#"
 @keyframes ru-light { from { transform: scale(0.55); opacity: 0.35; filter: saturate(0) brightness(0.6); } }
 
 .ru-notes { display: flex; flex-direction: column; gap: 5px; }
+.ru-note-row { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
+.ru-note-row .ru-note { flex: 1 1 220px; }
+.ru-sticky-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
+.ru-sticky-foot .ru-sticky-cap { flex: 1 1 220px; }
 .ru-note { font-size: 13px; line-height: 1.5; color: var(--ink-2); overflow-wrap: anywhere; }
 .ru-note code { font: 12px var(--mono); color: var(--ink); background: var(--control); padding: 1px 6px; border-radius: 6px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 
@@ -646,8 +743,15 @@ span.ru-msg-av img { width: 20px; height: 20px; }
 .ru-side [hidden] { display: none !important; }
 .ru-side .ru-sticky { margin-top: 0; }
 
-@media (max-width: 920px) {
+@container col (max-width: 760px) {
   .ru-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ru-stat:nth-child(3) { border-left: 0; }
+  .ru-stat:nth-child(n + 3) { border-top: 1px solid var(--edge-1); }
+}
+@media (max-width: 920px) {
+  .ru-stat { padding: 16px 16px 12px; gap: 14px; }
+  .ru-stat-head b { font-size: 23px; }
+  .ru-bars { gap: 4px; }
   .ru-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ru-card { padding: 16px; }
   .ru-head { flex-wrap: wrap; }
@@ -657,7 +761,7 @@ span.ru-msg-av img { width: 20px; height: 20px; }
   .ru-sec-pick { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .ru-grid .ru-tile.on .ru-ti, .ru-tile.pop .ru-ti { animation: none; }
+  .ru-grid .ru-tile.on .ru-ti, .ru-tile.pop .ru-ti, .ru-bar { animation: none; }
 }
 "#;
 

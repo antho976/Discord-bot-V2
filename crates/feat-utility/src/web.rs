@@ -1,22 +1,29 @@
 use std::collections::{HashMap, HashSet};
 
 use bot_core::axum::Router;
-use bot_core::axum::extract::{Path, State};
-use bot_core::axum::response::IntoResponse;
+use bot_core::axum::extract::{Path, Query, State};
+use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::jiff::Timestamp;
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_model::id::Id;
 use bot_core::web::ui::{self, Tone};
-use bot_core::web::{FormData, Level, User, WebResult, saved};
+use bot_core::web::{FormData, Level, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, text};
 
-use crate::{KEY, Settings, afk_clear, afk_list, name_of, name_or_stored, restore_nick, tz_all, tz_guild_users, zones};
+use crate::{Afk, KEY, Settings, afk_clear, afk_get, afk_list, name_of, name_or_stored, notice_line, restore_nick, tz_all, tz_guild_users, zones};
 
 pub fn routes() -> Router<Ctx> {
     Router::new()
         .route("/g/{guild}/utility", get(page).post(save_settings))
         .route("/g/{guild}/utility/afk/{user}/clear", post(clear_afk))
+        .route("/g/{guild}/utility/test", post(send_test))
+}
+
+#[derive(serde::Deserialize)]
+struct PageQuery {
+    /// Set after a test notice went out, for the toast.
+    sent: Option<String>,
 }
 
 /// Members of this server with a timezone, by what their clock reads, earliest first. Then
@@ -61,8 +68,8 @@ fn is_day(hour: u32) -> bool {
 
 fn member_line(n: usize) -> String {
     match n {
-        1 => "1 member sets a timezone with /timezone".into(),
-        n => format!("{} members set a timezone with /timezone", text::num(n as i64)),
+        1 => "1 member set a timezone with /time set".into(),
+        n => format!("{} members set a timezone with /time set", text::num(n as i64)),
     }
 }
 
@@ -194,7 +201,7 @@ fn dial() -> Markup {
     }
 }
 
-async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<PageQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     // Leaving clears someone's AFK, so every row is someone in the server, cached or not.
@@ -253,7 +260,8 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
         div.au-zones {
             @for (n, c) in clocks.iter().enumerate() {
                 @let l = c.local;
-                div.au-zone.is-day[is_day(l.hour)] data-offset=(l.offset_secs) style={ (hands(&l.clock)) ";--i:" (n) } title={ (c.zone) " · " (l.offset) } {
+                div.au-zone.is-day[is_day(l.hour)] data-offset=(l.offset_secs) style={ (hands(&l.clock)) ";--i:" (n) } {
+                    div.au-place { strong.clip data-tip={ (c.zone) ": " (l.offset) } { (zones::place(c.zone, &l.offset)) } span { (l.offset) } }
                     div.au-zone-top {
                         (dial())
                         div.au-zone-time {
@@ -261,7 +269,6 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                             span.au-zone-sub { (day_glyphs()) span.au-day { (weekday(l)) } }
                         }
                     }
-                    div.au-place { strong.clip { (zones::place(c.zone, &l.offset)) } span { (l.offset) } }
                     @if c.users.len() <= 4 {
                         div.au-people {
                             @for u in &c.users {
@@ -284,12 +291,15 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
         }
     };
 
+    let mut channels = vec![(String::new(), "Pick a channel".to_owned())];
+    channels.extend(ctx.text_channels(guild).into_iter().map(|(id, n)| (id.to_string(), format!("#{n}"))));
     let body = html! {
         style { (PreEscaped(CSS)) }
+        (ui::sent_toast(q.sent.is_some(), "Test notice sent"))
         div.with-rail.au {
             div.stack.au-main {
                 @if times.is_empty() && unknown.is_empty() {
-                    (ui::section("Where everyone is right now", None, ui::empty(Icon::Clock, "Nobody has set a timezone", "Members add theirs with /timezone set, and their local time shows here.")))
+                    (ui::section("Where everyone is right now", None, ui::empty(Icon::Clock, "Nobody has set a timezone", "Members add theirs with /time set, and their local time shows here.")))
                 } @else {
                     @if !times.is_empty() {
                         (ui::section("Where everyone is right now", Some("Each face sits at the time their own clock shows."), band))
@@ -302,7 +312,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                     @if !unknown.is_empty() {
                         p.muted.small {
                             (names_line(&unknown)) " saved a timezone the bot no longer recognizes, so "
-                            (if unknown.len() == 1 { "it's" } else { "they're" }) " left out. /timezone set fixes it."
+                            (if unknown.len() == 1 { "it's" } else { "they're" }) " left out. /time set fixes it."
                         }
                     }
                 }
@@ -319,17 +329,16 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                         div.au-aways {
                             @for a in &away {
                                 div.au-away {
-                                    span.au-face {
-                                        img.avatar src=(ctx.member_avatar(guild, a.user_id)) alt="" width="36" height="36" loading="lazy";
-                                        span.au-zz aria-hidden="true" { (ui::icon(Icon::Moon)) }
-                                    }
+                                    img.avatar src=(ctx.member_avatar(guild, a.user_id)) alt="" width="36" height="36" loading="lazy";
                                     div.grow {
                                         strong.clip { (name_or_stored(&ctx, guild, a.user_id, &a.name)) }
                                         @if !a.reason.is_empty() { span.au-reason { (a.reason) } }
                                         span.au-meta {
-                                            span { "since " (text::ago(a.since_ms)) }
+                                            span { "Since " (text::ago(a.since_ms)) }
                                             @if let Some((zone, l)) = zone_of.get(&a.user_id) {
-                                                span data-offset=(l.offset_secs) { b.au-clock { (l.clock) } " in " (zones::place(zone, &l.offset)) }
+                                                span.au-there.is-day[is_day(l.hour)] data-offset=(l.offset_secs) data-tip={ "The time in " (zones::place(zone, &l.offset)) } {
+                                                    (day_glyphs()) b.au-clock { (l.clock) }
+                                                }
                                             }
                                         }
                                     }
@@ -340,6 +349,19 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                             }
                         }
                     }
+                    @if page.can_edit() {
+                        div.au-test {
+                            p { "When someone mentions a member who's away, the bot replies with a notice." }
+                            (ui::pop("au-test-pop", "Send a test", None, "small", html! {
+                                form.stack method="post" action=(page.path(&format!("{KEY}/test"))) {
+                                    label.au-test-lab for="channel" { "Post a test notice in" }
+                                    (ui::select("channel", &channels, ""))
+                                    p.help { "It reads as if someone mentioned you while you were away, marked as a test." }
+                                    div.au-test-go { button.btn.primary.small type="submit" { "Send" } }
+                                }
+                            }))
+                        }
+                    }
                 }
                 div.rail-block {
                     h2 { "Options" }
@@ -348,7 +370,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                             (ui::switch_row("afk_enabled", "AFK", Some("Off: /afk does nothing, mentions get no notice, and anyone away now is back."), s.afk_enabled))
                             (ui::switch_row("nick_prefix", "Put [AFK] in their nickname", Some("Skipped for the owner and for members above the bot's role."), s.nick_prefix))
                             (ui::switch_row("welcome_back", "Say welcome back when they return", Some("A short message that deletes itself after a few seconds."), s.welcome_back))
-                            (ui::switch_row("timezones_enabled", "Timezones", Some("Off: /timezone and /time do nothing. Saved zones are kept."), s.timezones_enabled))
+                            (ui::switch_row("timezones_enabled", "Timezones", Some("Off: /time does nothing. Saved zones are kept."), s.timezones_enabled))
                         }
                     }))
                 }
@@ -390,6 +412,32 @@ async fn clear_afk(State(ctx): State<Ctx>, user: User, Path((guild, member)): Pa
     Ok(saved(&page.path(KEY)))
 }
 
+/// Post the notice someone gets when they mention a member who's away, with the person testing
+/// as the member: their own AFK if they're away, or away since now. Marked as a test.
+async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    if !ctx.settings::<Settings>(guild, KEY)?.afk_enabled {
+        return Err(WebError::Bad("AFK is off, so the bot posts no notice. Turn it on and save first.".into()));
+    }
+    let Some(channel) = form.id("channel").filter(|c| ctx.text_channels(guild).iter().any(|(id, _)| id == c)) else {
+        return Err(WebError::Bad("Pick a channel to post the test in.".into()));
+    };
+    let me = afk_get(&ctx, guild, page.user.id)?.unwrap_or_else(|| Afk {
+        user_id: page.user.id,
+        reason: String::new(),
+        since_ms: bot_core::now_ms(),
+        prev_nick: None,
+        prefixed: false,
+        name: page.user.name.clone(),
+    });
+    let line = format!("{}\n-# Test from the dashboard, sent by {}", notice_line(&name_of(&ctx, guild, page.user.id), &me), page.user.name);
+    if let Err(e) = ctx.say(channel, &line).await {
+        return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
+    }
+    ctx.audit(&page.user, Some(guild), KEY, format!("Sent a test AFK notice to #{}", ctx.text_channels(guild).into_iter().find(|(id, _)| *id == channel).map(|(_, n)| n).unwrap_or_default()));
+    Ok(Redirect::to(&page.path(&format!("{KEY}?sent=1"))).into_response())
+}
+
 /// Keeps every clock on the page true while it stays open: the times, the hands, the pins on
 /// the band and day or night.
 const JS: &str = r#"(() => {
@@ -411,10 +459,11 @@ const JS: &str = r#"(() => {
       el.style.setProperty("--h", ((h % 12) * 30 + m * 0.5) + "deg");
       el.style.setProperty("--m", (m * 6) + "deg");
       if (el.classList.contains("au-track")) el.style.setProperty("--x", ((h * 60 + m) / 14.4).toFixed(2));
-      if (el.classList.contains("au-zone")) el.classList.toggle("is-day", h >= 6 && h < 18);
+      if (el.querySelector(".au-glyph")) el.classList.toggle("is-day", h >= 6 && h < 18);
     });
   };
-  setInterval(tick, 30000);
+  const id = setInterval(tick, 30000);
+  window.botPage?.signal.addEventListener("abort", () => clearInterval(id));
 })();"#;
 
 const CSS: &str = r#"
@@ -430,23 +479,24 @@ const CSS: &str = r#"
 .au-pin:hover .au-pin-faces { transform: translateY(-3px) scale(1.07); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 55%, transparent); }
 .au-pin-faces .avatar { width: 30px; height: 30px; box-shadow: 0 0 0 2px var(--solid); }
 .au-pin-faces .avatar + .avatar, .au-pin-faces .au-more { margin-left: -9px; }
-.au-more { display: grid; place-items: center; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 14px; background: var(--control); box-shadow: 0 0 0 2px var(--solid); font: 600 11px var(--mono); color: var(--ink-2); }
-.au-pin .au-clock { margin-top: 5px; padding: 2px 6px; border-radius: 6px; background: color-mix(in oklab, var(--page) 70%, transparent); font: 600 11px/1.3 var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+.au-more { display: grid; place-items: center; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 14px; background: var(--control); box-shadow: 0 0 0 2px var(--solid); font: 600 11.5px var(--sans); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.au-pin .au-clock { margin-top: 6px; padding: 0 4px; font: 600 12px/1.3 var(--sans); color: var(--ink); font-variant-numeric: tabular-nums; }
 .au-stem { width: 1px; height: calc(var(--row) * 58px + 7px); background: linear-gradient(180deg, var(--edge-3), color-mix(in oklab, var(--ink) 55%, transparent)); }
 .au-pin::after { content: ""; width: 9px; height: 9px; margin-bottom: -10px; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 2.5px var(--page); }
-.au-band { position: relative; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #121633 0%, #1b2250 18%, #8a5a8c 22.5%, #e98c72 25.5%, #f2c585 29%, #8fc1ec 37%, #9cc9f0 50%, #8fc1ec 63%, #f2bd7c 70.5%, #e5826c 74.5%, #7f4a82 78%, #242456 83%, #121633 100%); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+/* Night in the page's hue, day in a pale warm tone, soft at dawn and dusk. */
+.au-band { --night: color-mix(in oklab, var(--hue) 22%, var(--raised)); --day: color-mix(in oklab, var(--waiting) 58%, var(--raised)); position: relative; height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--night) 0%, var(--night) 21%, var(--day) 29%, var(--day) 71%, var(--night) 79%, var(--night) 100%); box-shadow: inset 0 0 0 1px var(--edge-1); }
 .au-ticks { position: relative; height: 26px; margin-top: 6px; }
-.au-ticks span { position: absolute; top: 6px; transform: translateX(-50%); font: 11px var(--mono); color: var(--ink-3); }
+.au-ticks span { position: absolute; top: 6px; transform: translateX(-50%); font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .au-ticks span::before { content: ""; position: absolute; left: 50%; top: -9px; width: 1px; height: 5px; background: var(--edge-3); }
 @keyframes au-glide { from { transform: translateX(0); opacity: 0; } 25% { opacity: 1; } }
 
 /* One card per zone: a clock face, the time, the place and the people there. */
 .au-zones { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-.au-zone { --tint: var(--hue); position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 16px 16px 15px; border-radius: var(--r-card); background: radial-gradient(130% 120% at 100% 0%, color-mix(in oklab, var(--tint) 8%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
+.au-zone { --tint: var(--hue); position: relative; display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 15px 16px 14px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: box-shadow 0.25s; }
 .au-zone.is-day { --tint: var(--waiting); }
-.au-zone:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
+.au-zone:hover { box-shadow: inset 0 0 0 1px var(--edge-2); }
 .au-zone-top { display: flex; align-items: center; gap: 14px; }
-.au-dial { flex: none; width: 56px; height: 56px; overflow: visible; }
+.au-dial { flex: none; width: 50px; height: 50px; overflow: visible; }
 .au-dial .face { fill: color-mix(in oklab, var(--tint) 11%, var(--raised)); stroke: color-mix(in oklab, var(--tint) 40%, transparent); stroke-width: 1.2; }
 .au-dial .tk { stroke: var(--ink-3); stroke-width: 1; stroke-linecap: round; }
 .au-dial .tk.q { stroke: var(--ink-2); stroke-width: 1.5; }
@@ -456,43 +506,47 @@ const CSS: &str = r#"
 .au-dial .pivot { fill: var(--tint); stroke: var(--raised); stroke-width: 1; }
 @keyframes au-swing { from { transform: rotate(0deg); } }
 .au-zone-time { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.au-zone-time .au-clock { font: 600 27px/1.05 var(--mono); letter-spacing: -0.03em; color: var(--ink); font-variant-numeric: tabular-nums; }
-.au-zone-sub { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.au-zone-time .au-clock { font: 600 28px/1.05 var(--sans); letter-spacing: -0.035em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.au-zone-sub { display: flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
 .au-glyph { display: inline-grid; place-items: center; }
 .au-glyph .icon { width: 14px; height: 14px; }
 .au-sun { color: var(--waiting); display: none; }
 .au-moon { color: var(--hue); }
-.au-zone.is-day .au-sun { display: inline-grid; }
-.au-zone.is-day .au-moon { display: none; }
-.au-place { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.au-place strong { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; min-width: 0; }
-.au-place span { flex: none; font: 11.5px var(--mono); color: var(--ink-3); }
-.au-people { display: flex; flex-wrap: wrap; gap: 6px; margin-top: -2px; }
-.au-who { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; height: 28px; padding: 0 10px 0 3px; border-radius: 14px; background: var(--control); font-size: 12.5px; color: var(--ink-2); transition: background 0.18s, color 0.18s; }
-.au-who:hover { background: var(--hover); color: var(--ink); }
+.is-day > .au-sun, .is-day .au-zone-sub > .au-sun { display: inline-grid; }
+.is-day > .au-moon, .is-day .au-zone-sub > .au-moon { display: none; }
+.au-place { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.au-place strong { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; min-width: 0; }
+.au-place span { flex: none; font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.au-people { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--edge-1); }
+.au-who { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; font-size: 13px; color: var(--ink-2); }
 .au-who .avatar { width: 22px; height: 22px; }
 .au-who span { min-width: 0; }
-.au-crowd { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 12.5px; color: var(--ink-2); }
+.au-crowd { display: flex; align-items: center; gap: 10px; min-width: 0; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--edge-1); font-size: 13px; color: var(--ink-2); }
 .au-crowd .avatar { width: 26px; height: 26px; }
 
 /* The rail: who's away, with the time where they are. */
-.au-n { display: inline-grid; place-items: center; min-width: 22px; height: 20px; padding: 0 7px; border-radius: 10px; background: color-mix(in oklab, var(--hue) 18%, transparent); color: var(--hue); font: 600 11px var(--mono); }
+.au-n { font-size: 13px; font-weight: 500; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .au-aways { display: flex; flex-direction: column; gap: 2px; margin: 0 -10px; }
-.au-away { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: 12px; transition: background 0.18s; }
+.au-away { display: flex; align-items: flex-start; gap: 12px; padding: 10px; border-radius: 12px; transition: background 0.18s; }
 .au-away:hover { background: var(--well); }
-.au-face { position: relative; flex: none; display: block; }
-.au-face .avatar { display: block; width: 36px; height: 36px; }
-.au-zz { position: absolute; right: -4px; bottom: -3px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--solid); color: var(--hue); box-shadow: 0 0 0 2px color-mix(in oklab, var(--raised) 90%, transparent), inset 0 0 0 1px color-mix(in oklab, var(--hue) 35%, transparent); }
-.au-zz .icon { width: 11px; height: 11px; }
-.au-away .grow { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.au-away strong { font-size: 13.5px; font-weight: 600; }
-.au-reason { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
-.au-meta { display: flex; flex-wrap: wrap; gap: 0 10px; font-size: 12px; color: var(--ink-3); }
-.au-meta .au-clock { font: 500 11.5px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.au-away .btn { flex: none; }
+.au-away > .avatar { flex: none; width: 36px; height: 36px; }
+.au-away .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.au-away strong { font-size: 14px; font-weight: 600; line-height: 1.35; }
+.au-reason { font-size: 13px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
+.au-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; margin-top: 1px; font-size: 12px; color: var(--ink-3); }
+.au-there { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-2); cursor: default; }
+.au-there .icon { width: 12px; height: 12px; }
+.au-meta .au-clock { font-weight: 500; font-variant-numeric: tabular-nums; }
+.au-away form { flex: none; align-self: center; }
+.au-test { display: flex; align-items: center; gap: 14px; padding-top: 4px; }
+.au-test > p { flex: 1; min-width: 0; font-size: 12.5px; line-height: 1.45; color: var(--ink-3); }
+.au-test .pop { flex: none; }
+.au-test .pop-body { width: 300px; }
+.au-test-lab { font-size: 12.5px; font-weight: 500; color: var(--ink-2); }
+.au-test-go { display: flex; justify-content: flex-end; }
 .au-opts { display: flex; flex-direction: column; }
-.au-opts .switch-row label { font-size: 13px; }
-.au-opts .help { font-size: 12px; }
+.au-opts .switch-row label { font-size: 13.5px; font-weight: 500; }
+.au-opts .help { font-size: 12.5px; }
 /* The save button sits under the switches here; floating, it would cover them in the rail. */
 .au .rail .save-bar { position: static; margin-top: 4px; }
 @media (max-width: 920px) {
@@ -500,9 +554,9 @@ const CSS: &str = r#"
   .au-zones { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .au-zone { padding: 13px 13px 12px; gap: 10px; }
   .au-zone-top { gap: 10px; }
-  .au-dial { width: 40px; height: 40px; }
-  .au-zone-time .au-clock { font-size: 21px; }
-  .au-who { padding-right: 8px; }
+  .au-dial { width: 38px; height: 38px; }
+  .au-zone-time .au-clock { font-size: 22px; }
+  .au-place strong { font-size: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .au-track, .au-dial .hh, .au-dial .mh { animation: none; transition: none; }

@@ -34,6 +34,8 @@ pub struct Who {
 pub struct Queued {
     pub embed: Embed,
     pub who: Option<Who>,
+    /// Taken back before it posted. Kept in place so the positions `waiting` hands out hold.
+    pub retracted: bool,
 }
 
 #[derive(Default)]
@@ -56,7 +58,7 @@ impl Batcher {
         if q.items.len() >= MAX_QUEUED {
             q.dropped += 1;
         } else {
-            q.items.push(Queued { embed, who });
+            q.items.push(Queued { embed, who, retracted: false });
         }
         first
     }
@@ -77,15 +79,34 @@ impl Batcher {
         }
     }
 
+    /// Take back an entry that hasn't posted yet and still waits to learn who did it: a leave
+    /// that turned out to be a ban. Returns whether one was found.
+    pub fn retract(&self, guild: u64, kind: Kind, target: u64) -> bool {
+        let mut queues = self.queues.lock().unwrap();
+        let found = queues
+            .values_mut()
+            .flat_map(|q| q.items.iter_mut())
+            .find(|item| item.who.is_some_and(|w| w.guild == guild && w.kind == kind && w.target == target));
+        match found {
+            Some(item) => {
+                item.retracted = true;
+                item.who = None;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Take everything queued for a channel, in order, with a closing note when some were dropped.
     pub fn drain(&self, channel: u64) -> Vec<Queued> {
         let Some(mut q) = self.queues.lock().unwrap().remove(&channel) else { return Vec::new() };
+        q.items.retain(|item| !item.retracted);
         if q.dropped > 0 {
             let note = EmbedBuilder::new()
                 .color(0x8b8f98)
                 .description(format!("{} more events were not posted here. They are on the dashboard.", q.dropped))
                 .build();
-            q.items.push(Queued { embed: note, who: None });
+            q.items.push(Queued { embed: note, who: None, retracted: false });
         }
         q.items
     }
@@ -163,6 +184,23 @@ mod tests {
         for m in &messages {
             assert!(m.iter().map(embed_len).sum::<usize>() <= MAX_CHARS);
         }
+    }
+
+    #[test]
+    fn a_leave_is_taken_back_when_its_ban_comes_late() {
+        let b = Batcher::default();
+        let who = |kind, target| Some(Who { guild: 1, kind, target, channel: None, at: 0 });
+        b.push(5, embed("timeout"), who(Kind::Timeout, 8));
+        b.push(5, embed("left"), who(Kind::Leave, 9));
+        b.push(5, embed("joined"), None);
+        assert!(!b.retract(2, Kind::Leave, 9), "another server");
+        assert!(!b.retract(1, Kind::Leave, 8), "another member");
+        assert!(b.retract(1, Kind::Leave, 9));
+        assert!(!b.retract(1, Kind::Leave, 9), "only once");
+        // Positions hold for the moderator lookup still under way.
+        assert_eq!(b.waiting(5).iter().map(|(i, w)| (*i, w.target)).collect::<Vec<_>>(), vec![(0, 8)]);
+        let left: Vec<Option<String>> = b.drain(5).into_iter().map(|q| q.embed.description).collect();
+        assert_eq!(left, vec![Some("timeout".to_owned()), Some("joined".to_owned())]);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! AFK status and member timezones: `/afk`, `/timezone`, `/time` and the dashboard page.
+//! AFK status and member timezones: `/afk`, `/time now|set|clear` and the dashboard page.
 
 mod web;
 pub mod zones;
@@ -135,6 +135,21 @@ fn notice_line(name: &str, a: &Afk) -> String {
     if a.reason.is_empty() { format!("{name} is AFK ({since})") } else { format!("{name} is AFK: {} ({since})", a.reason) }
 }
 
+/// `/time now`: what time it is for `target`, asked by `user`.
+fn time_now(ctx: &Ctx, guild: u64, user: u64, target: u64) -> Result<Reply> {
+    let name = name_of(ctx, guild, target);
+    let zone = tz_get(ctx, target)?;
+    let local = zone.as_deref().and_then(|z| zones::local(z, Timestamp::now()));
+    Ok(match (zone, local) {
+        (Some(zone), Some(l)) => Reply::text(format!("**{name}**: {} ({}, {zone})", l.time, l.offset)),
+        // Saved, but the bundled tz database no longer has it.
+        (Some(_), None) if target == user => Reply::text("Your saved timezone isn't one I know anymore. Use /time set to pick it again.").ephemeral(),
+        (Some(_), None) => Reply::text(format!("{name}'s saved timezone isn't one I know anymore.")).ephemeral(),
+        (None, _) if target == user => Reply::text("You haven't set a timezone. Use /time set and pick your city.").ephemeral(),
+        (None, _) => Reply::text(format!("{name} hasn't set a timezone.")).ephemeral(),
+    })
+}
+
 /// Someone's name without the AFK prefix, which can still be in the cached nickname for a moment
 /// after it's taken off.
 pub(crate) fn name_of(ctx: &Ctx, guild: u64, user: u64) -> String {
@@ -188,16 +203,14 @@ impl Feature for Utility {
             CommandBuilder::new("afk", "Mark yourself away. People who mention you are told", CommandType::ChatInput)
                 .option(StringBuilder::new("reason", "Why you're away").max_length(100))
                 .build(),
-            CommandBuilder::new("timezone", "Set the timezone /time shows for you", CommandType::ChatInput)
+            CommandBuilder::new("time", "Local times: see anyone's, or set your own timezone", CommandType::ChatInput)
+                .option(SubCommandBuilder::new("now", "What time it is for you or someone else").option(UserBuilder::new("member", "Whose time to show")))
                 .option(
                     SubCommandBuilder::new("set", "Pick your timezone").option(
                         StringBuilder::new("zone", "A city or region, like Europe/Warsaw").required(true).autocomplete(true),
                     ),
                 )
                 .option(SubCommandBuilder::new("clear", "Forget your timezone"))
-                .build(),
-            CommandBuilder::new("time", "What time it is for you or someone else", CommandType::ChatInput)
-                .option(UserBuilder::new("member", "Whose time to show"))
                 .build(),
         ]
     }
@@ -228,6 +241,7 @@ impl Feature for Utility {
                             let ctx = ctx.clone();
                             bot_core::tokio::spawn(async move {
                                 bot_core::tokio::time::sleep(WELCOME_LIFETIME).await;
+                                ctx.deleting_own_message(id);
                                 let _ = ctx.http.delete_message(Id::new(channel), Id::new(id)).await;
                             });
                         }
@@ -304,11 +318,15 @@ impl Feature for Utility {
                     set_nick(ctx, guild, user, Some(&afk_nick(&base))).await;
                 }
             }
-            "timezone" => {
+            "time" => {
                 if !s.timezones_enabled {
                     return ctx.reply(&call.interaction, Reply::text("Timezones are turned off on this server.").ephemeral()).await;
                 }
                 let Some((sub, opts)) = call.opts().sub() else { return Ok(()) };
+                if sub == "now" {
+                    let target = opts.user("member").map(|u| u.get()).unwrap_or(user);
+                    return ctx.reply(&call.interaction, time_now(ctx, guild, user, target)?).await;
+                }
                 let msg = match sub {
                     "set" => match zones::normalize(opts.str("zone").unwrap_or_default()) {
                         Some(zone) => {
@@ -326,28 +344,6 @@ impl Feature for Utility {
                     _ => return Ok(()),
                 };
                 ctx.reply(&call.interaction, Reply::text(msg).ephemeral()).await?;
-            }
-            "time" => {
-                if !s.timezones_enabled {
-                    return ctx.reply(&call.interaction, Reply::text("Timezones are turned off on this server.").ephemeral()).await;
-                }
-                let target = call.opts().user("member").map(|u| u.get()).unwrap_or(user);
-                let name = name_of(ctx, guild, target);
-                let zone = tz_get(ctx, target)?;
-                let local = zone.as_deref().and_then(|z| zones::local(z, Timestamp::now()));
-                let reply = match (zone, local) {
-                    (Some(zone), Some(l)) => Reply::text(format!("**{name}**: {} ({}, {zone})", l.time, l.offset)),
-                    // Saved, but the bundled tz database no longer has it.
-                    (Some(_), None) if target == user => {
-                        Reply::text("Your saved timezone isn't one I know anymore. Use /timezone set to pick it again.").ephemeral()
-                    }
-                    (Some(_), None) => Reply::text(format!("{name}'s saved timezone isn't one I know anymore.")).ephemeral(),
-                    (None, _) if target == user => {
-                        Reply::text("You haven't set a timezone. Use /timezone set and pick your city.").ephemeral()
-                    }
-                    (None, _) => Reply::text(format!("{name} hasn't set a timezone.")).ephemeral(),
-                };
-                ctx.reply(&call.interaction, reply).await?;
             }
             _ => {}
         }
@@ -588,6 +584,22 @@ mod tests {
         assert_eq!(mention_candidates(1, [1, 2, 2, 3]), vec![2, 3]);
         assert!(mention_candidates(1, [1, 1]).is_empty());
         assert_eq!(mention_candidates(1, 2..100).len(), MAX_NOTICES * 3);
+    }
+
+    #[test]
+    fn time_is_one_command_with_now_set_and_clear() {
+        use bot_core::twilight_model::application::command::CommandOptionType;
+        let cmds = Utility::default().commands();
+        let names: Vec<&str> = cmds.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["afk", "time"]);
+        let time = &cmds[1];
+        let subs: Vec<&str> = time.options.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(subs, ["now", "set", "clear"]);
+        assert!(time.options.iter().all(|o| o.kind == CommandOptionType::SubCommand));
+        let zone = &time.options[1].options.as_ref().unwrap()[0];
+        assert_eq!((zone.name.as_str(), zone.autocomplete, zone.required), ("zone", Some(true), Some(true)));
+        let member = &time.options[0].options.as_ref().unwrap()[0];
+        assert_eq!((member.name.as_str(), member.kind), ("member", CommandOptionType::User));
     }
 
     #[test]

@@ -6,10 +6,10 @@ use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 
 use super::{
-    TabQuery, channel_in, channel_name, channel_select, countdown, discord_message, discord_relative, face_row, header_pop, month_start, open_link, plural,
-    post_block, rail_figures, role_name, script, style, until, when,
+    TabQuery, channel_in, channel_name, channel_select, countdown, discord_message, discord_relative, dm_refused, face_row, header_pop, month_start, open_link,
+    plural, post_block, rail_figures, role_name, script, style, until, when,
 };
-use crate::giveaways::{self as gw, EditOutcome, EndOutcome, Giveaway, RerollOutcome};
+use crate::giveaways::{self as gw, EditOutcome, EndOutcome, Giveaway, Replace, RerollOutcome};
 use crate::{CORAL, KEY, NEUTRAL};
 
 pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<TabQuery>) -> WebResult {
@@ -96,6 +96,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             }
         }
         (script())
+        (ui::sent_toast(q.sent.is_some(), "Test sent to your DMs"))
     };
     Ok(ui::layout(&ctx, &page, "Giveaways", actions, body).into_response())
 }
@@ -147,7 +148,7 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64]
                     // Units start at the first one that isn't zero; minutes and seconds always show.
                     @for (i, (v, u, label)) in units.iter().enumerate() {
                         @if i >= 2 || units[..=i].iter().any(|x| x.0 > 0) {
-                            div.gv-unit { b data-u=(u) { (format!("{v:02}")) } span { (label) } }
+                            div.gv-unit { b data-u=(u) { (digits(&format!("{v:02}"))) } span { (label) } }
                         }
                     }
                 }
@@ -177,8 +178,24 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64]
                     (open_link(page, g.channel_id, g.message_id, false))
                 }
             }
-            (post_block("The post", &channel_name(ctx, guild, g.channel_id), discord_message(ctx, page, g.created_at, post_preview(ctx, guild, g, n))))
+            (post_block(
+                "The post",
+                &channel_name(ctx, guild, g.channel_id),
+                discord_message(ctx, page, g.created_at, post_preview(ctx, guild, g, n)),
+                edit.then(|| html! {
+                    (ui::action_button(&page.path(&format!("community/giveaways/{}/test", g.id)), "Send a test", Tone::Muted, false))
+                    span.cm-dc-note { "DMs you how this one ends, with you as the winner." }
+                }),
+            ))
         }
+    }
+}
+
+/// A clock figure, one slot per digit, so the countdown script rolls only the digit that
+/// changes.
+fn digits(s: &str) -> Markup {
+    html! {
+        @for c in s.chars() { span.gv-dg { span { (c) } } }
     }
 }
 
@@ -239,7 +256,7 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
                             (open_link(page, g.channel_id, g.message_id, true))
                         }
                         @if g.winner_ids.is_empty() {
-                            span.gv-nobody { "Nobody entered" }
+                            span.gv-nobody { (gw::no_winner(*n)) }
                         } @else {
                             div.gv-won {
                                 (ui::icon(Icon::Trophy))
@@ -249,10 +266,46 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
                         }
                         div.gv-card-foot {
                             span { (winners_text(g)) " · " (entries_text(*n)) }
-                            @if edit && *n > (g.winner_ids.len() + g.passed_ids.len()) as i64 {
-                                div.cm-actions { (ui::action_button(&page.path(&format!("community/giveaways/{}/reroll", g.id)), "Reroll", Tone::Muted, false)) }
+                            @if edit && !g.winner_ids.is_empty() && *n > (g.winner_ids.len() + g.passed_ids.len()) as i64 {
+                                div.cm-actions { (reroll_control(ctx, page, guild, g)) }
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Reroll on an ended giveaway. One winner: a button that replaces them. Several: a menu with
+/// a button per winner and one that replaces them all. Each form names who it replaces (or the
+/// winners it saw), so a second click finds them already replaced and does nothing.
+fn reroll_control(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway) -> Markup {
+    let action = page.path(&format!("community/giveaways/{}/reroll", g.id));
+    html! {
+        @if let [only] = g.winner_ids.as_slice() {
+            form.inline method="post" action=(action) {
+                input type="hidden" name="winner" value=(only);
+                button.btn.small type="submit" { "Reroll" }
+            }
+        } @else {
+            details.pop.cm-review.gv-reroll {
+                summary.btn.small { "Reroll" }
+                div.pop-body {
+                    p.muted.small { "Pick a new winner in someone's place. Everyone else keeps their win." }
+                    @for w in &g.winner_ids {
+                        div.gv-reroll-row {
+                            img.avatar src=(ctx.member_avatar(guild, *w)) alt="" width="26" height="26" loading="lazy";
+                            span.grow { (ctx.display_name(guild, *w)) }
+                            form.inline method="post" action=(action) {
+                                input type="hidden" name="winner" value=(w);
+                                button.btn.small type="submit" { "Replace" }
+                            }
+                        }
+                    }
+                    form.inline method="post" action=(action) {
+                        input type="hidden" name="from" value=(g.winner_ids.iter().map(u64::to_string).collect::<Vec<_>>().join(","));
+                        button.btn.small.outline type="submit" { "Replace everyone" }
                     }
                 }
             }
@@ -291,7 +344,7 @@ fn post_preview(ctx: &Ctx, guild: u64, g: &Giveaway, n: i64) -> Markup {
                     div style="flex-basis:100%" {
                         b { (if g.winner_ids.len() == 1 { "Winner" } else { "Winners" }) }
                         span {
-                            @if g.winner_ids.is_empty() { "Nobody entered" }
+                            @if g.winner_ids.is_empty() { (gw::no_winner(n)) }
                             @for w in &g.winner_ids { span.cm-dc-ping { "@" (ctx.display_name(guild, *w)) } " " }
                         }
                     }
@@ -428,13 +481,44 @@ pub async fn edit(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u
     Ok(saved(&page.path("community/giveaways")))
 }
 
-pub async fn reroll(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
+/// "Send a test" on a running giveaway: its end, in the editor's DMs, with them as the winner.
+pub async fn send_test(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     owned(&ctx, guild, id).await?;
-    match gw::reroll(&ctx, id).await? {
-        RerollOutcome::Rolled(_) => ctx.audit(&page.user, Some(guild), KEY, format!("Rerolled giveaway #{id}")),
-        RerollOutcome::NoOneElse => return Err(WebError::Bad("Nobody else entered, so there's no one to pick.".into())),
-        RerollOutcome::StillRunning | RerollOutcome::Missing => {}
+    // The preview has no Discord to send to.
+    if !ctx.cfg.preview {
+        match gw::send_test(&ctx, id, page.user.id).await {
+            Ok(Some(true)) => {}
+            Ok(Some(false)) => return Err(dm_refused()),
+            Ok(None) => return Err(WebError::NotFound),
+            Err(e) => {
+                bot_core::tracing::warn!(guild, error = %e, "couldn't send a test giveaway end");
+                return Err(WebError::Bad("The test didn't send. Discord turned it down; try again in a minute.".into()));
+            }
+        }
+    }
+    ctx.audit(&page.user, Some(guild), KEY, format!("Sent themselves a test of giveaway #{id}'s end"));
+    Ok(bot_core::axum::response::Redirect::to(&page.path("community/giveaways?sent=1")).into_response())
+}
+
+/// Reroll: `winner` replaces that winner; `from` (the winners the page showed) replaces all of
+/// them. Either way a repeat of the same form finds the winners changed and does nothing.
+pub async fn reroll(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    owned(&ctx, guild, id).await?;
+    let (which, expected) = match form.id("winner") {
+        Some(w) => (Replace::One(w), None),
+        None => (Replace::All, Some(form.string("from").split(',').filter_map(|s| s.trim().parse().ok()).collect::<Vec<u64>>())),
+    };
+    match gw::reroll(&ctx, id, which, expected.as_deref()).await? {
+        RerollOutcome::Rolled { swaps, .. } => {
+            let names = |ids: &mut dyn Iterator<Item = u64>| ids.map(|u| ctx.display_name(guild, u)).collect::<Vec<_>>().join(", ");
+            let (old, new) = (names(&mut swaps.iter().map(|s| s.0)), names(&mut swaps.iter().map(|s| s.1)));
+            ctx.audit(&page.user, Some(guild), KEY, format!("Rerolled giveaway #{id}: {new} in place of {old}"));
+        }
+        RerollOutcome::NoOneElse(role) => return Err(WebError::Bad(gw::no_one_left(role))),
+        // Already replaced by the first click, or nothing to replace: the page shows how it is.
+        RerollOutcome::NotAWinner | RerollOutcome::Changed | RerollOutcome::StillRunning | RerollOutcome::Missing => {}
     }
     Ok(saved(&page.path("community/giveaways?tab=ended")))
 }

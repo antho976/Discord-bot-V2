@@ -9,3 +9,4 @@ bot-core.workspace = true
 serde.workspace = true
 rand.workspace = true
 maud.workspace = true
+bot-render = { path = "../render" }

@@ -48,6 +48,15 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '',
             banned_by TEXT NOT NULL, banned_at INTEGER NOT NULL, PRIMARY KEY (guild_id, user_id));
     ",
+}, Migration {
+    // Pictures staff upload (or take from idleontoolbox.com), kept here so pages never hotlink.
+    // A pet keeps its id when renamed, so a picture stays with it.
+    name: "002_pets_pictures",
+    sql: "
+        CREATE TABLE pets_pictures (
+            guild_id INTEGER NOT NULL, pet_id TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL,
+            updated_at INTEGER NOT NULL, PRIMARY KEY (guild_id, pet_id));
+    ",
 }];
 
 // ---- rarity ----
@@ -86,8 +95,14 @@ pub struct Pet {
     pub description: String,
     #[serde(default)]
     pub bonus: String,
+    /// An https link to a picture, from before pictures were uploaded. An uploaded picture wins.
     #[serde(default)]
     pub image: String,
+    #[serde(default)]
+    pub guild: u64,
+    /// When its uploaded picture last changed, if it has one.
+    #[serde(default)]
+    pub picture: Option<i64>,
 }
 
 impl Pet {
@@ -95,10 +110,26 @@ impl Pet {
     pub fn icon(&self) -> &str {
         if self.emoji.trim().is_empty() { "🐾" } else { &self.emoji }
     }
-    /// An image URL that's safe to put in a page or an embed.
-    pub fn image_url(&self) -> Option<&str> {
+    /// Where a page loads its picture from: the uploaded one, served by the bot, or an https
+    /// link. None draws the emoji.
+    pub fn image_url(&self) -> Option<String> {
+        if let Some(at) = self.picture {
+            return Some(format!("/p/{}/pet-pictures/{}?v={at}", self.guild, self.id));
+        }
         let u = self.image.trim();
-        u.starts_with("https://").then_some(u)
+        u.starts_with("https://").then(|| u.to_owned())
+    }
+    /// The picture as an absolute https address, for a Discord embed. An uploaded picture needs
+    /// the dashboard to be on https.
+    pub fn embed_image(&self, public_url: &str) -> Option<String> {
+        let base = public_url.trim_end_matches('/');
+        match self.image_url() {
+            Some(u) if u.starts_with('/') => base.starts_with("https://").then(|| format!("{base}{u}")),
+            other => other,
+        }
+    }
+    pub fn has_picture(&self) -> bool {
+        self.image_url().is_some()
     }
 }
 
@@ -140,7 +171,8 @@ pub fn ensure_seeded(ctx: &Ctx, guild: u64) -> Result<()> {
     Ok(())
 }
 
-const PET_COLS: &str = "id, name, emoji, category, rarity, description, bonus, image";
+const PET_SELECT: &str = "SELECT c.id, c.name, c.emoji, c.category, c.rarity, c.description, c.bonus, c.image, c.guild_id, p.updated_at
+     FROM pets_catalog c LEFT JOIN pets_pictures p ON p.guild_id = c.guild_id AND p.pet_id = c.id";
 
 fn pet_row(r: &Row) -> rusqlite::Result<Pet> {
     Ok(Pet {
@@ -152,21 +184,32 @@ fn pet_row(r: &Row) -> rusqlite::Result<Pet> {
         description: r.get(5)?,
         bonus: r.get(6)?,
         image: r.get(7)?,
+        guild: r.get::<_, i64>(8)? as u64,
+        picture: r.get(9)?,
     })
 }
 
 /// The whole catalog in display order.
 pub fn catalog(ctx: &Ctx, guild: u64) -> Result<Vec<Pet>> {
     ctx.db.with(|c| {
-        let mut s = c.prepare_cached(&format!("SELECT {PET_COLS} FROM pets_catalog WHERE guild_id = ?1 ORDER BY position, name"))?;
+        let mut s = c.prepare_cached(&format!("{PET_SELECT} WHERE c.guild_id = ?1 ORDER BY c.position, c.name"))?;
         s.query_map([guild as i64], pet_row)?.collect()
     })
 }
 
 pub fn pet(ctx: &Ctx, guild: u64, id: &str) -> Result<Option<Pet>> {
-    ctx.db.with(|c| {
-        c.query_row(&format!("SELECT {PET_COLS} FROM pets_catalog WHERE guild_id = ?1 AND id = ?2"), params![guild as i64, id], pet_row).optional()
-    })
+    ctx.db.with(|c| c.query_row(&format!("{PET_SELECT} WHERE c.guild_id = ?1 AND c.id = ?2"), params![guild as i64, id], pet_row).optional())
+}
+
+/// A name as two pets' names are compared: trimmed, ignoring case.
+pub fn name_key(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+/// Another pet in the catalog with this name, ignoring case.
+pub fn name_taken(ctx: &Ctx, guild: u64, name: &str, except: Option<&str>) -> Result<Option<Pet>> {
+    let needle = name_key(name);
+    Ok(catalog(ctx, guild)?.into_iter().find(|p| name_key(&p.name) == needle && Some(p.id.as_str()) != except))
 }
 
 /// A pet by id, or by name when someone typed instead of picking a suggestion.
@@ -217,15 +260,24 @@ pub fn delete_category(ctx: &Ctx, guild: u64, name: &str) -> Result<bool> {
 
 /// A url-safe id from a name, unique in the server's catalog.
 pub fn new_pet_id(ctx: &Ctx, guild: u64, name: &str) -> Result<String> {
+    let ids: HashSet<String> = ctx.db.with(|c| {
+        let mut s = c.prepare_cached("SELECT id FROM pets_catalog WHERE guild_id = ?1")?;
+        s.query_map([guild as i64], |r| r.get(0))?.collect()
+    })?;
+    Ok(free_id(name, &ids))
+}
+
+/// A url-safe id from a name that isn't one of `taken`: "slime", then "slime-2", ...
+pub fn free_id(name: &str, taken: &HashSet<String>) -> String {
     let base = slug(name);
     let base = if base.is_empty() { "pet".to_owned() } else { base };
     let mut id = base.clone();
     let mut n = 2;
-    while pet(ctx, guild, &id)?.is_some() {
+    while taken.contains(&id) {
         id = format!("{base}-{n}");
         n += 1;
     }
-    Ok(id)
+    id
 }
 
 pub fn slug(name: &str) -> String {
@@ -255,16 +307,72 @@ pub fn save_pet(ctx: &Ctx, guild: u64, p: &Pet) -> Result<()> {
     Ok(())
 }
 
+/// After an edit, giveaways of this pet show its new name, emoji and rarity. They keep a copy of
+/// those so a removed pet's history still reads; an edit is a correction of the same pet.
+pub fn sync_giveaways(ctx: &Ctx, guild: u64, p: &Pet) -> Result<usize> {
+    let n = ctx.db.with(|c| {
+        c.execute(
+            "UPDATE pets_giveaways SET pet_name = ?3, pet_emoji = ?4, pet_rarity = ?5 WHERE guild_id = ?1 AND pet_id = ?2",
+            params![guild as i64, p.id, p.name, p.emoji, clean_rarity(&p.rarity)],
+        )
+    })?;
+    Ok(n)
+}
+
+// ---- pictures ----
+
+/// Store a pet's picture, replacing any it had. Returns when it was stored, which is part of
+/// its address.
+pub fn set_picture(ctx: &Ctx, guild: u64, pet_id: &str, mime: &str, data: &[u8]) -> Result<i64> {
+    let at = now_ms();
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO pets_pictures (guild_id, pet_id, mime, data, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (guild_id, pet_id) DO UPDATE SET mime = excluded.mime, data = excluded.data, updated_at = excluded.updated_at",
+            params![guild as i64, pet_id, mime, data, at],
+        )
+    })?;
+    Ok(at)
+}
+
+pub fn remove_picture(ctx: &Ctx, guild: u64, pet_id: &str) -> Result<bool> {
+    let n = ctx.db.with(|c| c.execute("DELETE FROM pets_pictures WHERE guild_id = ?1 AND pet_id = ?2", params![guild as i64, pet_id]))?;
+    Ok(n > 0)
+}
+
+/// A pet's uploaded picture: `(mime, bytes)`.
+pub fn picture(ctx: &Ctx, guild: u64, pet_id: &str) -> Result<Option<(String, Vec<u8>)>> {
+    ctx.db.with(|c| {
+        c.query_row("SELECT mime, data FROM pets_pictures WHERE guild_id = ?1 AND pet_id = ?2", params![guild as i64, pet_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .optional()
+    })
+}
+
 /// Remove a pet from the catalog and every copy of it from the collection. Returns the copies
 /// removed.
 pub fn delete_pet(ctx: &Ctx, guild: u64, id: &str) -> Result<usize> {
+    Ok(delete_pets(ctx, guild, &[id])?.1)
+}
+
+/// Remove pets in one go, each as [`delete_pet`] does: the catalog entry, its picture, every
+/// copy in the collection and its submissions still waiting. Giveaways keep their history.
+/// Returns the names removed and the copies that went with them.
+pub fn delete_pets(ctx: &Ctx, guild: u64, ids: &[&str]) -> Result<(Vec<String>, usize)> {
     let mut conn = ctx.db.lock();
     let tx = conn.transaction()?;
-    let owned = tx.execute("DELETE FROM pets_owned WHERE guild_id = ?1 AND pet_id = ?2", params![guild as i64, id])?;
-    tx.execute("DELETE FROM pets_catalog WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id])?;
-    tx.execute("DELETE FROM pets_pending WHERE guild_id = ?1 AND pet_id = ?2 AND status = 'pending'", params![guild as i64, id])?;
+    let (mut names, mut owned) = (Vec::new(), 0);
+    for id in ids {
+        let name: Option<String> =
+            tx.query_row("SELECT name FROM pets_catalog WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id], |r| r.get(0)).optional()?;
+        let Some(name) = name else { continue };
+        owned += tx.execute("DELETE FROM pets_owned WHERE guild_id = ?1 AND pet_id = ?2", params![guild as i64, id])?;
+        tx.execute("DELETE FROM pets_catalog WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id])?;
+        tx.execute("DELETE FROM pets_pictures WHERE guild_id = ?1 AND pet_id = ?2", params![guild as i64, id])?;
+        tx.execute("DELETE FROM pets_pending WHERE guild_id = ?1 AND pet_id = ?2 AND status = 'pending'", params![guild as i64, id])?;
+        names.push(name);
+    }
     tx.commit()?;
-    Ok(owned)
+    Ok((names, owned))
 }
 
 // ---- collection ----
@@ -805,6 +913,11 @@ mod tests {
         assert_eq!(slug("King Doot"), "king-doot");
         assert_eq!(slug("  Santa's Little Helper!! "), "santa-s-little-helper");
         assert_eq!(slug("???"), "");
+        let taken: HashSet<String> = ["slime".to_owned(), "slime-2".to_owned(), "pet".to_owned()].into();
+        assert_eq!(free_id("Slime", &taken), "slime-3");
+        assert_eq!(free_id("???", &taken), "pet-2");
+        assert_eq!(free_id("Frog", &taken), "frog");
+        assert_eq!(name_key("  King DOOT "), "king doot");
     }
 
     #[test]
@@ -862,7 +975,30 @@ mod flow {
         assert!(ban(&ctx, g, 7).unwrap().is_some());
 
         assert!(!delete_category(&ctx, g, "Legacy Companions").unwrap());
+        set_picture(&ctx, g, "king-doot", "image/png", b"\x89PNG").unwrap();
+        assert!(super::pet(&ctx, g, "king-doot").unwrap().unwrap().image_url().unwrap().starts_with("/p/42/pet-pictures/king-doot?v="));
         assert_eq!(delete_pet(&ctx, g, "king-doot").unwrap(), 2);
+        assert!(picture(&ctx, g, "king-doot").unwrap().is_none(), "a removed pet's picture goes too");
+
+        // A rename keeps the id, so the collection and giveaways stay with the pet.
+        add_owned(&ctx, g, "slime", 7, 7, 2, "Antho").unwrap();
+        let mut slime = super::pet(&ctx, g, "slime").unwrap().unwrap();
+        let gid = record_giveaway(&ctx, g, &NewGiveaway { pet: &slime, giver: 7, winner: 9, notes: "", recorded_by: "Antho", expires_at: None }).unwrap();
+        slime.name = "Green Slime".into();
+        slime.rarity = "rare".into();
+        save_pet(&ctx, g, &slime).unwrap();
+        assert_eq!(sync_giveaways(&ctx, g, &slime).unwrap(), 1);
+        assert_eq!(owned_counts(&ctx, g).unwrap().get("slime"), Some(&2));
+        let gv = giveaway(&ctx, g, gid).unwrap().unwrap();
+        assert_eq!((gv.pet_name.as_str(), gv.pet_rarity.as_str()), ("Green Slime", "rare"));
+        assert!(name_taken(&ctx, g, "green slime", None).unwrap().is_some());
+        assert!(name_taken(&ctx, g, "green slime", Some("slime")).unwrap().is_none());
+
+        // Several at once, in one go.
+        add_owned(&ctx, g, "frog", 7, 7, 3, "Antho").unwrap();
+        let (names, copies) = delete_pets(&ctx, g, &["molti", "frog", "nope"]).unwrap();
+        assert_eq!((names, copies), (vec!["Molti".to_owned(), "Frog".to_owned()], 3));
+        assert!(super::pet(&ctx, g, "frog").unwrap().is_none());
         let id = new_pet_id(&ctx, g, "Slime").unwrap();
         assert_eq!(id, "slime-2");
         let _ = crate::Pets.meta();

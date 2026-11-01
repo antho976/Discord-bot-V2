@@ -10,7 +10,7 @@ Each feature is switched on per server on the dashboard (Admin, Features). Every
 
 | Feature | What it does |
 | --- | --- |
-| XP and levels | XP from messages, voice and reactions; level-up messages; reward roles; `/rank`, `/leaderboard`, `/xp`. Imports XP from antho-s-bot. |
+| XP and levels | XP from messages, voice and reactions; level-up messages; reward roles; `/level rank`, `/level top`, `/level prestige`, and `/xp` for staff. Imports XP from antho-s-bot. |
 | Stream alerts | Twitch live and offline posts (EventSub), schedule reminders and a weekly schedule image, YouTube uploads, a small stream history. |
 | Scam protection | Scam-message detection and a honeypot channel: deletes the messages, times the member out, alerts staff with Release and Ban buttons. |
 | Welcome | Welcome and goodbye messages with a card, auto-roles, roles back on rejoin, invite tracking. |
@@ -19,7 +19,7 @@ Each feature is switched on per server on the dashboard (Admin, Features). Every
 | Tickets and starboard | Support tickets as private threads; a starboard for popular messages. |
 | Pets | Idleon companion collection with approvals, pet giveaways, public pet pages. |
 | App approvals | Relay, Tally, Avex and your PCs connect after an approver allows them by DM. |
-| AFK and timezones | `/afk`, `/timezone`, `/time`. |
+| AFK and timezones | `/afk`, and `/time now`, `/time set`, `/time clear`. |
 | Embed builder | Write embeds on the dashboard and send or edit them in a channel. |
 
 Later: YouTube upload rewards, prestige and streaks, Twitch clips, modmail, channel rules, custom

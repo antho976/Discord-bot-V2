@@ -97,10 +97,15 @@ pub enum Reserved {
     Full(u64),
 }
 
+/// A reserved ticket still without a thread after this long was abandoned: opening failed half
+/// way, or the bot restarted in the middle. Opening takes a few seconds.
+const ABANDONED_MS: i64 = 5 * 60_000;
+
 /// Take the next ticket number for a member, unless they already have `max` open. The row has no
 /// thread yet; set it with [`set_thread`] or give the number back with [`release`].
 pub fn reserve(conn: &mut Connection, guild: u64, user: u64, subject: &str, details: &str, max: i64, now: i64) -> bot_core::rusqlite::Result<Reserved> {
     let tx = conn.transaction()?;
+    release_abandoned(&tx, guild, Some(user), now)?;
     if let Some(thread) = full_thread(&tx, guild, user, max)? {
         return Ok(Reserved::Full(thread));
     }
@@ -139,6 +144,15 @@ pub fn set_thread(conn: &Connection, guild: u64, number: i64, thread: u64) -> bo
 pub fn release(conn: &Connection, guild: u64, number: i64) -> bot_core::rusqlite::Result<()> {
     conn.execute("DELETE FROM tickets WHERE guild_id = ?1 AND number = ?2 AND thread_id = 0", params![guild as i64, number])?;
     Ok(())
+}
+
+/// Give back reservations that never got a thread (of one member, or everyone's), so a failed
+/// open doesn't count against the member's limit forever.
+pub fn release_abandoned(conn: &Connection, guild: u64, user: Option<u64>, now: i64) -> bot_core::rusqlite::Result<usize> {
+    conn.execute(
+        "DELETE FROM tickets WHERE guild_id = ?1 AND thread_id = 0 AND opened_at < ?2 AND (?3 IS NULL OR opener_id = ?3)",
+        params![guild as i64, now - ABANDONED_MS, user.map(|u| u as i64)],
+    )
 }
 
 pub fn by_number(conn: &Connection, guild: u64, number: i64) -> bot_core::rusqlite::Result<Option<Ticket>> {
@@ -289,6 +303,33 @@ pub fn on_thread_gone(ctx: &Ctx, guild: u64, thread: u64, why: &str) -> bot_core
     ctx.db.with(|c| thread_gone(c, thread, why, now_ms()).map(|_| ()))
 }
 
+/// Discord archives a thread by itself once nobody has written in it for its auto-archive time
+/// (a week for tickets). True when an archive looks like that: the thread isn't locked (the bot
+/// locks the threads it closes) and the last message, or the thread's start, is at least that
+/// old. Times in ms.
+pub fn archived_by_discord(locked: bool, last_activity: i64, archived_at: i64, auto_archive_mins: i64) -> bool {
+    !locked && archived_at - last_activity >= auto_archive_mins * 60_000 - 5 * 60_000
+}
+
+/// A ticket's thread was archived outside the bot. Discord's own archive after a quiet spell
+/// doesn't close the ticket: closing quiet tickets is the "Close idle tickets after" setting's
+/// job, so the thread is unarchived. Any other archive (someone did it in Discord) closes the
+/// ticket, as before.
+pub async fn on_thread_archived(ctx: &Ctx, guild: u64, thread: u64, by_discord: bool) -> bot_core::anyhow::Result<()> {
+    if !by_discord {
+        return on_thread_gone(ctx, guild, thread, "The thread was archived in Discord");
+    }
+    if !ctx.enabled(guild, KEY) || !ctx.db.with(|c| by_thread(c, guild, thread))?.is_some_and(|t| t.is_open()) {
+        return Ok(());
+    }
+    if let Err(e) = ctx.http.update_thread(Id::new(thread)).archived(false).await {
+        // It stays open either way: the thread isn't locked, so the member's next message
+        // unarchives it.
+        bot_core::tracing::warn!(guild, thread, error = %e, "couldn't unarchive an open ticket's thread");
+    }
+    Ok(())
+}
+
 fn thread_gone(conn: &Connection, thread: u64, why: &str, now: i64) -> bot_core::rusqlite::Result<bool> {
     let n = conn.execute(
         "UPDATE tickets SET status = 'closed', closed_at = ?2, close_reason = ?3 WHERE thread_id = ?1 AND status = 'open'",
@@ -369,6 +410,7 @@ pub async fn send_panel(ctx: &Ctx, guild: u64) -> Result<u64, String> {
         }
     };
     if let Some((old_channel, old_message)) = s.panel {
+        ctx.deleting_own_message(old_message);
         let _ = ctx.http.delete_message(Id::new(old_channel), Id::new(old_message)).await;
     }
     let mut next = (*s).clone();
@@ -502,7 +544,16 @@ async fn open_ticket(ctx: &Ctx, call: &ModalCall, guild: u64, s: &Settings) -> b
         .auto_archive_duration(AutoArchiveDuration::Week)
         .await;
     let thread = match created {
-        Ok(r) => r.model().await?,
+        Ok(r) => match r.model().await {
+            Ok(t) => t,
+            // Made, but Discord's answer can't be read, so the bot doesn't know which thread it
+            // is. Give the number back so the member can try again.
+            Err(e) => {
+                bot_core::tracing::warn!(guild, channel, error = %e, "made a ticket thread but couldn't read it back");
+                ctx.db.with(|c| release(c, guild, number))?;
+                return ctx.edit_original(&call.interaction, Reply::text("Couldn't open the ticket. Try again in a moment.")).await;
+            }
+        },
         Err(e) => {
             bot_core::tracing::warn!(guild, channel, error = %e, "couldn't create a ticket thread");
             ctx.db.with(|c| release(c, guild, number))?;
@@ -606,8 +657,12 @@ async fn archive(ctx: &Ctx, thread: u64) {
 
 pub async fn sweep_idle(feature: &Tickets, ctx: &Ctx) -> bot_core::anyhow::Result<()> {
     for guild in ctx.enabled_guilds(KEY) {
+        if !feature.sweep_due(guild) {
+            continue;
+        }
+        ctx.db.with(|c| release_abandoned(c, guild, None, now_ms()))?;
         let s = ctx.settings::<Settings>(guild, KEY)?;
-        if s.auto_close_days <= 0 || !feature.sweep_due(guild) {
+        if s.auto_close_days <= 0 {
             continue;
         }
         let open: Vec<Ticket> = ctx.db.with(|c| list(c, guild, Filter::Open, 500))?.into_iter().filter(|t| t.thread_id != 0).collect();
@@ -893,6 +948,35 @@ mod tests {
         assert!(!t.can_reopen(3000));
         // The member is at their limit again.
         assert!(matches!(reserve(&mut c, 1, 10, "b", "", 1, 4000).unwrap(), Reserved::Full(555)));
+    }
+
+    #[test]
+    fn a_reservation_that_never_got_a_thread_is_given_back() {
+        let db = db();
+        let mut c = db.lock();
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap(), Reserved::Number(1)));
+        // A minute later it's still being opened.
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 61_000).unwrap(), Reserved::Full(0)));
+        // After a restart mid-way it would wait forever; past five minutes it's let go.
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000 + ABANDONED_MS + 1).unwrap(), Reserved::Number(1)));
+        // The sweep lets go of anyone's, and never of a ticket with a thread.
+        reserve(&mut c, 1, 11, "b", "", 1, 1000).unwrap();
+        set_thread(&c, 1, 2, 777).unwrap();
+        assert_eq!(release_abandoned(&c, 1, None, 1000 + 3 * ABANDONED_MS).unwrap(), 1);
+        assert!(by_thread(&c, 1, 777).unwrap().is_some());
+    }
+
+    #[test]
+    fn only_discords_own_archive_keeps_a_ticket_open() {
+        let (min, week) = (60_000, 10_080);
+        let last = 1_000 * min;
+        // A week without messages, then Discord archived it: the ticket stays open.
+        assert!(archived_by_discord(false, last, last + week * min, week));
+        assert!(archived_by_discord(false, last, last + week * min + 30 * min, week));
+        // Archived in Discord two days after the last message: someone closed it.
+        assert!(!archived_by_discord(false, last, last + 2 * 1440 * min, week));
+        // Locked: closed by the bot or a moderator.
+        assert!(!archived_by_discord(true, last, last + 2 * week * min, week));
     }
 
     #[test]

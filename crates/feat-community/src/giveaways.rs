@@ -14,7 +14,7 @@ use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
 use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
 use bot_core::twilight_util::builder::command::{
-    ChannelBuilder, CommandBuilder, IntegerBuilder, RoleBuilder, StringBuilder, SubCommandBuilder,
+    ChannelBuilder, CommandBuilder, IntegerBuilder, RoleBuilder, StringBuilder, SubCommandBuilder, UserBuilder,
 };
 use bot_core::twilight_util::builder::embed::{EmbedBuilder, EmbedFieldBuilder, EmbedFooterBuilder};
 use bot_core::{Ctx, now_ms, text, tracing};
@@ -69,15 +69,17 @@ fn join_ids(ids: &[u64]) -> String {
 }
 
 fn from_row(r: &Row) -> bot_core::rusqlite::Result<Giveaway> {
+    let guild_id = r.get::<_, i64>(1)? as u64;
     Ok(Giveaway {
         id: r.get(0)?,
-        guild_id: r.get::<_, i64>(1)? as u64,
+        guild_id,
         channel_id: r.get::<_, i64>(2)? as u64,
         message_id: r.get::<_, Option<i64>>(3)?.map(|m| m as u64),
         prize: r.get(4)?,
         winners: r.get(5)?,
         ends_at: r.get(6)?,
-        required_role: r.get::<_, Option<i64>>(7)?.map(|m| m as u64),
+        // The @everyone role (its id is the server's) is no requirement: nobody's roles list it.
+        required_role: r.get::<_, Option<i64>>(7)?.map(|m| m as u64).filter(|role| *role != guild_id),
         created_by: r.get::<_, i64>(8)? as u64,
         ended: r.get::<_, i64>(9)? != 0,
         winner_ids: ids(&r.get::<_, String>(10)?),
@@ -203,12 +205,18 @@ pub fn parse_emoji(input: &str) -> Result<String, &'static str> {
     Ok(e.to_owned())
 }
 
+/// What an ended giveaway without winners says: nobody entered, or everyone who did left (or
+/// lost the role) before the draw.
+pub fn no_winner(entries: i64) -> &'static str {
+    if entries == 0 { "Nobody entered" } else { "Nobody who entered could win" }
+}
+
 pub fn embed(g: &Giveaway, entries: i64) -> Embed {
     let title = if g.emoji.is_empty() { g.prize.clone() } else { format!("{} {}", g.emoji, g.prize) };
     let mut b = EmbedBuilder::new().title(text::clip(&title, 250)).footer(EmbedFooterBuilder::new(format!("Giveaway #{}", g.id)));
     if g.ended {
         let winners = if g.winner_ids.is_empty() {
-            "Nobody entered".to_owned()
+            no_winner(entries).to_owned()
         } else {
             g.winner_ids.iter().map(|u| format!("<@{u}>")).collect::<Vec<_>>().join(" ")
         };
@@ -256,7 +264,8 @@ pub fn command() -> Command {
         )
         .option(
             SubCommandBuilder::new("reroll", "Pick new winners for an ended giveaway")
-                .option(IntegerBuilder::new("id", "The giveaway number").required(true).min_value(1)),
+                .option(IntegerBuilder::new("id", "The giveaway number").required(true).min_value(1))
+                .option(UserBuilder::new("winner", "Replace only this winner. Leave it out to replace every winner")),
         )
         .option(SubCommandBuilder::new("list", "Running and recent giveaways"))
         .build()
@@ -307,7 +316,7 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
             ctx.defer(&call.interaction, true).await?;
             let msg = match end(ctx, id).await? {
                 EndOutcome::AlreadyEnded => format!("Giveaway #{id} has already ended. Use /giveaway reroll for new winners."),
-                EndOutcome::Ended(w) if w.is_empty() => format!("Giveaway #{id} ended. Nobody had entered."),
+                EndOutcome::Ended(w) if w.is_empty() => format!("Giveaway #{id} ended. {}.", no_winner(ctx.db.with(|c| entry_count(c, id))?)),
                 EndOutcome::Ended(w) => format!("Giveaway #{id} ended with {} winner{}.", w.len(), if w.len() == 1 { "" } else { "s" }),
                 EndOutcome::Missing => format!("There's no giveaway #{id} here."),
             };
@@ -318,11 +327,26 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
             if !owned_by(ctx, id, guild)? {
                 return say(format!("There's no giveaway #{id} here.")).await;
             }
+            let which = match opts.user("winner") {
+                Some(u) => Replace::One(u.get()),
+                None => Replace::All,
+            };
             ctx.defer(&call.interaction, true).await?;
-            let msg = match reroll(ctx, id).await? {
-                RerollOutcome::Rolled(w) => format!("Picked {}.", w.iter().map(|u| format!("<@{u}>")).collect::<Vec<_>>().join(" ")),
+            let msg = match reroll(ctx, id, which, None).await? {
+                RerollOutcome::Rolled { swaps, kept } => {
+                    let mut msg = format!("Picked {} in place of {}.", mentions(swaps.iter().map(|s| s.1)), mentions(swaps.iter().map(|s| s.0)));
+                    if which == Replace::All && !kept.is_empty() {
+                        msg.push_str(&format!(" Nobody else could be picked, so {} {} their win.", mentions(kept.iter().copied()), if kept.len() == 1 { "keeps" } else { "keep" }));
+                    }
+                    msg
+                }
                 RerollOutcome::StillRunning => format!("Giveaway #{id} is still running. End it first."),
-                RerollOutcome::NoOneElse => "Nobody else entered, so there's no one to pick.".into(),
+                RerollOutcome::NotAWinner => match which {
+                    Replace::One(u) => format!("<@{u}> isn't a winner of giveaway #{id}."),
+                    Replace::All => format!("Giveaway #{id} has no winners to replace."),
+                },
+                RerollOutcome::Changed => format!("The winners of giveaway #{id} changed while picking. Check them and try again."),
+                RerollOutcome::NoOneElse(role) => no_one_left(role),
                 RerollOutcome::Missing => format!("There's no giveaway #{id} here."),
             };
             ctx.edit_original(&call.interaction, Reply::text(msg)).await?;
@@ -407,6 +431,8 @@ pub struct New<'a> {
 pub async fn create(ctx: &Ctx, new: New<'_>) -> Result<i64> {
     let New { guild, channel, prize, emoji, winners, ends_at, role, by } = new;
     let prize = text::clip(prize.trim(), 200);
+    // @everyone has the server's id, and members' role lists never include it.
+    let role = role.filter(|r| *r != guild);
     let id = ctx.db.with(|c| {
         c.execute(
             "INSERT INTO giveaways (guild_id, channel_id, prize, emoji, winners, ends_at, required_role, created_by, created_at)
@@ -482,11 +508,39 @@ pub enum EndOutcome {
     Ended(Vec<u64>),
 }
 
+/// Which winners a reroll replaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Replace {
+    /// This one winner.
+    One(u64),
+    /// Every winner, as far as there are entrants left to pick. The rest keep their win.
+    All,
+}
+
 pub enum RerollOutcome {
     Missing,
     StillRunning,
-    NoOneElse,
-    Rolled(Vec<u64>),
+    /// That member isn't a winner (any more, after a reroll that already replaced them), or
+    /// nobody won.
+    NotAWinner,
+    /// The winners changed since they were read (a second click, or a reroll at the same
+    /// moment). Nothing was picked.
+    Changed,
+    /// Nobody else can win. True when the giveaway needs a role.
+    NoOneElse(bool),
+    /// Who was replaced by whom, and the winners who kept their win.
+    Rolled { swaps: Vec<(u64, u64)>, kept: Vec<u64> },
+}
+
+/// Why a reroll found nobody, for the reply.
+pub fn no_one_left(role: bool) -> String {
+    let why = if role { "won before, left the server or lost the role" } else { "won before or left the server" };
+    format!("Nobody else can be picked. Everyone else who entered has {why}.")
+}
+
+/// "<@1> <@2>"
+fn mentions(users: impl Iterator<Item = u64>) -> String {
+    users.map(|u| format!("<@{u}>")).collect::<Vec<_>>().join(" ")
 }
 
 /// End a giveaway: pick winners, edit its message and announce them.
@@ -507,33 +561,158 @@ pub async fn end(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
             return Err(e);
         }
     };
-    let winners = pick_winners(&all, g.winners.max(1) as usize, &[], &mut bot_core::rand::rng());
+    let order = pick_winners(&all, all.len(), &[], &mut bot_core::rand::rng());
+    let winners = draw(ctx, &g, &order, g.winners.max(1) as usize).await;
     store_winners(ctx, id, &winners)?;
     let g = Giveaway { winner_ids: winners.clone(), ..g };
     refresh(ctx, &g, all.len() as i64).await;
-    announce(ctx, &g, &winners, false).await;
+    let content = if winners.is_empty() {
+        if all.is_empty() { format!("Nobody entered the {} giveaway.", g.prize) } else { format!("Nobody who entered the {} giveaway could win.", g.prize) }
+    } else {
+        format!("Congratulations {}, you won **{}**.", mentions(winners.iter().copied()), g.prize)
+    };
+    announce(ctx, &g, &content, &winners).await;
     Ok(EndOutcome::Ended(winners))
 }
 
-/// Pick new winners from everyone who entered, leaving out everyone picked before.
-pub async fn reroll(ctx: &Ctx, id: i64) -> Result<RerollOutcome> {
+/// How many members a draw may look up on Discord when the cache doesn't have them.
+const LOOKUPS: u32 = 30;
+
+/// Up to `count` winners from `order` (already shuffled), skipping anyone who can't win any
+/// more: they left the server, or lost the role the giveaway needs. The cache has every member
+/// (they're loaded at start), so it answers almost every check; someone missing from it is
+/// looked up on Discord, up to [`LOOKUPS`] times a draw. Past that, missing from a loaded
+/// server's cache counts as gone. When Discord can't say, they stay in. A required role that
+/// has since been deleted no longer counts.
+async fn draw(ctx: &Ctx, g: &Giveaway, order: &[u64], count: usize) -> Vec<u64> {
+    let role = g.required_role.filter(|r| Id::new_checked(*r).is_some_and(|id| ctx.cache.role(id).is_some()));
+    let mut picked = Vec::with_capacity(count);
+    let mut lookups = LOOKUPS;
+    for &user in order {
+        if picked.len() >= count {
+            break;
+        }
+        if can_win(ctx, g, role, user, &mut lookups).await {
+            picked.push(user);
+        }
+    }
+    picked
+}
+
+/// Whether a member with these roles can win. `None` roles: not in the server.
+pub fn eligible(roles: Option<&[u64]>, required: Option<u64>) -> bool {
+    roles.is_some_and(|roles| required.is_none_or(|r| roles.contains(&r)))
+}
+
+async fn can_win(ctx: &Ctx, g: &Giveaway, role: Option<u64>, user: u64, lookups: &mut u32) -> bool {
+    let (Some(guild), Some(uid)) = (Id::new_checked(g.guild_id), Id::new_checked(user)) else { return false };
+    if let Some(m) = ctx.cache.member(guild, uid) {
+        let roles: Vec<u64> = m.roles().iter().map(|r| r.get()).collect();
+        return eligible(Some(&roles), role);
+    }
+    // The preview has no Discord to ask.
+    if ctx.cfg.preview {
+        return true;
+    }
+    if *lookups == 0 {
+        return ctx.cache.guild(guild).is_none();
+    }
+    *lookups -= 1;
+    match ctx.http.guild_member(guild, uid).await {
+        Ok(r) => match r.model().await {
+            Ok(m) => {
+                let roles: Vec<u64> = m.roles.iter().map(|r| r.get()).collect();
+                eligible(Some(&roles), role)
+            }
+            Err(_) => true,
+        },
+        Err(e) if bot_core::discord::is_not_found(&e) => false,
+        Err(e) => {
+            tracing::warn!(giveaway = g.id, user, error = %e, "couldn't check a giveaway entrant; keeping them in");
+            true
+        }
+    }
+}
+
+/// The winners a reroll replaces, in the order they're replaced: the one asked for, or every
+/// winner in a random order, so when fewer people are left than winners, who keeps a win is
+/// down to chance. None when that member isn't a winner.
+pub fn to_replace<R: Rng + ?Sized>(winners: &[u64], which: Replace, rng: &mut R) -> Option<Vec<u64>> {
+    match which {
+        Replace::One(u) => winners.contains(&u).then(|| vec![u]),
+        Replace::All => {
+            let mut out = winners.to_vec();
+            out.shuffle(rng);
+            Some(out)
+        }
+    }
+}
+
+/// The winners after a reroll: each new winner takes the place of the one they replace, and
+/// everyone else keeps theirs. The count never changes.
+pub fn swapped(winners: &[u64], swaps: &[(u64, u64)]) -> Vec<u64> {
+    winners.iter().map(|w| swaps.iter().find(|(old, _)| old == w).map_or(*w, |(_, new)| *new)).collect()
+}
+
+/// The line in the channel after a reroll. Only the new winners are pinged.
+pub fn reroll_line(prize: &str, swaps: &[(u64, u64)], kept: &[u64]) -> String {
+    let new = mentions(swaps.iter().map(|s| s.1));
+    let old = mentions(swaps.iter().map(|s| s.0));
+    let label = if swaps.len() == 1 { "New winner" } else { "New winners" };
+    let mut line = format!("{label} for **{prize}**: {new}, in place of {old}.");
+    if !kept.is_empty() {
+        line.push_str(&format!(" {} {} their win.", mentions(kept.iter().copied()), if kept.len() == 1 { "keeps" } else { "keep" }));
+    }
+    line
+}
+
+/// Store a reroll, unless the winners changed since `g` was read. The check and the write
+/// run under one hold of the connection. Returns the giveaway as it is now.
+fn apply_reroll(c: &Connection, g: &Giveaway, swaps: &[(u64, u64)]) -> bot_core::rusqlite::Result<Option<Giveaway>> {
+    match get(c, g.id)? {
+        Some(now) if now.winner_ids == g.winner_ids && now.passed_ids == g.passed_ids => {}
+        _ => return Ok(None),
+    }
+    let winners = swapped(&g.winner_ids, swaps);
+    let passed: Vec<u64> = g.passed_ids.iter().copied().chain(swaps.iter().map(|s| s.0)).collect();
+    c.execute("UPDATE giveaways SET winner_ids = ?2, passed_ids = ?3 WHERE id = ?1", params![g.id, join_ids(&winners), join_ids(&passed)])?;
+    Ok(Some(Giveaway { winner_ids: winners, passed_ids: passed, ..g.clone() }))
+}
+
+/// Replace one winner or all of them with members who entered and haven't won before. A
+/// reroll never changes how many winners there are: when fewer people are left than winners
+/// to replace, the rest keep their win. `expected` is the winner list the caller saw; when it
+/// differs from the stored one, nothing happens, so a second click doesn't reroll twice.
+pub async fn reroll(ctx: &Ctx, id: i64, which: Replace, expected: Option<&[u64]>) -> Result<RerollOutcome> {
     let Some(g) = ctx.db.with(|c| get(c, id))? else { return Ok(RerollOutcome::Missing) };
     if !g.ended {
         return Ok(RerollOutcome::StillRunning);
     }
+    if expected.is_some_and(|e| e != g.winner_ids.as_slice()) {
+        return Ok(RerollOutcome::Changed);
+    }
     let all = ctx.db.with(|c| entries(c, id))?;
     let picked_before: Vec<u64> = g.passed_ids.iter().chain(&g.winner_ids).copied().collect();
-    let winners = pick_winners(&all, g.winners.max(1) as usize, &picked_before, &mut bot_core::rand::rng());
-    if winners.is_empty() {
-        return Ok(RerollOutcome::NoOneElse);
+    // The thread's generator can't be held across an await.
+    let (out, order) = {
+        let mut rng = bot_core::rand::rng();
+        (to_replace(&g.winner_ids, which, &mut rng), pick_winners(&all, all.len(), &picked_before, &mut rng))
+    };
+    let out = match out {
+        Some(out) if !out.is_empty() => out,
+        _ => return Ok(RerollOutcome::NotAWinner),
+    };
+    let picks = draw(ctx, &g, &order, out.len()).await;
+    if picks.is_empty() {
+        return Ok(RerollOutcome::NoOneElse(g.required_role.is_some()));
     }
-    ctx.db.with(|c| {
-        c.execute("UPDATE giveaways SET winner_ids = ?2, passed_ids = ?3 WHERE id = ?1", params![id, join_ids(&winners), join_ids(&picked_before)])
-    })?;
-    let g = Giveaway { winner_ids: winners.clone(), passed_ids: picked_before, ..g };
+    let swaps: Vec<(u64, u64)> = out.into_iter().zip(picks).collect();
+    let Some(g) = ctx.db.with(|c| apply_reroll(c, &g, &swaps))? else { return Ok(RerollOutcome::Changed) };
+    let kept: Vec<u64> = g.winner_ids.iter().copied().filter(|w| !swaps.iter().any(|(_, new)| new == w)).collect();
     refresh(ctx, &g, all.len() as i64).await;
-    announce(ctx, &g, &winners, true).await;
-    Ok(RerollOutcome::Rolled(winners))
+    let new: Vec<u64> = swaps.iter().map(|s| s.1).collect();
+    announce(ctx, &g, &reroll_line(&g.prize, &swaps, &kept), &new).await;
+    Ok(RerollOutcome::Rolled { swaps, kept })
 }
 
 fn store_winners(ctx: &Ctx, id: i64, winners: &[u64]) -> Result<()> {
@@ -552,21 +731,34 @@ async fn refresh(ctx: &Ctx, g: &Giveaway, entries: i64) {
     }
 }
 
-async fn announce(ctx: &Ctx, g: &Giveaway, winners: &[u64], reroll: bool) {
-    let content = if winners.is_empty() {
-        format!("Nobody entered the {} giveaway.", g.prize)
-    } else {
-        let who = winners.iter().map(|u| format!("<@{u}>")).collect::<Vec<_>>().join(" ");
-        if reroll { format!("New winner for **{}**: {who}", g.prize) } else { format!("Congratulations {who}, you won **{}**.", g.prize) }
-    };
-    let mentions = AllowedMentions { users: winners.iter().map(|u| Id::new(*u)).collect(), ..Default::default() };
-    let mut req = ctx.http.create_message(Id::new(g.channel_id)).content(&content).allowed_mentions(Some(&mentions));
+/// Post `content` in the giveaway's channel, as a reply to its post, pinging only `ping`.
+async fn announce(ctx: &Ctx, g: &Giveaway, content: &str, ping: &[u64]) {
+    let mentions = AllowedMentions { users: ping.iter().filter_map(|u| Id::new_checked(*u)).collect(), ..Default::default() };
+    let mut req = ctx.http.create_message(Id::new(g.channel_id)).content(content).allowed_mentions(Some(&mentions));
     if let Some(m) = g.message_id {
         req = req.reply(Id::new(m)).fail_if_not_exists(false);
     }
     if let Err(e) = req.await {
         tracing::warn!(giveaway = g.id, error = %e, "couldn't announce giveaway winners");
     }
+}
+
+/// A test for the dashboard, in `to`'s DMs: how this giveaway's end looks, with `to` as the
+/// winner. The closed post, and the line that replies to it in the channel. Nothing is picked
+/// or stored. None when there's no such giveaway, false when Discord won't let the bot DM them.
+pub async fn send_test(ctx: &Ctx, id: i64, to: u64) -> Result<Option<bool>> {
+    let found = ctx.db.with(|c| match get(c, id)? {
+        Some(g) => Ok(Some((g, entry_count(c, id)?))),
+        None => Ok(None),
+    })?;
+    let Some((g, n)) = found else { return Ok(None) };
+    let ended = Giveaway { ended: true, ended_at: now_ms(), winner_ids: vec![to], ..g };
+    let content = format!(
+        "Congratulations <@{to}>, you won **{}**.\n-# Test from the dashboard: when the giveaway ends, this line replies to its post and pings the winners, and the post closes like this.",
+        ended.prize
+    );
+    let embeds = [embed(&ended, n)];
+    Ok(Some(ctx.dm(to, &content, &embeds, &[]).await?.is_some()))
 }
 
 /// End every giveaway whose time is up.
@@ -659,6 +851,82 @@ mod tests {
             assert!(w.iter().all(|u| *u == 3 || *u == 4));
         }
         assert!(pick_winners(&[1, 2], 1, &[1, 2], &mut StdRng::seed_from_u64(1)).is_empty());
+    }
+
+    #[test]
+    fn a_reroll_never_shrinks_the_winners() {
+        // Three winners out of four entrants: one person is left to pick.
+        let (winners, entries) = ([1, 2, 3], [1, 2, 3, 4]);
+        for seed in 0..20 {
+            let rng = &mut StdRng::seed_from_u64(seed);
+            // Replacing one winner: the other two keep their win, in their places.
+            let out = to_replace(&winners, Replace::One(2), rng).unwrap();
+            let order = pick_winners(&entries, entries.len(), &winners, rng);
+            let swaps: Vec<_> = out.into_iter().zip(order.clone()).collect();
+            assert_eq!(swaps, [(2, 4)]);
+            assert_eq!(swapped(&winners, &swaps), [1, 4, 3]);
+            // Replacing everyone with one person left replaces one, at random, and keeps two.
+            let out = to_replace(&winners, Replace::All, rng).unwrap();
+            assert_eq!(out.len(), 3);
+            let swaps: Vec<_> = out.into_iter().zip(order).collect();
+            assert_eq!(swaps.len(), 1);
+            let after = swapped(&winners, &swaps);
+            assert_eq!(after.len(), 3);
+            assert!(after.contains(&4) && !after.contains(&swaps[0].0));
+        }
+        // Someone who isn't a winner can't be replaced.
+        assert_eq!(to_replace(&winners, Replace::One(4), &mut StdRng::seed_from_u64(1)), None);
+        assert_eq!(to_replace(&[], Replace::All, &mut StdRng::seed_from_u64(1)), Some(vec![]));
+    }
+
+    #[test]
+    fn reroll_lines_say_who_goes_and_who_stays() {
+        assert_eq!(reroll_line("Nitro", &[(2, 4)], &[1, 3]), "New winner for **Nitro**: <@4>, in place of <@2>. <@1> <@3> keep their win.");
+        assert_eq!(reroll_line("Nitro", &[(2, 4)], &[1]), "New winner for **Nitro**: <@4>, in place of <@2>. <@1> keeps their win.");
+        assert_eq!(reroll_line("Nitro", &[(1, 5), (2, 6)], &[]), "New winners for **Nitro**: <@5> <@6>, in place of <@1> <@2>.");
+    }
+
+    #[test]
+    fn a_second_reroll_of_the_same_winners_does_nothing() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        db.with(|c| {
+            c.execute("INSERT INTO giveaways (id, guild_id, channel_id, prize, ends_at, winners, ended, winner_ids) VALUES (1, 9, 2, 'x', 10, 3, 1, '1,2,3')", [])?;
+            let seen = get(c, 1)?.unwrap();
+            let g = apply_reroll(c, &seen, &[(2, 4)])?.unwrap();
+            assert_eq!((g.winner_ids.as_slice(), g.passed_ids.as_slice()), ([1, 4, 3].as_slice(), [2].as_slice()));
+            let stored = get(c, 1)?.unwrap();
+            assert_eq!((stored.winner_ids, stored.passed_ids), (vec![1, 4, 3], vec![2]));
+            // The double click read the same winners as the first one: it's refused.
+            assert!(apply_reroll(c, &seen, &[(1, 5)])?.is_none());
+            assert_eq!(get(c, 1)?.unwrap().winner_ids, vec![1, 4, 3]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn everyone_is_no_role_requirement() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        db.with(|c| {
+            c.execute("INSERT INTO giveaways (id, guild_id, channel_id, prize, ends_at, required_role) VALUES (1, 9, 2, 'x', 10, 9), (2, 9, 2, 'y', 10, 7)", [])?;
+            assert_eq!(get(c, 1)?.unwrap().required_role, None);
+            assert_eq!(get(c, 2)?.unwrap().required_role, Some(7));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn winners_must_still_be_here_with_the_role() {
+        assert!(eligible(Some(&[]), None));
+        assert!(eligible(Some(&[7, 8]), Some(7)));
+        // Lost the role, or left the server.
+        assert!(!eligible(Some(&[8]), Some(7)));
+        assert!(!eligible(None, None));
+        assert_eq!(no_winner(0), "Nobody entered");
+        assert_eq!(no_winner(3), "Nobody who entered could win");
     }
 
     #[test]

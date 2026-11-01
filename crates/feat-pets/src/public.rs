@@ -139,7 +139,7 @@ async fn collection(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path
     let body = html! {
         (view::collection_hero(&groups, &counts, week))
         @if !stars.is_empty() {
-            (view::section(Icon::Star, "Rarest in the collection", None, None, html! {
+            (view::section("Rarest in the collection", None, None, html! {
                 div.pets-spot {
                     @for (i, p) in stars.iter().enumerate() {
                         @let r = store::clean_rarity(&p.rarity);
@@ -156,7 +156,7 @@ async fn collection(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path
                 }
             }))
         }
-        (view::section(Icon::Paw, "Every companion", Some(&if total > 0 {
+        (view::section("Every companion", Some(&if total > 0 {
             let kinds = counts.len() as i64;
             format!(
                 "The server has {} {} of {} {}{}.",
@@ -189,16 +189,8 @@ async fn collection(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path
     page(&ctx, &viewer, guild, "Pet collection", "Collection", "pets", body)
 }
 
-fn giveaway_row(ctx: &Ctx, guild: u64, g: &Giveaway, image: Option<&str>) -> Markup {
-    let side = html! {
-        @if g.status == Status::Pending {
-            (view::clock(g.expires_at))
-        } @else {
-            (view::status_badge(g.status))
-            span { (text::ago(g.closed_at.unwrap_or(g.recorded_at))) }
-        }
-    };
-    view::giveaway_card(ctx, guild, g, image, side, None)
+fn waiting_card(ctx: &Ctx, guild: u64, g: &Giveaway, image: Option<&str>) -> Markup {
+    view::giveaway_card(ctx, guild, g, image, view::clock(g.expires_at), None)
 }
 
 async fn giveaways(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>) -> WebResult {
@@ -206,7 +198,7 @@ async fn giveaways(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<
     let active = store::active_giveaways(&ctx, guild)?;
     let past = store::past_giveaways(&ctx, guild, 30)?;
     let catalog = store::catalog(&ctx, guild)?;
-    let image = |id: &str| catalog.iter().find(|p| p.id == id).and_then(|p| p.image_url().map(str::to_owned));
+    let image = |id: &str| catalog.iter().find(|p| p.id == id).and_then(Pet::image_url);
     let s = store::stats(&store::all_giveaways(&ctx, guild)?);
     let mut readings = vec![("waiting for a hand-over", text::num(s.active)), ("confirmed", text::num(s.confirmed))];
     if let Some(r) = s.confirmation_rate() {
@@ -214,18 +206,18 @@ async fn giveaways(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<
     }
     let body = html! {
         (view::readings(&readings))
-        (view::section(Icon::Gift, "Waiting for a hand-over", Some("The giver passes the pet in game, then staff confirm it. Unconfirmed giveaways are cancelled when they expire."), None, html! {
+        (view::section("Waiting for a hand-over", Some("The giver passes the pet in game, then staff confirm it. Unconfirmed giveaways are cancelled when they expire."), None, html! {
             @if active.is_empty() {
                 (ui::empty(Icon::Gift, "Nothing waiting", "Giveaways show here from the moment staff record them until they're confirmed."))
             } @else {
-                div.pets-gvs.pets-tiles.wide { @for g in &active { (giveaway_row(&ctx, guild, g, image(&g.pet_id).as_deref())) } }
+                div.pets-gvs { @for g in &active { (waiting_card(&ctx, guild, g, image(&g.pet_id).as_deref())) } }
             }
         }))
-        (view::section(Icon::Log, "Recent", None, None, html! {
+        (view::section("Recent", None, None, html! {
             @if past.is_empty() {
                 (ui::empty(Icon::Log, "No finished giveaways yet", "Confirmed, expired and cancelled giveaways are listed here."))
             } @else {
-                div.pets-gvs.pets-tiles.wide { @for g in &past { (giveaway_row(&ctx, guild, g, image(&g.pet_id).as_deref())) } }
+                div.pets-list { @for g in &past { (view::giveaway_row(&ctx, guild, g, image(&g.pet_id).as_deref(), None)) } }
             }
         }))
     };
@@ -258,16 +250,16 @@ async fn stats(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>
     let pet_rarity = |name: &str| catalog.iter().find(|p| p.name == name).map(|p| p.rarity.clone()).unwrap_or_else(|| "common".into());
     let body = html! {
         (view::readings(&readings))
-        @let by_rarity = view::section(Icon::Paw, "The collection, by rarity", Some("Copies the server holds of each rarity."), None, view::hbars(&collection_rarity));
+        @let by_rarity = view::section("The collection, by rarity", Some("Copies the server holds of each rarity."), None, view::hbars(&collection_rarity));
         @if s.confirmed == 0 {
             (ui::empty(Icon::Chart, "No confirmed giveaways yet", "Stats fill in as staff confirm pet giveaways."))
             (by_rarity)
         } @else {
             div.pets-duo {
-                (view::section(Icon::Chart, "Confirmed giveaways", Some("Each day of the last 30, in UTC."), None, html! {
+                (view::section("Confirmed giveaways", Some("Each day of the last 30, in UTC."), None, html! {
                     div.card.chart-card { (ui::bar_chart(&series, "var(--data)", "giveaways")) }
                 }))
-                (view::section(Icon::Trophy, "Top givers", Some("Members whose giveaways went through."), None, html! {
+                (view::section("Top givers", Some("Members whose giveaways went through."), None, html! {
                     div.podium {
                         @for (place, (u, n)) in &podium {
                             div class={ "step p" (place) } {
@@ -284,12 +276,12 @@ async fn stats(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>
                 }))
             }
             div.pets-trio {
-                (view::section(Icon::Gift, "Most given", None, None, view::hbars(&s.top_pets.iter().map(|(name, emoji, n)| {
+                (view::section("Most given", None, None, view::hbars(&s.top_pets.iter().map(|(name, emoji, n)| {
                     let r = pet_rarity(name);
                     (html! { span.pc { (view::art(emoji, None, &r, "sm")) span { (name) } } }, *n, "")
                 }).collect::<Vec<_>>())))
                 @if !s.rarities.is_empty() {
-                    (view::section(Icon::Star, "Given, by rarity", None, None, view::hbars(&s.rarities.iter().map(|(r, n)| (view::rarity(r), *n, r.as_str())).collect::<Vec<_>>())))
+                    (view::section("Given, by rarity", None, None, view::hbars(&s.rarities.iter().map(|(r, n)| (view::rarity(r), *n, r.as_str())).collect::<Vec<_>>())))
                 }
                 (by_rarity)
             }

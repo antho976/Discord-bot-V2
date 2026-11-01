@@ -111,12 +111,13 @@ pub fn waiting_members(ctx: &Ctx, guild: u64, days: i64, limit: i64) -> Result<V
 /// Can the bot give this role? It must exist, not be managed (integration or booster roles)
 /// and sit below the bot's own highest role. Without a cached bot member we let it try.
 pub fn assignable(ctx: &Ctx, guild: u64, role: u64) -> bool {
-    let Some(r) = ctx.cache.role(Id::new(role)) else { return false };
+    let Some(r) = Id::new_checked(role).and_then(|id| ctx.cache.role(id)) else { return false };
     if r.managed || role == guild {
         return false;
     }
     let Some(bot) = ctx.bot_id() else { return true };
-    let Some(me) = ctx.cache.member(Id::new(guild), Id::new(bot)) else { return true };
+    let (Some(guild_id), Some(bot_id)) = (Id::new_checked(guild), Id::new_checked(bot)) else { return false };
+    let Some(me) = ctx.cache.member(guild_id, bot_id) else { return true };
     let top = me.roles().iter().filter_map(|id| ctx.cache.role(*id).map(|r| r.position)).max().unwrap_or(0);
     r.position < top
 }

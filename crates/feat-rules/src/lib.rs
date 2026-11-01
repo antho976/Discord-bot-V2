@@ -197,7 +197,7 @@ impl Rules {
         let sent = ctx
             .http
             .create_message(m.channel_id)
-            .content(&format!("<@{user}>, this channel is for pictures, videos, files and links."))
+            .content(&media_notice(user.get()))
             .allowed_mentions(Some(&mentions))
             .await;
         if let Ok(r) = sent
@@ -206,6 +206,7 @@ impl Rules {
             let ctx = ctx.clone();
             bot_core::tokio::spawn(async move {
                 bot_core::tokio::time::sleep(NOTICE_LIFETIME).await;
+                ctx.deleting_own_message(msg.id.get());
                 let _ = ctx.http.delete_message(msg.channel_id, msg.id).await;
             });
         }
@@ -259,6 +260,11 @@ fn notice_due(last: &mut HashMap<u64, Instant>, channel: u64, now: Instant) -> b
             true
         }
     }
+}
+
+/// What the bot says when it removes a message from a media-only channel.
+pub(crate) fn media_notice(user: u64) -> String {
+    format!("<@{user}>, this channel is for pictures, videos, files and links.")
 }
 
 fn author_name(m: &Message) -> String {

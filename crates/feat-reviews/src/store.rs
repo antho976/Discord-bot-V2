@@ -486,7 +486,8 @@ pub fn claim(ctx: &Ctx, guild: u64, id: i64, to: Move, by: &str) -> Result<bool>
 pub fn parse_input(input: &str) -> (String, String) {
     let mut s = input.trim();
     for prefix in ["reviewing for ", "review for ", "for ", "reviewing ", "review "] {
-        if s.len() > prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix) {
+        // `get`, not slicing: the byte after the prefix's length may fall inside a character.
+        if s.len() > prefix.len() && s.get(..prefix.len()).is_some_and(|p| p.eq_ignore_ascii_case(prefix)) {
             s = s[prefix.len()..].trim_start();
             break;
         }
@@ -567,6 +568,11 @@ mod tests {
         assert_eq!(parse_input("Mira (second account)"), ("Mira".into(), "second account".into()));
         assert_eq!(parse_input("  "), (String::new(), String::new()));
         assert_eq!(parse_input("review"), ("review".into(), String::new()));
+        // A character straddling a prefix's length used to panic (and abort the bot).
+        assert_eq!(parse_input("ミラ"), ("ミラ".into(), String::new()));
+        assert_eq!(parse_input("Café au lait"), ("Café au lait".into(), String::new()));
+        assert_eq!(parse_input("review for ミラ"), ("ミラ".into(), String::new()));
+        assert_eq!(parse_input("Ash 🐸"), ("Ash 🐸".into(), String::new()));
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]

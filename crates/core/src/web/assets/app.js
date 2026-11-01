@@ -1,6 +1,10 @@
 // The dashboard's one script. Everything works without it; it adds the search palette, the
 // server's colour, chart cursors and tooltips, numbers that count up, the phone drawer, the
 // banner upload, button states, toasts, two-click deletes and the timezone cookie.
+//
+// Links and forms inside the dashboard change only the page (`visit`): the sidebar, the server
+// rail and their scroll stay as they are, and the current page's pill glides to its new place.
+// Setup that belongs to a page runs in `mount`, once on load and again after every swap.
 (() => {
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -14,6 +18,11 @@
   const ICON_OK = '<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8.5 3 3 7-7"/></svg>';
   const ICON_BAD = '<svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m4 4 8 8M12 4l-8 8"/></svg>';
 
+  // A page's lifetime. Feature scripts that set timers or listen on the whole document pass
+  // `window.botPage.signal` (or check `.aborted`), so they stop when the page is swapped out.
+  let life = new AbortController();
+  window.botPage = { signal: life.signal };
+
   // ---------------------------------------------------------------- toast
   const toast = (text, bad = false) => {
     const t = document.createElement("div");
@@ -23,7 +32,7 @@
     t.lastChild.textContent = text;
     document.body.append(t);
     requestAnimationFrame(() => requestAnimationFrame(() => t.classList.add("show")));
-    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 400); }, 2200);
+    setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 400); }, 2600);
   };
   window.botToast = toast;
 
@@ -39,38 +48,45 @@
     }
   } catch (_) {}
 
-  const url = new URL(location.href);
-  if (url.searchParams.has("saved")) {
-    toast("Saved");
-    url.searchParams.delete("saved");
-    history.replaceState(null, "", url.pathname + url.search + url.hash);
-  }
-
   // ---------------------------------------------------------------- sidebar
   // Longest matching link wins, so /g/1/tickets/starboard marks Starboard, not Tickets. The
-  // server marks a guess first so the pill is in place on the first paint.
-  let best = null;
-  $$(".side-links .nav[data-path]").forEach((a) => {
-    const p = a.dataset.path;
-    if ((location.pathname === p || location.pathname.startsWith(p + "/")) && (!best || p.length > best.dataset.path.length)) best = a;
-  });
-  if (best && !best.classList.contains("on")) {
+  // pill keeps one view-transition-name, so moving it inside a transition makes it glide.
+  const markNav = () => {
+    let best = null;
+    $$(".side-links .nav").forEach((a) => {
+      const p = a.dataset.path || new URL(a.href).pathname;
+      const hit = location.pathname === p || (a.dataset.path && location.pathname.startsWith(p + "/"));
+      if (hit && (!best || p.length > (best.dataset.path || new URL(best.href).pathname).length)) best = a;
+    });
+    const was = $(".side-links .nav.on");
+    if (best === was) return best;
     const pill = $(".side-links .nav-pill") || Object.assign(document.createElement("span"), { className: "nav-pill" });
     $$(".side-links .nav.on").forEach((a) => { a.classList.remove("on"); a.removeAttribute("aria-current"); });
-    best.classList.add("on");
-    best.setAttribute("aria-current", "page");
-    best.prepend(pill);
-  }
-  const current = $(".side-links .nav.on");
-  current?.closest(".nav-fold")?.setAttribute("open", "");
-  // Keep the current page in view in a long list.
-  if (current) {
-    const list = $(".side-links");
-    const r = current.getBoundingClientRect(), lr = list.getBoundingClientRect();
-    if (r.bottom > lr.bottom - 20) list.scrollTop += r.bottom - lr.bottom + 60;
+    if (best) {
+      best.classList.add("on");
+      best.setAttribute("aria-current", "page");
+      best.prepend(pill);
+      best.closest(".nav-fold")?.setAttribute("open", "");
+    } else pill.remove();
+    return best;
+  };
+  const current = markNav();
+  // Keep the current page in view in a long list, without moving a list the person scrolled.
+  const list = $(".side-links");
+  const SCROLL = "side-scroll";
+  if (list) {
+    let saved = null;
+    try { saved = sessionStorage.getItem(SCROLL); } catch (_) {}
+    if (saved !== null) list.scrollTop = Number(saved);
+    else if (current) {
+      const r = current.getBoundingClientRect(), lr = list.getBoundingClientRect();
+      if (r.bottom > lr.bottom - 20) list.scrollTop += r.bottom - lr.bottom + 60;
+    }
+    list.addEventListener("scroll", () => { try { sessionStorage.setItem(SCROLL, String(list.scrollTop)); } catch (_) {} }, { passive: true });
   }
 
   // Groups stay as the person folded them, per browser. The current page's group stays open.
+  // Opening one lets its pages rise in; nothing animates on a page load.
   const CLOSED = "nav-closed";
   let closed = store.get(CLOSED, []);
   $$(".nav-fold").forEach((d) => {
@@ -80,8 +96,33 @@
       closed = closed.filter((x) => x !== g);
       if (!d.open) closed.push(g);
       store.set(CLOSED, closed);
+      if (d.open && !calm) { d.classList.add("opening"); setTimeout(() => d.classList.remove("opening"), 500); }
     });
   });
+
+  // Counts in the sidebar and on the bell, brought up to date from a fetched page.
+  const syncCounts = (doc) => {
+    $$(".side-links .nav").forEach((a) => {
+      const twin = doc.querySelector(`.side-links .nav[href="${a.getAttribute("href")}"]`);
+      const now = $(".nav-count", a), next = twin && twin.querySelector(".nav-count");
+      if (now && !next) { now.classList.add("leaving"); setTimeout(() => now.remove(), 250); }
+      else if (next && !now) a.append(next.cloneNode(true));
+      else if (now && next && now.textContent !== next.textContent) now.replaceWith(next.cloneNode(true));
+    });
+    $$(".nav-fold").forEach((d) => {
+      const twin = doc.querySelector(`.nav-fold[data-group="${d.dataset.group}"] > summary .nav-count`);
+      const now = $(":scope > summary .nav-count", d);
+      if (now && !twin) now.remove();
+      else if (twin && !now) $(":scope > summary .icon", d)?.before(twin.cloneNode(true));
+      else if (now && twin) now.replaceWith(twin.cloneNode(true));
+    });
+    $$(".bell").forEach((b) => {
+      const twin = doc.querySelector(".page-corner .bell, .topbar .bell");
+      const now = $(".count", b), next = twin && twin.querySelector(".count");
+      if (now && !next) now.remove();
+      else if (next) { now ? now.replaceWith(next.cloneNode(true)) : b.append(next.cloneNode(true)); }
+    });
+  };
 
   // ---------------------------------------------------------------- phone drawer
   const drawer = (open) => {
@@ -193,7 +234,7 @@
     if (!it) return;
     if (it.run) return it.run();
     store.set(RECENT, [it.href, ...store.get(RECENT, []).filter((h) => h !== it.href)].slice(0, 6));
-    location.href = it.href;
+    visit(it.href);
   };
   const openPal = () => {
     if (!pal) return;
@@ -245,7 +286,8 @@
   document.body.append(probe);
   let scale = 0;
   addEventListener("resize", () => { scale = 0; }, { passive: true });
-  const px = (v) => { if (!scale) scale = probe.getBoundingClientRect().left / 100 || 1; return v / scale + "px"; };
+  const zf = () => { if (!scale) scale = probe.getBoundingClientRect().left / 100 || 1; return scale; };
+  const px = (v) => v / zf() + "px";
   const showTip = (el, html, x, y, side) => {
     tipFor = el;
     tip.innerHTML = html;
@@ -294,7 +336,6 @@
     plot.addEventListener("pointermove", (e) => at(e.clientX));
     plot.addEventListener("pointerleave", () => { plot.classList.remove("hovering"); hideTip(); });
   };
-  $$("figure.area[data-points]").forEach(areaCursor);
 
   // ---------------------------------------------------------------- numbers count up
   const fmt = new Intl.NumberFormat("en-US");
@@ -315,28 +356,20 @@
     };
     requestAnimationFrame(tick);
   };
-  const counters = $$("[data-count]");
-  if (counters.length) {
-    const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { io.unobserve(e.target); countUp(e.target); } }), { threshold: 0.4 });
-    counters.forEach((el) => io.observe(el));
-  }
 
-  // ---------------------------------------------------------------- tabs that scroll on a phone
-  // Fade the edge while more tabs sit off to the right.
-  $$(".tabs").forEach((t) => {
+  // ---------------------------------------------------------------- tabs, segmented choices
+  const tabsFade = (t, signal) => {
     const edge = () => t.classList.toggle("more", t.scrollWidth - t.clientWidth - t.scrollLeft > 4);
     edge();
     t.addEventListener("scroll", edge, { passive: true });
-    addEventListener("resize", edge, { passive: true });
+    addEventListener("resize", edge, { passive: true, signal });
     const on = $(".tab.on", t);
     if (on && t.scrollWidth > t.clientWidth) t.scrollLeft = Math.max(0, on.offsetLeft - 24);
-  });
-
-  // ---------------------------------------------------------------- segmented choices glide
-  $$(".seg").forEach((seg) => {
+  };
+  const segGlide = (seg) => {
     const lit = () => $(":scope > .on", seg) || $(":scope > :has(input:checked)", seg);
     const first = lit();
-    if (!first || calm) return;
+    if (!first || calm || seg.classList.contains("glide")) return;
     const ind = document.createElement("span");
     ind.className = "seg-ind";
     const place = (el) => { ind.style.left = el.offsetLeft + "px"; ind.style.width = el.offsetWidth + "px"; };
@@ -345,7 +378,7 @@
     place(first);
     seg.addEventListener("click", (e) => { const el = e.target.closest(".seg > :not(.seg-ind)"); if (el) place(el); });
     seg.addEventListener("change", () => { const el = lit(); if (el) place(el); });
-  });
+  };
 
   // ---------------------------------------------------------------- the server's colour
   // Sample the server icon and light the dashboard in its most vivid colour. Remembered per
@@ -393,68 +426,309 @@
     (window.requestIdleCallback || setTimeout)(run);
   }
 
+
   // ---------------------------------------------------------------- hero parallax
-  const heroImg = $(".ov-bg img, .ov-bg .art");
-  if (heroImg && !calm) {
+  if (!calm) {
     let ticking = false;
     addEventListener("scroll", () => {
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {
-        const y = Math.min(scrollY, 400);
-        heroImg.style.translate = `0 ${y * 0.35}px`;
+        const hero = $(".ov-bg img, .ov-bg .art");
+        if (hero) hero.style.translate = `0 ${Math.min(scrollY, 400) * 0.35}px`;
         ticking = false;
       });
     }, { passive: true });
   }
 
   // ---------------------------------------------------------------- banner upload
-  const pick = $("#banner-file");
-  if (pick) {
-    pick.addEventListener("change", async () => {
-      const file = pick.files?.[0];
-      if (!file) return;
-      if (!file.type.startsWith("image/")) return toast("Pick a PNG, JPEG or WebP image", true);
-      const btn = $("[data-banner-pick]");
-      btn?.classList.add("busy");
-      try {
-        // Resize in the browser: wide enough for a large screen, small enough to store.
-        let body = file, type = file.type;
-        if (file.type !== "image/gif") {
-          const bmp = await createImageBitmap(file);
-          const k = Math.min(1, 2000 / bmp.width, 1100 / bmp.height);
-          const c = document.createElement("canvas");
-          c.width = Math.round(bmp.width * k);
-          c.height = Math.round(bmp.height * k);
-          c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-          body = await new Promise((res) => c.toBlob(res, "image/webp", 0.86));
-          type = "image/webp";
-          if (!body) { body = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.88)); type = "image/jpeg"; }
-        }
-        const r = await fetch(pick.dataset.action, { method: "POST", headers: { "content-type": type }, body, credentials: "same-origin" });
-        if (!r.ok) throw new Error(r.status === 403 ? "Only admins can change the banner" : r.status === 413 ? "That image is too large" : "The upload didn't go through");
-        location.href = location.pathname + "?saved=1";
-      } catch (err) {
-        btn?.classList.remove("busy");
-        toast(err.message || "The upload didn't go through", true);
+  document.addEventListener("change", async (e) => {
+    const pick = e.target.closest?.("#banner-file");
+    if (!pick) return;
+    const file = pick.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return toast("Pick a PNG, JPEG or WebP image", true);
+    const btn = $("[data-banner-pick]");
+    btn?.classList.add("busy");
+    try {
+      // Resize in the browser: wide enough for a large screen, small enough to store.
+      let body = file, type = file.type;
+      if (file.type !== "image/gif") {
+        const bmp = await createImageBitmap(file);
+        const k = Math.min(1, 2000 / bmp.width, 1100 / bmp.height);
+        const c = document.createElement("canvas");
+        c.width = Math.round(bmp.width * k);
+        c.height = Math.round(bmp.height * k);
+        c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+        body = await new Promise((res) => c.toBlob(res, "image/webp", 0.86));
+        type = "image/webp";
+        if (!body) { body = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.88)); type = "image/jpeg"; }
+      }
+      const r = await fetch(pick.dataset.action, { method: "POST", headers: { "content-type": type }, body, credentials: "same-origin" });
+      if (!r.ok) throw new Error(r.status === 403 ? "Only admins can change the banner" : r.status === 413 ? "That image is too large" : "The upload didn't go through");
+      // The banner also heads the sidebar, so this one is a full load.
+      location.href = location.pathname + "?saved=1";
+    } catch (err) {
+      btn?.classList.remove("busy");
+      toast(err.message || "The upload didn't go through", true);
+    }
+  });
+
+  // ---------------------------------------------------------------- unsaved changes
+  // Save sits at the end of its form. Once something in a settings form changes and that
+  // button is out of view, a bar like Discord's own rises at the bottom: Reset or Save.
+  const bar = document.createElement("div");
+  bar.className = "unsaved";
+  bar.setAttribute("role", "status");
+  bar.innerHTML = '<span>You have unsaved changes</span><button type="button" class="btn small ghost" data-unsaved="reset">Reset</button><button type="button" class="btn small primary" data-unsaved="save">Save changes</button>';
+  document.body.append(bar);
+  let dirty = null;
+  const snap = (f) => { try { return new URLSearchParams(new FormData(f)).toString(); } catch (_) { return ""; } };
+  const syncBar = () => bar.classList.toggle("show", !!dirty && !dirty.saveSeen && document.contains(dirty));
+  const watchForms = (scope, signal) => $$("form.settings", scope).forEach((f) => {
+    f.dataset.snap = snap(f);
+    const btn = $(".save-bar .btn", f);
+    if (!btn) return;
+    const io = new IntersectionObserver(([en]) => { f.saveSeen = en.isIntersecting; syncBar(); });
+    io.observe(btn);
+    signal.addEventListener("abort", () => io.disconnect());
+  });
+  const edited = (e) => {
+    const f = e.target.closest?.("form.settings");
+    if (!f || f.dataset.snap === undefined) return;
+    const changed = snap(f) !== f.dataset.snap;
+    f.classList.toggle("dirty", changed);
+    if (changed) dirty = f; else if (dirty === f) dirty = null;
+    syncBar();
+  };
+  document.addEventListener("input", edited);
+  document.addEventListener("change", edited);
+  bar.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-unsaved]");
+    if (!b || !dirty) return;
+    if (b.dataset.unsaved === "save") return dirty.requestSubmit($(".save-bar .btn", dirty) || undefined);
+    const f = dirty;
+    f.reset();
+    // A reset sets values after its event; re-read them on the next turn.
+    setTimeout(() => { f.dispatchEvent(new Event("input", { bubbles: true })); f.dispatchEvent(new Event("change", { bubbles: true })); }, 0);
+  });
+
+  // Unsaved edits survive the page coming back to itself (a test button posts the form
+  // elsewhere and returns): the values are put into the new form, which stays "unsaved".
+  const carry = (from) => (from && document.contains(from) ? { action: from.getAttribute("action"), data: new FormData(from) } : null);
+  const restore = (page, kept) => {
+    const f = [...page.querySelectorAll("form.settings")].find((x) => x.getAttribute("action") === kept.action);
+    if (!f) return;
+    const seen = {};
+    [...f.elements].forEach((el) => {
+      if (!el.name || el.disabled || el.type === "file" || el.type === "submit" || el.type === "button") return;
+      const all = kept.data.getAll(el.name).map(String);
+      if (el.type === "checkbox" || el.type === "radio") el.checked = all.includes(el.value);
+      else if (el.multiple) [...el.options].forEach((o) => { o.selected = all.includes(o.value); });
+      else {
+        const i = (seen[el.name] = (seen[el.name] ?? -1) + 1);
+        if (all[i] !== undefined) el.value = all[i];
       }
     });
-  }
+    f.dispatchEvent(new Event("input", { bubbles: true }));
+    f.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  // ---------------------------------------------------------------- the page's own setup
+  // Everything a page needs once it's on screen, on the first load and after each swap.
+  const mount = (page) => {
+    const signal = life.signal;
+    const url = new URL(location.href);
+    if (url.searchParams.has("saved")) {
+      toast("Saved");
+      url.searchParams.delete("saved");
+      history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+    }
+    // A test post's answer (`ui::sent_toast`): say it, then drop only the `sent` flag.
+    const told = $("[data-toast]", page);
+    if (told) {
+      toast(told.dataset.toast);
+      told.remove();
+      const u = new URL(location.href);
+      u.searchParams.delete("sent");
+      history.replaceState(history.state, "", u.pathname + u.search + u.hash);
+    }
+    $$("figure.area[data-points]", page).forEach(areaCursor);
+    const counters = $$("[data-count]", page);
+    if (counters.length) {
+      const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { io.unobserve(e.target); countUp(e.target); } }), { threshold: 0.4 });
+      counters.forEach((el) => io.observe(el));
+      signal.addEventListener("abort", () => io.disconnect());
+    }
+    $$(".tabs", page).forEach((t) => tabsFade(t, signal));
+    $$(".seg", page).forEach(segGlide);
+    watchForms(page, signal);
+    $$(".mac-only", page).forEach((k) => { k.textContent = mac ? "⌘K" : "Ctrl K"; });
+  };
+
+  // A submitted form's button spins after a beat; a quick answer cancels the spin.
+  let busyTimers = [];
+  const unbusy = () => { busyTimers.forEach(clearTimeout); busyTimers = []; $$(".btn.busy").forEach((b) => b.classList.remove("busy")); };
+
+  // ---------------------------------------------------------------- refusals
+  // When the server turns an action down (a setting isn't set yet, a value is wrong), say why
+  // in a small popup by the button that asked, instead of opening a page. It stays until it's
+  // dismissed: OK, Escape, a click elsewhere, or leaving the page.
+  const refusal = document.createElement("div");
+  refusal.className = "refusal";
+  refusal.setAttribute("role", "alertdialog");
+  refusal.innerHTML = '<span class="refusal-ic"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 4.2v4.6M8 11.6v.01"/></svg></span><div class="refusal-text"><strong></strong><p></p></div><button type="button" class="btn small">OK</button>';
+  document.body.append(refusal);
+  let refusedFrom = null;
+  const closeRefusal = () => {
+    if (!refusal.classList.contains("show")) return false;
+    refusal.classList.remove("show");
+    if (refusedFrom && document.contains(refusedFrom)) refusedFrom.focus({ preventScroll: true });
+    refusedFrom = null;
+    return true;
+  };
+  const refuse = (title, text, from) => {
+    $("strong", refusal).textContent = title;
+    $("p", refusal).textContent = text;
+    refusal.classList.remove("show", "above");
+    const k = zf();
+    const w = refusal.offsetWidth * k, h = refusal.offsetHeight * k;
+    const r = from && document.contains(from) ? from.getBoundingClientRect() : null;
+    const seen = r && r.bottom > 0 && r.top < innerHeight && r.width > 0;
+    refusedFrom = seen ? from : null;
+    let x = innerWidth / 2, y = 76;
+    if (seen) {
+      x = r.left + r.width / 2;
+      y = r.bottom + 10;
+      if (y + h > innerHeight - 12) { y = r.top - 10; refusal.classList.add("above"); }
+    }
+    x = Math.min(Math.max(x, w / 2 + 12), innerWidth - w / 2 - 12);
+    refusal.style.left = px(x);
+    refusal.style.top = px(y);
+    requestAnimationFrame(() => { refusal.classList.add("show"); $("button", refusal).focus({ preventScroll: true }); });
+  };
+  refusal.addEventListener("click", (e) => { if (e.target.closest("button")) closeRefusal(); });
+  document.addEventListener("pointerdown", (e) => { if (!refusal.contains(e.target)) closeRefusal(); });
+  addEventListener("resize", closeRefusal, { passive: true });
+
+  // ---------------------------------------------------------------- page swaps
+  // A link or form inside the dashboard fetches its page and puts in the new <main> only.
+  // Anything that isn't a dashboard page (sign-in, an error, another server, a file) falls
+  // back to an ordinary visit. Same page again (a filter, a save): no slide, scroll kept.
+  const boostable = (u) => u.origin === location.origin && /^\/(g\/\d+(\/|$)|users(\/|$)|activity$)/.test(u.pathname);
+  let inflight = null;
+  const run = (page) => {
+    // Scripts that came with the page run now, in order, as they would have on a load.
+    $$("script", page).forEach((old) => {
+      const s = document.createElement("script");
+      [...old.attributes].forEach((a) => s.setAttribute(a.name, a.value));
+      s.textContent = old.textContent;
+      old.replaceWith(s);
+    });
+  };
+  const visit = async (href, opts = {}) => {
+    const u = new URL(href, location.href);
+    // Only from a dashboard page (not the public pets pages), to a page of this server.
+    if (!$("main.page") || !boostable(u) || (u.pathname.startsWith("/g/") && !u.pathname.startsWith(`/g/${guild}`))) { location.href = u.href; return; }
+    inflight?.abort();
+    const ctl = (inflight = new AbortController());
+    const main = $("main.page");
+    const timer = setTimeout(() => root.classList.add("loading"), 180);
+    try {
+      const res = await fetch(u.href, { method: opts.method || "GET", body: opts.body, headers: opts.headers, credentials: "same-origin", signal: ctl.signal });
+      const type = res.headers.get("content-type") || "";
+      const posted = (opts.method || "GET") !== "GET";
+      // A post that didn't go through says why by its button, whatever the status. Loading the
+      // post's own address instead would ask for it with GET, which it doesn't answer.
+      if (posted && !res.ok && !type.includes("text/html")) {
+        unbusy();
+        const text = (await res.text()).trim().slice(0, 300);
+        refuse("That didn't go through", text || `The server answered ${res.status}.`, opts.from);
+        return;
+      }
+      if (!type.includes("text/html")) { location.href = res.url; return; }
+      const html = await res.text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const next = doc.querySelector("main.page");
+      // A page built for another server (People and Activity use the first one): its sidebar
+      // isn't this one, so load it whole.
+      if (next && doc.body.dataset.guild !== guild) { location.href = res.url; return; }
+      if (!next) {
+        const why = doc.querySelector(".notice p")?.textContent;
+        if (posted && (!res.ok || why)) {
+          unbusy();
+          refuse(doc.querySelector(".notice h1")?.textContent || "That didn't go through", why || `The server answered ${res.status}.`, opts.from);
+          return;
+        }
+        location.href = res.url;
+        return;
+      }
+      // A post answered with a page of its own (not a redirect) keeps the current address: the
+      // post's address can't be loaded again with a reload.
+      const stay = posted && !res.redirected;
+      const to = stay ? new URL(location.href) : new URL(res.url);
+      // fetch drops the fragment; a link's own (#pet-12) is put back and scrolled to.
+      if (!posted && u.hash && to.pathname === u.pathname) to.hash = u.hash;
+      const same = to.pathname === location.pathname;
+      const swap = () => {
+        closeRefusal();
+        life.abort();
+        life = new AbortController();
+        window.botPage = { signal: life.signal };
+        hideTip();
+        drawer(false);
+        $$(".pop[open]").forEach((d) => d.removeAttribute("open"));
+        document.title = doc.title;
+        if (opts.push !== false) {
+          if (same) history.replaceState({ boost: 1 }, "", to.href);
+          else history.pushState({ boost: 1 }, "", to.href);
+        }
+        root.classList.toggle("same", same);
+        if (same || calm || !document.startViewTransition) root.classList.remove("vt");
+        // Edits survive the page coming back to itself, except after that form's own save:
+        // then the page shows what was saved.
+        const kept = same && !opts.saving ? carry(dirty) : null;
+        dirty = null;
+        const fresh = document.importNode(next, true);
+        main.replaceWith(fresh);
+        markNav();
+        syncCounts(doc);
+        if (!same) window.scrollTo(0, opts.scroll || 0);
+        mount(fresh);
+        run(fresh);
+        if (kept) restore(fresh, kept);
+        syncBar();
+        if (to.hash) document.getElementById(decodeURIComponent(to.hash.slice(1)))?.scrollIntoView({ block: "start" });
+        if (!same) fresh.focus({ preventScroll: true });
+      };
+      unbusy();
+      if (!same && !calm && document.startViewTransition) {
+        // html.vt stays until the next swap: taking it off would restart the entrances.
+        root.classList.add("vt");
+        document.startViewTransition(swap);
+      } else swap();
+    } catch (err) {
+      if (err.name !== "AbortError") location.href = u.href;
+    } finally {
+      clearTimeout(timer);
+      root.classList.remove("loading");
+      if (inflight === ctl) inflight = null;
+    }
+  };
+  window.botVisit = visit;
+  history.replaceState({ boost: 1 }, "", location.href);
+  addEventListener("popstate", (e) => { if (e.state?.boost) visit(location.href, { push: false }); });
 
   // ---------------------------------------------------------------- in-place switches
   // A link marked data-swap (the overview's readings and its 7 / 30 days) changes one part of
   // the page: fetch where it points, put in the parts data-swap names, bring the other
-  // data-swap links up to date, and leave the rest of the page still. Any surprise falls back
-  // to an ordinary visit.
-  let swap = null;
-  document.addEventListener("click", async (e) => {
-    const a = e.target.closest?.("a[data-swap]");
-    if (!a || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-    e.preventDefault();
+  // data-swap links up to date, and leave the rest of the page still.
+  let swapping = null;
+  const partSwap = async (a) => {
     const parts = a.dataset.swap.split(/\s*,\s*/).map((s) => $(s));
-    if (parts.some((p) => !p)) return (location.href = a.href);
-    swap?.abort();
-    const ctl = (swap = new AbortController());
+    if (parts.some((p) => !p)) return visit(a.href);
+    swapping?.abort();
+    const ctl = (swapping = new AbortController());
     parts.forEach((p) => p.classList.add("swapping"));
     try {
       const res = await fetch(a.href, { credentials: "same-origin", signal: ctl.signal });
@@ -463,7 +737,6 @@
       const next = a.dataset.swap.split(/\s*,\s*/).map((s) => doc.querySelector(s));
       const olds = $$("a[data-swap]"), news = [...doc.querySelectorAll("a[data-swap]")];
       if (next.some((n) => !n) || olds.length !== news.length) throw new Error("visit");
-      // Where the lit reading's underline sits now, to glide it to its new card.
       const line = $(".stat-line"), from = line?.getBoundingClientRect();
       olds.forEach((o, i) => {
         const n = news[i];
@@ -482,14 +755,30 @@
         $$("figure.area[data-points]", n).forEach(areaCursor);
         $$("[data-count]", n).forEach(countUp);
       });
-      history.replaceState(null, "", a.href);
+      history.replaceState({ boost: 1 }, "", a.href);
     } catch (err) {
-      if (err.name !== "AbortError") location.href = a.href;
+      if (err.name !== "AbortError") visit(a.href);
     } finally {
-      if (swap === ctl) swap = null;
+      if (swapping === ctl) swapping = null;
       parts.forEach((p) => p.classList.remove("swapping"));
     }
-  });
+  };
+
+  // ---------------------------------------------------------------- the bell
+  // Opening it loads the newest notifications and marks them seen; "See all" is the page.
+  document.addEventListener("toggle", async (e) => {
+    const d = e.target;
+    if (!d.matches?.("details[data-peek]") || !d.open) return;
+    const body = $(".peek", d);
+    try {
+      const res = await fetch(d.dataset.peek, { credentials: "same-origin" });
+      if (!res.ok || res.redirected) throw new Error();
+      body.innerHTML = await res.text();
+      $$(".bell .count").forEach((c) => { c.classList.add("leaving"); setTimeout(() => c.remove(), 250); });
+    } catch (_) {
+      body.innerHTML = '<p class="peek-none">Notifications didn\'t load. Open the page instead.</p>';
+    }
+  }, true);
 
   // ---------------------------------------------------------------- clicks
   const closeOpen = (except) => $$(".pop[open]").forEach((d) => { if (!d.contains(except)) d.removeAttribute("open"); });
@@ -512,17 +801,46 @@
       return;
     }
     if (e.target.closest("[data-palette]")) { e.preventDefault(); openPal(); return; }
-    if (e.target.closest("[data-banner-pick]")) { e.preventDefault(); pick?.click(); return; }
+    if (e.target.closest("[data-banner-pick]")) { e.preventDefault(); $("#banner-file")?.click(); return; }
     const menu = e.target.closest(".menu-btn");
     if (menu) drawer(!document.body.classList.contains("drawer"));
     closeOpen(e.target);
+    // Links: a part swap, a page swap, or the browser's own way.
+    const a = e.target.closest("a[href]");
+    if (!a || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    if (a.target || a.hasAttribute("download") || a.hasAttribute("data-full") || a.getAttribute("href").startsWith("#")) return;
+    if (a.dataset.swap) { e.preventDefault(); partSwap(a); return; }
+    const u = new URL(a.href);
+    if (!boostable(u)) return;
+    e.preventDefault();
+    visit(u.href);
   });
 
-  // A submitted form's button spins until the next page arrives.
+  // Forms inside the dashboard post in place: the answer replaces the page, a refusal shows
+  // as a toast. The submitting button spins until then.
   document.addEventListener("submit", (e) => {
     if (e.defaultPrevented) return;
+    const f = e.target;
     const b = e.submitter;
-    if (b && b.classList.contains("btn")) setTimeout(() => b.classList.add("busy"), 120);
+    if (b && b.classList.contains("btn")) busyTimers.push(setTimeout(() => b.classList.add("busy"), 120));
+    // A real save of the changed form (not a test posting it elsewhere with formaction).
+    // "Unsaved" clears when the save's answer arrives, not before: a refusal keeps it.
+    const method = (b?.getAttribute("formmethod") || f.getAttribute("method") || "get").toUpperCase();
+    const action = new URL(b?.getAttribute("formaction") || f.getAttribute("action") || location.href, location.href);
+    if (f.target || f.hasAttribute("data-full") || !boostable(action) || f.closest(".account-menu")) return;
+    e.preventDefault();
+    const data = new FormData(f, b || undefined);
+    // The button that asked, or the form's own Save, anchors a refusal popup.
+    const from = b || $(".save-bar .btn", f) || f;
+    const saving = f === dirty && !b?.hasAttribute("formaction");
+    if (method === "GET") {
+      action.search = new URLSearchParams(data).toString();
+      visit(action.href, { from, saving });
+    } else if ((f.enctype || "").includes("multipart")) {
+      visit(action.href, { method, body: data, from, saving });
+    } else {
+      visit(action.href, { method, body: new URLSearchParams(data), headers: { "content-type": "application/x-www-form-urlencoded" }, from, saving });
+    }
   });
   addEventListener("pageshow", () => $$(".btn.busy").forEach((b) => b.classList.remove("busy")));
 
@@ -531,6 +849,7 @@
     if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) { e.preventDefault(); pal && !pal.hidden ? closePal() : openPal(); return; }
     if (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); openPal(); return; }
     if (e.key !== "Escape") return;
+    if (closeRefusal()) return;
     if (document.body.classList.contains("drawer")) return drawer(false);
     const open = $(".pop[open]");
     if (!open) return;
@@ -543,4 +862,6 @@
     const el = e.target.closest("[data-autosubmit]");
     if (el) el.form.requestSubmit();
   });
+
+  mount($("main.page") || document.body);
 })();

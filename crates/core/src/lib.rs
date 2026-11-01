@@ -159,9 +159,9 @@ pub trait Feature: Send + Sync + 'static {
         &[]
     }
 
-    /// Admin-only features can't be granted per server: they act on things shared by every
-    /// server (app connections), so only dashboard admins see or change them.
-    fn admin_only(&self) -> bool {
+    /// Features kept for the owner and the people they give Admin+: they act on things shared
+    /// by every server (app connections), so no per-server grant or plain admin reaches them.
+    fn admin_plus_only(&self) -> bool {
         false
     }
 
@@ -249,6 +249,9 @@ pub struct CtxInner {
     features: OnceLock<Vec<Arc<dyn Feature>>>,
     toggles: RwLock<HashMap<(u64, String), bool>>,
     settings_cache: RwLock<HashMap<(u64, String), Arc<dyn std::any::Any + Send + Sync>>>,
+    /// Bumped on every settings save, so a read that loaded from the database before a save
+    /// doesn't put its older value back into the cache after it.
+    settings_saves: std::sync::atomic::AtomicU64,
     counters: Mutex<HashMap<(u64, &'static str), i64>>,
     /// Who sent a message today, per server, for the "active today" count: `(day, sets)`.
     active: Mutex<(String, HashMap<u64, HashSet<u64>>)>,
@@ -309,6 +312,7 @@ impl Ctx {
             features: OnceLock::new(),
             toggles: RwLock::new(toggles),
             settings_cache: RwLock::new(HashMap::new()),
+            settings_saves: std::sync::atomic::AtomicU64::new(0),
             counters: Mutex::new(HashMap::new()),
             active: Mutex::new((today(), HashMap::new())),
             snapshots: Mutex::new(discord::Snapshots::default()),
@@ -333,8 +337,15 @@ impl Ctx {
         self.features().iter().find(|f| f.meta().key == key)
     }
 
+    /// The bot's application id. Set once the gateway task has fetched it; until then a
+    /// placeholder, so an early call fails at Discord rather than panicking here (release
+    /// builds abort on panic). Check [`Ctx::has_app_id`] first where it matters.
     pub fn app_id(&self) -> Id<ApplicationMarker> {
-        *self.app_id.get().expect("application id is set at boot")
+        self.app_id.get().copied().unwrap_or(Id::new(1))
+    }
+
+    pub fn has_app_id(&self) -> bool {
+        self.app_id.get().is_some()
     }
 
     pub(crate) fn set_app_id(&self, id: Id<ApplicationMarker>) {
@@ -401,8 +412,12 @@ impl Ctx {
             && let Ok(v) = hit.clone().downcast::<T>() {
                 return Ok(v);
             }
+        let saves = self.settings_saves.load(std::sync::atomic::Ordering::Acquire);
         let value = Arc::new(self.db.settings::<T>(guild_id, feature)?);
-        self.settings_cache.write().unwrap().insert(key, value.clone());
+        let mut cache = self.settings_cache.write().unwrap();
+        if self.settings_saves.load(std::sync::atomic::Ordering::Acquire) == saves {
+            cache.insert(key, value.clone());
+        }
         Ok(value)
     }
 
@@ -411,7 +426,9 @@ impl Ctx {
         T: Serialize,
     {
         self.db.save_settings(guild_id, feature, value)?;
-        self.settings_cache.write().unwrap().remove(&(guild_id, feature.to_owned()));
+        let mut cache = self.settings_cache.write().unwrap();
+        self.settings_saves.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        cache.remove(&(guild_id, feature.to_owned()));
         Ok(())
     }
 

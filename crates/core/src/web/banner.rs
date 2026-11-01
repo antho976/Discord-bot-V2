@@ -43,16 +43,18 @@ fn sniff(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-async fn serve(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
-    if !ctx.guilds_for(&user).contains(&guild) {
-        return Err(WebError::Forbidden);
+/// Public, like Discord's own banners: the public pets pages show it to visitors who aren't
+/// signed in. Only for servers the bot is in.
+async fn serve(State(ctx): State<Ctx>, Path(guild): Path<u64>) -> WebResult {
+    if !ctx.guild_ids().contains(&guild) {
+        return Err(WebError::NotFound);
     }
     let row: Option<(String, Vec<u8>)> = ctx
         .db
         .with(|c| c.query_row("SELECT mime, data FROM guild_banners WHERE guild_id = ?1", [guild as i64], |r| Ok((r.get(0)?, r.get(1)?))).optional())?;
     let Some((mime, data)) = row else { return Err(WebError::NotFound) };
     // The address carries the upload time, so a new banner is a new address.
-    Ok(([(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, "private, max-age=31536000, immutable".to_owned())], data).into_response())
+    Ok(([(header::CONTENT_TYPE, mime), (header::CACHE_CONTROL, "public, max-age=31536000, immutable".to_owned())], data).into_response())
 }
 
 /// The body is the image itself (app.js sends the resized file), not a form.

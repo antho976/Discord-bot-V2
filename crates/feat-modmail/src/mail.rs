@@ -589,6 +589,35 @@ fn why_no_dm(e: &bot_core::twilight_http::Error) -> String {
     }
 }
 
+// ---- a test from the dashboard ----
+
+/// The two DMs a member gets, as saved, each with `{server}` filled: on opening, and on closing.
+pub fn member_texts(s: &Settings, server: &str) -> [(&'static str, String); 2] {
+    let pick = |t: &str, default: &'static str| text::fill(if t.trim().is_empty() { default } else { t.trim() }, &[("server", server)]);
+    [("when a conversation opens", pick(&s.greeting, crate::DEFAULT_GREETING)), ("when staff close it", pick(&s.closing, crate::DEFAULT_CLOSING))]
+}
+
+/// The greeting and the closing text in `user`'s own DMs, as saved, each under a small grey line
+/// saying it's a test and when a member gets it. The error says why Discord didn't deliver them.
+pub(crate) async fn send_test(ctx: &Ctx, guild: u64, s: &Settings, user: u64) -> std::result::Result<(), String> {
+    let why = |e: &bot_core::twilight_http::Error| match e.kind() {
+        bot_core::twilight_http::error::ErrorType::Response { status, .. } if status.get() == 403 => {
+            "Discord didn't let the bot DM you. Allow direct messages from this server's members in your privacy settings, then try again.".to_owned()
+        }
+        _ => text::clip(&format!("Discord refused the message: {e}"), 300),
+    };
+    let channel = match ctx.http.create_private_channel(Id::new(user)).await {
+        Ok(r) => r.model().await.map_err(|_| "Discord didn't open a DM with you.".to_owned())?,
+        Err(e) => return Err(why(&e)),
+    };
+    let none = AllowedMentions::default();
+    for (when, body) in member_texts(s, &ctx.guild_name(guild)) {
+        let content = format!("-# Test from the dashboard: a member gets this {when}\n{body}");
+        ctx.http.create_message(channel.id).content(&content).allowed_mentions(Some(&none)).await.map_err(|e| why(&e))?;
+    }
+    Ok(())
+}
+
 // ---- closing ----
 
 fn is_staff(i: &Interaction, s: &Settings) -> bool {

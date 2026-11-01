@@ -22,8 +22,11 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/alerts", get(twitch_page).post(save_twitch))
         .route("/g/{guild}/alerts/test", post(send_test))
         .route("/g/{guild}/alerts/schedule", get(schedule_page).post(save_schedule))
+        .route("/g/{guild}/alerts/schedule/test-reminder", post(send_reminder_test))
+        .route("/g/{guild}/alerts/schedule/test-weekly", post(send_weekly_test))
         .route("/g/{guild}/alerts/schedule.png", get(schedule_png))
         .route("/g/{guild}/alerts/clips", get(clips_page).post(save_clips))
+        .route("/g/{guild}/alerts/clips/test", post(send_clip_test))
         .route("/g/{guild}/alerts/youtube", get(youtube_page).post(save_youtube))
         .route("/g/{guild}/alerts/youtube/test", post(send_youtube_test))
         .route("/g/{guild}/alerts/stats", get(stats_page))
@@ -82,16 +85,6 @@ fn today(now: i64, tz: &TimeZone) -> Date {
 fn month_start(tz: &TimeZone, now: i64) -> i64 {
     let today = today(now, tz);
     today.first_of_month().to_zoned(tz.clone()).map(|z| z.timestamp().as_millisecond()).unwrap_or(0)
-}
-
-fn toast_if(q: &HashMap<String, String>, key: &str, msg: &str) -> Markup {
-    html! {
-        @if q.contains_key(key) {
-            script { (PreEscaped(format!(
-                "addEventListener('DOMContentLoaded',()=>{{window.botToast&&window.botToast({msg:?});history.replaceState(null,'',location.pathname)}})"
-            ))) }
-        }
-    }
 }
 
 // ---- Twitch helpers ----
@@ -595,7 +588,7 @@ async fn twitch_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Twitch"))
-        (toast_if(&q, "sent", "Test alert sent"))
+        (ui::sent_toast(q.contains_key("sent"), "Test alert sent"))
         div.with-rail {
             div.stack.sa-main {
                 @if mode == Mode::Off {
@@ -792,9 +785,58 @@ async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     Ok(bot_core::axum::response::Redirect::to(&page.path("alerts?sent=1")).into_response())
 }
 
+/// A test button inside a settings form. A form can't hold another form, so it posts to its
+/// own route with `formaction`; the route reads the saved settings, not the form.
+fn test_in_form(page: &Page, path: &str, label: &str) -> Markup {
+    html! { button.btn.small type="submit" formaction=(page.path(path)) formmethod="post" formnovalidate { (label) } }
+}
+
+/// A test post's failure, said plainly.
+fn test_refused(e: &bot_core::anyhow::Error, what: &str) -> WebError {
+    tracing::warn!(error = %e, what, "test post failed");
+    WebError::Bad(bot_core::discord::why_refused_any(e))
+}
+
+async fn send_reminder_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    if s.reminder_channel.is_none() {
+        return Err(WebError::Bad("Pick a channel for reminders and save first.".into()));
+    }
+    schedule::test_reminder(&ctx, &s).await.map_err(|e| test_refused(&e, "reminder"))?;
+    ctx.audit(&page.user, Some(guild), KEY, "Sent a test stream reminder");
+    Ok(bot_core::axum::response::Redirect::to(&page.path("alerts/schedule?sent=reminder")).into_response())
+}
+
+async fn send_weekly_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    if s.weekly_channel.is_none() {
+        return Err(WebError::Bad("Pick a channel for the weekly image and save first.".into()));
+    }
+    schedule::test_weekly(&ctx, &s).await.map_err(|e| test_refused(&e, "weekly image"))?;
+    ctx.audit(&page.user, Some(guild), KEY, "Sent a test weekly schedule image");
+    Ok(bot_core::axum::response::Redirect::to(&page.path("alerts/schedule?sent=weekly")).into_response())
+}
+
+async fn send_clip_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    if s.clips_channel.is_none() {
+        return Err(WebError::Bad("Pick a channel for clips and save first.".into()));
+    }
+    let ids: Vec<String> = twitch::for_settings(&ctx, &s).into_iter().map(|b| b.user_id).collect();
+    if clips::recent(&ctx, &ids, 1).is_empty() {
+        return Err(WebError::Bad("There's no clip to post yet. The test uses your newest clip once the bot has seen one.".into()));
+    }
+    clips::test_post(&ctx, &s).await.map_err(|e| test_refused(&e, "clip"))?;
+    ctx.audit(&page.user, Some(guild), KEY, "Sent a test clip post");
+    Ok(bot_core::axum::response::Redirect::to(&page.path("alerts/clips?sent=1")).into_response())
+}
+
 // ---- Schedule ----
 
-async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<HashMap<String, String>>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let tz = s.tz();
@@ -827,6 +869,7 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Schedule"))
+        (ui::sent_toast(q.contains_key("sent"), "Test sent. It uses the saved settings."))
         @if bs.is_empty() {
             (ui::empty(Icon::Calendar, "No Twitch channel yet", "Add your channel on the Twitch tab and its schedule shows up here."))
         } @else if let Some(g) = next {
@@ -930,6 +973,7 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                     h2 { "What members see before a stream" }
                                     p.muted { "The closest reminder. Discord shows each reader the time in their own zone." }
                                 }
+                                @if page.can_edit() { (test_in_form(&page, "alerts/schedule/test-reminder", "Send a test reminder")) }
                             }
                             (discord(channel_name(&ctx, guild, s.reminder_channel), "No channel picked", reminder_post(&ctx, &page, &tz, role, &sample, next, closest)))
                             p.sa-foot-note { (reminder_line(&s)) }
@@ -949,6 +993,7 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                         h2 { "What /schedule posts" }
                                         p.muted { @if weekly { "The same picture goes up every Monday." } @else { "Members can ask for it any time. The Monday post is off." } }
                                     }
+                                    @if page.can_edit() { (test_in_form(&page, "alerts/schedule/test-weekly", "Send a test post")) }
                                 }
                                 (discord(if weekly { channel_name(&ctx, guild, s.weekly_channel) } else { None }, "Wherever someone uses it", bot_message(&ctx, &page, (!weekly).then_some("/schedule"), html! {
                                     div.sa-media.sheet {
@@ -1115,7 +1160,7 @@ fn clip_gallery(list: &[clips::Clip], channel: Option<&Broadcaster>) -> Markup {
     }
 }
 
-async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<HashMap<String, String>>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let mode = twitch::mode(&ctx);
@@ -1150,6 +1195,7 @@ async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Clips"))
+        (ui::sent_toast(q.contains_key("sent"), "Test post sent"))
         @if mode == Mode::Off {
             div.sa-note {
                 span.need-icon { (ui::icon(Icon::Plug)) }
@@ -1181,6 +1227,7 @@ async fn clips_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                                 h2 { "What members see for a new clip" }
                                 p.muted { "Discord turns the link into a player members can watch in the channel." }
                             }
+                            @if page.can_edit() { (ui::action_button(&page.path("alerts/clips/test"), "Send a test post", Tone::Muted, false)) }
                         }
                         (discord(channel_name(&ctx, guild, s.clips_channel), "No channel picked", clip_post(&ctx, &page, &b, &sample)))
                         p.sa-foot-note {
@@ -1267,7 +1314,7 @@ async fn youtube_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "YouTube"))
-        (toast_if(&q, "sent", "Test post sent"))
+        (ui::sent_toast(q.contains_key("sent"), "Test post sent"))
         section.block {
             div.sa-sechead {
                 div {
@@ -1718,13 +1765,14 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
     let ids: Vec<String> = bs.iter().map(|b| b.user_id.clone()).collect();
     let marks = vec!["?"; ids.len()].join(", ");
     let sql = format!(
-        "SELECT game, title, thumbnail, ended_at, duration_secs, peak FROM alerts_streams
+        "SELECT game, title, thumbnail, ended_at, duration_secs, peak, broadcaster_id, vod_url FROM alerts_streams
          WHERE broadcaster_id IN ({marks}) ORDER BY started_at DESC LIMIT 1"
     );
-    let last: Option<(String, String, String, Option<i64>, i64, i64)> = ctx
+    type Last = (String, String, String, Option<i64>, i64, i64, String, Option<String>);
+    let last: Option<Last> = ctx
         .db
         .with(|c| {
-            c.query_row(&sql, bot_core::rusqlite::params_from_iter(ids.iter()), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+            c.query_row(&sql, bot_core::rusqlite::params_from_iter(ids.iter()), |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)))
                 .optional()
         })
         .ok()
@@ -1751,8 +1799,11 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
             "Stream"
             span.status { span.dot.live[live] {} (if live { "Live" } else { "Offline" }) }
         }
-        @if let Some((game, title, thumb, _, secs, peak)) = &last {
-            a.stream-card href=(page.path("alerts/stats")) {
+        @if let Some((game, title, thumb, _, secs, peak, who, vod)) = &last {
+            // Watch it: the channel while live, else the recording when Twitch kept one.
+            @let channel = bs.iter().find(|b| &b.user_id == who).or(bs.first()).map(Broadcaster::url);
+            @let watch = if live { channel } else { vod.clone().or(channel) };
+            a.stream-card href=[watch] target="_blank" rel="noopener" aria-label=(if live { "Watch the stream on Twitch" } else { "Watch the last stream on Twitch" }) {
                 @if thumb.is_empty() {
                     span.stream-ph { (ui::icon(Icon::Live)) }
                 } @else {

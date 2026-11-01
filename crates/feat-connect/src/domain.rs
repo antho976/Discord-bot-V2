@@ -78,12 +78,14 @@ pub fn claim_state(kind: &str, status: &str, expires_at: i64, claims: i64, has_p
     ClaimState::Ready
 }
 
-/// A name the device chose, safe to show in a DM and store: no control characters, 48 at most.
+/// A name the device chose, safe to show in a DM and store: no control characters, no markdown,
+/// nothing that makes a link (brackets, parentheses, ":" and "/"), 48 characters at most. The
+/// name comes from an unauthenticated request and lands in the approvers' DMs.
 pub fn clean_device_name(raw: &str) -> String {
     let visible: String = raw
         .chars()
         .map(|c| if (c as u32) < 0x20 || c as u32 == 0x7f { ' ' } else { c })
-        .filter(|c| !matches!(c, '`' | '*' | '_' | '~' | '|' | '<' | '>' | '@' | '#'))
+        .filter(|c| !matches!(c, '`' | '*' | '_' | '~' | '|' | '<' | '>' | '@' | '#' | '[' | ']' | '(' | ')' | ':' | '/' | '\\'))
         .collect();
     let collapsed = visible.split_whitespace().collect::<Vec<_>>().join(" ");
     let name: String = collapsed.chars().take(48).collect();
@@ -254,6 +256,13 @@ pub fn js_len(s: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn device_names_cant_carry_a_link() {
+        assert_eq!(clean_device_name("[Verify here](https://evil.example/x)"), "Verify herehttpsevil.examplex");
+        assert_eq!(clean_device_name("Antho's PC"), "Antho's PC");
+        assert!(!clean_device_name("https://evil.example").contains("://"));
+    }
     use super::*;
 
     const V: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";

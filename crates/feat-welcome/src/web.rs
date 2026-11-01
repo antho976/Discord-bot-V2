@@ -1,5 +1,5 @@
 use bot_core::axum::Router;
-use bot_core::axum::extract::{Path, State};
+use bot_core::axum::extract::{Path, Query, State};
 use bot_core::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
@@ -18,6 +18,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/welcome", get(messages_page).post(save_messages))
         .route("/g/{guild}/welcome/card.png", get(card_png))
         .route("/g/{guild}/welcome/test", post(send_test))
+        .route("/g/{guild}/welcome/test-goodbye", post(send_goodbye_test))
         .route("/g/{guild}/welcome/roles", get(roles_page).post(save_roles))
         .route("/g/{guild}/welcome/invites", get(invites_page).post(save_invites))
         .route("/g/{guild}/welcome/invites/names", post(save_invite_names))
@@ -27,8 +28,9 @@ fn tabs(page: &Page, active: &str) -> Markup {
     ui::tabs(&[("Messages", page.path("welcome")), ("Roles", page.path("welcome/roles")), ("Invites", page.path("welcome/invites"))], active)
 }
 
-fn channel_name(ctx: &Ctx, guild: u64, id: Option<u64>) -> String {
-    id.and_then(|id| ctx.text_channels(guild).into_iter().find(|(c, _)| *c == id)).map(|(_, n)| format!("#{n}")).unwrap_or_else(|| "Off".into())
+/// Where a test posts: "#welcome", or "the saved channel" before one is picked.
+fn test_channel(ctx: &Ctx, guild: u64, id: Option<u64>) -> String {
+    id.and_then(|id| ctx.text_channels(guild).into_iter().find(|(c, _)| *c == id)).map(|(_, n)| format!("#{n}")).unwrap_or_else(|| "the saved channel".into())
 }
 
 /// "@Regulars, @Idleon", with roles deleted since counted at the end: "@Regulars and 1 deleted role".
@@ -115,14 +117,11 @@ fn readings(items: &[(&str, String)]) -> Markup {
     html! { div.readings.wl-readings { @for (label, value) in items { div.reading { b data-count { (value) } span { (label) } } } } }
 }
 
-/// A section headed by an icon tile in the group's hue.
-fn section(ic: Icon, title: &str, hint: Option<&str>, body: Markup) -> Markup {
+/// A titled section: the heading and its one line, then the body, on one left edge.
+fn section(title: &str, hint: Option<&str>, body: Markup) -> Markup {
     html! {
         section.block.wl-sec {
-            div.wl-sec-head {
-                span.wl-sec-ic { (ui::icon(ic)) }
-                div { h2 { (title) } @if let Some(h) = hint { p.muted { (h) } } }
-            }
+            div.block-head { h2 { (title) } @if let Some(h) = hint { p.muted { (h) } } }
             (body)
         }
     }
@@ -194,46 +193,40 @@ fn popout(avatar: &str, name: &str, username: &str, roles: &[(String, String)], 
 }
 
 const CSS: &str = r#"
-.wl-main { gap: 30px; }
-.wl-block { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.wl-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
-.wl-sec { gap: 14px; }
-.wl-sec-head { display: flex; align-items: flex-start; gap: 12px; }
-.wl-sec-ic { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; flex: none; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 24%, transparent); }
-.wl-sec-ic .icon { width: 17px; height: 17px; }
-.wl-sec-head h2 { padding-top: 6px; }
-.wl-sec-head p { font-size: 13px; margin-top: 3px; max-width: 68ch; }
+/* One rhythm on every tab: 28 px between blocks, 12 px from a heading to what it heads, 16 px from
+   a form's last card to its Save. */
+.wl-main { gap: 28px; }
+.wl-block, .wl-sec { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.wl-sec .block-head p, .wl-block .block-head p { max-width: 68ch; }
+.wl-main .settings { gap: 16px; }
+.wl-main .settings fieldset { gap: 28px; }
+@container col (max-width: 999px) { .wl-main .compose { row-gap: 28px; } }
 
 /* Readings stretch to share their row, so the page's answer spans the column. */
 .readings.wl-readings > .reading { flex: 1 1 160px; }
 
-/* Joined today: one card per face, as many as the column holds in one row. A wider column shows
-   more faces and swaps in the "more" tile that counts the rest. */
-.wl-faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+/* Joined today: a face per member, as many as the column holds in one row. A wider column shows
+   more faces and swaps in the "more" face that counts the rest. */
+.wl-faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 16px 12px; }
 .wl-face.x8, .wl-face.x11, .wl-face.m8, .wl-face.m11 { display: none; }
 @container col (min-width: 1016px) {
   .wl-face.x8, .wl-face.m8 { display: flex; }
   .wl-face.m5 { display: none; }
 }
-@container col (min-width: 1280px) {
-  .wl-faces { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
-  .wl-face .avatar, .wl-more { width: 64px; height: 64px; }
-}
 @container col (min-width: 1700px) {
   .wl-face.x11, .wl-face.m11 { display: flex; }
   .wl-face.m8 { display: none; }
 }
-.wl-face { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; padding: 16px 8px 13px; border-radius: 14px; text-align: center; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
-.wl-face:hover { transform: translateY(-3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.wl-face .avatar { width: 56px; height: 56px; margin-bottom: 9px; box-shadow: 0 0 0 2px var(--page), 0 0 0 4px color-mix(in oklab, var(--hue) 60%, transparent); }
-.wl-face.back .avatar { box-shadow: 0 0 0 2px var(--page), 0 0 0 4px color-mix(in oklab, var(--data) 70%, transparent); }
-.wl-face strong { font-weight: 600; font-size: 13px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wl-face .muted { font-size: 11.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wl-face.back .muted { color: var(--data); }
-.wl-more { display: grid; place-items: center; width: 56px; height: 56px; margin-bottom: 9px; border-radius: 50%; background: color-mix(in oklab, var(--hue) 14%, transparent); color: var(--hue); font: 600 16px var(--sans); }
+.wl-face { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; text-align: center; }
+.wl-face .avatar, .wl-more { width: 56px; height: 56px; margin-bottom: 8px; transition: transform 0.3s var(--spring); }
+.wl-face:hover .avatar { transform: translateY(-2px); }
+.wl-face strong { max-width: 100%; font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-when { max-width: 100%; font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-face.back .wl-when { color: var(--data); }
+.wl-more { display: grid; place-items: center; border-radius: 50%; background: var(--control); color: var(--ink-2); font: 600 15px var(--sans); font-variant-numeric: tabular-nums; }
 
 /* Discord, drawn the way members see it. */
-.wl-dc { border-radius: 14px; overflow: hidden; background: #313338; color: #dbdee1; font-size: 15px; box-shadow: 0 30px 60px -28px rgba(0, 0, 0, 0.95), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+.wl-dc { border-radius: 14px; overflow: hidden; background: #313338; color: #dbdee1; font-size: 15px; box-shadow: 0 24px 48px -28px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
 .wl-dc-head { display: flex; align-items: center; gap: 7px; height: 46px; padding: 0 16px; color: #f2f3f5; font-weight: 600; font-size: 15px; box-shadow: 0 1px 0 rgba(4, 4, 5, 0.2), 0 1.5px 0 rgba(6, 6, 7, 0.05), 0 2px 0 rgba(4, 4, 5, 0.05); position: relative; z-index: 1; }
 .wl-dc-head .icon { color: #80848e; width: 20px; height: 20px; }
 .wl-dc-body { padding: 10px 0 18px; }
@@ -257,41 +250,47 @@ span.wl-dc-av img { width: 22px; height: 22px; }
 .wl-card[hidden] { display: none; }
 .wl-card img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .wl-card::after { content: ""; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.22) 50%, transparent 65%); transform: translateX(-110%); animation: wl-sheen 1.3s var(--ease) both 1.25s; pointer-events: none; }
-.wl-dc + .wl-dc { margin-top: 12px; }
-.wl-send { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.wl-settings .settings { gap: 22px; }
+html.same .wl-card, html.same .wl-card::after, html.same .wl-pop, html.same .wl-pop-role { animation: none; }
+#wl-preview { display: flex; flex-direction: column; gap: 12px; }
+.wl-send { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.wl-send .muted { font-size: 12.5px; }
 
 /* Rail. */
-.wl-inv { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 11px; align-items: center; font-size: 13px; }
+.wl-inv { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; font-size: 13.5px; }
 .wl-inv .avatar { width: 30px; height: 30px; }
 .wl-inv .grow { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .wl-inv .grow > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.wl-inv .mono { color: var(--ink-2); }
+.wl-inv .meter { height: 5px; }
+.wl-inv .meter > span, .wl-uses .meter > span { background: var(--data); }
+.wl-n { min-width: 22px; text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .wl-back { display: flex; align-items: center; gap: 12px; }
 .wl-back p { font-size: 13px; color: var(--ink-2); }
 .wl-back .avatars .avatar { width: 32px; height: 32px; }
+/* Roles as Discord shows them: a dot in the role's colour on a quiet chip. */
 .wl-roles { display: flex; flex-wrap: wrap; gap: 6px; }
-.wl-role { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px; border-radius: 13px; background: color-mix(in oklab, var(--c) 13%, transparent); color: var(--ink); font-size: 12.5px; font-weight: 500; white-space: nowrap; }
-.wl-role i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: none; }
+.wl-role { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border-radius: 8px; background: var(--control); color: var(--ink); font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+.wl-role i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
 .wl-big { display: flex; flex-direction: column; gap: 4px; }
+.wl-track .settings { gap: 12px; }
+.wl-track .switch-row { padding: 0; }
 
 /* Roles: two profile cards, a newcomer's and a returning member's. */
 .wl-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .wl-pair > div { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .wl-cap { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
 .wl-cap b { color: var(--ink); font-weight: 600; }
-.wl-pop { position: relative; border-radius: 12px; overflow: hidden; background: #232428; color: #dbdee1; box-shadow: 0 26px 50px -24px rgba(0, 0, 0, 0.95), inset 0 0 0 1px rgba(255, 255, 255, 0.06); animation: wl-arrive 0.8s var(--ease) both 0.3s; }
+.wl-pop { position: relative; border-radius: 12px; overflow: hidden; background: #232428; color: #dbdee1; box-shadow: 0 24px 48px -28px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(255, 255, 255, 0.06); animation: wl-arrive 0.8s var(--ease) both 0.3s; }
 .wl-pair > div + div .wl-pop { animation-delay: 0.45s; }
 /* Roles: the two profiles above the form, or beside it at Discord's own popout width once the
    column has room, each next to the settings that decide it. */
-.wl-roles-set { display: flex; flex-direction: column; gap: 30px; }
+.wl-roles-set { display: flex; flex-direction: column; gap: 28px; }
 @container col (min-width: 1000px) {
-  .wl-roles-set { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 30px 28px; align-items: start; }
-  .wl-roles-set > .wl-pair { grid-column: 2; grid-row: 1; grid-template-columns: minmax(0, 1fr); gap: 22px; position: sticky; top: 16px; }
+  .wl-roles-set { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px 32px; align-items: start; }
+  .wl-roles-set > .wl-pair { grid-column: 2; grid-row: 1; grid-template-columns: minmax(0, 1fr); gap: 24px; position: sticky; top: 16px; }
   .wl-roles-set > form { grid-column: 1; grid-row: 1; }
 }
-.wl-pop-banner { height: 64px; background: linear-gradient(120deg, color-mix(in oklab, var(--hue) 75%, #000), color-mix(in oklab, var(--hue) 35%, #000)); }
-.wl-pop-banner.back { background: linear-gradient(120deg, color-mix(in oklab, var(--data-2) 80%, #000), color-mix(in oklab, var(--data) 40%, #000)); }
+.wl-pop-banner { height: 64px; background: color-mix(in oklab, var(--hue) 55%, #000); }
+.wl-pop-banner.back { background: color-mix(in oklab, var(--data-2) 60%, #000); }
 .wl-pop-av { position: absolute; top: 22px; left: 14px; width: 76px; height: 76px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 6px #232428; }
 .wl-pop-body { display: flex; flex-direction: column; margin: 46px 12px 12px; padding: 12px; border-radius: 8px; background: #111214; }
 .wl-pop-name { color: #f2f3f5; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
@@ -302,59 +301,58 @@ span.wl-dc-av img { width: 22px; height: 22px; }
 .wl-pop-role { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border-radius: 4px; background: #2b2d31; font-size: 12px; font-weight: 500; color: #dbdee1; animation: pop-in 0.4s var(--spring) both; animation-delay: 0.9s; }
 .wl-pop-role i { width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
 .wl-pop-none { font-size: 12px; color: #949ba4; }
-.wl-rows { display: flex; flex-direction: column; gap: 8px; }
-/* Up to three across, so a short list doesn't sit in a corner of a wide column. */
-.wl-rows.wl-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(min(100%, 340px), calc((100% - 16px) / 3)), 1fr)); }
-.wl-row { display: flex; align-items: center; gap: 13px; padding: 11px 14px; border-radius: 14px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; min-width: 0; }
-.wl-row:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.wl-row > .avatar { width: 38px; height: 38px; }
-.wl-row .grow { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+/* Recently restored: up to three across, so a short list doesn't sit in a corner of a wide
+   column. */
+.wl-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(min(100%, 340px), calc((100% - 24px) / 3)), 1fr)); gap: 12px; }
+.wl-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px 14px; border-radius: 14px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.wl-row > .avatar { width: 36px; height: 36px; }
+.wl-row .grow { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .wl-row strong { font-weight: 600; font-size: 13.5px; }
-.wl-row .meta { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
-.wl-list { padding: 4px 16px; }
-.wl-list .wl-row { padding: 11px 0; border-radius: 0; background: none; box-shadow: none; }
-.wl-list .wl-row:hover { transform: none; box-shadow: none; }
+.wl-row .meta { align-self: flex-start; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+/* Recent joins: rows on one card, a hairline between them. */
+.wl-list { padding: 4px 18px; }
+.wl-list .wl-row { padding: 12px 0; border-radius: 0; background: none; box-shadow: none; }
 .wl-list .wl-row + .wl-row { border-top: 1px solid var(--edge-1); }
 .wl-list .wl-row > .avatar { width: 34px; height: 34px; }
+.wl-list .wl-row .grow { gap: 3px; }
+.wl-list .wl-row .meta { align-self: center; }
 /* Recent joins run down two or three columns on a wide card. Every row carries its hairline, and
    the list hides the top pixel so the first row of each column starts clean. */
 @container col (min-width: 1000px) {
-  .wl-list-in { columns: 2; column-gap: 36px; margin-top: -1px; clip-path: inset(1px -16px -40px -16px); }
+  .wl-list-in { columns: 2; column-gap: 36px; margin-top: -1px; clip-path: inset(1px -18px -40px -18px); }
   .wl-list .wl-row { break-inside: avoid; border-top: 1px solid var(--edge-1); }
 }
 @container col (min-width: 1500px) { .wl-list-in { columns: 3; } }
 .wl-row.gone > .avatar { filter: grayscale(1); opacity: 0.6; }
 .wl-row.gone strong { color: var(--ink-2); font-weight: 500; }
-.wl-via { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 12.5px; min-width: 0; flex-wrap: wrap; }
+.wl-via { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 12.5px; min-width: 0; flex-wrap: wrap; }
 .wl-via .avatar { width: 18px; height: 18px; }
-.wl-via .wl-tag { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; background: color-mix(in oklab, var(--hue) 14%, transparent); color: var(--hue); font-size: 11.5px; font-weight: 600; }
+.wl-via .wl-tag { color: var(--ink); font-weight: 500; }
+.wl-via .wl-tag::before { content: "·"; margin-right: 6px; color: var(--ink-3); font-weight: 400; }
+.wl-via .wl-c { color: var(--ink-3); }
 
 /* Invites. */
 .wl-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12.5px; }
 .wl-status .status { background: var(--control); backdrop-filter: none; }
-.wl-links { padding: 4px 18px; }
-.wl-link { display: grid; grid-template-columns: 40px minmax(0, 1fr) minmax(120px, 200px) 220px; gap: 14px; align-items: center; padding: 13px 0; }
+.wl-links { padding: 4px 20px; }
+.wl-link { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 200px) 220px; gap: 16px; align-items: center; padding: 14px 0; }
 /* A wide card spreads each link like a table: the code, its uses on a long meter, its name. */
-@container col (min-width: 1100px) { .wl-link { grid-template-columns: 40px minmax(180px, 1fr) minmax(200px, 1.4fr) minmax(220px, 300px); gap: 14px 28px; } }
+@container col (min-width: 1100px) { .wl-link { grid-template-columns: minmax(180px, 1fr) minmax(200px, 1.4fr) minmax(220px, 300px); gap: 16px 28px; } }
 .wl-link + .wl-link { border-top: 1px solid var(--edge-1); }
-.wl-link-ic { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; color: var(--hue); background: color-mix(in oklab, var(--hue) 13%, transparent); }
-.wl-link-ic .icon { width: 18px; height: 18px; }
-.wl-link .grow { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.wl-link .grow { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .wl-code { font: 600 13.5px var(--mono); color: var(--ink); }
-.wl-link .wl-via { color: var(--ink-3); }
-.wl-uses { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--ink-3); }
+.wl-uses { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--ink-2); }
 .wl-uses b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
 .wl-uses .meter { height: 5px; }
 .wl-link .input { width: 100%; }
-.wl-links-foot { display: flex; justify-content: flex-end; padding: 4px 0 12px; }
+.wl-links-foot { display: flex; justify-content: flex-end; padding: 2px 0 14px; }
 .wl-chart { padding: 18px 20px 14px; }
 @keyframes wl-arrive { from { opacity: 0; transform: translateY(16px) scale(0.96); filter: blur(8px); } }
 @keyframes wl-sheen { to { transform: translateX(110%); } }
-@media (max-width: 1180px) { .wl-link { grid-template-columns: 40px minmax(0, 1fr) 170px; } .wl-uses { display: none; } }
+@media (max-width: 1180px) { .wl-link { grid-template-columns: minmax(0, 1fr) 170px; } .wl-uses { display: none; } }
 @media (max-width: 920px) {
   .wl-pair { grid-template-columns: 1fr; }
-  .wl-link { grid-template-columns: 40px minmax(0, 1fr); }
-  .wl-link .input { grid-column: 1 / -1; }
+  .wl-link { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .wl-row { flex-wrap: wrap; }
 }
 "#;
@@ -389,16 +387,16 @@ const SCRIPT: &str = r##"
     $(id).addEventListener("input", sync);
     $(id).addEventListener("change", sync);
   });
-  const url = new URL(location.href);
-  if (url.searchParams.has("sent")) {
-    window.botToast && window.botToast("Test sent");
-    url.searchParams.delete("sent");
-    history.replaceState(null, "", url.pathname + url.search + url.hash);
-  }
 })();
 "##;
 
-async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+#[derive(serde::Deserialize)]
+struct SentQuery {
+    /// Set after a test post went out, for the toast.
+    sent: Option<String>,
+}
+
+async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<SentQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let now = now_ms();
@@ -415,18 +413,20 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let max_recent = top.iter().map(|t| t.1).max().unwrap_or(1).max(1);
     let names = invites::names(&ctx, guild)?;
     let server = ctx.guild_name(guild);
-    let faces: Vec<(u64, String, String, bool)> = shown
+    // Each face: who, how long ago, and where they came from for the tooltip.
+    let faces: Vec<(u64, String, String, Option<String>, bool)> = shown
         .iter()
         .map(|(j, came_back)| {
-            let mut parts = vec![short_ago(j.at)];
-            if *came_back {
-                parts.push("came back".to_owned());
+            let ago = short_ago(j.at);
+            let when = if *came_back { format!("Came back {ago}") } else if ago == "just now" { "Just now".to_owned() } else { format!("{ago} ago") };
+            let via = if *came_back {
+                Some("Rejoined and got their roles back".to_owned())
             } else if let Some(name) = j.code.as_ref().and_then(|c| names.get(c)) {
-                parts.push(format!("via {name}"));
-            } else if let Some(i) = j.inviter {
-                parts.push(format!("via {}", ctx.display_name(guild, i)));
-            }
-            (j.user, ctx.display_name(guild, j.user), parts.join(" · "), *came_back)
+                Some(format!("Came in through {name}"))
+            } else {
+                j.inviter.map(|i| format!("Invited by {}", ctx.display_name(guild, i)))
+            };
+            (j.user, ctx.display_name(guild, j.user), when, via, *came_back)
         })
         .collect();
     let channel = |id: Option<u64>| id.and_then(|c| ctx.text_channels(guild).into_iter().find(|x| x.0 == c)).map(|(_, n)| n).unwrap_or_else(|| "pick a channel".into());
@@ -444,19 +444,16 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     ("came back this week", text::num(back.len() as i64)),
                 ]))
                 div.wl-block {
-                    div.wl-head {
-                        h2 { "Joined today" }
-                        span.muted.small { (counted(joins, "new member", "new members")) " · " (text::num(left)) " left" }
-                    }
+                    h2 { "Joined today" }
                     @if shown.is_empty() {
                         (ui::empty(Icon::Door, "Nobody has joined yet today", "New members show up here with how long ago they came in and who invited them."))
                     } @else {
                         div.wl-faces {
-                            @for (i, (user_id, name, detail, came_back)) in faces.iter().enumerate() {
-                                div.wl-face.back[*came_back].x8[(FACES[0]..FACES[1]).contains(&i)].x11[i >= FACES[1]] {
+                            @for (i, (user_id, name, when, via, came_back)) in faces.iter().enumerate() {
+                                div.wl-face.back[*came_back].x8[(FACES[0]..FACES[1]).contains(&i)].x11[i >= FACES[1]] data-tip=[via.as_deref()] {
                                     img.avatar src=(ctx.member_avatar(guild, *user_id)) alt="" loading="lazy";
                                     strong { (name) }
-                                    span.muted { (detail) }
+                                    span.wl-when { (when) }
                                 }
                             }
                             // One "more" tile per width, counting the faces that width leaves out.
@@ -466,7 +463,7 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                     div class={ "wl-face " (tier) } {
                                         span.wl-more { "+" (more) }
                                         strong { (more) " more" }
-                                        span.muted { "earlier today" }
+                                        span.wl-when { "Earlier today" }
                                     }
                                 }
                             }
@@ -478,13 +475,13 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 div.compose {
                     div.wl-settings {
                         (ui::settings_form(&page, &page.path("welcome"), html! {
-                            (section(Icon::Wave, "Welcome", None, ui::card(html! {
+                            (section("Welcome", None, ui::card(html! {
                                 (ui::field_toggle("welcome_on", "Welcome new members", None, s.welcome_on))
                                 (ui::field_channel(&ctx, guild, "welcome_channel", "Post in", None, s.welcome_channel))
                                 (ui::field_textarea("welcome_text", "Message", Some("{user} mentions them, {name} is their name, {server} the server and {count} their member number. Only they are mentioned."), &s.welcome_text, DEFAULT_WELCOME))
                                 (ui::field_toggle("welcome_card", "Attach the welcome card", Some("An image with their avatar, name and member number."), s.welcome_card))
                             })))
-                            (section(Icon::Door, "Goodbye", None, ui::card(html! {
+                            (section("Goodbye", None, ui::card(html! {
                                 (ui::field_toggle("goodbye_on", "Say goodbye", Some("Posts when someone leaves."), s.goodbye_on))
                                 (ui::field_channel(&ctx, guild, "goodbye_channel", "Goodbye in", None, s.goodbye_channel))
                                 (ui::field_textarea("goodbye_text", "Goodbye message", Some("{name}, {server} and {count} work here. Nobody is mentioned."), &s.goodbye_text, DEFAULT_GOODBYE))
@@ -492,9 +489,9 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                         }))
                     }
                     div.wl-block.compose-preview {
-                        div.wl-head {
+                        div.block-head {
                             h2 { "What new members see" }
-                            span.muted.small { "Your own name and card, as a newcomer gets theirs" }
+                            p.muted { "Your own name and card, as a newcomer gets theirs." }
                         }
                         div #wl-preview data-name=(user.name) data-server=(server) data-members=(count)
                             data-default-welcome=(DEFAULT_WELCOME) data-default-goodbye=(DEFAULT_GOODBYE) {
@@ -510,6 +507,12 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                     }))
                                 }
                             }
+                            @if page.can_edit() {
+                                form.wl-send method="post" action=(page.path("welcome/test")) {
+                                    button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send a test welcome" }
+                                    span.muted { "For you, in " (test_channel(&ctx, guild, s.welcome_channel)) ", with the saved settings" }
+                                }
+                            }
                             div.wl-dc {
                                 (channel_bar("wl-chan-goodbye", &channel(s.goodbye_channel)))
                                 div.wl-dc-body {
@@ -518,20 +521,17 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                     }))
                                 }
                             }
-                        }
-                        @if page.can_edit() && s.welcome_channel.is_some() {
-                            div.wl-send {
-                                form.inline method="post" action=(page.path("welcome/test")) {
-                                    button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send a test" }
+                            @if page.can_edit() {
+                                form.wl-send method="post" action=(page.path("welcome/test-goodbye")) {
+                                    button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send a test goodbye" }
+                                    span.muted { "With your name, in " (test_channel(&ctx, guild, s.goodbye_channel)) ", with the saved settings" }
                                 }
-                                span.muted.small { "Posts the welcome for you in " (channel_name(&ctx, guild, s.welcome_channel)) ", using the saved settings." }
                             }
-                        } @else if page.can_edit() {
-                            p.muted.small { "Pick a welcome channel and save to send a test." }
                         }
                     }
                 }
                 script { (PreEscaped(SCRIPT)) }
+                (ui::sent_toast(q.sent.is_some(), if q.sent.as_deref() == Some("goodbye") { "Test goodbye sent" } else { "Test welcome sent" }))
             }
 
             aside.rail {
@@ -547,7 +547,7 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                 span { (ctx.display_name(guild, *inviter)) }
                                 span.meter { span style={ "width:" (*recent * 100 / max_recent) "%" } {} }
                             }
-                            span.mono { (text::num(*recent)) }
+                            span.wl-n { (text::num(*recent)) }
                         }
                     }
                 }
@@ -599,7 +599,7 @@ async fn save_messages(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
 
 /// The signed-in person's Discord username, when the cache has it.
 fn username(ctx: &Ctx, user: u64) -> String {
-    ctx.cache.user(Id::new(user)).map(|u| u.name.clone()).unwrap_or_default()
+    Id::new_checked(user).and_then(|id| ctx.cache.user(id)).map(|u| u.name.clone()).unwrap_or_default()
 }
 
 /// The welcome card for whoever is signed in, as the page's preview.
@@ -613,11 +613,27 @@ async fn card_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
 async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
+    if s.welcome_channel.is_none() {
+        return Err(WebError::Bad("Pick a welcome channel and save first.".into()));
+    }
     crate::post_welcome(&ctx, &s, guild, user.id, &user.name, &username(&ctx, user.id), &user.avatar_url())
         .await
         .map_err(|e| WebError::Bad(e.to_string()))?;
     ctx.audit(&page.user, Some(guild), KEY, "Sent a test welcome");
-    Ok(Redirect::to(&format!("{}?sent=1", page.path("welcome"))).into_response())
+    Ok(Redirect::to(&format!("{}?sent=welcome", page.path("welcome"))).into_response())
+}
+
+/// Post the saved goodbye with the viewer's name, as if they had left.
+async fn send_goodbye_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let channel = s.goodbye_channel.ok_or_else(|| WebError::Bad("Pick a goodbye channel and save first.".into()))?;
+    crate::post_goodbye(&ctx, &s, guild, channel, &user.name).await.map_err(|e| {
+        bot_core::tracing::warn!(guild, error = %e, "test goodbye failed");
+        WebError::Bad(bot_core::discord::why_refused_any(&e))
+    })?;
+    ctx.audit(&page.user, Some(guild), KEY, "Sent a test goodbye");
+    Ok(Redirect::to(&format!("{}?sent=goodbye", page.path("welcome"))).into_response())
 }
 
 // ---- roles ----
@@ -631,7 +647,7 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
     let waiting_list = roles::waiting_members(&ctx, guild, days, 5)?;
     let restored = roles::recently_restored(&ctx, guild, 25)?;
     let this_week = restored.iter().filter(|r| r.at >= now - 7 * DAY_MS).count() as i64;
-    let exists = |r: &u64| ctx.cache.role(Id::new(*r)).is_some();
+    let exists = |r: &u64| Id::new_checked(*r).and_then(|id| ctx.cache.role(id)).is_some();
     let stuck: Vec<u64> = s.autoroles.iter().copied().filter(|r| exists(r) && !roles::assignable(&ctx, guild, *r)).collect();
     let deleted = s.autoroles.iter().filter(|r| !exists(r)).count() as i64;
     let given = role_list(&ctx, guild, &s.autoroles);
@@ -695,22 +711,22 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                         }
                     }
                     (ui::settings_form(&page, &page.path("welcome/roles"), html! {
-                        (section(Icon::Users, "Auto-roles", None, ui::card(html! {
+                        (section("Auto-roles", None, ui::card(html! {
                             (ui::field_roles(&ctx, guild, "autoroles", "Roles for new members", Some("The bot can only give roles below its own role."), &s.autoroles))
                             (ui::field_toggle("autorole_bots", "Include bots", Some("Off: bots that join get no auto-roles."), s.autorole_bots))
                         })))
-                        (section(Icon::Door, "Roles back on rejoin", None, ui::card(html! {
-                            (ui::field_toggle("rejoin_on", "Give roles back", Some("A member who leaves and returns gets the roles they left with."), s.rejoin_on))
+                        (section("Roles back on rejoin", None, ui::card(html! {
+                            (ui::field_toggle("rejoin_on", "Give roles back", Some("A member who leaves and returns gets the roles they left with. Roles with moderation or admin permissions are never given back."), s.rejoin_on))
                             (ui::field_number("rejoin_days", "Keep for", Some("After this long, a leaver's saved roles are deleted."), days, 1, 3650, Some("days")))
                             (ui::field_roles(&ctx, guild, "rejoin_exclude", "Never give back", Some("Useful for staff or punishment roles."), &s.rejoin_exclude))
                         })))
                     }))
                 }
-                (section(Icon::Activity, "Recently restored", Some("Members who came back and got their roles."), html! {
+                (section("Recently restored", Some("Members who came back and got their roles."), html! {
                     @if restored.is_empty() {
                         (ui::empty(Icon::Users, "Nobody restored yet", "Members who leave and return show up here with the roles they got back."))
                     } @else {
-                        div.wl-rows.wl-tiles {
+                        div.wl-rows {
                             @for r in &restored {
                                 div.wl-row {
                                     img.avatar src=(ctx.member_avatar(guild, r.user)) alt="" loading="lazy";
@@ -745,7 +761,7 @@ async fn roles_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) 
                 div.rail-block {
                     h2 { "Never given back" }
                     @if s.rejoin_exclude.is_empty() {
-                        p.muted.small { "Every saved role comes back. Exclude staff or punishment roles in the form." }
+                        p.muted.small { "Every saved role comes back except roles with moderation or admin permissions. Exclude other staff or punishment roles in the form." }
                     } @else {
                         (role_pills(&role_list(&ctx, guild, &s.rejoin_exclude)))
                     }
@@ -844,14 +860,14 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     ("matched to an invite", if joins > 0 { format!("{}%", known * 100 / joins) } else { "None yet".into() }),
                     ("invites watched", text::num(state.as_ref().map(|s| s.codes).unwrap_or(0))),
                 ]))
-                (section(Icon::Chart, "Joins per day", Some("The last 30 days, in your timezone."), html! {
+                (section("Joins per day", Some("The last 30 days, in your timezone."), html! {
                     @if joins == 0 {
                         (ui::empty(Icon::Door, "Nobody has joined in 30 days", "Each join lands here on its day, whether or not an invite is matched."))
                     } @else {
                         div.card.wl-chart { (ui::area_chart(&series, "joins")) }
                     }
                 }))
-                (section(Icon::Door, "Invite links", Some("Name a link to see where members come from, like \"Twitch link\". The name shows on Joined today and in recent joins."), html! {
+                (section("Invite links", Some("Name a link to see where members come from, like \"Twitch link\". The name shows on Joined today and in recent joins."), html! {
                     @if live.is_empty() {
                         (ui::empty(Icon::Door, "No invites read yet", "The server's invites show up here once the bot has read them."))
                     } @else {
@@ -860,7 +876,6 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                 @for inv in &live {
                                     @let name = names.get(&inv.code).map(String::as_str).unwrap_or_default();
                                     div.wl-link {
-                                        span.wl-link-ic { (ui::icon(Icon::Enter)) }
                                         div.grow {
                                             span.wl-code { (inv.code) }
                                             span.wl-via {
@@ -889,7 +904,7 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                         }
                     }
                 }))
-                (section(Icon::Users, "Recent joins", None, html! {
+                (section("Recent joins", None, html! {
                     @if recent.is_empty() {
                         (ui::empty(Icon::Door, "No joins recorded", "New members appear here with the invite they came through."))
                     } @else {
@@ -906,7 +921,7 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                                 None => { "invite unknown" },
                                             }
                                             @if let Some(c) = &j.code {
-                                                @match names.get(c) { Some(n) => { span.wl-tag { (n) } }, None => { code { (c) } } }
+                                                @match names.get(c) { Some(n) => { span.wl-tag { (n) } }, None => { code.wl-c { (c) } } }
                                             }
                                         }
                                     }
@@ -918,7 +933,7 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 }))
             }
             aside.rail {
-                div.rail-block {
+                div.rail-block.wl-track {
                     h2 { "Tracking" }
                     (ui::settings_form(&page, &page.path("welcome/invites"), ui::switch_row("track_invites", "Track invites", Some("Works out which invite each new member used. The bot needs the Manage Server permission to read invites."), s.track_invites)))
                 }
@@ -934,7 +949,7 @@ async fn invites_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                                 span { (ctx.display_name(guild, *inviter)) }
                                 span.meter { span style={ "width:" (*recent * 100 / top_recent) "%" } {} }
                             }
-                            span.mono data-tip={ "30 days: " (text::num(*recent)) " · all time " (text::num(*all)) } { (text::num(*recent)) }
+                            span.wl-n data-tip={ "All time: " (text::num(*all)) } { (text::num(*recent)) }
                         }
                     }
                     @if !top.is_empty() { p.muted.small { "Joins in the last 30 days. Hover a figure for all time." } }

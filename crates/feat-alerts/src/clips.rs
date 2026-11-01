@@ -247,6 +247,15 @@ fn store(ctx: &Ctx, bid: &str, found: &[HClip], since: i64) -> Result<Vec<Clip>>
     Ok(fresh)
 }
 
+/// The dashboard's "Send a test post" for clips: the newest stored clip, posted now.
+pub async fn test_post(ctx: &Ctx, s: &Settings) -> Result<()> {
+    let channel = s.clips_channel.ok_or_else(|| bot_core::anyhow::anyhow!("no channel"))?;
+    let ids: Vec<String> = twitch::for_settings(ctx, s).into_iter().map(|b| b.user_id).collect();
+    let Some(c) = recent(ctx, &ids, 1).into_iter().next() else { bot_core::anyhow::bail!("no clips") };
+    ctx.say(channel, &format!("{}\n-# Test post.", post_text(&c))).await?;
+    Ok(())
+}
+
 /// The newest stored clips of these broadcasters.
 pub fn recent(ctx: &Ctx, ids: &[String], limit: i64) -> Vec<Clip> {
     if ids.is_empty() {

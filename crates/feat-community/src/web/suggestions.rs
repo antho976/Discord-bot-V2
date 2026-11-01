@@ -1,24 +1,15 @@
 use bot_core::axum::extract::{Path, Query, State};
 use bot_core::axum::response::IntoResponse;
 use bot_core::maud::{Markup, html};
-use bot_core::web::ui::{self, Tone};
+use bot_core::web::ui;
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 
-use super::{TabQuery, discord_message, month_start, open_link, plural, rail_figures, style};
+use super::{TabQuery, discord_message, dm_refused, month_start, open_link, plural, rail_figures, style};
 use crate::suggestions::{self as sg, Status, Suggestion, Tally};
 use crate::{KEY, Settings};
 
-fn tone(s: Status) -> Tone {
-    match s {
-        Status::Open => Tone::Muted,
-        Status::Considering => Tone::Warn,
-        Status::Approved | Status::Implemented => Tone::Ok,
-        Status::Denied => Tone::Bad,
-    }
-}
-
-/// What the badge says. A suggestion nobody has answered is waiting for review.
+/// What the status says. A suggestion nobody has answered is waiting for review.
 fn state_label(s: Status) -> &'static str {
     match s {
         Status::Open => "Waiting for review",
@@ -26,10 +17,10 @@ fn state_label(s: Status) -> &'static str {
     }
 }
 
-/// The tint of a staff reply.
-fn reply_class(s: Status) -> &'static str {
+/// The colour of the status dot.
+fn status_class(s: Status) -> &'static str {
     match s {
-        Status::Open => "",
+        Status::Open => "open",
         Status::Considering => "warn",
         Status::Approved | Status::Implemented => "ok",
         Status::Denied => "bad",
@@ -80,6 +71,12 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                             },
                             None => p.muted.small { "Once a member uses /suggest, the post shows here as Discord draws it." },
                         }
+                        @if edit {
+                            div.cm-test {
+                                (ui::action_button(&page.path("community/suggestions/test"), "Send a test", ui::Tone::Muted, false))
+                                span.cm-dc-note { "DMs you this post and the message its author gets when staff decide." }
+                            }
+                        }
                     }
                 }
             }
@@ -96,7 +93,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                         }
                     } @else {
                         div.sg-list {
-                            @for (i, (r, t)) in shown.iter().enumerate() { (card(&ctx, &page, guild, r, t, i, edit)) }
+                            @for (r, t) in &shown { (card(&ctx, &page, guild, r, t, edit)) }
                         }
                     }
                 }
@@ -131,63 +128,57 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
             }
         }
     };
+    let main = html! { (main) (ui::sent_toast(q.sent.is_some(), "Test sent to your DMs")) };
     Ok(ui::layout(&ctx, &page, "Suggestions", None, main).into_response())
 }
 
-/// One suggestion on the board: its score, the text and who sent it, the split of votes, and
+/// One suggestion on the board: its score, the text and who sent it, the votes each way, and
 /// the staff reply once there is one.
-fn card(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, t: &Tally, i: usize, edit: bool) -> Markup {
+fn card(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, t: &Tally, edit: bool) -> Markup {
     let net = t.up - t.down;
-    let votes = t.up + t.down;
-    let score = match net {
-        n if n > 0 => "sg-score",
-        0 => "sg-score flat",
-        _ => "sg-score down",
+    let lean = match net {
+        n if n > 0 => "up",
+        0 => "flat",
+        _ => "down",
     };
     html! {
-        article.sg-card style={ "--i:" (i.min(10)) } {
-            div class=(score) aria-label={ "Net votes: " (net) } {
+        article.sg-card {
+            // The score as a vote count reads it: a small arrow and the net, no box.
+            div class={ "sg-score " (lean) } data-tip={ "Votes: " (tally_text(t)) } aria-label={ "Score " (net) ", " (tally_text(t)) } {
                 (arrow(net >= 0))
-                b { (if net > 0 { format!("+{net}") } else { net.to_string() }) }
+                b { (score_text(net)) }
             }
             div.sg-body {
                 p.sg-text title=(r.content) { (text::clip(&r.content, 220)) }
                 div.sg-by {
-                    img.avatar src=(ctx.member_avatar(guild, r.author_id)) alt="" width="22" height="22" loading="lazy";
-                    span { strong { (ctx.display_name(guild, r.author_id)) } " · " (text::ago(r.created_at)) }
-                    @if r.anonymous { span { "· posted anonymously" } }
+                    img.avatar src=(ctx.member_avatar(guild, r.author_id)) alt="" width="20" height="20" loading="lazy";
+                    strong { (ctx.display_name(guild, r.author_id)) }
+                    span title=(page.user.local(r.created_at).strftime("%b %-d, %-I:%M %p").to_string()) { (text::ago(r.created_at)) }
+                    @if r.anonymous { span.sg-anon data-tip="Posted anonymously: the post shows no name" { "anonymous" } }
                 }
             }
             // How it's going: the votes, and staff's answer once there is one.
             div.sg-state {
-                @if votes > 0 {
-                    div.sg-tally style={ "--i:" (i.min(10)) } {
-                        span.sg-split role="img" aria-label=(tally_text(t)) {
-                            @if t.up > 0 { span.up style={ "flex:" (t.up) } {} }
-                            @if t.down > 0 { span.down style={ "flex:" (t.down) } {} }
-                        }
-                        span { (tally_text(t)) }
-                    }
-                } @else {
-                    div.sg-tally { span { "No votes yet" } }
+                p.sg-tally {
+                    @if t.up + t.down == 0 { "No votes yet" } @else { b { (text::num(t.up)) } " up, " b { (text::num(t.down)) } " down" }
                 }
                 @if r.status != Status::Open {
-                    div class={ "sg-reply " (reply_class(r.status)) } {
+                    div.sg-reply {
                         @if let Some(staff) = r.staff_id {
-                            img.avatar src=(ctx.member_avatar(guild, staff)) alt="" width="28" height="28" loading="lazy";
+                            img.avatar src=(ctx.member_avatar(guild, staff)) alt="" width="22" height="22" loading="lazy";
                         }
-                        div.sg-bubble {
-                            strong {
-                                @if let Some(staff) = r.staff_id { (ctx.display_name(guild, staff)) " " }
-                                span { (r.status.label().to_lowercase()) " it" }
+                        div {
+                            p.sg-reply-head {
+                                @if let Some(staff) = r.staff_id { strong { (ctx.display_name(guild, staff)) } " " }
+                                (r.status.label().to_lowercase()) " it"
                             }
-                            @if r.reason.is_empty() { span.muted { "No reason given." } } @else { span { (r.reason) } }
+                            @if r.reason.is_empty() { p.muted { "No reason given." } } @else { p { (r.reason) } }
                         }
                     }
                 }
             }
             div.sg-side {
-                (ui::badge(state_label(r.status), tone(r.status)))
+                span class={ "sg-status " (status_class(r.status)) } { span.dot {} (state_label(r.status)) }
                 div.cm-actions {
                     (open_link(page, r.channel_id, r.message_id, true))
                     @if edit { (review_pop(page, r)) }
@@ -195,6 +186,11 @@ fn card(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, t: &Tally, i: usize,
             }
         }
     }
+}
+
+/// "12", "0", "−3": the net votes, with a real minus sign.
+fn score_text(net: i64) -> String {
+    if net < 0 { format!("\u{2212}{}", text::num(-net)) } else { text::num(net) }
 }
 
 /// The suggestion's post as members see it: the embed in its status colour, the author unless
@@ -244,7 +240,7 @@ fn review_pop(page: &Page, r: &Suggestion) -> Markup {
     let options: Vec<(String, String)> = Status::ALL.iter().map(|st| (st.as_str().to_owned(), state_label(*st).to_owned())).collect();
     html! {
         details.pop.cm-review {
-            summary.btn.small.outline { @if r.status == Status::Open { "Review" } @else { "Change" } }
+            @if r.status == Status::Open { summary.btn.small.outline { "Review" } } @else { summary.btn.small.ghost { "Change" } }
             div.pop-body {
                 form.stack method="post" action=(page.path(&format!("community/suggestions/{}/status", r.id))) {
                     (ui::select("status", &options, r.status.as_str()))
@@ -263,7 +259,7 @@ fn tally_text(t: &Tally) -> String {
     format!("{}, {}", part(t.up, "up"), part(t.down, "down"))
 }
 
-/// A small chevron, up or down, for the score tile.
+/// A small chevron, up or down, beside the score.
 fn arrow(up: bool) -> Markup {
     let d = if up { "M4 9.5 8 5.5l4 4" } else { "M4 6.5 8 10.5l4-4" };
     html! {
@@ -293,6 +289,26 @@ pub async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed suggestion settings");
     Ok(saved(&page.path("community/suggestions?tab=settings")))
+}
+
+/// "Send a test" on the settings tab: a suggestion post and its author's message, in the
+/// editor's DMs.
+pub async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    // The preview has no Discord to send to.
+    if !ctx.cfg.preview {
+        match sg::send_test(&ctx, guild, page.user.id, &s).await {
+            Ok(true) => {}
+            Ok(false) => return Err(dm_refused()),
+            Err(e) => {
+                bot_core::tracing::warn!(guild, error = %e, "couldn't send a test suggestion");
+                return Err(WebError::Bad("The test didn't send. Discord turned it down; try again in a minute.".into()));
+            }
+        }
+    }
+    ctx.audit(&page.user, Some(guild), KEY, "Sent themselves a test suggestion post");
+    Ok(bot_core::axum::response::Redirect::to(&page.path("community/suggestions?tab=settings&sent=1")).into_response())
 }
 
 pub async fn set_status(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {

@@ -3,8 +3,8 @@
 
 use bot_core::axum::Router;
 use bot_core::axum::body::Bytes;
-use bot_core::axum::extract::{DefaultBodyLimit, Path, State};
-use bot_core::axum::response::{IntoResponse, Json};
+use bot_core::axum::extract::{DefaultBodyLimit, Path, Query, State};
+use bot_core::axum::response::{IntoResponse, Json, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_model::id::Id;
@@ -21,6 +21,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/connect/requests/{id}/{answer}", post(answer))
         .route("/g/{guild}/connect/approvers", post(add_approver))
         .route("/g/{guild}/connect/approvers/{user}/remove", post(remove_approver))
+        .route("/g/{guild}/connect/test-dm", post(test_dm))
         .route("/g/{guild}/connect/hosts/{id}/forget", post(forget_host))
         .route("/g/{guild}/connect/import", post(import).layer(DefaultBodyLimit::max(64 * 1024 * 1024)))
 }
@@ -86,7 +87,13 @@ fn since_month(page: &Page, ms: i64) -> String {
     if z.year() == page.user.local(now_ms()).year() { format!("since {name}") } else { format!("since {name} {}", z.year()) }
 }
 
-async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+#[derive(serde::Deserialize)]
+struct PageQuery {
+    /// Set after a test DM went out, for the toast.
+    sent: Option<String>,
+}
+
+async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<PageQuery>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let now = now_ms();
     let pending = store::pending(&ctx, now)?;
@@ -97,6 +104,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
 
     let body = html! {
         style { (PreEscaped(CSS)) }
+        (ui::sent_toast(q.sent.is_some(), "Test DM sent"))
         @if !cloud {
             div.cn-note role="note" {
                 span.cn-note-ic { (cloud_off_icon()) }
@@ -175,7 +183,14 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> Web
                         }
                     }
                     @if page.can_edit() {
-                        (approver_form(&ctx, &page, guild, &approvers))
+                        div.cn-ap-acts {
+                            (approver_form(&ctx, &page, guild, &approvers))
+                            @if approvers.contains(&page.user.id) {
+                                form.inline method="post" action=(page.path("connect/test-dm")) {
+                                    button.btn.small type="submit" data-tip="The DM an approver gets, sent to you and marked as a test" { "DM me a test" }
+                                }
+                            }
+                        }
                     }
                 }
                 div.rail-block {
@@ -419,6 +434,24 @@ async fn add_approver(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     Ok(saved(&page.path(KEY)))
 }
 
+/// DM the person testing the message approvers get when something asks to connect, marked as a
+/// test and without Allow and Deny, since nothing is asking.
+async fn test_dm(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let me = page.user.id;
+    if !crate::approvers(&ctx).contains(&me) {
+        return Err(WebError::Bad("You aren't an approver, so you don't get these DMs. Add yourself first.".into()));
+    }
+    let text = format!("{}\n-# Test from the dashboard. Nothing is asking to connect.", domain::ask_text("tally", "a test phone", "TEST"));
+    match ctx.dm(me, &text, &[], &[]).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(WebError::Bad("Discord wouldn't open a DM with you. Allow DMs from this server's members, then try again.".into())),
+        Err(e) => return Err(WebError::Bad(bot_core::discord::why_refused_any(&e))),
+    }
+    ctx.audit(&page.user, Some(guild), KEY, "Sent themselves a test approval DM");
+    Ok(Redirect::to(&page.path("connect?sent=1")).into_response())
+}
+
 async fn remove_approver(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, u64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     if id == ctx.cfg.owner_id {
@@ -477,7 +510,7 @@ const CSS: &str = r#"
 /* Requests side by side once the column has room for two; a lone one fills the column. */
 .cn-reqs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); gap: 12px; }
 .cn-req { container: cnreq / inline-size; position: relative; display: flex; flex-direction: column; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; isolation: isolate; }
-.cn-req.first { background: radial-gradient(70% 160% at 100% 0%, color-mix(in oklab, var(--hue) 9%, transparent), transparent 62%), linear-gradient(180deg, rgba(243, 242, 248, 0.055), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 40%, transparent); }
+.cn-req.first { background: linear-gradient(180deg, rgba(243, 242, 248, 0.055), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 40%, transparent); }
 .cn-req-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 20px 22px 18px; }
 .cn-tile { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 17px; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 24%, transparent); }
 .cn-req.first .cn-tile { color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 22%)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); animation: pop-in 0.6s var(--spring) both 0.15s; }
@@ -495,6 +528,7 @@ const CSS: &str = r#"
 .cn-stuck { display: flex; align-items: center; gap: 9px; margin: -4px 22px 16px; padding: 9px 12px; border-radius: 11px; font-size: 12.5px; color: var(--waiting); background: color-mix(in oklab, var(--waiting) 10%, transparent); }
 .cn-stuck .icon { width: 15px; height: 15px; }
 .cn-req-foot { margin-top: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 215px) auto; align-items: center; gap: 12px 22px; padding: 12px 22px; border-top: 1px solid var(--edge-1); background: rgba(7, 7, 11, 0.24); }
+.cn-ap-acts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .cn-dm { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 12.5px; color: var(--ink-2); }
 .cn-dm .avatars .avatar { width: 24px; height: 24px; }
 .cn-nodm { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 8px; color: var(--waiting); background: color-mix(in oklab, var(--waiting) 15%, transparent); }

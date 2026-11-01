@@ -45,7 +45,7 @@ impl IntoResponse for WebError {
             WebError::Login => return Redirect::to("/login").into_response(),
             WebError::Forbidden => (StatusCode::FORBIDDEN, "No access", "Your account can't open this page. Ask the owner to give you access.".to_owned()),
             WebError::NotFound => (StatusCode::NOT_FOUND, "Not found", "This page doesn't exist.".to_owned()),
-            WebError::Bad(msg) => (StatusCode::BAD_REQUEST, "Couldn't save", msg),
+            WebError::Bad(msg) => (StatusCode::BAD_REQUEST, "That didn't go through", msg),
             WebError::Internal(e) => {
                 tracing::error!(error = ?e, "dashboard error");
                 (StatusCode::INTERNAL_SERVER_ERROR, "Something broke", "The error is in the bot's log.".to_owned())

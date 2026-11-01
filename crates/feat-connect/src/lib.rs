@@ -65,8 +65,8 @@ impl Feature for Connect {
     }
 
     /// App connections are shared by every server, so a per-server grant mustn't reach them:
-    /// only dashboard admins see the page, answer requests, or edit approvers and PCs.
-    fn admin_only(&self) -> bool {
+    /// only the owner and Admin+ people see the page, answer requests, or edit approvers and PCs.
+    fn admin_plus_only(&self) -> bool {
         true
     }
 
@@ -75,7 +75,7 @@ impl Feature for Connect {
     }
 
     fn overview(&self, ctx: &Ctx, page: &bot_core::web::Page) -> Overview {
-        if !page.user.admin {
+        if !page.user.admin_plus {
             return Overview::default();
         }
         let now = now_ms();
