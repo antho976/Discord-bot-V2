@@ -513,6 +513,27 @@
     setTimeout(() => { f.dispatchEvent(new Event("input", { bubbles: true })); f.dispatchEvent(new Event("change", { bubbles: true })); }, 0);
   });
 
+  // Unsaved edits survive the page coming back to itself (a test button posts the form
+  // elsewhere and returns): the values are put into the new form, which stays "unsaved".
+  const carry = (from) => (from && document.contains(from) ? { action: from.getAttribute("action"), data: new FormData(from) } : null);
+  const restore = (page, kept) => {
+    const f = [...page.querySelectorAll("form.settings")].find((x) => x.getAttribute("action") === kept.action);
+    if (!f) return;
+    const seen = {};
+    [...f.elements].forEach((el) => {
+      if (!el.name || el.disabled || el.type === "file" || el.type === "submit" || el.type === "button") return;
+      const all = kept.data.getAll(el.name).map(String);
+      if (el.type === "checkbox" || el.type === "radio") el.checked = all.includes(el.value);
+      else if (el.multiple) [...el.options].forEach((o) => { o.selected = all.includes(o.value); });
+      else {
+        const i = (seen[el.name] = (seen[el.name] ?? -1) + 1);
+        if (all[i] !== undefined) el.value = all[i];
+      }
+    });
+    f.dispatchEvent(new Event("input", { bubbles: true }));
+    f.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
   // ---------------------------------------------------------------- the page's own setup
   // Everything a page needs once it's on screen, on the first load and after each swap.
   const mount = (page) => {
@@ -638,6 +659,8 @@
         }
         root.classList.toggle("same", same);
         if (same || calm || !document.startViewTransition) root.classList.remove("vt");
+        const kept = same ? carry(dirty) : null;
+        dirty = null;
         const fresh = document.importNode(next, true);
         main.replaceWith(fresh);
         markNav();
@@ -645,6 +668,8 @@
         if (!same) window.scrollTo(0, opts.scroll || 0);
         mount(fresh);
         run(fresh);
+        if (kept) restore(fresh, kept);
+        syncBar();
         if (!same) fresh.focus({ preventScroll: true });
       };
       unbusy();
