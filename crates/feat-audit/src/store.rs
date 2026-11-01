@@ -16,6 +16,9 @@ pub struct Row {
     pub user_name: String,
     pub channel_id: Option<u64>,
     pub summary: String,
+    /// Who did it, as decided when the entry was posted, and why.
+    pub moderator: Option<u64>,
+    pub reason: Option<String>,
 }
 
 /// The filter chips on the page: everything, or one group of event kinds.
@@ -120,22 +123,23 @@ impl Search {
     }
 }
 
-/// Everyone who took a moderator action in the last two weeks.
+/// Everyone named as the moderator behind an entry in the last two weeks.
 fn moderator_ids(ctx: &Ctx, guild: u64) -> Result<Vec<u64>> {
     ctx.db.with(|c| {
-        let mut st = c.prepare_cached("SELECT DISTINCT moderator_id FROM audit_mod_actions WHERE guild_id = ?1")?;
+        let mut st = c.prepare_cached("SELECT DISTINCT moderator_id FROM audit_events WHERE guild_id = ?1 AND moderator_id IS NOT NULL")?;
         st.query_map([guild as i64], |r| Ok(r.get::<_, i64>(0)? as u64))?.collect()
     })
 }
 
-pub fn record(ctx: &Ctx, guild: u64, kind: Kind, user: Option<u64>, user_name: &str, channel: Option<u64>, summary: &str) -> Result<()> {
+/// Store an entry. Returns its id, to add the moderator to once Discord says who it was.
+pub fn record(ctx: &Ctx, guild: u64, kind: Kind, user: Option<u64>, user_name: &str, channel: Option<u64>, summary: &str) -> Result<i64> {
     ctx.db.with(|c| {
         c.execute(
             "INSERT INTO audit_events (guild_id, at, kind, user_id, user_name, channel_id, summary) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![guild as i64, bot_core::now_ms(), kind.key(), user.map(|u| u as i64), user_name, channel.map(|c| c as i64), summary],
-        )
-    })?;
-    Ok(())
+        )?;
+        Ok(c.last_insert_rowid())
+    })
 }
 
 /// Drop a member's entries of one kind stored since `since`: a leave the ban that followed
@@ -162,6 +166,7 @@ pub fn prune(ctx: &Ctx, before: i64) -> Result<()> {
 /// `untimeout`, `delete` or `roles`.
 #[derive(Debug, Clone)]
 pub struct ModAction {
+    pub id: i64,
     pub at: i64,
     pub moderator: u64,
     pub action: String,
@@ -169,6 +174,10 @@ pub struct ModAction {
     /// For a deleted message, the channel it was in.
     pub channel: Option<u64>,
     pub reason: Option<String>,
+    /// How many events the entry explains: one, or for deleted messages Discord's count.
+    pub covers: i64,
+    /// How many of those it has explained already.
+    pub used: i64,
 }
 
 /// Remember who did what. The bot's own actions (scam protection, reward roles) are kept too, so
@@ -195,50 +204,84 @@ pub fn record_moderator(ctx: &Ctx, e: &AuditLogEntry) -> Result<()> {
     };
     let channel = e.options.as_ref().and_then(|o| o.channel_id).map(|c| c.get() as i64);
     let reason = e.reason.as_deref().map(str::trim).filter(|r| !r.is_empty()).map(|r| bot_core::text::clip(r, 300));
+    // Discord counts the messages one entry covers; anything else is one event.
+    let covers = match e.action_type {
+        AuditLogEventType::MessageDelete => e.options.as_ref().and_then(|o| o.count.as_deref()).and_then(|n| n.parse::<i64>().ok()).filter(|n| *n > 0).unwrap_or(1),
+        _ => 1,
+    };
     ctx.db.with(|c| {
         c.execute(
-            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, channel_id, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![guild.get() as i64, bot_core::now_ms(), moderator.get() as i64, action, e.target_id.map(|t| t.get() as i64), channel, reason],
+            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, channel_id, reason, covers, entry_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![guild.get() as i64, bot_core::now_ms(), moderator.get() as i64, action, e.target_id.map(|t| t.get() as i64), channel, reason, covers, e.id.get() as i64],
         )
     })?;
     Ok(())
 }
 
-/// Moderator actions since `since`, newest first.
+fn mod_action(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<ModAction> {
+    Ok(ModAction {
+        id: r.get(0)?,
+        at: r.get(1)?,
+        moderator: r.get::<_, i64>(2)? as u64,
+        action: r.get(3)?,
+        target: r.get::<_, Option<i64>>(4)?.map(|t| t as u64),
+        channel: r.get::<_, Option<i64>>(5)?.map(|c| c as u64),
+        reason: r.get(6)?,
+        covers: r.get(7)?,
+        used: r.get(8)?,
+    })
+}
+
+/// Moderator actions since `since` that can still explain an event, newest first.
 pub fn mod_actions(ctx: &Ctx, guild: u64, since: i64) -> Result<Vec<ModAction>> {
     ctx.db.with(|c| {
         let mut st = c.prepare_cached(
-            "SELECT at, moderator_id, action, target_id, channel_id, reason FROM audit_mod_actions WHERE guild_id = ?1 AND at >= ?2 ORDER BY at DESC LIMIT 2000",
+            "SELECT id, at, moderator_id, action, target_id, channel_id, reason, covers, used FROM audit_mod_actions
+             WHERE guild_id = ?1 AND at >= ?2 AND used < covers ORDER BY at DESC LIMIT 2000",
         )?;
         st.query_map(params![guild as i64, since], mod_action)?.collect()
     })
 }
 
-/// Moderator actions on these members since `since`, newest first: what can explain the
-/// entries a page shows, however many other actions came after them.
-pub fn mod_actions_on(ctx: &Ctx, guild: u64, targets: &[u64], since: i64) -> Result<Vec<ModAction>> {
-    if targets.is_empty() {
-        return Ok(Vec::new());
-    }
+/// How long Discord goes on adding a moderator's deletes of one member's messages in one channel
+/// to the entry it already sent, raising its count instead of sending a new one. Only the
+/// first delete comes as an entry, so later ones find the entry used up.
+pub const MERGE_MS: i64 = 10 * 60_000;
+
+/// Message delete entries since `since`, newest first, each with Discord's id for it: any may
+/// have gone on to cover more deletes than it said, whether or not its uses so far were taken
+/// (a delete the bot didn't log leaves one untaken).
+pub fn recent_deletes(ctx: &Ctx, guild: u64, since: i64) -> Result<Vec<(ModAction, u64)>> {
     ctx.db.with(|c| {
-        let mut st = c.prepare(&format!(
-            "SELECT at, moderator_id, action, target_id, channel_id, reason FROM audit_mod_actions
-             WHERE guild_id = ?1 AND at >= ?2 AND target_id IN ({}) ORDER BY at DESC",
-            id_list(targets)
-        ))?;
-        st.query_map(params![guild as i64, since], mod_action)?.collect()
+        let mut st = c.prepare_cached(
+            "SELECT id, at, moderator_id, action, target_id, channel_id, reason, covers, used, entry_id FROM audit_mod_actions
+             WHERE guild_id = ?1 AND at >= ?2 AND action = 'delete' AND entry_id IS NOT NULL ORDER BY at DESC LIMIT 50",
+        )?;
+        st.query_map(params![guild as i64, since], |r| Ok((mod_action(r)?, r.get::<_, i64>(9)? as u64)))?.collect()
     })
 }
 
-fn mod_action(r: &bot_core::rusqlite::Row) -> bot_core::rusqlite::Result<ModAction> {
-    Ok(ModAction {
-        at: r.get(0)?,
-        moderator: r.get::<_, i64>(1)? as u64,
-        action: r.get(2)?,
-        target: r.get::<_, Option<i64>>(3)?.map(|t| t as u64),
-        channel: r.get::<_, Option<i64>>(4)?.map(|c| c as u64),
-        reason: r.get(5)?,
-    })
+/// Discord's count on an entry went up: it explains that many events now. Never lowered.
+pub fn raise_covers(ctx: &Ctx, action: i64, covers: i64) -> Result<()> {
+    ctx.db.with(|c| c.execute("UPDATE audit_mod_actions SET covers = MAX(covers, ?2) WHERE id = ?1", params![action, covers]))?;
+    Ok(())
+}
+
+/// Use up one event of an action, and when `row` is given, name its moderator and reason on that
+/// stored entry so the dashboard shows what the post said. False when another event took the
+/// action's last use first.
+pub fn use_action(ctx: &Ctx, action: &ModAction, row: Option<i64>, named: bool) -> Result<bool> {
+    let mut conn = ctx.db.lock();
+    let tx = conn.transaction()?;
+    let n = tx.execute("UPDATE audit_mod_actions SET used = used + 1 WHERE id = ?1 AND used < covers", [action.id])?;
+    if n == 1
+        && named
+        && let Some(row) = row
+    {
+        tx.execute("UPDATE audit_events SET moderator_id = ?1, reason = ?2 WHERE id = ?3", params![action.moderator as i64, action.reason, row])?;
+    }
+    tx.commit()?;
+    Ok(n == 1)
 }
 
 /// Moderators by how many actions they took since `since`, most first, leaving out `skip` (the bot).
@@ -252,16 +295,26 @@ pub fn moderator_counts(ctx: &Ctx, guild: u64, since: i64, skip: Option<u64>) ->
     })
 }
 
-/// How far apart an event and its audit entry may be. Discord sends the entry a moment before or
-/// after the event; a minute leaves room for a slow gateway.
-pub const MATCH_MS: i64 = 60_000;
+/// How long before an event its audit entry may have come in. A leave is logged after waiting a
+/// moment for its ban, so the kick behind it is a little older than the entry.
+pub const MATCH_BEFORE_MS: i64 = 3_000;
+/// How long after an event its audit entry may come in. A post waits this long for it.
+pub const MATCH_AFTER_MS: i64 = 5_000;
 
-/// The moderator action behind a logged event: the same kind of action on the same member (and,
-/// for a deleted message, in the same channel) closest in time to it, within a minute either way.
-/// Closest, not newest, so two moderators acting on one member in the same minute each get their
-/// own event.
-pub fn moderator_for(actions: &[ModAction], kind: Kind, target: Option<u64>, channel: Option<u64>, at: i64) -> Option<&ModAction> {
-    let want = match kind {
+/// A logged event a moderator may be behind: what happened, to whom, where and when.
+#[derive(Debug, Clone, Copy)]
+pub struct Logged {
+    pub kind: Kind,
+    pub target: u64,
+    pub channel: Option<u64>,
+    pub at: i64,
+}
+
+/// Whether an action could be behind an event: the same kind of action on the same member (and,
+/// for a deleted message, in the same channel), from a few seconds around the event. Uses left
+/// aren't looked at here.
+fn could_explain(a: &ModAction, e: &Logged) -> bool {
+    let want = match e.kind {
         Kind::Ban => "ban",
         Kind::Unban => "unban",
         Kind::Timeout => "timeout",
@@ -269,15 +322,45 @@ pub fn moderator_for(actions: &[ModAction], kind: Kind, target: Option<u64>, cha
         Kind::MessageDelete => "delete",
         Kind::Roles => "roles",
         Kind::Leave => "kick",
-        _ => return None,
+        _ => return false,
     };
-    let target = target?;
     // Discord says which channel a deleted message was in; a delete elsewhere is someone else's.
-    let same_channel = |a: &ModAction| kind != Kind::MessageDelete || a.channel.is_none() || channel.is_none() || a.channel == channel;
-    actions
-        .iter()
-        .filter(|a| a.action == want && a.target == Some(target) && (a.at - at).abs() < MATCH_MS && same_channel(a))
-        .min_by_key(|a| (a.at - at).abs())
+    let same_channel = e.kind != Kind::MessageDelete || a.channel.is_none() || e.channel.is_none() || a.channel == e.channel;
+    a.action == want && a.target == Some(e.target) && same_channel && (-MATCH_BEFORE_MS..=MATCH_AFTER_MS).contains(&(a.at - e.at))
+}
+
+/// Put each event down to the moderator action behind it, if any, and count each action as used
+/// so it explains no more events than it covers. Matched across all the events at once, closest
+/// pairs first, an entry at or after its event before an earlier one: so two moderators acting
+/// on one member moments apart each get their own event, and a member's own delete a moment
+/// before a moderator's doesn't take the moderator's entry because it was queued first.
+pub fn assign(actions: &mut [ModAction], events: &[Logged]) -> Vec<Option<ModAction>> {
+    let mut pairs: Vec<((bool, i64), usize, usize)> = Vec::new();
+    for (ei, e) in events.iter().enumerate() {
+        for (ai, a) in actions.iter().enumerate() {
+            if a.used < a.covers && could_explain(a, e) {
+                pairs.push(((a.at < e.at, (a.at - e.at).abs()), ei, ai));
+            }
+        }
+    }
+    // Ties go to the earlier event, then the action listed first.
+    pairs.sort_unstable();
+    let mut out: Vec<Option<ModAction>> = vec![None; events.len()];
+    for (_, ei, ai) in pairs {
+        let a = &mut actions[ai];
+        if out[ei].is_some() || a.used >= a.covers {
+            continue;
+        }
+        a.used += 1;
+        out[ei] = Some(a.clone());
+    }
+    out
+}
+
+/// [`assign`] for one event.
+#[cfg(test)]
+pub fn claim(actions: &mut [ModAction], kind: Kind, target: u64, channel: Option<u64>, at: i64) -> Option<ModAction> {
+    assign(actions, &[Logged { kind, target, channel, at }]).pop().flatten()
 }
 
 /// `'a', 'b'`: the keys are fixed words from `Kind::key`, so they can go in as text.
@@ -292,7 +375,7 @@ fn id_list(ids: &[u64]) -> String {
 
 /// What a search matches, in the words the page shows: the member's name then or now, their id,
 /// the channel, the event's label, the deleted text, an edit's or nickname's before and after,
-/// the roles' names, and the moderator behind it and their reason.
+/// the roles' names, and the moderator named on it and their reason.
 const SEARCH_SQL: &str = "
     instr(lower(e.user_name), ?Q) > 0 OR e.user_id = ?N OR e.user_id IN ({users}) OR e.channel_id IN ({channels}) OR e.kind IN ({kinds})
     OR (e.kind IN ('message_edit', 'nickname') AND json_valid(e.summary)
@@ -303,13 +386,7 @@ const SEARCH_SQL: &str = "
         OR EXISTS (SELECT 1 FROM json_each(e.summary, '$.removed') j WHERE j.type = 'object' AND instr(lower(json_extract(j.value, '$.name')), ?Q) > 0)))
     -- Plain summaries, including edits, nicknames and role changes stored as text by older versions.
     OR ((e.kind NOT IN ('message_edit', 'nickname', 'roles') OR NOT json_valid(e.summary)) AND instr(lower(e.summary), ?Q) > 0)
-    -- A range on `at`, not abs(), so the lookup is an index range rather than a scan per event.
-    OR EXISTS (SELECT 1 FROM audit_mod_actions a
-               WHERE a.guild_id = e.guild_id AND a.target_id = e.user_id AND a.at BETWEEN e.at - 59999 AND e.at + 59999
-                 AND a.action = CASE e.kind WHEN 'ban' THEN 'ban' WHEN 'unban' THEN 'unban' WHEN 'timeout' THEN 'timeout'
-                     WHEN 'timeout_end' THEN 'untimeout' WHEN 'message_delete' THEN 'delete' WHEN 'roles' THEN 'roles'
-                     WHEN 'leave' THEN 'kick' END
-                 AND (a.moderator_id IN ({moderators}) OR a.moderator_id = ?N OR instr(lower(COALESCE(a.reason, '')), ?Q) > 0))";
+    OR e.moderator_id IN ({moderators}) OR e.moderator_id = ?N OR instr(lower(COALESCE(e.reason, '')), ?Q) > 0";
 
 pub(crate) fn where_clause(guild: u64, f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
     let mut sql = "e.guild_id = ?1".to_owned();
@@ -340,7 +417,7 @@ pub fn recent(ctx: &Ctx, guild: u64, f: &Filter, limit: i64) -> Result<(Vec<Row>
     ctx.db.with(|c| {
         let total: i64 = c.query_row(&format!("SELECT COUNT(*) FROM audit_events e WHERE {clause}"), params_from_iter(args.iter().map(|a| a.as_ref())), |r| r.get(0))?;
         let mut stmt = c.prepare(&format!(
-            "SELECT e.at, e.kind, e.user_id, e.user_name, e.channel_id, e.summary FROM audit_events e WHERE {clause} ORDER BY e.at DESC, e.id DESC LIMIT {limit}"
+            "SELECT e.at, e.kind, e.user_id, e.user_name, e.channel_id, e.summary, e.moderator_id, e.reason FROM audit_events e WHERE {clause} ORDER BY e.at DESC, e.id DESC LIMIT {limit}"
         ))?;
         let rows = stmt
             .query_map(params_from_iter(args.iter().map(|a| a.as_ref())), |r| {
@@ -352,6 +429,8 @@ pub fn recent(ctx: &Ctx, guild: u64, f: &Filter, limit: i64) -> Result<(Vec<Row>
                     user_name: r.get(3)?,
                     channel_id: r.get::<_, Option<i64>>(4)?.map(|c| c as u64),
                     summary: r.get(5)?,
+                    moderator: r.get::<_, Option<i64>>(6)?.map(|m| m as u64),
+                    reason: r.get(7)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -465,10 +544,13 @@ pub fn seed_preview(ctx: &Ctx, guild: u64) -> Result<()> {
         (2100, 1, "delete", 2, None), (5900, 3, "roles", 5, None), (7000, 0, "delete", 3, None),
     ];
     for (ago, moderator, action, target, reason) in mods {
+        let (at, moderator, target) = (now - ago * min, m(moderator).0 as i64, m(target).0 as i64);
         tx.execute(
-            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, reason) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![guild as i64, now - ago * min, m(moderator).0 as i64, action, m(target).0 as i64, reason],
+            "INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, reason, used) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1)",
+            params![guild as i64, at, moderator, action, target, reason],
         )?;
+        // The entry it explained, as the post would have named it.
+        tx.execute("UPDATE audit_events SET moderator_id = ?1, reason = ?2 WHERE guild_id = ?3 AND at = ?4 AND user_id = ?5", params![moderator, reason, guild as i64, at, target])?;
     }
     tx.commit()?;
     Ok(())

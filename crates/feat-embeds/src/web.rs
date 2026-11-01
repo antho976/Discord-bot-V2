@@ -151,7 +151,7 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                         div.eb-col {
                             section.eb-grp {
                                 (group_head(chat_icon(), "Message text", None))
-                                (text_field("content", "Text above the embed", "Optional. Mentions of members and roles ping them; @everyone and @here don't.", &d.content, true, Some(model::MAX_CONTENT), 2, "content", ""))
+                                (text_field("content", "Text above the embed", "Optional. Mentions of members ping them, and so do mentions of roles anyone can mention. @everyone and @here don't.", &d.content, true, Some(model::MAX_CONTENT), 2, "content", ""))
                             }
                             section.eb-grp {
                                 (group_head(ui::icon(Icon::Brush), "Embed", None))
@@ -421,9 +421,33 @@ fn explain(e: &bot_core::twilight_http::Error) -> String {
     }
 }
 
-/// Users and roles in the text can be pinged. `@everyone` and `@here` can't.
-fn mentions() -> AllowedMentions {
-    AllowedMentions { parse: vec![MentionType::Users, MentionType::Roles], ..Default::default() }
+/// Users in the text can be pinged, and roles only where anyone may mention them anyway. Discord
+/// lets a bot with Mention Everyone ping any role named in the text, so the roles are listed one by
+/// one instead. `@everyone` and `@here` can't be pinged.
+fn mentions(ctx: &Ctx, guild: u64, content: &str) -> AllowedMentions {
+    let roles = role_ids(content)
+        .into_iter()
+        .filter(|r| *r != guild)
+        .filter_map(Id::new_checked)
+        .filter(|r| ctx.cache.role(*r).is_some_and(|role| role.guild_id().get() == guild && role.mentionable))
+        .collect();
+    AllowedMentions { parse: vec![MentionType::Users], roles, ..Default::default() }
+}
+
+/// The role ids mentioned in a message's text as `<@&id>`, each once, at most 100 (Discord's limit).
+fn role_ids(content: &str) -> Vec<u64> {
+    let mut out = Vec::new();
+    for part in content.split("<@&").skip(1) {
+        let Some((digits, _)) = part.split_once('>') else { continue };
+        if let Ok(id) = digits.parse::<u64>()
+            && id != 0
+            && !out.contains(&id)
+            && out.len() < 100
+        {
+            out.push(id);
+        }
+    }
+    out
 }
 
 async fn send(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
@@ -436,7 +460,7 @@ async fn send(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
         return rerender(&ctx, &page, failed(data, &form, None, "Pick a channel to send to.".into()));
     };
     let embeds: Vec<Embed> = data.embed().into_iter().collect();
-    let allowed = mentions();
+    let allowed = mentions(&ctx, guild, &data.content);
     let mut req = ctx.http.create_message(Id::new(channel)).embeds(&embeds).allowed_mentions(Some(&allowed));
     if !data.content.is_empty() {
         req = req.content(&data.content);
@@ -469,7 +493,7 @@ async fn update(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64
     // A stored row never holds 0, but a 0 would be no message to edit.
     let (Some(channel), Some(message)) = (Id::new_checked(sent.channel_id), Id::new_checked(sent.message_id)) else { return Err(WebError::NotFound) };
     let embeds: Vec<Embed> = data.embed().into_iter().collect();
-    let allowed = mentions();
+    let allowed = mentions(&ctx, guild, &data.content);
     let content = Some(data.content.as_str()).filter(|c| !c.is_empty());
     let res = ctx
         .http
@@ -960,5 +984,13 @@ mod tests {
         let taken = vec!["Rules (copy)".to_owned(), "Rules (copy 2)".to_owned()];
         assert_eq!(copy_name("Rules", &taken), "Rules (copy 3)");
         assert!(copy_name(&"n".repeat(60), &[]).chars().count() <= 60);
+    }
+
+    #[test]
+    fn role_mentions_are_read_from_the_text() {
+        assert_eq!(role_ids("hi <@&12> and <@&34>, again <@&12>"), vec![12, 34]);
+        // Users, channels, broken and zero ids aren't roles.
+        assert!(role_ids("<@12> <#34> <@&x> <@&0> <@&56").is_empty());
+        assert_eq!(role_ids(&"<@&7>".repeat(3)), vec![7]);
     }
 }

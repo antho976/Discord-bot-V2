@@ -9,6 +9,7 @@ use bot_core::rusqlite::{Connection, params};
 use bot_core::twilight_model::channel::ChannelType;
 use bot_core::twilight_model::channel::message::AllowedMentions;
 use bot_core::twilight_model::id::Id;
+use bot_core::web::dc;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
@@ -199,38 +200,10 @@ fn tiles(r: &Rule, card: usize) -> Markup {
     }
 }
 
-/// The bot's name and face for a Discord-style message. The preview has no bot user, so its
-/// face is the dashboard's mark.
-fn bot_identity(ctx: &Ctx) -> (String, Option<String>) {
-    match ctx.cache.current_user() {
-        Some(u) => (u.name.clone(), Some(bot_core::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref()))),
-        None => ("Bot".into(), None),
-    }
-}
-
-/// "Today at 5:06 PM", or "Oct 30 at 5:06 PM" for an older one, in the viewer's time.
-fn message_time(page: &Page, ms: i64) -> String {
-    let at = page.user.local(ms);
-    let clock = at.strftime("%-I:%M %p").to_string();
-    if at.date() == page.user.local(now_ms()).date() { format!("Today at {clock}") } else { format!("{} at {clock}", at.strftime("%b %-d")) }
-}
-
-/// A message from the bot as Discord draws it, for the sticky message. `id` names the text so
-/// the edit page's script can rewrite it in place.
-fn bot_message(ctx: &Ctx, time: &str, text: &str, id: Option<&str>) -> Markup {
-    let (name, avatar) = bot_identity(ctx);
-    html! {
-        div.ru-msg {
-            @match avatar {
-                Some(url) => img.ru-msg-av src=(url) alt="" width="36" height="36" loading="lazy";,
-                None => span.ru-msg-av { img src="/static/icon.svg" alt="" width="20" height="20"; },
-            }
-            div.ru-msg-main {
-                div.ru-msg-head { b { (name) } span.ru-app { "APP" } span.ru-msg-time { (time) } }
-                div.ru-msg-text id=[id] { (text.trim()) }
-            }
-        }
-    }
+/// The sticky message: a message from the bot on Discord's grey, posted at `time`. `id` names the
+/// text so the edit page's script can rewrite it in place.
+fn bot_message(ctx: &Ctx, page: &Page, time: String, text: &str, id: Option<&str>) -> Markup {
+    html! { div.ru-msg { (dc::message(ctx, page).time_text(time).render(html! { div.dp-line id=[id] { (text.trim()) } })) } }
 }
 
 /// "After 25 messages or 10 min of quiet".
@@ -338,7 +311,7 @@ fn rule_card(ctx: &Ctx, page: &Page, guild: u64, r: &Rule, posted: Option<i64>, 
             }
             @if r.has_sticky() {
                 div.ru-sticky {
-                    (bot_message(ctx, &posted.map(|at| message_time(page, at)).unwrap_or_else(|| "Not posted yet".into()), &text::clip(r.sticky.trim(), 300), None))
+                    (bot_message(ctx, page, posted.map(|at| dc::time(page, at)).unwrap_or_else(|| "Not posted yet".into()), &text::clip(r.sticky.trim(), 300), None))
                     div.ru-sticky-foot {
                         p.ru-sticky-cap {
                             (rule_icon(Kind::Sticky))
@@ -466,7 +439,7 @@ async fn edit_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
                         "A thread on every message, named " code #ru-pv-tname { (crate::thread_name(&r.thread_name, &sample_user, &sample_date, sample_text)) }
                     }
                     div.ru-sticky #ru-pv-sticky hidden[!r.has_sticky()] {
-                        (bot_message(&ctx, &message_time(&page, now_ms()), &r.sticky, Some("ru-pv-stext")))
+                        (bot_message(&ctx, &page, dc::time(&page, now_ms()), &r.sticky, Some("ru-pv-stext")))
                         p.ru-sticky-cap { (rule_icon(Kind::Sticky)) span #ru-pv-scap { (sticky_when(&r)) } }
                     }
                     p.muted.small { "Sample values: you as the member, today's date and a first line someone might post." }
@@ -691,16 +664,9 @@ html.same .ru-bar { animation: none; }
 
 /* The sticky message as Discord draws it. Discord's own colours: it's their surface. */
 .ru-sticky { display: flex; flex-direction: column; gap: 7px; margin-top: auto; }
-.ru-msg { display: flex; gap: 12px; min-width: 0; padding: 12px 14px 13px; border-radius: 12px; background: #313338; color: #dbdee1; font: 14px/1.375 var(--sans); box-shadow: 0 10px 26px -16px rgba(0, 0, 0, 0.9); }
-.ru-msg-av { flex: none; width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
-span.ru-msg-av { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
-span.ru-msg-av img { width: 20px; height: 20px; }
-.ru-msg-main { flex: 1; min-width: 0; }
-.ru-msg-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.ru-msg-head b { color: #f2f3f5; font-weight: 500; }
-.ru-app { display: inline-flex; align-items: center; height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font-size: 10px; font-weight: 600; }
-.ru-msg-time { color: #949ba4; font-size: 12px; }
-.ru-msg-text { margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ru-msg { padding: 12px 14px 13px; border-radius: 12px; background: #313338; box-shadow: 0 10px 26px -16px rgba(0, 0, 0, 0.9); }
+/* A card's width: Discord's message (web/dc.rs) a size down, so the text keeps its line. */
+.ru-msg .dp-post { gap: 12px; font-size: 14px; }
 .ru-sticky-cap { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; color: var(--ink-3); }
 .ru-sticky-cap .icon { width: 14px; height: 14px; margin-top: 2px; color: var(--hue); }
 

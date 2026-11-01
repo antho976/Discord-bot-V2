@@ -55,6 +55,8 @@ pub struct Afk {
     pub prefixed: bool,
     /// Their name when they went away, for when the member cache doesn't have them.
     pub name: String,
+    /// The nickname the bot gave them, "[AFK] Mira", to tell it from one they chose since.
+    pub set_nick: Option<String>,
 }
 
 #[derive(Default)]
@@ -83,6 +85,9 @@ const MIGRATIONS: &[Migration] = &[Migration {
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, name TEXT NOT NULL DEFAULT '',
             PRIMARY KEY (guild_id, user_id));
     ",
+}, Migration {
+    name: "003_utility_set_nick",
+    sql: "ALTER TABLE utility_afk ADD COLUMN set_nick TEXT;",
 }];
 
 /// Who was already told about whom, so a busy channel doesn't get the same notice twice.
@@ -90,14 +95,17 @@ const MIGRATIONS: &[Migration] = &[Migration {
 struct Notices(HashMap<(u64, u64), i64>);
 
 impl Notices {
-    /// Of these AFK people, the ones nobody has been told about in `channel` recently. Marks
-    /// them as told.
-    fn due(&mut self, channel: u64, afk_users: &[u64], now_ms: i64) -> Vec<u64> {
+    /// Of these AFK people, the first `max` nobody has been told about in `channel` recently.
+    /// Marks only those as told, so the rest are still told next time.
+    fn due(&mut self, channel: u64, afk_users: &[u64], now_ms: i64, max: usize) -> Vec<u64> {
         if self.0.len() > 2000 {
             self.0.retain(|_, t| now_ms - *t < NOTICE_COOLDOWN_MS);
         }
         let mut out = Vec::new();
         for user in afk_users {
+            if out.len() >= max {
+                break;
+            }
             match self.0.get(&(channel, *user)) {
                 Some(t) if now_ms - *t < NOTICE_COOLDOWN_MS => {}
                 _ => {
@@ -129,15 +137,16 @@ fn clean_reason(raw: &str) -> String {
     text::clip(&one_line, 100)
 }
 
-/// "Mira is AFK: lunch (since <t:...:R>)".
+/// "Mira is AFK: lunch (since <t:...:R>)". The name and reason show as typed, never as a link.
 fn notice_line(name: &str, a: &Afk) -> String {
     let since = format!("since <t:{}:R>", a.since_ms / 1000);
-    if a.reason.is_empty() { format!("{name} is AFK ({since})") } else { format!("{name} is AFK: {} ({since})", a.reason) }
+    let name = text::escape_markdown(name);
+    if a.reason.is_empty() { format!("{name} is AFK ({since})") } else { format!("{name} is AFK: {} ({since})", text::escape_markdown(&a.reason)) }
 }
 
 /// `/time now`: what time it is for `target`, asked by `user`.
 fn time_now(ctx: &Ctx, guild: u64, user: u64, target: u64) -> Result<Reply> {
-    let name = name_of(ctx, guild, target);
+    let name = text::escape_markdown(&name_of(ctx, guild, target));
     let zone = tz_get(ctx, target)?;
     let local = zone.as_deref().and_then(|z| zones::local(z, Timestamp::now()));
     Ok(match (zone, local) {
@@ -174,6 +183,23 @@ fn caller_name(call: &CommandCall) -> String {
 pub(crate) fn name_or_stored(ctx: &Ctx, guild: u64, user: u64, stored: &str) -> String {
     let cached = ctx.cache.member(Id::new(guild), Id::new(user)).is_some() || ctx.cache.user(Id::new(user)).is_some();
     if cached || stored.is_empty() { name_of(ctx, guild, user) } else { stored.to_owned() }
+}
+
+/// A nickname without the AFK prefix, or none when nothing is left: the one to put back is never
+/// itself an AFK nickname.
+fn without_prefix(nick: Option<String>) -> Option<String> {
+    match nick {
+        Some(n) => match n.strip_prefix(NICK_PREFIX) {
+            Some(rest) => Some(rest.trim().to_owned()).filter(|r| !r.is_empty()),
+            None => Some(n),
+        },
+        None => None,
+    }
+}
+
+/// When a message was sent, from its id.
+fn snowflake_ms(id: u64) -> i64 {
+    ((id >> 22) + 1_420_070_400_000) as i64
 }
 
 /// The nickname while away, kept inside Discord's 32 characters.
@@ -231,11 +257,12 @@ impl Feature for Utility {
                     return Ok(());
                 }
                 let (author, channel) = (m.author.id.get(), m.channel_id.get());
-                if let Some(back) = afk_clear(ctx, guild, author)? {
+                // A message sent before /afk (and only now handled) doesn't end it.
+                if let Some(back) = afk_end(ctx, guild, author, snowflake_ms(m.id.get()))? {
                     restore_nick(ctx, guild, author, &back).await;
                     if s.welcome_back {
                         let away = ((bot_core::now_ms() - back.since_ms) / 1000).max(0);
-                        let name = name_of(ctx, guild, author);
+                        let name = text::escape_markdown(&name_of(ctx, guild, author));
                         let line = format!("Welcome back, {name}. You were away for {}.", text::duration(away));
                         if let Ok(id) = ctx.say(channel, &line).await {
                             let ctx = ctx.clone();
@@ -256,11 +283,10 @@ impl Feature for Utility {
                     return Ok(());
                 }
                 let ids: Vec<u64> = away.iter().map(|a| a.user_id).collect();
-                let due = self.notices.lock().unwrap().due(channel, &ids, bot_core::now_ms());
+                let due = self.notices.lock().unwrap().due(channel, &ids, bot_core::now_ms(), MAX_NOTICES);
                 let lines: Vec<String> = away
                     .iter()
                     .filter(|a| due.contains(&a.user_id))
-                    .take(MAX_NOTICES)
                     .map(|a| notice_line(&name_of(ctx, guild, a.user_id), a))
                     .collect();
                 if lines.is_empty() {
@@ -298,24 +324,31 @@ impl Feature for Utility {
                     return ctx.reply(&call.interaction, Reply::text("AFK is turned off on this server.").ephemeral()).await;
                 }
                 let reason = clean_reason(call.opts().str("reason").unwrap_or_default());
-                let current_nick = call.interaction.member.as_ref().and_then(|m| m.nick.clone());
+                // An "[AFK] " nickname left over from before is never the one to put back.
+                let current_nick = without_prefix(call.interaction.member.as_ref().and_then(|m| m.nick.clone()));
                 let before = afk_get(ctx, guild, user)?;
-                // Setting it again changes the reason and keeps the nickname we'd restore.
-                let (prefixed, prev_nick) = match &before {
-                    Some(b) if b.prefixed => (true, b.prev_nick.clone()),
-                    _ => (s.nick_prefix && can_edit_nick(ctx, guild, user), current_nick.clone()),
+                // Setting it again changes the reason and keeps the nicknames we set and would restore.
+                let (prefixed, prev_nick, set) = match &before {
+                    Some(b) if b.prefixed => (true, b.prev_nick.clone(), None),
+                    _ if s.nick_prefix && can_edit_nick(ctx, guild, user) => {
+                        let base = current_nick.clone().unwrap_or_else(|| name_of(ctx, guild, user));
+                        (true, current_nick, Some(afk_nick(&base)))
+                    }
+                    _ => (false, current_nick, None),
                 };
+                let set_nick_to = set.clone().or_else(|| before.as_ref().and_then(|b| b.set_nick.clone()));
                 let since_ms = before.as_ref().map(|b| b.since_ms).unwrap_or_else(bot_core::now_ms);
-                afk_set(ctx, guild, &Afk { user_id: user, reason: reason.clone(), since_ms, prev_nick, prefixed, name: caller_name(call) })?;
+                // Saved with the nickname about to be set, so a message sent before Discord
+                // confirms it still puts the old one back.
+                afk_set(ctx, guild, &Afk { user_id: user, reason: reason.clone(), since_ms, prev_nick, prefixed, name: caller_name(call), set_nick: set_nick_to })?;
                 let msg = if reason.is_empty() {
                     "You're AFK. Your next message ends it.".to_owned()
                 } else {
-                    format!("You're AFK: {reason}. Your next message ends it.")
+                    format!("You're AFK: {}. Your next message ends it.", text::escape_markdown(&reason))
                 };
                 ctx.reply(&call.interaction, Reply::text(msg).ephemeral()).await?;
-                if prefixed && before.as_ref().is_none_or(|b| !b.prefixed) {
-                    let base = current_nick.unwrap_or_else(|| ctx.display_name(guild, user));
-                    set_nick(ctx, guild, user, Some(&afk_nick(&base))).await;
+                if let Some(nick) = set {
+                    set_nick(ctx, guild, user, Some(&nick)).await;
                 }
             }
             "time" => {
@@ -376,7 +409,7 @@ impl Feature for Utility {
             (9, "Driving, back tonight", 50 * 60_000),
         ];
         for (i, reason, ago) in away {
-            afk_set(ctx, guild, &Afk { user_id: members[i].0, reason: reason.into(), since_ms: now - ago, prev_nick: None, prefixed: false, name: members[i].1.into() })?;
+            afk_set(ctx, guild, &Afk { user_id: members[i].0, reason: reason.into(), since_ms: now - ago, prev_nick: None, prefixed: false, name: members[i].1.into(), set_nick: None })?;
         }
         // Two pairs share a zone, so a clock and a pin on the band show more than one face.
         let zones = [
@@ -400,10 +433,11 @@ fn afk_from_row(r: &bot_core::rusqlite::Row<'_>) -> bot_core::rusqlite::Result<A
         prev_nick: r.get(3)?,
         prefixed: r.get::<_, i64>(4)? != 0,
         name: r.get(5)?,
+        set_nick: r.get(6)?,
     })
 }
 
-const AFK_COLUMNS: &str = "user_id, reason, since_ms, prev_nick, prefixed, name";
+const AFK_COLUMNS: &str = "user_id, reason, since_ms, prev_nick, prefixed, name, set_nick";
 
 pub fn afk_get(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<Afk>> {
     ctx.db.with(|c| {
@@ -419,8 +453,8 @@ pub fn afk_get(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<Afk>> {
 pub fn afk_set(ctx: &Ctx, guild: u64, a: &Afk) -> Result<()> {
     ctx.db.with(|c| {
         c.execute(
-            "INSERT OR REPLACE INTO utility_afk (guild_id, user_id, reason, since_ms, prev_nick, prefixed, name) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![guild as i64, a.user_id as i64, a.reason, a.since_ms, a.prev_nick, a.prefixed as i64, a.name],
+            "INSERT OR REPLACE INTO utility_afk (guild_id, user_id, reason, since_ms, prev_nick, prefixed, name, set_nick) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![guild as i64, a.user_id as i64, a.reason, a.since_ms, a.prev_nick, a.prefixed as i64, a.name, a.set_nick],
         )
     })?;
     Ok(())
@@ -432,6 +466,19 @@ pub fn afk_clear(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<Afk>> {
         c.query_row(
             &format!("DELETE FROM utility_afk WHERE guild_id = ?1 AND user_id = ?2 RETURNING {AFK_COLUMNS}"),
             params![guild as i64, user as i64],
+            afk_from_row,
+        )
+        .optional()
+    })
+}
+
+/// End someone's AFK because of a message they sent at `sent_ms`, and return it. A message from
+/// before they went away doesn't count.
+fn afk_end(ctx: &Ctx, guild: u64, user: u64, sent_ms: i64) -> Result<Option<Afk>> {
+    ctx.db.with(|c| {
+        c.query_row(
+            &format!("DELETE FROM utility_afk WHERE guild_id = ?1 AND user_id = ?2 AND since_ms <= ?3 RETURNING {AFK_COLUMNS}"),
+            params![guild as i64, user as i64, sent_ms],
             afk_from_row,
         )
         .optional()
@@ -484,13 +531,24 @@ async fn set_nick(ctx: &Ctx, guild: u64, user: u64, nick: Option<&str>) {
 
 /// Put the old nickname back, unless they've changed it themselves since.
 pub async fn restore_nick(ctx: &Ctx, guild: u64, user: u64, was: &Afk) {
-    if !was.prefixed {
-        return;
-    }
     let now = ctx.cache.member(Id::new(guild), Id::new(user)).and_then(|m| m.nick().map(str::to_owned));
-    if now.is_some_and(|n| n.starts_with(NICK_PREFIX)) {
+    if should_restore(now.as_deref(), was) {
         set_nick(ctx, guild, user, was.prev_nick.as_deref()).await;
     }
+}
+
+/// Whether the nickname the cache shows now is still ours to change back: the one the bot set,
+/// or the old one when the cache hasn't seen the change yet. Rows saved before the bot kept the
+/// nickname it set go by the prefix.
+fn should_restore(now: Option<&str>, was: &Afk) -> bool {
+    if !was.prefixed {
+        return false;
+    }
+    let ours = match &was.set_nick {
+        Some(set) => now == Some(set.as_str()),
+        None => now.is_some_and(|n| n.starts_with(NICK_PREFIX)),
+    };
+    ours || now == was.prev_nick.as_deref()
 }
 
 // ---- timezone storage ----
@@ -556,26 +614,34 @@ mod tests {
     #[test]
     fn notices_once_per_channel_per_ten_minutes() {
         let mut n = Notices::default();
-        assert_eq!(n.due(1, &[10, 11], 0), vec![10, 11]);
+        assert_eq!(n.due(1, &[10, 11], 0, 4), vec![10, 11]);
         // Same channel again: nothing new to say.
-        assert!(n.due(1, &[10, 11], 5 * MIN).is_empty());
+        assert!(n.due(1, &[10, 11], 5 * MIN, 4).is_empty());
         // Another channel is its own conversation.
-        assert_eq!(n.due(2, &[10], 5 * MIN), vec![10]);
+        assert_eq!(n.due(2, &[10], 5 * MIN, 4), vec![10]);
         // A new AFK person in the first channel is still announced.
-        assert_eq!(n.due(1, &[10, 12], 9 * MIN), vec![12]);
+        assert_eq!(n.due(1, &[10, 12], 9 * MIN, 4), vec![12]);
         // After ten minutes it's allowed again.
-        assert_eq!(n.due(1, &[10], 10 * MIN), vec![10]);
+        assert_eq!(n.due(1, &[10], 10 * MIN, 4), vec![10]);
         // A repeat inside one call counts once.
-        assert_eq!(n.due(3, &[20, 20], 0), vec![20]);
+        assert_eq!(n.due(3, &[20, 20], 0, 4), vec![20]);
+    }
+
+    #[test]
+    fn only_the_people_shown_are_marked_as_told() {
+        let mut n = Notices::default();
+        assert_eq!(n.due(1, &[1, 2, 3, 4, 5, 6], 0, 4), vec![1, 2, 3, 4]);
+        // The two left out are told on the next mention.
+        assert_eq!(n.due(1, &[1, 2, 3, 4, 5, 6], MIN, 4), vec![5, 6]);
     }
 
     #[test]
     fn stale_notices_are_pruned() {
         let mut n = Notices::default();
         for u in 0..2100u64 {
-            n.due(1, &[u], 0);
+            n.due(1, &[u], 0, 4);
         }
-        n.due(1, &[9999], 11 * MIN);
+        n.due(1, &[9999], 11 * MIN, 4);
         assert!(n.0.len() < 10);
     }
 
@@ -604,10 +670,57 @@ mod tests {
 
     #[test]
     fn notice_reads_plainly() {
-        let a = Afk { user_id: 1, reason: "lunch".into(), since_ms: 1_700_000_000_000, prev_nick: None, prefixed: false, name: String::new() };
+        let a = Afk { user_id: 1, reason: "lunch".into(), since_ms: 1_700_000_000_000, prev_nick: None, prefixed: false, name: String::new(), set_nick: None };
         assert_eq!(notice_line("Mira", &a), "Mira is AFK: lunch (since <t:1700000000:R>)");
-        let bare = Afk { reason: String::new(), ..a };
+        let bare = Afk { reason: String::new(), ..a.clone() };
         assert_eq!(notice_line("Mira", &bare), "Mira is AFK (since <t:1700000000:R>)");
+        // A reason or name can't become a masked link.
+        let link = Afk { reason: "[discord.gift/x](https://evil.example)".into(), ..a };
+        assert_eq!(notice_line("*Mira*", &link), r"\*Mira\* is AFK: \[discord.gift/x\]\(https://evil.example\) (since <t:1700000000:R>)");
+    }
+
+    #[test]
+    fn the_nickname_goes_back_when_it_is_still_ours() {
+        let a = Afk {
+            user_id: 1,
+            reason: String::new(),
+            since_ms: 0,
+            prev_nick: Some("Mira".into()),
+            prefixed: true,
+            name: String::new(),
+            set_nick: Some("[AFK] Mira".into()),
+        };
+        assert!(should_restore(Some("[AFK] Mira"), &a));
+        // The cache hasn't seen the bot's change yet.
+        assert!(should_restore(Some("Mira"), &a));
+        // They picked another one while away.
+        assert!(!should_restore(Some("Mira (back at 5)"), &a));
+        assert!(!should_restore(Some("Mira"), &Afk { prefixed: false, ..a.clone() }));
+        // A row from before the bot kept the nickname it set.
+        let old = Afk { set_nick: None, ..a };
+        assert!(should_restore(Some("[AFK] Mira"), &old));
+        assert!(!should_restore(Some("Someone"), &old));
+    }
+
+    #[test]
+    fn an_afk_nickname_is_never_the_one_to_put_back() {
+        assert_eq!(without_prefix(Some("[AFK] Mira".into())), Some("Mira".into()));
+        assert_eq!(without_prefix(Some("Mira".into())), Some("Mira".into()));
+        assert_eq!(without_prefix(Some("[AFK] ".into())), None);
+        assert_eq!(without_prefix(None), None);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_message_from_before_afk_does_not_end_it() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(Utility::default())]).unwrap();
+        let since = 1_700_000_000_000;
+        let a = Afk { user_id: 5, reason: String::new(), since_ms: since, prev_nick: None, prefixed: false, name: String::new(), set_nick: None };
+        afk_set(&ctx, 1, &a).unwrap();
+        let id_at = |ms: i64| ((ms - 1_420_070_400_000) as u64) << 22;
+        assert_eq!(snowflake_ms(id_at(since)), since);
+        assert!(afk_end(&ctx, 1, 5, snowflake_ms(id_at(since - 2_000))).unwrap().is_none());
+        assert_eq!(afk_end(&ctx, 1, 5, snowflake_ms(id_at(since + 2_000))).unwrap(), Some(a));
     }
 
     #[test]

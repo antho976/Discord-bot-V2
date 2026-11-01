@@ -95,19 +95,30 @@ pub enum Reserved {
     Number(i64),
     /// The member is at their limit; this is their newest open ticket's thread.
     Full(u64),
+    /// The member opened a ticket too recently. They can open another at this time (ms).
+    TooSoon(i64),
 }
 
 /// A reserved ticket still without a thread after this long was abandoned: opening failed half
 /// way, or the bot restarted in the middle. Opening takes a few seconds.
 const ABANDONED_MS: i64 = 5 * 60_000;
 
-/// Take the next ticket number for a member, unless they already have `max` open. The row has no
-/// thread yet; set it with [`set_thread`] or give the number back with [`release`].
-pub fn reserve(conn: &mut Connection, guild: u64, user: u64, subject: &str, details: &str, max: i64, now: i64) -> bot_core::rusqlite::Result<Reserved> {
+/// How long a member waits between opening tickets, so opening and closing in a loop can't
+/// ping the staff over and over. Staff don't wait.
+pub const COOLDOWN_MS: i64 = 10 * 60_000;
+
+/// Take the next ticket number for a member, unless they already have `max` open or opened one
+/// less than `cooldown` ms ago. The row has no thread yet; set it with [`set_thread`] or give the
+/// number back with [`release`].
+#[allow(clippy::too_many_arguments)]
+pub fn reserve(conn: &mut Connection, guild: u64, user: u64, subject: &str, details: &str, max: i64, cooldown: i64, now: i64) -> bot_core::rusqlite::Result<Reserved> {
     let tx = conn.transaction()?;
     release_abandoned(&tx, guild, Some(user), now)?;
     if let Some(thread) = full_thread(&tx, guild, user, max)? {
         return Ok(Reserved::Full(thread));
+    }
+    if let Some(at) = next_open_at(&tx, guild, user, cooldown, now)? {
+        return Ok(Reserved::TooSoon(at));
     }
     let number: i64 = tx.query_row("SELECT COALESCE(MAX(number), 0) + 1 FROM tickets WHERE guild_id = ?1", [guild as i64], |r| r.get(0))?;
     tx.execute(
@@ -134,6 +145,17 @@ pub fn full_thread(conn: &Connection, guild: u64, user: u64, max: i64) -> bot_co
         params![guild as i64, user as i64],
         |r| r.get::<_, i64>(0).map(|t| Some(t as u64)),
     )
+}
+
+/// When a member who opened a ticket less than `cooldown` ms ago can open the next one. None
+/// when they can now. Reservations given back don't count: they never reached the staff.
+pub fn next_open_at(conn: &Connection, guild: u64, user: u64, cooldown: i64, now: i64) -> bot_core::rusqlite::Result<Option<i64>> {
+    if cooldown <= 0 {
+        return Ok(None);
+    }
+    let last: Option<i64> =
+        conn.query_row("SELECT MAX(opened_at) FROM tickets WHERE guild_id = ?1 AND opener_id = ?2", params![guild as i64, user as i64], |r| r.get(0))?;
+    Ok(last.map(|at| at + cooldown).filter(|at| *at > now))
 }
 
 pub fn set_thread(conn: &Connection, guild: u64, number: i64, thread: u64) -> bot_core::rusqlite::Result<()> {
@@ -346,6 +368,16 @@ fn is_not_found(e: &bot_core::twilight_http::Error) -> bool {
     matches!(e.kind(), ErrorType::Response { status, .. } if status.get() == 404)
 }
 
+/// Whether a ticket's thread is still there. The cache has every active thread the bot is in,
+/// so only one it doesn't have is asked about, and only Discord's "not found" counts as gone.
+async fn thread_exists(ctx: &Ctx, thread: u64) -> bool {
+    let Some(id) = Id::new_checked(thread) else { return false };
+    if ctx.cache.channel(id).is_some() {
+        return true;
+    }
+    !matches!(ctx.http.channel(id).await, Err(e) if is_not_found(&e))
+}
+
 // ---- who is allowed ----
 
 /// Who is behind an interaction: id, name and avatar. None in the odd case Discord leaves the
@@ -374,16 +406,28 @@ fn already_open(thread: u64) -> String {
     }
 }
 
+/// What to tell a member who opened a ticket too recently.
+fn too_soon(at: i64) -> String {
+    format!("You opened a ticket a few minutes ago. You can open another <t:{}:R>.", (at + 999) / 1000)
+}
+
 fn has_perm(i: &Interaction, perms: Permissions) -> bool {
     i.member.as_ref().and_then(|m| m.permissions).is_some_and(|p| p.contains(Permissions::ADMINISTRATOR) || p.intersects(perms))
 }
 
-fn can_close(i: &Interaction, s: &Settings, t: &Ticket) -> bool {
-    if i.author_id().is_some_and(|u| u.get() == t.opener_id) {
-        return true;
-    }
+/// The staff role, or a permission to manage the server or threads.
+fn is_staff(i: &Interaction, s: &Settings) -> bool {
     let staff = s.staff_role.is_some_and(|role| i.member.as_ref().is_some_and(|m| m.roles.iter().any(|r| r.get() == role)));
     staff || has_perm(i, Permissions::MANAGE_GUILD | Permissions::MANAGE_THREADS)
+}
+
+/// The wait between tickets for whoever is behind the interaction.
+fn cooldown_for(i: &Interaction, s: &Settings) -> i64 {
+    if is_staff(i, s) { 0 } else { COOLDOWN_MS }
+}
+
+fn can_close(i: &Interaction, s: &Settings, t: &Ticket) -> bool {
+    i.author_id().is_some_and(|u| u.get() == t.opener_id) || is_staff(i, s)
 }
 
 fn channel_label(ctx: &Ctx, guild: u64, channel: u64) -> String {
@@ -392,8 +436,13 @@ fn channel_label(ctx: &Ctx, guild: u64, channel: u64) -> String {
 
 // ---- the panel ----
 
+/// One panel post at a time per server, so a double click doesn't leave two panels up.
+static PANEL_LOCKS: std::sync::LazyLock<crate::GuildLocks> = std::sync::LazyLock::new(Default::default);
+
 /// Post the "Open a ticket" panel in the ticket channel and take down the previous one.
 pub async fn send_panel(ctx: &Ctx, guild: u64) -> Result<u64, String> {
+    let lock = PANEL_LOCKS.get(guild);
+    let _one_at_a_time = lock.lock().await;
     let s = ctx.settings::<Settings>(guild, KEY).map_err(|e| e.to_string())?;
     let Some(channel) = s.ticket_channel else { return Err("Pick a ticket channel and save before sending the panel.".into()) };
     let title = if s.panel_title.trim().is_empty() { crate::DEFAULT_PANEL_TITLE } else { s.panel_title.as_str() };
@@ -409,14 +458,60 @@ pub async fn send_panel(ctx: &Ctx, guild: u64) -> Result<u64, String> {
             return Err(format!("Couldn't post in {}. The bot needs to see it and send embeds there.", channel_label(ctx, guild, channel)));
         }
     };
-    if let Some((old_channel, old_message)) = s.panel {
-        ctx.deleting_own_message(old_message);
-        let _ = ctx.http.delete_message(Id::new(old_channel), Id::new(old_message)).await;
-    }
-    let mut next = (*s).clone();
+    let old: Vec<(u64, u64)> = s.stale_panels.iter().copied().chain(s.panel).collect();
+    let stale = delete_panels(ctx, guild, &old).await;
+    // Read again: a save on the dashboard while this was posting is kept, and only the panel
+    // changes.
+    let mut next = (*ctx.settings::<Settings>(guild, KEY).map_err(|e| e.to_string())?).clone();
     next.panel = Some((channel, message.id.get()));
+    next.stale_panels = stale;
     ctx.save_settings(guild, KEY, &next).map_err(|e| e.to_string())?;
     Ok(channel)
+}
+
+/// Old panels kept to try again, at most: past this the oldest are let go.
+const STALE_PANELS_MAX: usize = 10;
+
+/// Delete old panels. The ones Discord didn't delete come back, to try again later; one that's
+/// already gone (404) is done with.
+async fn delete_panels(ctx: &Ctx, guild: u64, panels: &[(u64, u64)]) -> Vec<(u64, u64)> {
+    let mut left = Vec::new();
+    for &(channel, message) in panels {
+        let (Some(c), Some(m)) = (Id::new_checked(channel), Id::new_checked(message)) else { continue };
+        ctx.deleting_own_message(message);
+        match ctx.http.delete_message(c, m).await {
+            Err(e) if !is_not_found(&e) => {
+                bot_core::tracing::warn!(guild, channel, message, error = %e, "couldn't take down an old ticket panel");
+                left.push((channel, message));
+            }
+            _ => {}
+        }
+    }
+    keep_newest(left)
+}
+
+fn keep_newest(mut panels: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
+    panels.dedup();
+    let extra = panels.len().saturating_sub(STALE_PANELS_MAX);
+    panels.drain(..extra);
+    panels
+}
+
+/// Try again to take down old panels a send couldn't. In the hourly sweep.
+async fn retry_stale_panels(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
+    if ctx.settings::<Settings>(guild, KEY)?.stale_panels.is_empty() {
+        return Ok(());
+    }
+    let lock = PANEL_LOCKS.get(guild);
+    let _one_at_a_time = lock.lock().await;
+    let stale = ctx.settings::<Settings>(guild, KEY)?.stale_panels.clone();
+    let left = delete_panels(ctx, guild, &stale).await;
+    if left != stale {
+        let mut next = (*ctx.settings::<Settings>(guild, KEY)?).clone();
+        next.stale_panels = left;
+        ctx.save_settings(guild, KEY, &next)?;
+    }
+    Ok(())
 }
 
 // ---- commands, buttons, modals ----
@@ -463,8 +558,27 @@ pub async fn on_component(ctx: &Ctx, call: &ComponentCall) -> bot_core::anyhow::
             if s.ticket_channel.is_none() {
                 return ctx.reply(&call.interaction, Reply::text("Tickets aren't set up on this server yet.").ephemeral()).await;
             }
-            if let Some(thread) = ctx.db.with(|c| full_thread(c, guild, call.user_id(), s.max_open))? {
+            let user = call.user_id();
+            let now = now_ms();
+            let cooldown = cooldown_for(&call.interaction, &s);
+            // A reservation left by a restart mid-open is let go first, as `reserve` does.
+            let check = |c: &Connection| -> bot_core::rusqlite::Result<(Option<u64>, Option<i64>)> {
+                release_abandoned(c, guild, Some(user), now)?;
+                Ok((full_thread(c, guild, user, s.max_open)?, next_open_at(c, guild, user, cooldown, now)?))
+            };
+            let (mut full, mut wait) = ctx.db.with(check)?;
+            // A thread deleted while the bot wasn't watching: close its ticket and look again.
+            if let Some(thread) = full.filter(|t| *t != 0)
+                && !thread_exists(ctx, thread).await
+            {
+                ctx.db.with(|c| thread_gone(c, thread, "The thread was deleted", now_ms()).map(|_| ()))?;
+                (full, wait) = ctx.db.with(check)?;
+            }
+            if let Some(thread) = full {
                 return ctx.reply(&call.interaction, Reply::text(already_open(thread)).ephemeral()).await;
+            }
+            if let Some(at) = wait {
+                return ctx.reply(&call.interaction, Reply::text(too_soon(at)).ephemeral()).await;
             }
             ctx.modal(
                 &call.interaction,
@@ -527,13 +641,15 @@ async fn open_ticket(ctx: &Ctx, call: &ModalCall, guild: u64, s: &Settings) -> b
     let details = text::clip(call.value("details").unwrap_or_default().trim(), 2000);
     let subject = if subject.is_empty() { "No subject".to_owned() } else { subject };
 
+    let cooldown = cooldown_for(&call.interaction, s);
     let reserved = {
         let mut conn = ctx.db.lock();
-        reserve(&mut conn, guild, user, &subject, &details, s.max_open, now_ms())?
+        reserve(&mut conn, guild, user, &subject, &details, s.max_open, cooldown, now_ms())?
     };
     let number = match reserved {
         Reserved::Number(n) => n,
         Reserved::Full(thread) => return ctx.edit_original(&call.interaction, Reply::text(already_open(thread))).await,
+        Reserved::TooSoon(at) => return ctx.edit_original(&call.interaction, Reply::text(too_soon(at))).await,
     };
 
     let thread_name = format!("ticket-{number:04} {}", text::clip(&name, 60));
@@ -655,20 +771,28 @@ async fn archive(ctx: &Ctx, thread: u64) {
 
 // ---- idle tickets ----
 
+/// Once an hour per server: let go of abandoned reservations, close tickets whose thread is gone,
+/// and, with "Close idle tickets after" on, close the quiet ones. Discord is only asked about a
+/// thread the cache doesn't have, or a ticket the stored times say has gone quiet.
 pub async fn sweep_idle(feature: &Tickets, ctx: &Ctx) -> bot_core::anyhow::Result<()> {
     for guild in ctx.enabled_guilds(KEY) {
         if !feature.sweep_due(guild) {
             continue;
         }
         ctx.db.with(|c| release_abandoned(c, guild, None, now_ms()))?;
-        let s = ctx.settings::<Settings>(guild, KEY)?;
-        if s.auto_close_days <= 0 {
-            continue;
+        if let Err(e) = retry_stale_panels(ctx, guild).await {
+            bot_core::tracing::warn!(guild, error = %e, "couldn't retry old ticket panels");
         }
+        let s = ctx.settings::<Settings>(guild, KEY)?;
         let open: Vec<Ticket> = ctx.db.with(|c| list(c, guild, Filter::Open, 500))?.into_iter().filter(|t| t.thread_id != 0).collect();
         let limit = s.auto_close_days * DAY_MS;
         for t in open {
-            let channel = match ctx.http.channel(Id::new(t.thread_id)).await {
+            let Some(id) = Id::new_checked(t.thread_id) else { continue };
+            let quiet = s.auto_close_days > 0 && now_ms() - t.last_message_at.unwrap_or(t.opened_at).max(t.opened_at) >= limit;
+            if !quiet && ctx.cache.channel(id).is_some() {
+                continue;
+            }
+            let channel = match ctx.http.channel(id).await {
                 Ok(r) => match r.model().await {
                     Ok(c) => c,
                     Err(_) => continue,
@@ -679,6 +803,10 @@ pub async fn sweep_idle(feature: &Tickets, ctx: &Ctx) -> bot_core::anyhow::Resul
                 }
                 Err(_) => continue,
             };
+            if !quiet {
+                continue;
+            }
+            // The thread's own last message, bots' and ones sent while the bot was away included.
             let last = channel.last_message_id.map(|id| snowflake_ms(id.get())).unwrap_or(t.opened_at).max(t.opened_at);
             if now_ms() - last < limit {
                 continue;
@@ -778,6 +906,18 @@ mod tests {
     }
 
     #[test]
+    fn old_panels_kept_to_retry_are_bounded() {
+        assert_eq!(keep_newest(vec![(1, 2), (1, 2), (1, 3)]), vec![(1, 2), (1, 3)]);
+        let many: Vec<(u64, u64)> = (1..=15).map(|m| (1, m)).collect();
+        let kept = keep_newest(many);
+        assert_eq!(kept.len(), STALE_PANELS_MAX);
+        assert_eq!((kept[0], kept[kept.len() - 1]), ((1, 6), (1, 15)), "the newest are kept");
+        // Settings saved before the list existed read as none.
+        let s: Settings = bot_core::serde_json::from_str(r#"{"panel": [1, 2]}"#).unwrap();
+        assert!(s.stale_panels.is_empty());
+    }
+
+    #[test]
     fn median_of_lists() {
         assert_eq!(median(&[]), None);
         assert_eq!(median(&[5]), Some(5));
@@ -795,27 +935,27 @@ mod tests {
     fn numbers_count_up_per_server_and_cap_open_tickets() {
         let db = db();
         let mut c = db.lock();
-        let a = reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
+        let a = reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap();
         assert!(matches!(a, Reserved::Number(1)));
         set_thread(&c, 1, 1, 555).unwrap();
         // Same member, limit 1: told where their ticket is.
-        assert!(matches!(reserve(&mut c, 1, 10, "b", "", 1, 2000).unwrap(), Reserved::Full(555)));
+        assert!(matches!(reserve(&mut c, 1, 10, "b", "", 1, 0, 2000).unwrap(), Reserved::Full(555)));
         // A higher limit lets them open another; another server starts again at 1.
-        assert!(matches!(reserve(&mut c, 1, 10, "b", "", 2, 2000).unwrap(), Reserved::Number(2)));
-        assert!(matches!(reserve(&mut c, 2, 10, "c", "", 1, 2000).unwrap(), Reserved::Number(1)));
+        assert!(matches!(reserve(&mut c, 1, 10, "b", "", 2, 0, 2000).unwrap(), Reserved::Number(2)));
+        assert!(matches!(reserve(&mut c, 2, 10, "c", "", 1, 0, 2000).unwrap(), Reserved::Number(1)));
     }
 
     #[test]
     fn closing_frees_the_member_and_only_works_once() {
         let db = db();
         let mut c = db.lock();
-        reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
+        reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap();
         set_thread(&c, 1, 1, 555).unwrap();
         assert!(mark_closed(&c, 1, 1, Some(99), Some("done"), CLOSED, 5000).unwrap());
         assert!(!mark_closed(&c, 1, 1, Some(99), None, CLOSED, 6000).unwrap());
         let t = by_thread(&c, 1, 555).unwrap().unwrap();
         assert_eq!((t.status.as_str(), t.closed_by, t.closed_at), (CLOSED, Some(99), Some(5000)));
-        assert!(matches!(reserve(&mut c, 1, 10, "again", "", 1, 7000).unwrap(), Reserved::Number(2)));
+        assert!(matches!(reserve(&mut c, 1, 10, "again", "", 1, 0, 7000).unwrap(), Reserved::Number(2)));
     }
 
     #[test]
@@ -823,14 +963,14 @@ mod tests {
         let db = db();
         let mut c = db.lock();
         for (user, thread) in [(10u64, 501u64), (11, 502), (12, 503)] {
-            let Reserved::Number(n) = reserve(&mut c, 1, user, "a", "", 1, 1000).unwrap() else { panic!("full") };
+            let Reserved::Number(n) = reserve(&mut c, 1, user, "a", "", 1, 0, 1000).unwrap() else { panic!("full") };
             set_thread(&c, 1, n, thread).unwrap();
         }
         // Closing, or releasing a ticket that already has its thread, frees nothing.
         mark_closed(&c, 1, 3, None, None, IDLE, 2000).unwrap();
         release(&c, 1, 3).unwrap();
         assert!(by_number(&c, 1, 3).unwrap().is_some());
-        assert!(matches!(reserve(&mut c, 1, 13, "b", "", 1, 3000).unwrap(), Reserved::Number(4)));
+        assert!(matches!(reserve(&mut c, 1, 13, "b", "", 1, 0, 3000).unwrap(), Reserved::Number(4)));
         assert!(by_number(&c, 1, 99).unwrap().is_none());
     }
 
@@ -838,20 +978,42 @@ mod tests {
     fn pressing_twice_finds_the_ticket_still_being_opened() {
         let db = db();
         let mut c = db.lock();
-        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap(), Reserved::Number(1)));
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap(), Reserved::Number(1)));
         // No thread yet: the second press is told to wait, not sent to <#0>.
-        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap(), Reserved::Full(0)));
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap(), Reserved::Full(0)));
         assert_eq!(already_open(0), "Your ticket is still being opened. It shows up in a moment.");
         assert!(already_open(555).contains("<#555>"));
+    }
+
+    #[test]
+    fn opening_and_closing_in_a_loop_waits_between_tickets() {
+        let db = db();
+        let mut c = db.lock();
+        let t0 = 1_000_000;
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, COOLDOWN_MS, t0).unwrap(), Reserved::Number(1)));
+        set_thread(&c, 1, 1, 555).unwrap();
+        mark_closed(&c, 1, 1, Some(10), None, CLOSED, t0 + 1000).unwrap();
+        // Closed, but opened a minute ago: told when they can open the next.
+        assert!(matches!(reserve(&mut c, 1, 10, "b", "", 1, COOLDOWN_MS, t0 + 60_000).unwrap(), Reserved::TooSoon(at) if at == t0 + COOLDOWN_MS));
+        assert_eq!(next_open_at(&c, 1, 10, COOLDOWN_MS, t0 + 60_000).unwrap(), Some(t0 + COOLDOWN_MS));
+        assert!(too_soon(t0 + COOLDOWN_MS).contains(&format!("<t:{}:R>", (t0 + COOLDOWN_MS) / 1000)));
+        // Staff (no wait), another member, another server, or once the wait is over: opened.
+        assert_eq!(next_open_at(&c, 1, 10, 0, t0 + 60_000).unwrap(), None);
+        assert_eq!(next_open_at(&c, 1, 11, COOLDOWN_MS, t0 + 60_000).unwrap(), None);
+        assert_eq!(next_open_at(&c, 2, 10, COOLDOWN_MS, t0 + 60_000).unwrap(), None);
+        assert!(matches!(reserve(&mut c, 1, 10, "b", "", 1, COOLDOWN_MS, t0 + COOLDOWN_MS).unwrap(), Reserved::Number(2)));
+        // A reservation given back never reached the staff, so it doesn't count.
+        release(&c, 1, 2).unwrap();
+        assert!(matches!(reserve(&mut c, 1, 10, "c", "", 1, COOLDOWN_MS, t0 + COOLDOWN_MS + 1).unwrap(), Reserved::Number(2)));
     }
 
     #[test]
     fn a_failed_thread_gives_the_number_back() {
         let db = db();
         let mut c = db.lock();
-        reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
+        reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap();
         release(&c, 1, 1).unwrap();
-        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap(), Reserved::Number(1)));
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap(), Reserved::Number(1)));
     }
 
     #[test]
@@ -860,12 +1022,12 @@ mod tests {
         let mut c = db.lock();
         let now = 100 * DAY_MS;
         for (i, took) in [60_000i64, 3_600_000, 7_200_000].iter().enumerate() {
-            reserve(&mut c, 1, 10 + i as u64, "x", "", 1, now - DAY_MS).unwrap();
+            reserve(&mut c, 1, 10 + i as u64, "x", "", 1, 0, now - DAY_MS).unwrap();
             let n = i as i64 + 1;
             set_thread(&c, 1, n, 100 + n as u64).unwrap();
             mark_closed(&c, 1, n, None, None, CLOSED, now - DAY_MS + took).unwrap();
         }
-        reserve(&mut c, 1, 50, "open", "", 1, now - 10 * DAY_MS).unwrap();
+        reserve(&mut c, 1, 50, "open", "", 1, 0, now - 10 * DAY_MS).unwrap();
         let s = stats(&c, 1, now).unwrap();
         assert_eq!((s.open, s.this_week), (1, 3));
         assert_eq!(s.median_close_secs, Some(3600));
@@ -875,7 +1037,7 @@ mod tests {
     fn replies_set_whose_turn_it_is() {
         let db = db();
         let mut c = db.lock();
-        reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
+        reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap();
         set_thread(&c, 1, 1, 555).unwrap();
         let turn = |c: &Connection| by_number(c, 1, 1).unwrap().unwrap().waiting_on();
         // Opening counts as the member's message.
@@ -903,7 +1065,7 @@ mod tests {
         let db = db();
         let mut c = db.lock();
         for (user, thread) in [(10u64, 555u64), (11, 556), (12, 557)] {
-            reserve(&mut c, 1, user, "a", "", 1, 1000).unwrap();
+            reserve(&mut c, 1, user, "a", "", 1, 0, 1000).unwrap();
             let n = number_opened_by(&c, user);
             set_thread(&c, 1, n, thread).unwrap();
         }
@@ -921,8 +1083,8 @@ mod tests {
     fn closing_your_own_ticket_is_not_answering() {
         let db = db();
         let mut c = db.lock();
-        reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
-        reserve(&mut c, 1, 11, "b", "", 1, 1000).unwrap();
+        reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap();
+        reserve(&mut c, 1, 11, "b", "", 1, 0, 1000).unwrap();
         mark_closed(&c, 1, 1, Some(10), None, CLOSED, 2000).unwrap();
         mark_closed(&c, 1, 2, Some(99), None, CLOSED, 2000).unwrap();
         assert_eq!(closers(&c, 1, 0, 5).unwrap(), vec![(99, 1)]);
@@ -932,7 +1094,7 @@ mod tests {
     fn reopening_is_for_recent_closes_with_a_thread() {
         let db = db();
         let mut c = db.lock();
-        reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
+        reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap();
         set_thread(&c, 1, 1, 555).unwrap();
         mark_closed(&c, 1, 1, Some(99), Some("done"), CLOSED, 2000).unwrap();
         let t = by_number(&c, 1, 1).unwrap().unwrap();
@@ -947,20 +1109,20 @@ mod tests {
         assert!(waiting_on_staff(&c, 1, 9 * DAY_MS, 10).unwrap().is_empty());
         assert!(!t.can_reopen(3000));
         // The member is at their limit again.
-        assert!(matches!(reserve(&mut c, 1, 10, "b", "", 1, 4000).unwrap(), Reserved::Full(555)));
+        assert!(matches!(reserve(&mut c, 1, 10, "b", "", 1, 0, 4000).unwrap(), Reserved::Full(555)));
     }
 
     #[test]
     fn a_reservation_that_never_got_a_thread_is_given_back() {
         let db = db();
         let mut c = db.lock();
-        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap(), Reserved::Number(1)));
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap(), Reserved::Number(1)));
         // A minute later it's still being opened.
-        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 61_000).unwrap(), Reserved::Full(0)));
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 0, 61_000).unwrap(), Reserved::Full(0)));
         // After a restart mid-way it would wait forever; past five minutes it's let go.
-        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 1000 + ABANDONED_MS + 1).unwrap(), Reserved::Number(1)));
+        assert!(matches!(reserve(&mut c, 1, 10, "a", "", 1, 0, 1000 + ABANDONED_MS + 1).unwrap(), Reserved::Number(1)));
         // The sweep lets go of anyone's, and never of a ticket with a thread.
-        reserve(&mut c, 1, 11, "b", "", 1, 1000).unwrap();
+        reserve(&mut c, 1, 11, "b", "", 1, 0, 1000).unwrap();
         set_thread(&c, 1, 2, 777).unwrap();
         assert_eq!(release_abandoned(&c, 1, None, 1000 + 3 * ABANDONED_MS).unwrap(), 1);
         assert!(by_thread(&c, 1, 777).unwrap().is_some());
@@ -983,7 +1145,7 @@ mod tests {
     fn a_vanished_thread_closes_its_ticket() {
         let db = db();
         let mut c = db.lock();
-        reserve(&mut c, 1, 10, "a", "", 1, 1000).unwrap();
+        reserve(&mut c, 1, 10, "a", "", 1, 0, 1000).unwrap();
         set_thread(&c, 1, 1, 555).unwrap();
         assert!(thread_gone(&c, 555, "The thread was deleted", 2000).unwrap());
         assert!(!thread_gone(&c, 555, "again", 3000).unwrap());

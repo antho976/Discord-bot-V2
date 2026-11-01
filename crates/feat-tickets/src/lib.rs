@@ -5,7 +5,7 @@ mod tickets;
 mod web;
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use bot_core::anyhow::Result;
@@ -38,13 +38,17 @@ pub struct Settings {
     pub panel_text: String,
     /// The last panel posted: `(channel, message)`. Sending a new one removes this one.
     pub panel: Option<(u64, u64)>,
+    /// Earlier panels Discord didn't delete when asked (an error other than already gone):
+    /// `(channel, message)`. Tried again on the next send and in the hourly sweep.
+    pub stale_panels: Vec<(u64, u64)>,
 
     /// The starboard is off until a channel is picked.
     pub star_channel: Option<u64>,
     /// A unicode emoji, or a custom one pasted as `<:name:id>`.
     pub star_emoji: String,
     pub star_threshold: i64,
-    /// Take the post down when the count falls back under the threshold.
+    /// Take the post down when the count falls back under the threshold, once it has been up for
+    /// 10 minutes.
     pub star_remove_below: bool,
     /// Whether a message's author starring their own message counts.
     pub star_self: bool,
@@ -61,6 +65,7 @@ impl Default for Settings {
             panel_title: DEFAULT_PANEL_TITLE.into(),
             panel_text: DEFAULT_PANEL_TEXT.into(),
             panel: None,
+            stale_panels: Vec::new(),
             star_channel: None,
             star_emoji: "⭐".into(),
             star_threshold: 3,
@@ -107,10 +112,21 @@ const MIGRATIONS: &[Migration] = &[Migration {
 
 #[derive(Default)]
 pub struct Tickets {
-    /// One starboard update at a time, so two quick reactions can't post the same message twice.
-    star_lock: bot_core::tokio::sync::Mutex<()>,
+    /// One starboard update at a time in each server, so two quick reactions can't post the same
+    /// message twice.
+    star_locks: GuildLocks,
     /// When each server's open tickets were last checked for idleness.
     swept: Mutex<HashMap<u64, Instant>>,
+}
+
+/// An async lock per server, made on first use.
+#[derive(Default)]
+pub(crate) struct GuildLocks(Mutex<HashMap<u64, Arc<bot_core::tokio::sync::Mutex<()>>>>);
+
+impl GuildLocks {
+    pub(crate) fn get(&self, guild: u64) -> Arc<bot_core::tokio::sync::Mutex<()>> {
+        self.0.lock().unwrap().entry(guild).or_default().clone()
+    }
 }
 
 #[feature_async]
@@ -171,7 +187,13 @@ impl Feature for Tickets {
                     tickets::on_message(ctx, guild.get(), m.channel_id.get(), m.author.id.get(), m.author.bot, m.timestamp.as_micros() / 1000)?;
                 }
             }
-            Event::MessageDelete(m) => starboard::on_message_delete(ctx, m.guild_id, m.channel_id, m.id)?,
+            Event::MessageDelete(m) => starboard::on_message_delete(self, ctx, m.guild_id, m.channel_id, &[m.id]).await?,
+            Event::MessageDeleteBulk(m) => starboard::on_message_delete(self, ctx, m.guild_id, m.channel_id, &m.ids).await?,
+            Event::MessageUpdate(m) => {
+                if let Some(guild) = m.guild_id {
+                    starboard::on_message_update(self, ctx, guild.get(), m).await?;
+                }
+            }
             Event::ThreadDelete(t) => tickets::on_thread_gone(ctx, t.guild_id.get(), t.id.get(), "The thread was deleted")?,
             Event::ThreadUpdate(t) => {
                 if let (Some(guild), Some(meta)) = (t.guild_id, &t.thread_metadata)
@@ -251,6 +273,10 @@ impl Feature for Tickets {
 }
 
 impl Tickets {
+    pub(crate) fn star_lock(&self, guild: u64) -> Arc<bot_core::tokio::sync::Mutex<()>> {
+        self.star_locks.get(guild)
+    }
+
     pub(crate) fn sweep_due(&self, guild: u64) -> bool {
         let mut swept = self.swept.lock().unwrap();
         if swept.get(&guild).is_some_and(|t| t.elapsed().as_secs() < 3600) {

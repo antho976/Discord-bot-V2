@@ -10,6 +10,7 @@ use bot_core::jiff::tz::TimeZone;
 use bot_core::jiff::{Span, Timestamp};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::rusqlite::OptionalExtension;
+use bot_core::web::dc;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text, tracing};
@@ -138,22 +139,9 @@ fn readings(items: &[(&str, String)]) -> Markup {
     }
 }
 
-/// A Discord channel as Discord draws it: the channel's name in its bar (or `none` when there
-/// isn't one), then the messages.
+/// A Discord channel as Discord draws it, named after the channel picked (or `none`).
 fn discord(name: Option<String>, none: &str, body: Markup) -> Markup {
-    html! {
-        div.sa-dc {
-            div.sa-dc-bar {
-                (ui::icon(Icon::Hash))
-                @match name {
-                    Some(c) => span.clip { (c.trim_start_matches('#')) },
-                    None => span.none { (none) },
-                }
-                span.sa-dc-tag { "Preview" }
-            }
-            div.sa-dc-body { (body) }
-        }
-    }
+    dc::channel(name.as_deref(), none, body)
 }
 
 /// Where posts go and who they ping, as tags: the channel, then the role in its colour.
@@ -214,67 +202,46 @@ fn video_thumb(id: &str) -> String {
     youtube::thumb(id)
 }
 
-/// A message from the bot as Discord shows it: avatar, name with its APP tag and the time,
-/// then `body`. `used` is the slash command it answers, shown above it as Discord does.
+/// A message from the bot, sent now. `used` is the slash command it answers.
 fn bot_message(ctx: &Ctx, page: &Page, used: Option<&str>, body: Markup) -> Markup {
-    let bot = ctx.cache.current_user();
-    let bot_name = bot.as_ref().map(|u| u.name.clone()).unwrap_or_else(|| "Bot".into());
-    let bot_avatar = bot.as_ref().map(|u| bot_core::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref()));
-    let time = page.user.local(now_ms()).strftime("%-I:%M %p").to_string();
-    html! {
-        div.sa-msg {
-            @if let Some(cmd) = used {
-                div.sa-used { img src=(page.user.avatar_url()) alt=""; b { (page.user.name) } " used " span.cmd { (cmd) } }
-            }
-            div.sa-post {
-                @if let Some(url) = &bot_avatar {
-                    img.sa-av src=(url) alt="" width="40" height="40" loading="lazy";
-                } @else {
-                    span.sa-av.mark { img src="/static/icon.svg" alt=""; }
-                }
-                div.sa-post-main {
-                    div.sa-head {
-                        b.sa-name { (bot_name) }
-                        span.sa-app { "APP" }
-                        span.sa-time { "Today at " (time) }
-                    }
-                    (body)
-                }
-            }
-        }
+    let m = dc::message(ctx, page);
+    match used {
+        Some(cmd) => m.used(page, cmd),
+        None => m,
     }
+    .render(body)
 }
 
 /// The ping in front of a post, when a role is set.
 fn ping(role: Option<String>) -> Markup {
-    html! { @if let Some(r) = role { span.sa-ping { (r) } " " } }
+    html! { @if let Some(r) = role { span.dp-ping { (r) } " " } }
 }
 
 /// The live post as Discord shows it: the ping and the message, the embed with its coral edge,
 /// its fields, picture and footer, and the Watch on Twitch button.
 fn live_post(ctx: &Ctx, page: &Page, role: Option<String>, line: &str, b: &Broadcaster, sample: &Sample) -> Markup {
     bot_message(ctx, page, None, html! {
-        div.sa-line { (ping(role)) (line) }
-        div.sa-embed style="--embed:#f0806a" {
-            div.sa-author {
+        div.dp-line { (ping(role)) (line) }
+        div.dp-embed style="--embed:#f0806a" {
+            div.dp-author {
                 @if !b.avatar.is_empty() { img src=(b.avatar) alt="" width="24" height="24" loading="lazy"; }
                 (b.name)
             }
-            a.sa-title href=(b.url()) target="_blank" rel="noopener" { @if sample.title.is_empty() { (b.name) " is live" } @else { (sample.title) } }
-            div.sa-fields {
+            a.dp-title href=(b.url()) target="_blank" rel="noopener" { @if sample.title.is_empty() { (b.name) " is live" } @else { (sample.title) } }
+            div.dp-fields {
                 @if !sample.game.is_empty() { div { b { "Playing" } span { (sample.game) } } }
-                div { b { "Started" } span { span.sa-ts { (sample.started) } } }
+                div { b { "Started" } span { span.dp-ts { (sample.started) } } }
                 @if let Some(v) = &sample.viewers { div { b { "Viewers" } span { (v) } } }
             }
-            div.sa-media {
+            div.dp-media {
                 @match &sample.thumb {
                     Some(src) => { img src=(src) alt="" width="640" height="360" loading="lazy"; }
-                    None => { div.sa-thumb { (ui::icon(Icon::Live)) span { "The stream's picture" } } }
+                    None => { div.dp-thumb { (ui::icon(Icon::Live)) span { "The stream's picture" } } }
                 }
             }
-            div.sa-foot { @if sample.viewers.is_some() { "Twitch · updated • Today at " (page.user.local(now_ms()).strftime("%-I:%M %p")) } @else { "Twitch" } }
+            div.dp-foot { @if sample.viewers.is_some() { "Twitch · updated • Today at " (page.user.local(now_ms()).strftime("%-I:%M %p")) } @else { "Twitch" } }
         }
-        div.sa-buttons { a.sa-watch href=(b.url()) target="_blank" rel="noopener" { "Watch on Twitch" (ui::icon(Icon::External)) } }
+        div.dp-buttons { a.dp-btn href=(b.url()) target="_blank" rel="noopener" { "Watch on Twitch" (ui::icon(Icon::External)) } }
     })
 }
 
@@ -284,16 +251,16 @@ fn ended_preview(ctx: &Ctx, page: &Page, b: &Broadcaster, row: &StreamRow) -> Ma
     let p = twitch::ended_post(b, row);
     let link = row.vod_url.clone().unwrap_or_else(|| b.url());
     bot_message(ctx, page, None, html! {
-        div.sa-line { (p.content) }
-        div.sa-embed style="--embed:#3a3a3a" {
-            div.sa-author { (b.name) }
-            a.sa-title href=(link) target="_blank" rel="noopener" { (p.embed.title.unwrap_or_default()) }
-            div { "Ended " span.sa-ts { (text::ago(row.ended_at.unwrap_or_else(now_ms))) } "." }
-            div.sa-fields { @for f in &p.embed.fields { div { b { (f.name) } span { (f.value) } } } }
-            div.sa-foot { "Twitch" }
+        div.dp-line { (p.content) }
+        div.dp-embed style="--embed:#3a3a3a" {
+            div.dp-author { (b.name) }
+            a.dp-title href=(link) target="_blank" rel="noopener" { (p.embed.title.unwrap_or_default()) }
+            div { "Ended " span.dp-ts { (text::ago(row.ended_at.unwrap_or_else(now_ms))) } "." }
+            div.dp-fields { @for f in &p.embed.fields { div { b { (f.name) } span { (f.value) } } } }
+            div.dp-foot { "Twitch" }
         }
-        div.sa-buttons {
-            a.sa-watch href=(link) target="_blank" rel="noopener" { (if row.vod_url.is_some() { "Watch the VOD" } else { "Twitch channel" }) (ui::icon(Icon::External)) }
+        div.dp-buttons {
+            a.dp-btn href=(link) target="_blank" rel="noopener" { (if row.vod_url.is_some() { "Watch the VOD" } else { "Twitch channel" }) (ui::icon(Icon::External)) }
         }
     })
 }
@@ -306,9 +273,9 @@ fn reminder_post(ctx: &Ctx, page: &Page, tz: &TimeZone, role: Option<String>, b:
     let (title, game) = seg.map(|g| (g.title.as_str(), g.game.as_str())).unwrap_or(("Your stream title", "Just Chatting"));
     let when = in_minutes(minutes);
     bot_message(ctx, page, None, html! {
-        div.sa-line {
+        div.dp-line {
             (ping(role))
-            (b.name) " streams " span.sa-ts { (when) } " at " span.sa-ts { (at) }
+            (b.name) " streams " span.dp-ts { (when) } " at " span.dp-ts { (at) }
             @if !title.is_empty() { ": " b { (text::clip(title, 140)) } }
             @if !game.is_empty() { " (" (game) ")" }
             br;
@@ -334,7 +301,7 @@ fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &
     let filled = youtube::fill_video(template, &v.author, &v.title, &url);
     let unfurls = filled.contains(&url);
     bot_message(ctx, page, None, html! {
-        div.sa-line.sa-pre {
+        div.dp-line {
             (ping(role))
             @for (i, part) in filled.split(url.as_str()).enumerate() {
                 @if i > 0 { a href=(url) target="_blank" rel="noopener" { (url) } }
@@ -342,13 +309,13 @@ fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &
             }
         }
         @if unfurls {
-            div.sa-embed style="--embed:#ff0033" {
-                div.sa-provider { "YouTube" }
-                div.sa-author { (v.author) }
-                a.sa-title href=(url) target="_blank" rel="noopener" { (v.title) }
-                div.sa-media {
+            div.dp-embed style="--embed:#ff0033" {
+                div.dp-provider { "YouTube" }
+                div.dp-author { (v.author) }
+                a.dp-title href=(url) target="_blank" rel="noopener" { (v.title) }
+                div.dp-media {
                     @if v.id.is_empty() {
-                        div.sa-thumb { (ui::icon(Icon::Play)) span { "The video's picture" } }
+                        div.dp-thumb { (ui::icon(Icon::Play)) span { "The video's picture" } }
                     } @else {
                         img src=(video_thumb(&v.id)) alt="" width="320" height="180" loading="lazy";
                     }
@@ -356,7 +323,7 @@ fn video_post(ctx: &Ctx, page: &Page, role: Option<String>, template: &str, v: &
                 }
             }
         }
-        @if let Some(label) = reward { div.sa-buttons { span.sa-claim { (label) } } }
+        @if let Some(label) = reward { div.dp-buttons { span.dp-btn.green { (label) } } }
     })
 }
 
@@ -1069,7 +1036,7 @@ async fn schedule_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                     @if page.can_edit() { (test_in_form(&page, "alerts/schedule/test-weekly", "Send a test post")) }
                                 }
                                 (discord(if weekly { channel_name(&ctx, guild, s.weekly_channel) } else { None }, "Wherever someone uses it", bot_message(&ctx, &page, (!weekly).then_some("/schedule"), html! {
-                                    div.sa-media.sheet {
+                                    div.dp-media.sheet {
                                         img src=(page.path("alerts/schedule.png")) alt="This week's stream schedule" width="960" height="884" loading="lazy";
                                     }
                                 })))
@@ -1169,13 +1136,13 @@ async fn schedule_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
 fn clip_post(ctx: &Ctx, page: &Page, b: &Broadcaster, c: &clips::Clip) -> Markup {
     let text = clips::headline(c);
     bot_message(ctx, page, None, html! {
-        div.sa-line { (text) br; a href=(c.url) target="_blank" rel="noopener" { (c.url) } }
-        div.sa-embed style="--embed:#9146ff" {
-            div.sa-provider { "Twitch" }
-            a.sa-title href=(c.url) target="_blank" rel="noopener" { (c.title) " - " (b.name) }
-            div.sa-media {
+        div.dp-line { (text) br; a href=(c.url) target="_blank" rel="noopener" { (c.url) } }
+        div.dp-embed style="--embed:#9146ff" {
+            div.dp-provider { "Twitch" }
+            a.dp-title href=(c.url) target="_blank" rel="noopener" { (c.title) " - " (b.name) }
+            div.dp-media {
                 @if c.thumbnail.is_empty() {
-                    div.sa-thumb { (ui::icon(Icon::Play)) span { "The clip's picture" } }
+                    div.dp-thumb { (ui::icon(Icon::Play)) span { "The clip's picture" } }
                 } @else {
                     img src=(c.thumbnail) alt="" width="480" height="272" loading="lazy";
                 }

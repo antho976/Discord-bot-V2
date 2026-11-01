@@ -27,6 +27,18 @@ pub const MAX_WINNERS: i64 = 25;
 /// Enough for flags, skin tones and joined emoji like 👩‍💻.
 const MAX_EMOJI_CHARS: usize = 10;
 
+// The `ended` column: where a giveaway is in its life.
+const RUNNING: i64 = 0;
+/// Over, with its winners stored.
+const ENDED: i64 = 1;
+/// Claimed by `end`: entries are closed and the winners are being picked.
+const DRAWING: i64 = 2;
+/// Its post was deleted before it ended. Nobody is picked.
+const CANCELLED: i64 = 3;
+/// A draw that hasn't stored its winners after this long was cut short (a crash or a database
+/// error), and `tick` draws again.
+const STUCK_MS: i64 = 5 * 60_000;
+
 #[derive(Debug, Clone)]
 pub struct Giveaway {
     pub id: i64,
@@ -38,7 +50,12 @@ pub struct Giveaway {
     pub ends_at: i64,
     pub required_role: Option<u64>,
     pub created_by: u64,
+    /// No longer running: ended, being drawn, or cancelled.
     pub ended: bool,
+    /// Ended, with the winners not stored yet.
+    pub drawing: bool,
+    /// Called off when its post was deleted.
+    pub cancelled: bool,
     pub winner_ids: Vec<u64>,
     pub created_at: i64,
     /// When it was ended. 0 for rows ended before this was kept, and for running ones.
@@ -70,6 +87,7 @@ fn join_ids(ids: &[u64]) -> String {
 
 fn from_row(r: &Row) -> bot_core::rusqlite::Result<Giveaway> {
     let guild_id = r.get::<_, i64>(1)? as u64;
+    let state: i64 = r.get(9)?;
     Ok(Giveaway {
         id: r.get(0)?,
         guild_id,
@@ -81,7 +99,9 @@ fn from_row(r: &Row) -> bot_core::rusqlite::Result<Giveaway> {
         // The @everyone role (its id is the server's) is no requirement: nobody's roles list it.
         required_role: r.get::<_, Option<i64>>(7)?.map(|m| m as u64).filter(|role| *role != guild_id),
         created_by: r.get::<_, i64>(8)? as u64,
-        ended: r.get::<_, i64>(9)? != 0,
+        ended: state != RUNNING,
+        drawing: state == DRAWING,
+        cancelled: state == CANCELLED,
         winner_ids: ids(&r.get::<_, String>(10)?),
         created_at: r.get(11)?,
         ended_at: r.get(12)?,
@@ -131,15 +151,31 @@ pub fn since_totals(c: &Connection, guild: u64, since: i64) -> bot_core::rusqlit
     )
 }
 
-/// Giveaways of a server with their entry counts: running ones soonest first, ended ones most
-/// recently ended first.
+/// Giveaways of a server with their entry counts: running ones soonest first, ended and
+/// cancelled ones most recently ended first. One being drawn is in neither list for the moment.
 pub fn list(c: &Connection, guild: u64, ended: bool, limit: i64) -> bot_core::rusqlite::Result<Vec<(Giveaway, i64)>> {
-    let order = if ended { "CASE WHEN ended_at > 0 THEN ended_at ELSE ends_at END DESC" } else { "ends_at ASC" };
+    let (states, order) =
+        if ended { ("(1, 3)", "CASE WHEN ended_at > 0 THEN ended_at ELSE ends_at END DESC") } else { ("(0)", "ends_at ASC") };
     let mut s = c.prepare(&format!(
         "SELECT {COLS}, (SELECT COUNT(*) FROM giveaway_entries e WHERE e.giveaway_id = giveaways.id)
-         FROM giveaways WHERE guild_id = ?1 AND ended = ?2 ORDER BY {order} LIMIT ?3"
+         FROM giveaways WHERE guild_id = ?1 AND ended IN {states} ORDER BY {order} LIMIT ?2"
     ))?;
-    s.query_map(params![id_i64(guild), ended as i64, limit], |r| Ok((from_row(r)?, r.get(15)?)))?.collect()
+    s.query_map(params![id_i64(guild), limit], |r| Ok((from_row(r)?, r.get(15)?)))?.collect()
+}
+
+/// Call off the running giveaways whose post is one of `messages` in `channel`: their post was
+/// deleted, so nobody is picked. One being drawn is stopped before its winners are stored. One
+/// that already ended keeps its winners. Returns how many were cancelled.
+pub fn cancel_deleted(c: &Connection, guild: u64, channel: u64, messages: &[u64], now: i64) -> bot_core::rusqlite::Result<usize> {
+    let mut s = c.prepare_cached(
+        "UPDATE giveaways SET ended = 3, ended_at = ?4
+         WHERE guild_id = ?1 AND channel_id = ?2 AND message_id = ?3 AND ended IN (0, 2)",
+    )?;
+    let mut n = 0;
+    for m in messages {
+        n += s.execute(params![id_i64(guild), id_i64(channel), id_i64(*m), now])?;
+    }
+    Ok(n)
 }
 
 /// Add the member to the giveaway, or take them out if they're already in. True when they're in
@@ -316,6 +352,7 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
             ctx.defer(&call.interaction, true).await?;
             let msg = match end(ctx, id).await? {
                 EndOutcome::AlreadyEnded => format!("Giveaway #{id} has already ended. Use /giveaway reroll for new winners."),
+                EndOutcome::Cancelled => format!("Giveaway #{id} was cancelled when its post was deleted."),
                 EndOutcome::Ended(w) if w.is_empty() => format!("Giveaway #{id} ended. {}.", no_winner(ctx.db.with(|c| entry_count(c, id))?)),
                 EndOutcome::Ended(w) => format!("Giveaway #{id} ended with {} winner{}.", w.len(), if w.len() == 1 { "" } else { "s" }),
                 EndOutcome::Missing => format!("There's no giveaway #{id} here."),
@@ -333,14 +370,22 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
             };
             ctx.defer(&call.interaction, true).await?;
             let msg = match reroll(ctx, id, which, None).await? {
-                RerollOutcome::Rolled { swaps, kept } => {
-                    let mut msg = format!("Picked {} in place of {}.", mentions(swaps.iter().map(|s| s.1)), mentions(swaps.iter().map(|s| s.0)));
+                RerollOutcome::Rolled { swaps, added, kept } => {
+                    let mut parts = Vec::new();
+                    if !swaps.is_empty() {
+                        parts.push(format!("Picked {} in place of {}.", mentions(swaps.iter().map(|s| s.1)), mentions(swaps.iter().map(|s| s.0))));
+                    }
+                    if !added.is_empty() {
+                        parts.push(format!("Picked {} for the empty {}.", mentions(added.iter().copied()), if added.len() == 1 { "place" } else { "places" }));
+                    }
+                    let mut msg = parts.join(" ");
                     if which == Replace::All && !kept.is_empty() {
                         msg.push_str(&format!(" Nobody else could be picked, so {} {} their win.", mentions(kept.iter().copied()), if kept.len() == 1 { "keeps" } else { "keep" }));
                     }
                     msg
                 }
                 RerollOutcome::StillRunning => format!("Giveaway #{id} is still running. End it first."),
+                RerollOutcome::Cancelled => format!("Giveaway #{id} was cancelled when its post was deleted, so it has no winners."),
                 RerollOutcome::NotAWinner => match which {
                     Replace::One(u) => format!("<@{u}> isn't a winner of giveaway #{id}."),
                     Replace::All => format!("Giveaway #{id} has no winners to replace."),
@@ -354,7 +399,13 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
         "list" => {
             let (running, ended) = ctx.db.with(|c| Ok((list(c, guild, false, 10)?, list(c, guild, true, 5)?)))?;
             let line = |(g, n): &(Giveaway, i64)| {
-                let state = if g.ended { format!("ended <t:{}:R>", g.finished_at() / 1000) } else { format!("ends <t:{}:R>", g.ends_at / 1000) };
+                let state = if g.cancelled {
+                    format!("cancelled <t:{}:R>", g.finished_at() / 1000)
+                } else if g.ended {
+                    format!("ended <t:{}:R>", g.finished_at() / 1000)
+                } else {
+                    format!("ends <t:{}:R>", g.ends_at / 1000)
+                };
                 format!("`#{}` {}, {state}, {} entries", g.id, text::clip(&g.prize, 60), text::num(*n))
             };
             let mut lines: Vec<String> = Vec::new();
@@ -389,6 +440,9 @@ pub async fn on_enter(ctx: &Ctx, call: &ComponentCall, id: i64) -> Result<()> {
     if call.guild_id() != Some(g.guild_id) {
         return Ok(());
     }
+    if g.cancelled {
+        return reply("This giveaway was cancelled.").await;
+    }
     if g.ended || g.ends_at <= now_ms() {
         return reply("This giveaway has ended.").await;
     }
@@ -403,8 +457,9 @@ pub async fn on_enter(ctx: &Ctx, call: &ComponentCall, id: i64) -> Result<()> {
     };
     ctx.update(&call.interaction, Reply::embed(embed(&g, count)).components(components(id))).await?;
     // If it ended while that update was on its way, the running post may have landed after the
-    // ended one. Put the ended one back.
-    if let Some(now) = ctx.db.with(|c| get(c, id))?.filter(|g| g.ended) {
+    // ended one. Put the ended one back. One still being drawn gets its ended post from `end`,
+    // after this.
+    if let Some(now) = ctx.db.with(|c| get(c, id))?.filter(|g| g.ended && !g.drawing && !g.cancelled) {
         let n = ctx.db.with(|c| entry_count(c, id))?;
         refresh(ctx, &now, n).await;
     }
@@ -504,7 +559,9 @@ pub async fn edit(ctx: &Ctx, id: i64, ch: Changes<'_>) -> Result<EditOutcome> {
 
 pub enum EndOutcome {
     Missing,
+    /// Ended before, or being drawn by another caller.
     AlreadyEnded,
+    Cancelled,
     Ended(Vec<u64>),
 }
 
@@ -520,6 +577,7 @@ pub enum Replace {
 pub enum RerollOutcome {
     Missing,
     StillRunning,
+    Cancelled,
     /// That member isn't a winner (any more, after a reroll that already replaced them), or
     /// nobody won.
     NotAWinner,
@@ -528,8 +586,9 @@ pub enum RerollOutcome {
     Changed,
     /// Nobody else can win. True when the giveaway needs a role.
     NoOneElse(bool),
-    /// Who was replaced by whom, and the winners who kept their win.
-    Rolled { swaps: Vec<(u64, u64)>, kept: Vec<u64> },
+    /// Who was replaced by whom, who filled a place nobody had won, and the winners who kept
+    /// their win.
+    Rolled { swaps: Vec<(u64, u64)>, added: Vec<u64>, kept: Vec<u64> },
 }
 
 /// Why a reroll found nobody, for the reply.
@@ -545,26 +604,45 @@ fn mentions(users: impl Iterator<Item = u64>) -> String {
 
 /// End a giveaway: pick winners, edit its message and announce them.
 pub async fn end(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
-    // Only one caller wins the race to end it. The row is read after the claim, so an edit saved
-    // just before is the prize and winner count that get announced.
-    let claimed = ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 1, ended_at = ?2 WHERE id = ?1 AND ended = 0", params![id, now_ms()]))?;
+    // Only one caller wins the race to end it. The claim closes entries; the winners and the
+    // final state are stored together afterwards, so a crash in between leaves it drawing, and
+    // `tick` draws again.
+    let claimed = ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = ?3, ended_at = ?2 WHERE id = ?1 AND ended = ?4", params![id, now_ms(), DRAWING, RUNNING]))?;
     if claimed == 0 {
-        return Ok(if ctx.db.with(|c| get(c, id))?.is_some() { EndOutcome::AlreadyEnded } else { EndOutcome::Missing });
+        return settled(ctx, id);
     }
+    finish(ctx, id).await
+}
+
+/// Why a giveaway couldn't be claimed for a draw.
+fn settled(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
+    Ok(match ctx.db.with(|c| get(c, id))? {
+        Some(g) if g.cancelled => EndOutcome::Cancelled,
+        Some(_) => EndOutcome::AlreadyEnded,
+        None => EndOutcome::Missing,
+    })
+}
+
+/// Draw a claimed giveaway, store its winners and announce them.
+async fn finish(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
+    // The row is read after the claim, so an edit saved just before is the prize and winner
+    // count that get announced.
     let (g, all) = match ctx.db.with(|c| Ok((get(c, id)?, entries(c, id)?))) {
         Ok((Some(g), all)) => (g, all),
         Ok((None, _)) => return Ok(EndOutcome::Missing),
         Err(e) => {
-            // Let it go back to running so the next tick tries again, rather than ending with
-            // no winners and no announcement.
-            ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = 0, ended_at = 0 WHERE id = ?1", [id]))?;
+            // Let it go back to running so the next tick tries again.
+            ctx.db.with(|c| c.execute("UPDATE giveaways SET ended = ?2, ended_at = 0 WHERE id = ?1 AND ended = ?3", params![id, RUNNING, DRAWING]))?;
             return Err(e);
         }
     };
     let order = pick_winners(&all, all.len(), &[], &mut bot_core::rand::rng());
     let winners = draw(ctx, &g, &order, g.winners.max(1) as usize).await;
-    store_winners(ctx, id, &winners)?;
-    let g = Giveaway { winner_ids: winners.clone(), ..g };
+    // Nothing stored: it was cancelled during the draw, or a second draw of a stuck one won.
+    if ctx.db.with(|c| store_winners(c, id, &winners))? == 0 {
+        return settled(ctx, id);
+    }
+    let g = Giveaway { winner_ids: winners.clone(), drawing: false, ..g };
     refresh(ctx, &g, all.len() as i64).await;
     let content = if winners.is_empty() {
         if all.is_empty() { format!("Nobody entered the {} giveaway.", g.prize) } else { format!("Nobody who entered the {} giveaway could win.", g.prize) }
@@ -573,6 +651,18 @@ pub async fn end(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
     };
     announce(ctx, &g, &content, &winners).await;
     Ok(EndOutcome::Ended(winners))
+}
+
+/// Draw again a giveaway whose draw was cut short. Claimed like `end`, by moving its time, so
+/// two ticks can't both draw it.
+async fn redraw(ctx: &Ctx, id: i64, now: i64) -> Result<()> {
+    let claimed = ctx.db.with(|c| {
+        c.execute("UPDATE giveaways SET ended_at = ?2 WHERE id = ?1 AND ended = ?3 AND ended_at < ?4", params![id, now, DRAWING, now - STUCK_MS])
+    })?;
+    if claimed > 0 {
+        finish(ctx, id).await?;
+    }
+    Ok(())
 }
 
 /// How many members a draw may look up on Discord when the cache doesn't have them.
@@ -654,12 +744,22 @@ pub fn swapped(winners: &[u64], swaps: &[(u64, u64)]) -> Vec<u64> {
     winners.iter().map(|w| swaps.iter().find(|(old, _)| old == w).map_or(*w, |(_, new)| *new)).collect()
 }
 
-/// The line in the channel after a reroll. Only the new winners are pinged.
-pub fn reroll_line(prize: &str, swaps: &[(u64, u64)], kept: &[u64]) -> String {
-    let new = mentions(swaps.iter().map(|s| s.1));
-    let old = mentions(swaps.iter().map(|s| s.0));
-    let label = if swaps.len() == 1 { "New winner" } else { "New winners" };
-    let mut line = format!("{label} for **{prize}**: {new}, in place of {old}.");
+/// The line in the channel after a reroll. Only the new winners are pinged. `added` are winners
+/// for places nobody had won.
+pub fn reroll_line(prize: &str, swaps: &[(u64, u64)], added: &[u64], kept: &[u64]) -> String {
+    let count = swaps.len() + added.len();
+    let label = if count == 1 { "New winner" } else { "New winners" };
+    let new = mentions(swaps.iter().map(|s| s.1).chain(added.iter().copied()));
+    let mut line = format!("{label} for **{prize}**: {new}");
+    match (swaps.is_empty(), added.is_empty()) {
+        (false, true) => line.push_str(&format!(", in place of {}.", mentions(swaps.iter().map(|s| s.0)))),
+        (false, false) => line.push_str(&format!(
+            ", in place of {} and for the {} nobody had won.",
+            mentions(swaps.iter().map(|s| s.0)),
+            if added.len() == 1 { "place" } else { "places" }
+        )),
+        _ => line.push('.'),
+    }
     if !kept.is_empty() {
         line.push_str(&format!(" {} {} their win.", mentions(kept.iter().copied()), if kept.len() == 1 { "keeps" } else { "keep" }));
     }
@@ -667,28 +767,35 @@ pub fn reroll_line(prize: &str, swaps: &[(u64, u64)], kept: &[u64]) -> String {
 }
 
 /// Store a reroll, unless the winners changed since `g` was read. The check and the write
-/// run under one hold of the connection. Returns the giveaway as it is now.
-fn apply_reroll(c: &Connection, g: &Giveaway, swaps: &[(u64, u64)]) -> bot_core::rusqlite::Result<Option<Giveaway>> {
+/// run under one hold of the connection. `added` join the winners at the end. Returns the
+/// giveaway as it is now.
+fn apply_reroll(c: &Connection, g: &Giveaway, swaps: &[(u64, u64)], added: &[u64]) -> bot_core::rusqlite::Result<Option<Giveaway>> {
     match get(c, g.id)? {
-        Some(now) if now.winner_ids == g.winner_ids && now.passed_ids == g.passed_ids => {}
+        Some(now) if now.winner_ids == g.winner_ids && now.passed_ids == g.passed_ids && !now.drawing && !now.cancelled => {}
         _ => return Ok(None),
     }
-    let winners = swapped(&g.winner_ids, swaps);
+    let mut winners = swapped(&g.winner_ids, swaps);
+    winners.extend_from_slice(added);
     let passed: Vec<u64> = g.passed_ids.iter().copied().chain(swaps.iter().map(|s| s.0)).collect();
     c.execute("UPDATE giveaways SET winner_ids = ?2, passed_ids = ?3 WHERE id = ?1", params![g.id, join_ids(&winners), join_ids(&passed)])?;
     Ok(Some(Giveaway { winner_ids: winners, passed_ids: passed, ..g.clone() }))
 }
 
 /// Replace one winner or all of them with members who entered and haven't won before. A
-/// reroll never changes how many winners there are: when fewer people are left than winners
-/// to replace, the rest keep their win. `expected` is the winner list the caller saw; when it
-/// differs from the stored one, nothing happens, so a second click doesn't reroll twice.
+/// reroll of one never changes how many winners there are: when fewer people are left than
+/// winners to replace, the rest keep their win. Replacing all also fills the places nobody won
+/// (fewer winners than the giveaway has), first. `expected` is the winner list the caller saw;
+/// when it differs from the stored one, nothing happens, so a second click doesn't reroll twice.
 pub async fn reroll(ctx: &Ctx, id: i64, which: Replace, expected: Option<&[u64]>) -> Result<RerollOutcome> {
     let Some(g) = ctx.db.with(|c| get(c, id))? else { return Ok(RerollOutcome::Missing) };
+    if g.cancelled {
+        return Ok(RerollOutcome::Cancelled);
+    }
     if !g.ended {
         return Ok(RerollOutcome::StillRunning);
     }
-    if expected.is_some_and(|e| e != g.winner_ids.as_slice()) {
+    // Still being drawn: the winners are about to change.
+    if g.drawing || expected.is_some_and(|e| e != g.winner_ids.as_slice()) {
         return Ok(RerollOutcome::Changed);
     }
     let all = ctx.db.with(|c| entries(c, id))?;
@@ -698,25 +805,45 @@ pub async fn reroll(ctx: &Ctx, id: i64, which: Replace, expected: Option<&[u64]>
         let mut rng = bot_core::rand::rng();
         (to_replace(&g.winner_ids, which, &mut rng), pick_winners(&all, all.len(), &picked_before, &mut rng))
     };
+    let empty = if which == Replace::All { open_places(&g) } else { 0 };
     let out = match out {
-        Some(out) if !out.is_empty() => out,
+        Some(out) if !out.is_empty() || empty > 0 => out,
         _ => return Ok(RerollOutcome::NotAWinner),
     };
-    let picks = draw(ctx, &g, &order, out.len()).await;
+    let mut picks = draw(ctx, &g, &order, empty + out.len()).await;
     if picks.is_empty() {
         return Ok(RerollOutcome::NoOneElse(g.required_role.is_some()));
     }
-    let swaps: Vec<(u64, u64)> = out.into_iter().zip(picks).collect();
-    let Some(g) = ctx.db.with(|c| apply_reroll(c, &g, &swaps))? else { return Ok(RerollOutcome::Changed) };
-    let kept: Vec<u64> = g.winner_ids.iter().copied().filter(|w| !swaps.iter().any(|(_, new)| new == w)).collect();
+    let rest = picks.split_off(empty.min(picks.len()));
+    let added = picks;
+    let swaps: Vec<(u64, u64)> = out.into_iter().zip(rest).collect();
+    let Some(g) = ctx.db.with(|c| apply_reroll(c, &g, &swaps, &added))? else { return Ok(RerollOutcome::Changed) };
+    let new: Vec<u64> = swaps.iter().map(|s| s.1).chain(added.iter().copied()).collect();
+    let kept: Vec<u64> = g.winner_ids.iter().copied().filter(|w| !new.contains(w)).collect();
     refresh(ctx, &g, all.len() as i64).await;
-    let new: Vec<u64> = swaps.iter().map(|s| s.1).collect();
-    announce(ctx, &g, &reroll_line(&g.prize, &swaps, &kept), &new).await;
-    Ok(RerollOutcome::Rolled { swaps, kept })
+    announce(ctx, &g, &reroll_line(&g.prize, &swaps, &added, &kept), &new).await;
+    Ok(RerollOutcome::Rolled { swaps, added, kept })
 }
 
-fn store_winners(ctx: &Ctx, id: i64, winners: &[u64]) -> Result<()> {
-    ctx.db.with(|c| c.execute("UPDATE giveaways SET winner_ids = ?2 WHERE id = ?1", params![id, join_ids(winners)]))?;
+/// Places with no winner: the draw found fewer people who could win than the giveaway has
+/// winners.
+pub fn open_places(g: &Giveaway) -> usize {
+    (g.winners.max(1) as usize).saturating_sub(g.winner_ids.len())
+}
+
+/// Store the winners of a draw and mark it ended, in one write. 0 when it isn't being drawn
+/// any more.
+fn store_winners(c: &Connection, id: i64, winners: &[u64]) -> bot_core::rusqlite::Result<usize> {
+    c.execute("UPDATE giveaways SET ended = ?3, winner_ids = ?2 WHERE id = ?1 AND ended = ?4", params![id, join_ids(winners), ENDED, DRAWING])
+}
+
+/// Messages were deleted in a channel: cancel any running giveaway whose post was one of them,
+/// so nobody is pinged for a prize that was withdrawn.
+pub fn on_posts_deleted(ctx: &Ctx, guild: u64, channel: u64, messages: &[u64]) -> Result<()> {
+    let n = ctx.db.with(|c| cancel_deleted(c, guild, channel, messages, now_ms()))?;
+    if n > 0 {
+        tracing::info!(guild, channel, cancelled = n, "giveaway post deleted; cancelled it");
+    }
     Ok(())
 }
 
@@ -761,14 +888,21 @@ pub async fn send_test(ctx: &Ctx, id: i64, to: u64) -> Result<Option<bool>> {
     Ok(Some(ctx.dm(to, &content, &embeds, &[]).await?.is_some()))
 }
 
-/// End every giveaway whose time is up.
+/// The running giveaways whose time is up, and the ones whose draw was cut short.
+fn due(c: &Connection, guild: u64, now: i64) -> bot_core::rusqlite::Result<(Vec<i64>, Vec<i64>)> {
+    let mut s = c.prepare_cached("SELECT id FROM giveaways WHERE guild_id = ?1 AND ended = 0 AND ends_at <= ?2")?;
+    let due = s.query_map(params![id_i64(guild), now], |r| r.get(0))?.collect::<bot_core::rusqlite::Result<_>>()?;
+    let mut s = c.prepare_cached("SELECT id FROM giveaways WHERE guild_id = ?1 AND ended = 2 AND ended_at < ?2")?;
+    let stuck = s.query_map(params![id_i64(guild), now - STUCK_MS], |r| r.get(0))?.collect::<bot_core::rusqlite::Result<_>>()?;
+    Ok((due, stuck))
+}
+
+/// End every giveaway whose time is up, and draw again any whose draw was cut short.
 pub async fn tick(ctx: &Ctx) {
     for guild in ctx.enabled_guilds(KEY) {
-        let due: Vec<i64> = match ctx.db.with(|c| {
-            let mut s = c.prepare_cached("SELECT id FROM giveaways WHERE guild_id = ?1 AND ended = 0 AND ends_at <= ?2")?;
-            s.query_map(params![id_i64(guild), now_ms()], |r| r.get(0))?.collect()
-        }) {
-            Ok(due) => due,
+        let now = now_ms();
+        let (due, stuck) = match ctx.db.with(|c| due(c, guild, now)) {
+            Ok(ids) => ids,
             Err(e) => {
                 tracing::warn!(guild, error = %e, "couldn't read giveaways that are due");
                 continue;
@@ -777,6 +911,11 @@ pub async fn tick(ctx: &Ctx) {
         for id in due {
             if let Err(e) = end(ctx, id).await {
                 tracing::warn!(guild, giveaway = id, error = %e, "couldn't end a giveaway");
+            }
+        }
+        for id in stuck {
+            if let Err(e) = redraw(ctx, id, now).await {
+                tracing::warn!(guild, giveaway = id, error = %e, "couldn't draw a giveaway again");
             }
         }
     }
@@ -881,9 +1020,12 @@ mod tests {
 
     #[test]
     fn reroll_lines_say_who_goes_and_who_stays() {
-        assert_eq!(reroll_line("Nitro", &[(2, 4)], &[1, 3]), "New winner for **Nitro**: <@4>, in place of <@2>. <@1> <@3> keep their win.");
-        assert_eq!(reroll_line("Nitro", &[(2, 4)], &[1]), "New winner for **Nitro**: <@4>, in place of <@2>. <@1> keeps their win.");
-        assert_eq!(reroll_line("Nitro", &[(1, 5), (2, 6)], &[]), "New winners for **Nitro**: <@5> <@6>, in place of <@1> <@2>.");
+        assert_eq!(reroll_line("Nitro", &[(2, 4)], &[], &[1, 3]), "New winner for **Nitro**: <@4>, in place of <@2>. <@1> <@3> keep their win.");
+        assert_eq!(reroll_line("Nitro", &[(2, 4)], &[], &[1]), "New winner for **Nitro**: <@4>, in place of <@2>. <@1> keeps their win.");
+        assert_eq!(reroll_line("Nitro", &[(1, 5), (2, 6)], &[], &[]), "New winners for **Nitro**: <@5> <@6>, in place of <@1> <@2>.");
+        // A draw that found nobody, rerolled: the places are filled.
+        assert_eq!(reroll_line("Nitro", &[], &[7], &[]), "New winner for **Nitro**: <@7>.");
+        assert_eq!(reroll_line("Nitro", &[(1, 5)], &[7], &[]), "New winners for **Nitro**: <@5> <@7>, in place of <@1> and for the place nobody had won.");
     }
 
     #[test]
@@ -893,12 +1035,12 @@ mod tests {
         db.with(|c| {
             c.execute("INSERT INTO giveaways (id, guild_id, channel_id, prize, ends_at, winners, ended, winner_ids) VALUES (1, 9, 2, 'x', 10, 3, 1, '1,2,3')", [])?;
             let seen = get(c, 1)?.unwrap();
-            let g = apply_reroll(c, &seen, &[(2, 4)])?.unwrap();
+            let g = apply_reroll(c, &seen, &[(2, 4)], &[])?.unwrap();
             assert_eq!((g.winner_ids.as_slice(), g.passed_ids.as_slice()), ([1, 4, 3].as_slice(), [2].as_slice()));
             let stored = get(c, 1)?.unwrap();
             assert_eq!((stored.winner_ids, stored.passed_ids), (vec![1, 4, 3], vec![2]));
             // The double click read the same winners as the first one: it's refused.
-            assert!(apply_reroll(c, &seen, &[(1, 5)])?.is_none());
+            assert!(apply_reroll(c, &seen, &[(1, 5)], &[])?.is_none());
             assert_eq!(get(c, 1)?.unwrap().winner_ids, vec![1, 4, 3]);
             Ok(())
         })
@@ -1009,6 +1151,65 @@ mod tests {
             assert!(enter_if_running(c, 1, 7, 50)?.is_none());
             assert_eq!(entries(c, 1)?, vec![7]);
             assert!(enter_if_running(c, 2, 7, 50)?.is_none());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn winners_are_stored_with_the_end_and_stuck_draws_come_back() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        db.with(|c| {
+            c.execute("INSERT INTO giveaways (id, guild_id, channel_id, prize, ends_at, winners) VALUES (1, 9, 2, 'x', 10, 2)", [])?;
+            // Not claimed: nothing to store.
+            assert_eq!(store_winners(c, 1, &[5])?, 0);
+            // Claimed: entering is closed, and it's in neither list while drawing.
+            c.execute("UPDATE giveaways SET ended = 2, ended_at = 1000 WHERE id = 1", [])?;
+            let g = get(c, 1)?.unwrap();
+            assert!(g.ended && g.drawing && !g.cancelled);
+            assert!(enter_if_running(c, 1, 7, 5)?.is_none());
+            assert!(list(c, 9, false, 10)?.is_empty() && list(c, 9, true, 10)?.is_empty());
+            // A draw cut short shows up for the tick once it's been stuck long enough.
+            assert_eq!(due(c, 9, 1000 + STUCK_MS)?, (vec![], vec![]));
+            assert_eq!(due(c, 9, 1001 + STUCK_MS)?, (vec![], vec![1]));
+            assert_eq!(store_winners(c, 1, &[5])?, 1);
+            let g = get(c, 1)?.unwrap();
+            assert!(g.ended && !g.drawing && g.winner_ids == vec![5]);
+            assert_eq!(open_places(&g), 1);
+            // A second draw finds it finished.
+            assert_eq!(store_winners(c, 1, &[6])?, 0);
+            assert_eq!(due(c, 9, 10 * STUCK_MS)?, (vec![], vec![]));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn deleting_the_post_cancels_a_giveaway_that_hasnt_ended() {
+        let db = bot_core::Db::memory().unwrap();
+        db.migrate(KEY, crate::MIGRATIONS).unwrap();
+        db.with(|c| {
+            c.execute(
+                "INSERT INTO giveaways (id, guild_id, channel_id, message_id, prize, ends_at, ended) VALUES
+                 (1, 9, 2, 100, 'running', 10, 0), (2, 9, 2, 101, 'drawing', 10, 2), (3, 9, 2, 102, 'ended', 10, 1), (4, 9, 3, 103, 'elsewhere', 10, 0)",
+                [],
+            )?;
+            // Another server, or the right message in the wrong channel: nothing.
+            assert_eq!(cancel_deleted(c, 8, 2, &[100], 50)?, 0);
+            assert_eq!(cancel_deleted(c, 9, 2, &[103], 50)?, 0);
+            assert_eq!(cancel_deleted(c, 9, 2, &[100, 101, 102, 999], 50)?, 2);
+            let g = get(c, 1)?.unwrap();
+            assert!(g.ended && g.cancelled && g.ended_at == 50);
+            // The draw under way stores nothing, and the ended one keeps its winners.
+            assert_eq!(store_winners(c, 2, &[5])?, 0);
+            assert!(get(c, 2)?.unwrap().cancelled);
+            assert!(!get(c, 3)?.unwrap().cancelled);
+            // The tick skips it, and the dashboard lists it with the ended ones.
+            assert_eq!(due(c, 9, 1_000_000)?, (vec![4], vec![]));
+            let ended: Vec<i64> = list(c, 9, true, 10)?.iter().map(|(g, _)| g.id).collect();
+            assert_eq!(ended.len(), 3);
+            assert!(!ended.contains(&4));
             Ok(())
         })
         .unwrap();

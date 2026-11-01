@@ -27,6 +27,18 @@ pub fn save(ctx: &Ctx, guild: u64, user: u64, roles: &[u64]) -> Result<()> {
     Ok(())
 }
 
+/// Drop a save still waiting for a member, as when they leave again with no roles. A save that
+/// was already given back stays, for the dashboard's list of restores.
+pub fn forget(ctx: &Ctx, guild: u64, user: u64) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute(
+            "DELETE FROM welcome_saved_roles WHERE guild_id = ?1 AND user_id = ?2 AND restored_at IS NULL",
+            params![guild as i64, user as i64],
+        )
+    })?;
+    Ok(())
+}
+
 /// The roles waiting for a member who left no more than `days` ago and hasn't been restored.
 pub fn waiting(ctx: &Ctx, guild: u64, user: u64, days: i64) -> Result<Vec<u64>> {
     let cutoff = bot_core::now_ms() - days * 86_400_000;
@@ -120,4 +132,24 @@ pub fn assignable(ctx: &Ctx, guild: u64, role: u64) -> bool {
     let Some(me) = ctx.cache.member(guild_id, bot_id) else { return true };
     let top = me.roles().iter().filter_map(|id| ctx.cache.role(*id).map(|r| r.position)).max().unwrap_or(0);
     r.position < top
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn leaving_with_no_roles_drops_the_old_save() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Welcome::default())]).unwrap();
+        save(&ctx, 1, 10, &[100, 101]).unwrap();
+        assert_eq!(waiting(&ctx, 1, 10, 90).unwrap(), vec![100, 101]);
+        forget(&ctx, 1, 10).unwrap();
+        assert!(waiting(&ctx, 1, 10, 90).unwrap().is_empty());
+        // A restore already made stays listed.
+        save(&ctx, 1, 11, &[100]).unwrap();
+        mark_restored(&ctx, 1, 11, &[100]).unwrap();
+        forget(&ctx, 1, 11).unwrap();
+        assert_eq!(recently_restored(&ctx, 1, 10).unwrap().len(), 1);
+    }
 }

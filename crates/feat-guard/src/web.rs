@@ -5,7 +5,7 @@ use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_model::channel::ChannelType;
 use bot_core::twilight_model::id::Id;
-use bot_core::web::ui;
+use bot_core::web::{dc, ui};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 use serde::Deserialize;
@@ -253,14 +253,12 @@ fn catch_card(ctx: &Ctx, page: &Page, guild: u64, c: &Catch, threshold: i64, new
                         span { (channel_name(ctx, c.channel_id).trim_start_matches('#')) }
                         @if c.honeypot { span.gd-chan-tag { "honeypot" } }
                     }
-                    div.gd-dmsg {
-                        img.avatar src=(ctx.member_avatar(guild, c.user_id)) alt="" width="40" height="40" loading="lazy";
-                        div.gd-dbody {
-                            div.gd-dhead {
-                                strong { (name) }
-                                time.gd-dtime datetime=(c.at) title=(page.user.local(c.at).strftime("%b %-d, %H:%M").to_string()) { (discord_time(page, c.at)) }
-                            }
-                            div.gd-dtext {
+                    (dc::message(ctx, page)
+                        .from(name, Some(ctx.member_avatar(guild, c.user_id)))
+                        .time_text(discord_time(page, c.at))
+                        .stamp(page.user.local(c.at).strftime("%b %-d, %H:%M").to_string())
+                        .render(html! {
+                            div.dp-line {
                                 @if shown.trim().is_empty() {
                                     em.gd-none { "No text, attachments only" }
                                 } @else {
@@ -268,8 +266,7 @@ fn catch_card(ctx: &Ctx, page: &Page, guild: u64, c: &Catch, threshold: i64, new
                                     @if cut { "…" }
                                 }
                             }
-                        }
-                    }
+                        }))
                 }
                 @if !c.signals.is_empty() {
                     ul.gd-sigs aria-label="Why it was caught" {
@@ -798,16 +795,13 @@ const STYLE: &str = r#"
 .gd-chan { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px 0 12px; background: #2b2d31; color: #b5bac1; font-size: 12.5px; font-weight: 600; }
 .gd-chan .icon { width: 15px; height: 15px; color: #80848e; }
 .gd-chan-tag { margin-left: 4px; color: #949ba4; font-weight: 500; }
-.gd-dmsg { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 14px; padding: 12px 16px 14px 14px; }
-.gd-dmsg > .avatar { width: 40px; height: 40px; }
-.gd-dbody { min-width: 0; }
-.gd-dhead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.gd-dhead strong { color: #f2f3f5; font-weight: 600; font-size: 14.5px; }
-.gd-dtime { color: #949ba4; font-size: 12px; }
-.gd-dtext { margin-top: 2px; color: #dbdee1; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
-.gd-dtext .gd-none { color: #949ba4; }
+/* The message itself is Discord's (web/dc.rs), a size down to sit in the card. */
+.gd-discord .dp-msg { padding: 12px 16px 14px 14px; }
+.gd-discord .dp-post { gap: 14px; font-size: 14px; }
+.gd-discord .dp-line { line-height: 1.55; }
+.gd-none { color: #949ba4; }
 /* The bait: a red wash that sweeps across the words the score counted. */
-.gd-dtext mark { color: #ffe1e4; padding: 1px 3px; margin: 0 -1px; border-radius: 4px; background: linear-gradient(var(--gd-bait), var(--gd-bait)) no-repeat 0 0 / 0% 100%; --gd-bait: color-mix(in oklab, var(--held) 30%, transparent);-webkit-box-decoration-break: clone; box-decoration-break: clone; animation: gd-bait 0.5s var(--ease) forwards; animation-delay: calc(var(--i, 0) * 45ms + 380ms); }
+.gd-discord mark { color: #ffe1e4; padding: 1px 3px; margin: 0 -1px; border-radius: 4px; background: linear-gradient(var(--gd-bait), var(--gd-bait)) no-repeat 0 0 / 0% 100%; --gd-bait: color-mix(in oklab, var(--held) 30%, transparent);-webkit-box-decoration-break: clone; box-decoration-break: clone; animation: gd-bait 0.5s var(--ease) forwards; animation-delay: calc(var(--i, 0) * 45ms + 380ms); }
 @keyframes gd-bait { to { background-size: 100% 100%; } }
 
 /* Why it was caught: the points in a column of their own, then the reason. Two columns once the
@@ -906,8 +900,8 @@ const STYLE: &str = r#"
 }
 
 /* Coming back to the page after a release, a ban or another filter: no entrance again. */
-html.same .gd-catch, html.same .gd-arc, html.same .gd-dtext mark { animation: none; }
-html.same .gd-dtext mark { background-size: 100% 100%; }
+html.same .gd-catch, html.same .gd-arc, html.same .gd-discord mark { animation: none; }
+html.same .gd-discord mark { background-size: 100% 100%; }
 
 /* Laid out for the column's own width, so the sidebar and rail are already counted. */
 @container col (max-width: 700px) {
@@ -926,9 +920,9 @@ html.same .gd-dtext mark { background-size: 100% 100%; }
   .gd-acts { flex-direction: row; flex-wrap: wrap; flex-basis: 100%; }
   .gd-acts .gd-pop { position: static; }
   .gd-pop .pop-body { left: 0; right: 0; width: auto; }
-  .gd-dmsg { grid-template-columns: 34px minmax(0, 1fr); gap: 10px; padding: 10px 12px 12px 10px; }
-  .gd-dmsg > .avatar { width: 34px; height: 34px; }
-  .gd-dtext { font-size: 13.5px; }
+  .gd-discord .dp-msg { padding: 10px 12px 12px 10px; }
+  .gd-discord .dp-post { gap: 10px; font-size: 13.5px; }
+  .gd-discord .dp-av { width: 34px; height: 34px; }
   .gd-hp { flex-direction: row; gap: 10px; padding: 0; }
   .gd-hp-ic { width: 38px; height: 38px; margin: 0; }
   .gd-hp span:last-child { display: none; }

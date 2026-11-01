@@ -81,6 +81,10 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
                 let before = snapshot_before(&ctx, &event);
                 ctx.cache.update(&event);
                 track_member_count(&ctx, &event);
+                // Who can see what may have changed: drop the kept answers for that server.
+                if let (Some(g), true) = (event.guild_id(), changes_visibility(&event)) {
+                    ctx.forget_seen(g.get());
+                }
                 match &event {
                     Event::Ready(ready) => {
                         ctx.set_bot_id(ready.user.id.get());
@@ -207,6 +211,25 @@ impl Snapshots {
             self.voice.retain(|_, (t, _)| keep(t));
         }
     }
+}
+
+/// Events after which `Ctx::readers_can_see` may answer differently.
+fn changes_visibility(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::ChannelCreate(_)
+            | Event::ChannelUpdate(_)
+            | Event::ChannelDelete(_)
+            | Event::ThreadCreate(_)
+            | Event::ThreadUpdate(_)
+            | Event::RoleCreate(_)
+            | Event::RoleUpdate(_)
+            | Event::RoleDelete(_)
+            | Event::MemberAdd(_)
+            | Event::MemberUpdate(_)
+            | Event::MemberChunk(_)
+            | Event::GuildCreate(_)
+    )
 }
 
 fn snapshot_before(ctx: &Ctx, event: &Event) -> Before {
@@ -1057,7 +1080,15 @@ impl Ctx {
             | P::KICK_MEMBERS
             | P::MODERATE_MEMBERS
             | P::MANAGE_MESSAGES
-            | P::MENTION_EVERYONE;
+            | P::MENTION_EVERYONE
+            | P::MANAGE_NICKNAMES
+            | P::MANAGE_THREADS
+            | P::MANAGE_EVENTS
+            | P::MANAGE_GUILD_EXPRESSIONS
+            | P::VIEW_AUDIT_LOG
+            | P::MUTE_MEMBERS
+            | P::DEAFEN_MEMBERS
+            | P::MOVE_MEMBERS;
         role != guild_id
             && !r.managed
             && self.cache.guild_roles(g).is_some_and(|set| set.contains(&r.id))

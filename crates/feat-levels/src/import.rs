@@ -60,8 +60,12 @@ struct Row {
     xp: i64,
     messages: i64,
     voice_minutes: i64,
-    prestige: i64,
+    /// None when the file doesn't say, as in the JSON format: the prestige here stays.
+    prestige: Option<i64>,
 }
+
+/// The most prestige the dashboard lets staff set; imports are held to it too.
+const MAX_PRESTIGE: i64 = 1000;
 
 /// Import from bytes: a SQLite file or JSON. `only` limits it to one server.
 /// `any_role`: keep reward roles with moderation or admin power. Only for admins and the CLI;
@@ -103,7 +107,7 @@ pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode, any_role
                 r.get::<_, i64>(2)?,
                 r.get::<_, i64>(3)?,
                 r.get::<_, i64>(4)?,
-                r.get::<_, i64>(5)?,
+                r.get::<_, Option<i64>>(5)?,
             ))
         })?;
         for row in it {
@@ -191,6 +195,8 @@ pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode, any_role
             .filter_map(|(g, l, role)| Some((id(&g)?, l, id(&role)?)))
             // Only the servers being imported: roles of other servers in the file aren't looked at.
             .filter(|(g, _, _)| targets.contains(g))
+            // The levels the rewards page takes. A reward at level 0 would go to everyone.
+            .filter(|(_, level, _)| (1..=500).contains(level))
             .filter(|(g, _, role)| any_role || ctx.safe_role(*g, *role))
             .collect();
         ctx.db.with(|c| {
@@ -228,7 +234,7 @@ pub fn import_json(ctx: &Ctx, bytes: &[u8], only: Option<u64>, mode: Mode) -> Re
                 xp: num(item.get("xp")),
                 messages: num(item.get("messages")),
                 voice_minutes: num(item.get("voice_minutes")),
-                prestige: num(item.get("prestige")),
+                prestige: item.get("prestige").and_then(|x| x.as_i64()),
             });
         }
     }
@@ -272,6 +278,24 @@ fn targets(ctx: &Ctx, rows: &[Row], only: Option<u64>, report: &mut Report) -> V
     out
 }
 
+/// A member's XP and prestige after the import, from what's stored here (`(xp, prestige)`, if
+/// anything) and what the file has. Keep the higher keeps whichever of the two ranks higher, as a
+/// whole: a member who prestiged here keeps their prestige and the XP they've earned since,
+/// rather than getting their old XP back on top of it.
+///
+/// A file that doesn't say (`prestige` None) leaves the prestige stored here. Its XP is then
+/// XP before any prestige, so for Keep the higher it ranks at prestige 0. Only the file's own
+/// prestige is held to `MAX_PRESTIGE`; one stored here was already allowed.
+fn merged(mode: Mode, existing: Option<(i64, i64)>, xp: i64, prestige: Option<i64>) -> (i64, i64) {
+    let xp = xp.clamp(0, crate::curve::MAX_XP);
+    let prestige = prestige.map(|p| p.clamp(0, MAX_PRESTIGE));
+    let stored_prestige = existing.map(|e| e.1).unwrap_or(0);
+    match (mode, existing) {
+        (Mode::KeepHigher, Some((cur_xp, cur_prestige))) if (cur_prestige, cur_xp) >= (prestige.unwrap_or(0), xp) => (cur_xp, cur_prestige),
+        _ => (xp, prestige.unwrap_or(stored_prestige)),
+    }
+}
+
 fn write_rows(ctx: &Ctx, rows: &[Row], targets: &[u64], mode: Mode, report: &mut Report) -> Result<()> {
     let mut conn = ctx.db.lock();
     let tx = conn.transaction()?;
@@ -284,14 +308,14 @@ fn write_rows(ctx: &Ctx, rows: &[Row], targets: &[u64], mode: Mode, report: &mut
         };
         let mut n = 0;
         for r in rows.iter().filter(|r| r.guild == *guild) {
-            let existing: Option<i64> = tx
-                .query_row("SELECT xp FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![r.guild as i64, r.user as i64], |x| x.get(0))
+            let existing: Option<(i64, i64)> = tx
+                .query_row(
+                    "SELECT xp, prestige FROM levels WHERE guild_id = ?1 AND user_id = ?2",
+                    params![r.guild as i64, r.user as i64],
+                    |x| Ok((x.get(0)?, x.get(1)?)),
+                )
                 .optional()?;
-            let xp = match (mode, existing) {
-                (Mode::KeepHigher, Some(cur)) => cur.max(r.xp),
-                _ => r.xp,
-            }
-            .clamp(0, crate::curve::MAX_XP);
+            let (xp, prestige) = merged(mode, existing, r.xp, r.prestige);
             let level = s.progress(xp).level;
             tx.execute(
                 "INSERT INTO levels (guild_id, user_id, xp, level, messages, voice_minutes, prestige, updated_at)
@@ -299,12 +323,14 @@ fn write_rows(ctx: &Ctx, rows: &[Row], targets: &[u64], mode: Mode, report: &mut
                  ON CONFLICT (guild_id, user_id) DO UPDATE SET xp = excluded.xp, level = excluded.level,
                    messages = MAX(messages, excluded.messages), voice_minutes = MAX(voice_minutes, excluded.voice_minutes),
                    prestige = excluded.prestige, updated_at = excluded.updated_at",
-                params![r.guild as i64, r.user as i64, xp, level as i64, r.messages, r.voice_minutes, r.prestige, bot_core::now_ms()],
+                params![r.guild as i64, r.user as i64, xp, level as i64, r.messages.max(0), r.voice_minutes.max(0), prestige, bot_core::now_ms()],
             )?;
             // Imported XP wasn't earned this week: keep it off the weekly board.
-            crate::shift_week(&tx, r.guild, r.user, xp - existing.unwrap_or(0))?;
+            crate::shift_week(&tx, r.guild, r.user, xp - existing.map(|e| e.0).unwrap_or(0))?;
             n += 1;
         }
+        // The import may have brought a new curve: members who weren't in the file move with it.
+        crate::recompute_levels(&tx, *guild, &s)?;
         report.imported.push((*guild, n));
     }
     tx.commit()?;
@@ -469,5 +495,109 @@ mod tests {
         let json = br#"[{"guild_id": "1", "user_id": 0, "xp": 5}, {"guild_id": "1", "user_id": "0", "xp": 5}, {"guild_id": 1, "user_id": "13", "xp": 5}]"#;
         let report = import_json(&ctx, json, Some(1), Mode::Replace).unwrap();
         assert_eq!(report.imported, vec![(1, 1)]);
+    }
+
+    #[test]
+    fn keep_the_higher_compares_prestige_and_xp_together() {
+        // Prestiged here: the old bot's higher XP doesn't come back on top of the prestige.
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 1)), 9_000, Some(0)), (300, 1));
+        // The file ranks higher: its XP and prestige both come over.
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 1)), 100, Some(2)), (100, 2));
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 1)), 900, Some(1)), (900, 1));
+        // A file without prestige has XP from before any prestige: against a prestige here the
+        // stored row wins, however much XP the file has. Imported 9,000, prestiged, earned 300.
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 1)), 9_000, None), (300, 1));
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 2)), 900, None), (300, 2));
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 2)), 100, None), (300, 2));
+        // At prestige 0 here, the higher XP wins.
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 0)), 900, None), (900, 0));
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 0)), 100, None), (300, 0));
+        assert_eq!(merged(Mode::KeepHigher, None, 100, None), (100, 0));
+        // Replace takes the file's XP and keeps the prestige here.
+        assert_eq!(merged(Mode::Replace, Some((300, 2)), 100, None), (100, 2));
+        assert_eq!(merged(Mode::Replace, None, 100, None), (100, 0));
+        // The file's values are held to what the dashboard allows.
+        assert_eq!(merged(Mode::Replace, None, -5, Some(i64::MAX)), (0, MAX_PRESTIGE));
+        assert_eq!(merged(Mode::Replace, None, 5, Some(-3)), (5, 0));
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 1_500)), 100, Some(2_000)), (300, 1_500));
+        // A prestige stored here is left alone, even above that limit.
+        assert_eq!(merged(Mode::Replace, Some((300, 1_500)), 100, None), (100, 1_500));
+        assert_eq!(merged(Mode::KeepHigher, Some((300, 1_500)), 9_000, None), (300, 1_500));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_json_import_keeps_prestige() {
+        let ctx = two_servers();
+        crate::set_prestige(&ctx, 1, 11, 3).unwrap();
+        let json = br#"[{"guild_id": "1", "user_id": "11", "xp": 500}]"#;
+        import_json(&ctx, json, Some(1), Mode::Replace).unwrap();
+        let m = crate::member(&ctx, 1, 11).unwrap().unwrap();
+        assert_eq!((m.xp, m.prestige), (500, 3));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn imported_rewards_and_prestige_are_held_to_the_dashboard_limits() {
+        let ctx = two_servers();
+        let path = old_db(
+            "INSERT INTO levels VALUES ('1', '11', 300, 0, 0, 999999999999), ('1', '12', 300, 0, 0, -4), ('1', '13', 300, 0, 0, NULL);
+             INSERT INTO level_rewards VALUES ('1', 0, '100'), ('1', -3, '100'), ('1', 501, '100'), ('1', 5, '100');",
+        );
+        let report = import_db(&ctx, &path, Some(1), Mode::Replace, false).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(report.rewards, 1);
+        assert_eq!(crate::rewards(&ctx, 1).unwrap(), vec![(5, 100)]);
+        let prestige = |user| crate::member(&ctx, 1, user).unwrap().unwrap().prestige;
+        assert_eq!((prestige(11), prestige(12), prestige(13)), (MAX_PRESTIGE, 0, 0));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_new_curve_moves_members_who_werent_in_the_file() {
+        let ctx = two_servers();
+        // Member 20 is only here, at a level from a much cheaper curve.
+        ctx.db.with(|c| c.execute("INSERT INTO levels (guild_id, user_id, xp, level) VALUES (1, 20, 150, 9)", [])).unwrap();
+        // The file's curve starts at 120 XP a level with a factor of 1.3.
+        let path = old_db(&config_row("NULL", "NULL"));
+        import_db(&ctx, &path, Some(1), Mode::Replace, false).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let s = ctx.settings::<Settings>(1, KEY).unwrap();
+        assert!(s.progress(150).level < 9);
+        assert_eq!(crate::member(&ctx, 1, 20).unwrap().unwrap().level, s.progress(150).level);
+        assert_eq!(crate::member(&ctx, 1, 11).unwrap().unwrap().level, s.progress(500).level);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn rewards_skip_roles_the_bot_cant_give() {
+        let ctx = two_servers();
+        assert!(crate::assignable(&ctx, 1, 100));
+        // Missing, another server's view of @everyone, and role 0.
+        assert!(!crate::assignable(&ctx, 1, 999));
+        assert!(!crate::assignable(&ctx, 1, 1));
+        assert!(!crate::assignable(&ctx, 1, 0));
+        // Server 2's role, which the cache holds too.
+        assert!(!crate::assignable(&ctx, 1, 200));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn role_work_needs_manage_roles() {
+        use bot_core::twilight_model::guild::Permissions as P;
+        let ctx = ctx();
+        guild_create(&ctx, 1, &[], &[(100, 0)]);
+        guild_create(&ctx, 2, &[], &[(200, P::MANAGE_ROLES.bits())]);
+        guild_create(&ctx, 3, &[], &[(300, P::ADMINISTRATOR.bits())]);
+        // The bot, user 50, has the one role of each server.
+        for (guild, role) in [(1, 100), (2, 200), (3, 300)] {
+            let add = serde_json::json!({
+                "guild_id": guild.to_string(), "roles": [role.to_string()], "joined_at": "2025-03-01T00:00:00.000000+00:00", "deaf": false, "mute": false, "flags": 0,
+                "user": {"id": "50", "username": "bot", "discriminator": "0", "avatar": null, "bot": true}
+            });
+            ctx.cache.update(&Event::MemberAdd(Box::new(serde_json::from_value(add).unwrap())));
+        }
+        assert!(!crate::manages_roles(&ctx, 1, Some(50)));
+        assert!(crate::manages_roles(&ctx, 2, Some(50)));
+        assert!(crate::manages_roles(&ctx, 3, Some(50)));
+        // Not connected yet, or the bot's member isn't cached: it's tried.
+        assert!(crate::manages_roles(&ctx, 1, None));
+        assert!(crate::manages_roles(&ctx, 1, Some(51)));
+        assert!(!crate::manages_roles(&ctx, 0, Some(50)));
     }
 }

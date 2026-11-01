@@ -16,8 +16,13 @@ pub const WINDOW: Duration = Duration::from_secs(2);
 pub const MAX_PER_MESSAGE: usize = 10;
 /// Discord allows 6000 characters across a message's embeds; stay under it.
 pub const MAX_CHARS: usize = 5500;
-/// Most embeds held per channel per window. A raid or a purge past this is summed up in one line.
-pub const MAX_QUEUED: usize = 50;
+/// Most embeds posted per channel per window: one message, with room for the line that sums up
+/// the rest. Discord takes about one message a second in a channel, so a raid or a purge past this
+/// is summed up instead of queued behind and posted minutes late.
+pub const MAX_QUEUED: usize = MAX_PER_MESSAGE - 1;
+/// Events past that which are still looked up in the audit log, so the dashboard names their
+/// moderator.
+const MAX_LOOKUPS: usize = 500;
 
 /// An entry that a moderator may be behind, to look up in Discord's audit log before posting.
 #[derive(Debug, Clone, Copy)]
@@ -27,21 +32,36 @@ pub struct Who {
     pub target: u64,
     pub channel: Option<u64>,
     pub at: i64,
+    /// The stored entry, to name the moderator on.
+    pub row: Option<i64>,
 }
 
 /// One embed waiting to go out.
 #[derive(Debug, Clone)]
 pub struct Queued {
     pub embed: Embed,
+    pub kind: Kind,
     pub who: Option<Who>,
     /// Taken back before it posted. Kept in place so the positions `waiting` hands out hold.
     pub retracted: bool,
+    /// Past the window's limit: kept only to look up who did it, then summed up.
+    pub over: bool,
 }
 
 #[derive(Default)]
 struct Queue {
     items: Vec<Queued>,
-    dropped: usize,
+    /// Items that will post, retracted ones included.
+    shown: usize,
+    /// Events summed up, by kind.
+    dropped: Vec<(Kind, usize)>,
+}
+
+fn count(dropped: &mut Vec<(Kind, usize)>, kind: Kind) {
+    match dropped.iter_mut().find(|(k, _)| *k == kind) {
+        Some((_, n)) => *n += 1,
+        None => dropped.push((kind, 1)),
+    }
 }
 
 #[derive(Default)]
@@ -51,14 +71,17 @@ pub struct Batcher {
 
 impl Batcher {
     /// Queue an embed. Returns true when it opened a new window, so the caller schedules the flush.
-    pub fn push(&self, channel: u64, embed: Embed, who: Option<Who>) -> bool {
+    pub fn push(&self, channel: u64, kind: Kind, embed: Embed, who: Option<Who>) -> bool {
         let mut queues = self.queues.lock().unwrap();
         let first = !queues.contains_key(&channel);
         let q = queues.entry(channel).or_default();
-        if q.items.len() >= MAX_QUEUED {
-            q.dropped += 1;
+        if q.shown < MAX_QUEUED {
+            q.shown += 1;
+            q.items.push(Queued { embed, kind, who, retracted: false, over: false });
+        } else if who.is_some() && q.items.len() < MAX_QUEUED + MAX_LOOKUPS {
+            q.items.push(Queued { embed: EmbedBuilder::new().build(), kind, who, retracted: false, over: true });
         } else {
-            q.items.push(Queued { embed, who, retracted: false });
+            count(&mut q.dropped, kind);
         }
         first
     }
@@ -97,18 +120,55 @@ impl Batcher {
         }
     }
 
-    /// Take everything queued for a channel, in order, with a closing note when some were dropped.
+    /// Take everything queued for a channel, in order, with a closing line for the events past the
+    /// window's limit.
     pub fn drain(&self, channel: u64) -> Vec<Queued> {
         let Some(mut q) = self.queues.lock().unwrap().remove(&channel) else { return Vec::new() };
         q.items.retain(|item| !item.retracted);
-        if q.dropped > 0 {
-            let note = EmbedBuilder::new()
-                .color(0x8b8f98)
-                .description(format!("{} more events were not posted here. They are on the dashboard.", q.dropped))
-                .build();
-            q.items.push(Queued { embed: note, who: None, retracted: false });
+        for item in q.items.iter().filter(|i| i.over) {
+            count(&mut q.dropped, item.kind);
+        }
+        q.items.retain(|item| !item.over);
+        if !q.dropped.is_empty() {
+            let note = EmbedBuilder::new().color(0x8b8f98).description(more_line(&q.dropped)).build();
+            q.items.push(Queued { embed: note, kind: Kind::Join, who: None, retracted: false, over: false });
         }
         q.items
+    }
+}
+
+/// "…and 37 more joins, 2 more leaves. They're on the dashboard.", most first.
+pub fn more_line(dropped: &[(Kind, usize)]) -> String {
+    let mut sorted = dropped.to_vec();
+    sorted.sort_by_key(|a| std::cmp::Reverse(a.1));
+    let parts: Vec<String> = sorted
+        .iter()
+        .map(|(kind, n)| {
+            let (one, many) = nouns(*kind);
+            format!("{} more {}", bot_core::text::num(*n as i64), if *n == 1 { one } else { many })
+        })
+        .collect();
+    format!("…and {}. They're on the dashboard.", parts.join(", "))
+}
+
+/// A kind of event as a noun, one and many.
+fn nouns(kind: Kind) -> (&'static str, &'static str) {
+    match kind {
+        Kind::MessageDelete => ("deleted message", "deleted messages"),
+        Kind::MessageEdit => ("edit", "edits"),
+        Kind::BulkDelete => ("bulk delete", "bulk deletes"),
+        Kind::Join => ("join", "joins"),
+        Kind::Leave => ("leave", "leaves"),
+        Kind::Nickname => ("nickname change", "nickname changes"),
+        Kind::Roles => ("role change", "role changes"),
+        Kind::Ban => ("ban", "bans"),
+        Kind::Unban => ("unban", "unbans"),
+        Kind::Timeout => ("timeout", "timeouts"),
+        Kind::TimeoutEnd => ("timeout removed", "timeouts removed"),
+        Kind::Boost => ("boost", "boosts"),
+        Kind::VoiceJoin => ("voice join", "voice joins"),
+        Kind::VoiceLeave => ("voice leave", "voice leaves"),
+        Kind::VoiceMove => ("voice move", "voice moves"),
     }
 }
 
@@ -157,23 +217,18 @@ mod tests {
     #[test]
     fn only_the_first_push_opens_a_window() {
         let b = Batcher::default();
-        assert!(b.push(1, embed("a"), None));
-        assert!(!b.push(1, embed("b"), None));
-        assert!(b.push(2, embed("c"), None));
+        assert!(b.push(1, Kind::Join, embed("a"), None));
+        assert!(!b.push(1, Kind::Join, embed("b"), None));
+        assert!(b.push(2, Kind::Join, embed("c"), None));
         assert_eq!(b.drain(1).len(), 2);
         // Once drained, the next push opens a new window.
-        assert!(b.push(1, embed("d"), None));
+        assert!(b.push(1, Kind::Join, embed("d"), None));
     }
 
     #[test]
     fn a_burst_goes_out_ten_at_a_time() {
-        let b = Batcher::default();
-        for i in 0..25 {
-            b.push(7, embed(&format!("event {i}")), None);
-        }
-        let sizes: Vec<usize> = chunk(embeds(b.drain(7))).iter().map(Vec::len).collect();
+        let sizes: Vec<usize> = chunk((0..25).map(|i| embed(&format!("event {i}"))).collect()).iter().map(Vec::len).collect();
         assert_eq!(sizes, vec![10, 10, 5]);
-        assert!(b.drain(7).is_empty());
     }
 
     #[test]
@@ -189,10 +244,10 @@ mod tests {
     #[test]
     fn a_leave_is_taken_back_when_its_ban_comes_late() {
         let b = Batcher::default();
-        let who = |kind, target| Some(Who { guild: 1, kind, target, channel: None, at: 0 });
-        b.push(5, embed("timeout"), who(Kind::Timeout, 8));
-        b.push(5, embed("left"), who(Kind::Leave, 9));
-        b.push(5, embed("joined"), None);
+        let who = |kind, target| Some(Who { guild: 1, kind, target, channel: None, at: 0, row: None });
+        b.push(5, Kind::Timeout, embed("timeout"), who(Kind::Timeout, 8));
+        b.push(5, Kind::Leave, embed("left"), who(Kind::Leave, 9));
+        b.push(5, Kind::Join, embed("joined"), None);
         assert!(!b.retract(2, Kind::Leave, 9), "another server");
         assert!(!b.retract(1, Kind::Leave, 8), "another member");
         assert!(b.retract(1, Kind::Leave, 9));
@@ -204,13 +259,20 @@ mod tests {
     }
 
     #[test]
-    fn a_flood_is_summed_up() {
+    fn a_flood_is_one_message_and_a_line() {
         let b = Batcher::default();
-        for i in 0..(MAX_QUEUED + 7) {
-            b.push(3, embed(&format!("event {i}")), None);
+        for i in 0..(MAX_QUEUED + 37) {
+            b.push(3, Kind::Join, embed(&format!("join {i}")), None);
         }
+        // Bans past the limit are still looked up for the dashboard, then summed up too.
+        let who = |target| Some(Who { guild: 1, kind: Kind::Ban, target, channel: None, at: 0, row: None });
+        b.push(3, Kind::Ban, embed("ban"), who(8));
+        b.push(3, Kind::Ban, embed("ban"), who(9));
+        assert_eq!(b.waiting(3).len(), 2);
         let all = embeds(b.drain(3));
+        assert_eq!(chunk(all.clone()).len(), 1, "one message per window");
         assert_eq!(all.len(), MAX_QUEUED + 1);
-        assert!(all.last().unwrap().description.as_deref().unwrap().starts_with("7 more events"));
+        assert_eq!(all.last().unwrap().description.as_deref(), Some("…and 37 more joins, 2 more bans. They're on the dashboard."));
+        assert_eq!(more_line(&[(Kind::Leave, 1)]), "…and 1 more leave. They're on the dashboard.");
     }
 }

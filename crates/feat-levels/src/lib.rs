@@ -17,7 +17,7 @@ use bot_core::rusqlite::{OptionalExtension, params};
 use bot_core::twilight_model::application::command::{Command, CommandType};
 use bot_core::twilight_model::channel::message::component::ButtonStyle;
 use bot_core::twilight_model::channel::message::component::Component;
-use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
+use bot_core::twilight_model::channel::message::{AllowedMentions, Embed, MessageType};
 use bot_core::twilight_model::http::attachment::Attachment;
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::guild::Permissions;
@@ -185,7 +185,7 @@ fn boosted(amount: i64, pct: i64) -> i64 {
     if pct <= 0 || amount <= 0 {
         return amount;
     }
-    amount.saturating_mul(100 + pct).saturating_add(50) / 100
+    amount.saturating_mul(pct.saturating_add(100)).saturating_add(50) / 100
 }
 
 #[derive(Debug, Clone)]
@@ -202,8 +202,8 @@ pub struct Member {
 
 #[derive(Default)]
 pub struct Levels {
-    cooldowns: Mutex<HashMap<(u64, u64), Instant>>,
-    reaction_cooldowns: Mutex<HashMap<(u64, u64), Instant>>,
+    cooldowns: Mutex<Cooldowns>,
+    reaction_cooldowns: Mutex<Cooldowns>,
 }
 
 const MIGRATIONS: &[Migration] = &[Migration {
@@ -315,7 +315,8 @@ impl Feature for Levels {
         match event {
             Event::MessageCreate(m) => {
                 let Some(guild) = m.guild_id.map(|g| g.get()) else { return Ok(()) };
-                if m.author.bot {
+                // Joins, boosts, pins and thread notices are messages too, but nobody wrote them.
+                if m.author.bot || !matches!(m.kind, MessageType::Regular | MessageType::Reply) {
                     return Ok(());
                 }
                 let s = ctx.settings::<Settings>(guild, KEY)?;
@@ -354,16 +355,28 @@ impl Feature for Levels {
         Ok(())
     }
 
+    /// The tick is shared by every feature, so it only writes to the database here. Posts and role
+    /// changes run in the background, and a server that fails is logged and skipped, not the rest.
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
         for guild in ctx.enabled_guilds(KEY) {
-            let winners = roll_week(ctx, guild)?;
-            if !winners.is_empty() {
-                post_winners(ctx, guild, &winners).await;
+            match roll_week(ctx, guild) {
+                Ok(winners) if !winners.is_empty() => {
+                    let ctx = ctx.clone();
+                    bot_core::tokio::spawn(async move { post_winners(&ctx, guild, &winners).await });
+                }
+                Ok(_) => {}
+                Err(e) => bot_core::tracing::warn!(guild, error = %e, "couldn't roll the week over"),
             }
         }
         // One minute of voice XP for everyone talking in a channel.
         for guild in ctx.enabled_guilds(KEY) {
-            let s = ctx.settings::<Settings>(guild, KEY)?;
+            let s = match ctx.settings::<Settings>(guild, KEY) {
+                Ok(s) => s,
+                Err(e) => {
+                    bot_core::tracing::warn!(guild, error = %e, "couldn't read the levels settings");
+                    continue;
+                }
+            };
             if s.voice_xp <= 0 {
                 continue;
             }
@@ -383,9 +396,8 @@ impl Feature for Levels {
                 if *bot || Some(*channel) == afk || (s.voice_require_active && *quiet) || no_xp_here(ctx, &s, channel.get()) {
                     continue;
                 }
-                let no_xp_role = ctx
-                    .cache
-                    .member(guild_id, Id::new(*user))
+                let no_xp_role = Id::new_checked(*user)
+                    .and_then(|user_id| ctx.cache.member(guild_id, user_id))
                     .is_some_and(|m| m.roles().iter().any(|r| s.no_xp_roles.contains(&r.get())));
                 if no_xp_role {
                     continue;
@@ -395,7 +407,14 @@ impl Feature for Levels {
                 if humans < 2 {
                     continue;
                 }
-                grant(ctx, guild, *user, s.voice_xp, Earned::Voice, None).await?;
+                match record_xp(ctx, guild, *user, s.voice_xp, Earned::Voice) {
+                    Ok((s, before, level)) if level != before => {
+                        let (ctx, user) = (ctx.clone(), *user);
+                        bot_core::tokio::spawn(async move { level_changed(&ctx, &s, guild, user, before, level, None).await });
+                    }
+                    Ok(_) => {}
+                    Err(e) => bot_core::tracing::warn!(guild, user = *user, error = %e, "couldn't give voice XP"),
+                }
             }
         }
         Ok(())
@@ -455,12 +474,12 @@ impl Feature for Levels {
                 let msg = match sub {
                     "give" => {
                         let n = opts.int("amount").unwrap_or(0);
-                        grant(ctx, guild, user, n, Earned::Manual, None).await?;
+                        grant(ctx, guild, user, n, Earned::Staff, None).await?;
                         format!("Gave {} XP to {name}.", text::num(n))
                     }
                     "take" => {
                         let n = opts.int("amount").unwrap_or(0);
-                        grant(ctx, guild, user, -n, Earned::Manual, None).await?;
+                        grant(ctx, guild, user, -n, Earned::Staff, None).await?;
                         format!("Took {} XP from {name}.", text::num(n))
                     }
                     // "set-level", the only other part the check above lets through.
@@ -514,15 +533,24 @@ impl Feature for Levels {
                 return Ok(());
             }
             let s = ctx.settings::<Settings>(guild, KEY)?;
-            let text = match prestige(ctx, guild, call.user_id(), s.prestige_level)? {
+            let user = call.user_id();
+            let (text, prestiged) = match prestige(ctx, guild, user, s.prestige_level)? {
                 Some(n) => {
-                    sync_rewards(ctx, guild, call.user_id(), 0).await;
                     let bonus = if s.prestige_bonus > 0 { format!(" You earn {}% more XP from here.", s.prestige_pct(n)) } else { String::new() };
-                    format!("You're prestige {n} now, back at level 0.{bonus}")
+                    (format!("You're prestige {n} now, back at level 0.{bonus}"), true)
                 }
-                None => prestige_offer(&s, member(ctx, guild, call.user_id())?.as_ref()).err().unwrap_or_else(|| "Nothing changed. Try /level prestige again.".into()),
+                None => (prestige_offer(&s, member(ctx, guild, user)?.as_ref()).err().unwrap_or_else(|| "Nothing changed. Try /level prestige again.".into()), false),
             };
-            ctx.update(&call.interaction, Reply::text(text)).await?;
+            // Answer first: taking many reward roles away can outlast the 3 seconds Discord waits.
+            // The prestige is already written, so the roles follow even when the answer fails.
+            let answered = ctx.update(&call.interaction, Reply::text(text)).await;
+            if prestiged {
+                let ctx = ctx.clone();
+                bot_core::tokio::spawn(async move { sync_rewards(&ctx, guild, user, 0).await });
+            }
+            if let Err(e) = answered {
+                bot_core::tracing::warn!(guild, user, error = %e, "couldn't answer the prestige button");
+            }
         }
         Ok(())
     }
@@ -549,7 +577,10 @@ enum Earned {
     Message,
     Voice,
     Reaction,
+    /// Paid by another feature: no boost, but it counts on the weekly board.
     Manual,
+    /// Given or taken by staff with `/xp`: no boost, and kept off the weekly board.
+    Staff,
 }
 
 pub fn member(ctx: &Ctx, guild: u64, user: u64) -> Result<Option<Member>> {
@@ -861,17 +892,31 @@ fn leaderboard(ctx: &Ctx, guild: u64, board: Board, page: i64, you: u64) -> Resu
     Ok(LeaderboardPage { board, faces, embed, buttons })
 }
 
-/// Whether `key` is past its cooldown; if so, the cooldown starts again now. Entries that have
-/// run out are dropped once the map grows, so it stays small.
-fn cooled_down(map: &Mutex<HashMap<(u64, u64), Instant>>, key: (u64, u64), cooldown_secs: i64) -> bool {
-    let limit = cooldown_secs.max(0) as u64;
+/// The longest message cooldown: what the settings page and the import allow. A longer one in an
+/// old settings file is held to it.
+const MAX_COOLDOWN_SECS: u64 = 3600;
+
+/// (server, member) -> when their cooldown started, and how long it was then.
+type Cooldowns = HashMap<(u64, u64), (Instant, std::time::Duration)>;
+
+/// Whether `key` is past its cooldown; if so, the cooldown starts again now. The map holds when
+/// each cooldown started, so a server that lowers its cooldown sees it at once. Past 5,000
+/// entries, the ones whose own cooldown is over are dropped, which frees most of them, so the
+/// sweep doesn't run again on the next message.
+fn cooled_down(map: &Mutex<Cooldowns>, key: (u64, u64), cooldown_secs: i64) -> bool {
+    cooled_down_at(map, key, cooldown_secs, Instant::now())
+}
+
+/// `cooled_down` as of `now`.
+fn cooled_down_at(map: &Mutex<Cooldowns>, key: (u64, u64), cooldown_secs: i64, now: Instant) -> bool {
+    let cooldown = std::time::Duration::from_secs((cooldown_secs.max(0) as u64).min(MAX_COOLDOWN_SECS));
     let mut cd = map.lock().unwrap();
-    if cd.get(&key).is_some_and(|t| t.elapsed().as_secs() < limit) {
+    if cd.get(&key).is_some_and(|(started, _)| now.saturating_duration_since(*started) < cooldown) {
         return false;
     }
-    cd.insert(key, Instant::now());
+    cd.insert(key, (now, cooldown));
     if cd.len() > 5000 {
-        cd.retain(|_, t| t.elapsed().as_secs() < limit);
+        cd.retain(|_, (started, length)| now.saturating_duration_since(*started) < *length);
     }
     true
 }
@@ -900,12 +945,19 @@ pub async fn give_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, channel: Opt
 /// Add XP (or take it, when `amount` is negative) and handle a level change: announcement and
 /// reward roles.
 async fn grant(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned, channel: Option<u64>) -> Result<()> {
+    let (s, before, level) = record_xp(ctx, guild, user, amount, how)?;
+    level_changed(ctx, &s, guild, user, before, level, channel).await;
+    Ok(())
+}
+
+/// The database half of `grant`: write the XP and log a level-up. Returns the settings, the level
+/// before and the level after, for `level_changed`.
+fn record_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned) -> Result<(std::sync::Arc<Settings>, u32, u32)> {
     let (s, before, level) = add_xp(ctx, guild, user, amount, how)?;
     if level > before {
         log_level_up(ctx, guild, user, level)?;
     }
-    level_changed(ctx, &s, guild, user, before, level, channel).await;
-    Ok(())
+    Ok((s, before, level))
 }
 
 /// Write the XP change. Returns the settings, the level before and the level after.
@@ -915,6 +967,9 @@ fn add_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned) -> Result<
     // can land together, and each must add to what the other wrote.
     let now = bot_core::now_ms();
     let (before, level) = ctx.db.with(|c| {
+        // The XP and, for staff changes, the weekly board's start move together.
+        let tx = c.unchecked_transaction()?;
+        let c: &bot_core::rusqlite::Connection = &tx;
         let (xp, level, prestige, streak, day): (i64, u32, i64, i64, i64) = c
             .query_row(
                 "SELECT xp, level, prestige, streak, streak_day FROM levels WHERE guild_id = ?1 AND user_id = ?2",
@@ -926,7 +981,7 @@ fn add_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned) -> Result<
         let before = (xp, level);
         // Earning keeps the streak going, and prestige and the streak boost what members earn;
         // staff giving or taking XP touches neither.
-        let (amount, streak, day) = if how == Earned::Manual {
+        let (amount, streak, day) = if matches!(how, Earned::Manual | Earned::Staff) {
             (amount, streak, day)
         } else {
             let today = day_of(now);
@@ -953,6 +1008,10 @@ fn add_xp(ctx: &Ctx, guild: u64, user: u64, amount: i64, how: Earned) -> Result<
                 day
             ],
         )?;
+        if how == Earned::Staff {
+            shift_week(c, guild, user, xp - before.0)?;
+        }
+        tx.commit()?;
         Ok((before, level))
     })?;
     Ok((s, before.1, level))
@@ -1149,40 +1208,110 @@ pub fn rewards(ctx: &Ctx, guild: u64) -> Result<Vec<(u32, u64)>> {
 /// qualify for, and lose `dropped` (the role the reward gave before) unless another reward still
 /// gives it. Only members the cache holds are touched, since only their roles are known; the rest
 /// catch up when their level next changes. Runs in the background, paced by Discord's limits.
+///
+/// A sweep started while another runs in the same server takes over from it: it covers the
+/// older one's levels and dropped roles too, and the older one stops at its next member, so two
+/// saves in a row don't fight over the same roles.
 pub fn resync_rewards(ctx: &Ctx, guild: u64, from_level: u32, dropped: Option<u64>) {
+    let sweep = start_sweep(&mut SWEEPS.lock().unwrap(), guild, from_level, dropped);
     let ctx = ctx.clone();
     bot_core::tokio::spawn(async move {
-        let members: Vec<(u64, u32)> = ctx
-            .db
-            .with(|c| {
-                let mut s = c.prepare("SELECT user_id, level FROM levels WHERE guild_id = ?1 AND level >= ?2")?;
-                s.query_map(params![guild as i64, from_level as i64], |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u32)))?.collect()
-            })
-            .unwrap_or_default();
-        let still_given = rewards(&ctx, guild).unwrap_or_default();
-        let dropped = dropped.filter(|r| !still_given.iter().any(|(_, x)| x == r));
-        let Some(guild_id) = Id::new_checked(guild) else { return };
-        for (user, level) in members {
-            let Some(user_id) = Id::new_checked(user) else { continue };
-            let Some(has) = ctx.cache.member(guild_id, user_id).map(|m| m.roles().iter().map(|r| r.get()).collect::<Vec<_>>()) else {
-                continue;
-            };
-            if let Some(role) = dropped
-                && has.contains(&role)
+        run_sweep(&ctx, guild, &sweep).await;
+        let mut sweeps = SWEEPS.lock().unwrap();
+        if sweeps.get(&guild).is_some_and(|s| s.generation == sweep.generation) {
+            sweeps.remove(&guild);
+        }
+    });
+}
+
+/// The reward sweep running in each server.
+static SWEEPS: std::sync::LazyLock<Mutex<HashMap<u64, Sweep>>> = std::sync::LazyLock::new(Default::default);
+
+/// A reward sweep: which one it is in its server, the lowest level it covers, and the roles that
+/// rewards gave before they changed.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Sweep {
+    generation: u64,
+    from_level: u32,
+    dropped: Vec<u64>,
+}
+
+/// Record a new sweep in `guild` and return it. One still running there is replaced, and the new
+/// one takes on its levels and dropped roles, since it stops before it's done.
+fn start_sweep(sweeps: &mut HashMap<u64, Sweep>, guild: u64, from_level: u32, dropped: Option<u64>) -> Sweep {
+    // Never reused, even after a server's entry is gone: an old sweep still mid-member must
+    // never pass for a new one.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let generation = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut sweep = match sweeps.get(&guild) {
+        Some(old) => Sweep { generation, from_level: old.from_level.min(from_level), dropped: old.dropped.clone() },
+        None => Sweep { generation, from_level, dropped: Vec::new() },
+    };
+    if let Some(role) = dropped
+        && !sweep.dropped.contains(&role)
+    {
+        sweep.dropped.push(role);
+    }
+    sweeps.insert(guild, sweep.clone());
+    sweep
+}
+
+/// Whether `generation` is still the newest sweep in `guild`.
+fn sweep_current(sweeps: &HashMap<u64, Sweep>, guild: u64, generation: u64) -> bool {
+    sweeps.get(&guild).is_some_and(|s| s.generation == generation)
+}
+
+async fn run_sweep(ctx: &Ctx, guild: u64, sweep: &Sweep) {
+    let Some(guild_id) = Id::new_checked(guild) else { return };
+    // Checked once for the server: without Manage Roles every member's change would be refused.
+    if !can_manage_roles(ctx, guild) {
+        return;
+    }
+    let users: Vec<u64> = ctx
+        .db
+        .with(|c| {
+            let mut s = c.prepare("SELECT user_id FROM levels WHERE guild_id = ?1 AND level >= ?2")?;
+            s.query_map(params![guild as i64, sweep.from_level as i64], |r| Ok(r.get::<_, i64>(0)? as u64))?.collect()
+        })
+        .unwrap_or_default();
+    let still_given = rewards(ctx, guild).unwrap_or_default();
+    let dropped: Vec<u64> = sweep.dropped.iter().copied().filter(|r| !still_given.iter().any(|(_, x)| x == r)).collect();
+    for user in users {
+        if !sweep_current(&SWEEPS.lock().unwrap(), guild, sweep.generation) {
+            return;
+        }
+        let Some(user_id) = Id::new_checked(user) else { continue };
+        let Some(has) = ctx.cache.member(guild_id, user_id).map(|m| m.roles().iter().map(|r| r.get()).collect::<Vec<_>>()) else {
+            continue;
+        };
+        for &role in &dropped {
+            if has.contains(&role)
+                && assignable(ctx, guild, role)
                 && let Some(role_id) = Id::new_checked(role)
                 && let Err(e) = ctx.http.remove_guild_member_role(guild_id, user_id, role_id).await
             {
                 bot_core::tracing::warn!(guild, user, role, error = %e, "couldn't take back a changed reward role");
             }
-            sync_rewards(&ctx, guild, user, level).await;
         }
-    });
+        // The level as it is now, not when the sweep started: role changes for the members before
+        // are paced by Discord's limits, and this one may have levelled up or prestiged (back to
+        // level 0) since.
+        let level = ctx.db.with(|c| {
+            c.query_row("SELECT level FROM levels WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64], |r| r.get::<_, i64>(0))
+                .optional()
+        });
+        match level {
+            Ok(Some(level)) => sync_rewards(ctx, guild, user, level.clamp(0, u32::MAX as i64) as u32).await,
+            Ok(None) => {}
+            Err(e) => bot_core::tracing::warn!(guild, user, error = %e, "couldn't read a level for the reward sweep"),
+        }
+    }
 }
 
 async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
     let (Some(guild_id), Some(user_id)) = (Id::new_checked(guild), Id::new_checked(user)) else { return };
     let Ok(list) = rewards(ctx, guild) else { return };
-    if list.is_empty() {
+    if list.is_empty() || !can_manage_roles(ctx, guild) {
         return;
     }
     let stack = ctx.settings::<Settings>(guild, KEY).map(|s| s.stack_rewards).unwrap_or(true);
@@ -1190,8 +1319,12 @@ async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
     let keep: Vec<u64> = if stack { earned.clone() } else { earned.last().copied().into_iter().collect() };
     let has: Vec<u64> = ctx.cache.member(guild_id, user_id).map(|m| m.roles().iter().map(|r| r.get()).collect()).unwrap_or_default();
     for (_, role) in &list {
-        // A reward stored without a real role (0) gives and takes nothing.
+        // A reward stored without a real role (0) gives and takes nothing, and nor does one the
+        // bot isn't allowed to give: Discord would only refuse it.
         let Some(role_id) = Id::new_checked(*role) else { continue };
+        if !assignable(ctx, guild, *role) {
+            continue;
+        }
         let want = keep.contains(role);
         let have = has.contains(role);
         let res = if want && !have {
@@ -1205,6 +1338,66 @@ async fn sync_rewards(ctx: &Ctx, guild: u64, user: u64, level: u32) {
             bot_core::tracing::warn!(guild, user, role, error = %e, "couldn't update a level reward role");
         }
     }
+}
+
+/// Whether the bot can give or take `role`: it's a role of this server, isn't managed by an
+/// integration (bot and booster roles) or the @everyone role, and sits below the bot's highest
+/// role. When the cache doesn't hold the bot's own member, it's tried anyway. Whether the bot
+/// has Manage Roles at all is `can_manage_roles`.
+fn assignable(ctx: &Ctx, guild: u64, role: u64) -> bool {
+    let (Some(guild_id), Some(role_id)) = (Id::new_checked(guild), Id::new_checked(role)) else { return false };
+    if role == guild || !ctx.cache.guild_roles(guild_id).is_some_and(|set| set.contains(&role_id)) {
+        return false;
+    }
+    let Some(r) = ctx.cache.role(role_id) else { return false };
+    if r.managed {
+        return false;
+    }
+    let Some(bot_id) = ctx.bot_id().and_then(Id::new_checked) else { return true };
+    let Some(me) = ctx.cache.member(guild_id, bot_id) else { return true };
+    let top = me.roles().iter().filter_map(|id| ctx.cache.role(*id).map(|r| r.position)).max().unwrap_or(0);
+    r.position < top
+}
+
+/// Whether the bot has Manage Roles (or Administrator, or owns the server) in `guild`, from its
+/// cached roles and @everyone. Without it Discord refuses every role change, so callers skip the
+/// role work. When the cache doesn't hold the bot's own member, it's tried anyway.
+fn can_manage_roles(ctx: &Ctx, guild: u64) -> bool {
+    manages_roles(ctx, guild, ctx.bot_id())
+}
+
+/// `can_manage_roles` for the bot user `bot`, when it's known.
+fn manages_roles(ctx: &Ctx, guild: u64, bot: Option<u64>) -> bool {
+    let Some(guild_id) = Id::new_checked(guild) else { return false };
+    let Some(bot_id) = bot.and_then(Id::new_checked) else { return true };
+    let Some(me) = ctx.cache.member(guild_id, bot_id) else { return true };
+    if ctx.cache.guild(guild_id).is_some_and(|g| g.owner_id() == bot_id) {
+        return true;
+    }
+    let perms = me
+        .roles()
+        .iter()
+        .copied()
+        .chain(std::iter::once(guild_id.cast()))
+        .filter_map(|id| ctx.cache.role(id).map(|r| r.permissions))
+        .fold(Permissions::empty(), |all, p| all | p);
+    perms.intersects(Permissions::MANAGE_ROLES | Permissions::ADMINISTRATOR)
+}
+
+/// Work every stored level of `guild` out again from XP, after the curve changed. Only rows whose
+/// level moved are written. Roles aren't touched: follow with `resync_rewards`.
+pub(crate) fn recompute_levels(c: &bot_core::rusqlite::Connection, guild: u64, s: &Settings) -> bot_core::rusqlite::Result<()> {
+    let rows: Vec<(i64, i64, i64)> = {
+        let mut st = c.prepare("SELECT user_id, xp, level FROM levels WHERE guild_id = ?1")?;
+        st.query_map([guild as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<bot_core::rusqlite::Result<_>>()?
+    };
+    for (user, xp, level) in rows {
+        let new = s.progress(xp).level as i64;
+        if new != level {
+            c.execute("UPDATE levels SET level = ?3 WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user, new])?;
+        }
+    }
+    Ok(())
 }
 
 /// A level-up message for `user`, with the mentions it may make: only that member, and only when
@@ -1372,11 +1565,66 @@ mod tests {
         // No cooldown: every message counts.
         assert!(cooled_down(&map, (3, 10), 0));
         assert!(cooled_down(&map, (3, 10), 0));
-        // Past the size limit, finished cooldowns are dropped.
+        // Past the size limit, entries older than the longest cooldown are dropped.
+        let start = Instant::now();
         for user in 0..5001 {
-            cooled_down(&map, (4, user), 0);
+            cooled_down_at(&map, (4, user), 0, start);
         }
+        let later = start + std::time::Duration::from_secs(MAX_COOLDOWN_SECS + 1);
+        assert!(cooled_down_at(&map, (5, 10), 60, later));
         assert!(map.lock().unwrap().len() < 10);
+    }
+
+    #[test]
+    fn a_lowered_cooldown_counts_at_once() {
+        let map = Mutex::new(HashMap::new());
+        let start = Instant::now();
+        let at = |secs| start + std::time::Duration::from_secs(secs);
+        assert!(cooled_down_at(&map, (1, 10), 3600, start));
+        assert!(!cooled_down_at(&map, (1, 10), 3600, at(61)));
+        // The server drops its cooldown to a minute: the hour started before no longer holds.
+        assert!(cooled_down_at(&map, (1, 10), 60, at(61)));
+        assert!(!cooled_down_at(&map, (1, 10), 60, at(100)));
+        // A cooldown above the settings page's hour is held to the hour.
+        assert!(cooled_down_at(&map, (1, 11), i64::MAX, start));
+        assert!(cooled_down_at(&map, (1, 11), i64::MAX, at(MAX_COOLDOWN_SECS)));
+    }
+
+    #[test]
+    fn pruning_keeps_each_servers_own_cooldown() {
+        let map = Mutex::new(HashMap::new());
+        // A server with an hour's cooldown, then a busy one with none fills the map.
+        assert!(cooled_down(&map, (1, 10), 3600));
+        for user in 0..5001 {
+            cooled_down(&map, (2, user), 0);
+        }
+        assert!(!cooled_down(&map, (1, 10), 3600), "the hour-long cooldown survived the prune");
+    }
+
+    #[test]
+    fn a_newer_sweep_takes_over_from_an_older_one() {
+        let mut sweeps = HashMap::new();
+        let first = start_sweep(&mut sweeps, 1, 5, Some(70));
+        assert_eq!((first.from_level, first.dropped.clone()), (5, vec![70]));
+        assert!(sweep_current(&sweeps, 1, first.generation));
+        // A second save while it runs: the first stops, and the second covers its levels and role.
+        let second = start_sweep(&mut sweeps, 1, 20, None);
+        assert_eq!((second.from_level, second.dropped.clone()), (5, vec![70]));
+        assert_ne!(second.generation, first.generation);
+        assert!(!sweep_current(&sweeps, 1, first.generation));
+        assert!(sweep_current(&sweeps, 1, second.generation));
+        let third = start_sweep(&mut sweeps, 1, 0, Some(70));
+        assert_eq!((third.from_level, third.dropped), (0, vec![70]));
+        let third = start_sweep(&mut sweeps, 1, 3, Some(71));
+        assert_eq!((third.from_level, third.dropped), (0, vec![70, 71]));
+        // Another server's sweep is its own.
+        let other = start_sweep(&mut sweeps, 2, 8, None);
+        assert_eq!((other.from_level, other.dropped.clone()), (8, vec![]));
+        assert!(sweep_current(&sweeps, 1, third.generation));
+        // Once a server's sweeps are done, a new one never reuses an old one's number.
+        sweeps.remove(&1);
+        let fresh = start_sweep(&mut sweeps, 1, 0, None);
+        assert!(![first.generation, second.generation, third.generation].contains(&fresh.generation));
     }
 
     #[test]
@@ -1475,6 +1723,8 @@ mod tests {
         // Taking XP away is never boosted.
         assert_eq!(boosted(-20, 50), -20);
         assert_eq!(boosted(i64::MAX, 50), i64::MAX / 100);
+        // A bonus too large to add to doesn't turn negative.
+        assert_eq!(boosted(20, i64::MAX), i64::MAX / 100);
         let mut s = Settings::default();
         assert_eq!(s.prestige_pct(3), 0, "prestige is off by default");
         s.prestige_level = 30;
@@ -1668,5 +1918,26 @@ mod tests {
         grant(&ctx, 1, 10, -30, Earned::Manual, None).await.unwrap();
         assert_eq!(streak(&ctx), (5, today, 120));
         assert_eq!(member(&ctx, 1, 10).unwrap().unwrap().streak, 5);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn staff_xp_stays_off_the_weekly_board_and_payouts_dont() {
+        let ctx = ctx();
+        ctx.save_settings(1, KEY, &Settings { announce: false, ..Default::default() }).unwrap();
+        set_level(&ctx, 10, 1_000, 5, 0);
+        roll_week_to(&ctx, 1, "2026-W44").unwrap();
+        grant(&ctx, 1, 10, 50, Earned::Message, None).await.unwrap();
+        // /xp give and take, and taking more than they have only counts what was there.
+        grant(&ctx, 1, 10, 5_000, Earned::Staff, None).await.unwrap();
+        grant(&ctx, 1, 11, 700, Earned::Staff, None).await.unwrap();
+        grant(&ctx, 1, 11, -1_000, Earned::Staff, None).await.unwrap();
+        let week = |ctx: &Ctx| crate::week_top(ctx, 1, 0, 10).unwrap().into_iter().map(|(m, g)| (m.user_id, g)).collect::<Vec<_>>();
+        assert_eq!(week(&ctx).len(), 1);
+        assert_eq!(week(&ctx)[0].0, 10);
+        let earned = week(&ctx)[0].1;
+        assert!((50..=60).contains(&earned), "{earned}");
+        // Another feature's payout counts as earned.
+        grant(&ctx, 1, 10, 100, Earned::Manual, None).await.unwrap();
+        assert_eq!(week(&ctx)[0].1, earned + 100);
     }
 }

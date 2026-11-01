@@ -4,6 +4,7 @@ use bot_core::axum::response::IntoResponse;
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::rusqlite::params;
+use bot_core::web::dc;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
@@ -166,13 +167,13 @@ fn placeholder_block() -> Markup {
     }
 }
 
-/// The bot's name and face. In a preview without Discord, the dashboard's own mark.
-fn bot_av(ctx: &Ctx, class: &str) -> (String, Markup) {
-    let bot = ctx.cache.current_user();
-    let name = bot.as_ref().map(|u| u.name.clone()).unwrap_or_else(|| "Bot".into());
-    let face = match bot.as_ref() {
-        Some(u) => html! { img class=(class) src=(bot_core::discord::avatar_url(u.id.get(), u.avatar.map(|a| a.to_string()).as_deref())) alt="" width="36" height="36" loading="lazy"; },
-        None => html! { span class={ (class) " mark" } { img src="/static/icon.svg" alt="" width="20" height="20"; } },
+/// The bot's name and face, small, for a list row. In a preview without Discord, the dashboard's
+/// own mark.
+fn bot_av(ctx: &Ctx) -> (String, Markup) {
+    let (name, avatar) = dc::bot_identity(ctx);
+    let face = match avatar {
+        Some(url) => html! { img.cc-bav src=(url) alt="" width="28" height="28" loading="lazy"; },
+        None => html! { span.cc-bav.mark { img src="/static/icon.svg" alt="" width="16" height="16"; } },
     };
     (name, face)
 }
@@ -180,7 +181,7 @@ fn bot_av(ctx: &Ctx, class: &str) -> (String, Markup) {
 /// A small copy of the exchange for a list row, in Discord's colours: what the member said (for
 /// a trigger), then the bot's reply with placeholders filled, and the embed under it.
 fn reply_bubble(ctx: &Ctx, sample: &Sample, said: Option<Markup>, reply: &str, embed: Option<&CardEmbed>, ephemeral: bool) -> Markup {
-    let (name, face) = bot_av(ctx, "cc-bav");
+    let (name, face) = bot_av(ctx);
     html! {
         div.cc-bubble {
             @if let Some(said) = said {
@@ -242,38 +243,38 @@ impl Sample {
     }
 }
 
-/// The bot's reply as Discord draws it, in Discord's own colours, inside a channel. `above` goes
-/// over the message (who used the command, or what they said). The page script fills it as you
-/// type.
+/// The bot's reply as Discord draws it, inside a channel. `used` is the slash command it answers
+/// (shown over it as Discord does); `said` is the member's message it answers, drawn first. The
+/// page script fills it as you type.
 #[allow(clippy::too_many_arguments)]
-fn preview(ctx: &Ctx, page: &Page, sample: &Sample, channel: &str, above: Markup, reply: &str, embed: Option<&CardEmbed>, ephemeral: bool) -> Markup {
-    let (bot_name, face) = bot_av(ctx, "cc-av");
-    let time = page.user.local(now_ms()).strftime("%-I:%M %p").to_string();
+fn preview(ctx: &Ctx, page: &Page, sample: &Sample, channel: &str, used: Option<&str>, said: Option<Markup>, reply: &str, embed: Option<&CardEmbed>, ephemeral: bool) -> Markup {
     let e = embed.cloned().unwrap_or_default();
     let img_ok = e.image.trim().starts_with("https://");
+    let bot = dc::message(ctx, page);
+    let bot = match used {
+        Some(cmd) => bot.used(page, cmd),
+        None => bot,
+    };
     html! {
-        div.cc-win {
-            div.cc-win-bar { (ui::icon(Icon::Hash)) strong #cc-win-chan { (channel) } span.cc-win-tag { "Preview" } }
-            div.cc-preview #cc-preview data-user=(sample.user) data-server=(sample.server) data-channel=(sample.channel) data-members=(sample.members) {
-                (above)
-                div.cc-msg.cc-bot {
-                    (face)
-                    div.cc-msg-main {
-                        div.cc-head { b { (bot_name) } span.cc-tag { "APP" } span.cc-time { "Today at " (time) } }
-                        div.cc-text #cc-p-text { (sample.fill(reply)) }
-                        div.cc-embed #cc-p-embed hidden[embed.is_none()] {
-                            strong #cc-p-etitle { (sample.fill(&e.title)) }
-                            p #cc-p-edesc { (sample.fill(&e.description)) }
-                            img #cc-p-eimg src=[img_ok.then_some(e.image.trim())] alt="" hidden[!img_ok];
-                        }
-                        div.cc-ghost #cc-p-ghost hidden[!(reply.trim().is_empty() && embed.is_none())] {
-                            span {} span {}
-                            p { "Write the reply and it shows here as members will see it." }
-                        }
-                        p.cc-only #cc-p-eph hidden[!ephemeral] { (eye_icon()) "Only you can see this" }
-                    }
+        div #cc-preview data-user=(sample.user) data-server=(sample.server) data-channel=(sample.channel) data-members=(sample.members) {
+            (dc::channel(Some(channel), "", html! {
+                @if let Some(said) = said {
+                    (dc::message(ctx, page).from(sample.user.clone(), Some(sample.avatar.clone())).render(said))
                 }
-            }
+                (bot.render(html! {
+                    div.dp-line #cc-p-text { (sample.fill(reply)) }
+                    div.dp-embed #cc-p-embed hidden[embed.is_none()] style="--embed:#f0806a" {
+                        strong.dp-title #cc-p-etitle { (sample.fill(&e.title)) }
+                        p.dp-desc #cc-p-edesc { (sample.fill(&e.description)) }
+                        img #cc-p-eimg src=[img_ok.then_some(e.image.trim())] alt="" hidden[!img_ok];
+                    }
+                    div.cc-ghost #cc-p-ghost hidden[!(reply.trim().is_empty() && embed.is_none())] {
+                        span {} span {}
+                        p { "Write the reply and it shows here as members will see it." }
+                    }
+                    p.cc-only #cc-p-eph hidden[!ephemeral] { (eye_icon()) "Only you can see this" }
+                }))
+            }))
         }
     }
 }
@@ -315,13 +316,7 @@ async fn command_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let e = c.embed.clone().unwrap_or_default();
     let sample = Sample::new(&ctx, &page);
     let title = if existing.is_some() { "Edit command" } else { "Add a command" };
-    let used = html! {
-        div.cc-used {
-            span.cc-used-line aria-hidden="true" {}
-            img.avatar src=(sample.avatar) alt="" width="16" height="16";
-            span { b { (sample.user) } " used " span.cc-cmd #cc-p-name { "/" (if c.name.is_empty() { "name" } else { &c.name }) } }
-        }
-    };
+    let used = format!("/{}", if c.name.is_empty() { "name" } else { &c.name });
     let body = html! {
         style { (PreEscaped(CSS)) }
         (back(&page.path("commands"), "All commands"))
@@ -344,7 +339,7 @@ async fn command_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 })) } }))
             }))
             aside.cc-side.compose-preview {
-                (preview(&ctx, &page, &sample, &sample.channel, used, &c.reply, c.embed.as_ref(), c.ephemeral))
+                (preview(&ctx, &page, &sample, &sample.channel, Some(&used), None, &c.reply, c.embed.as_ref(), c.ephemeral))
                 p.muted.small { "You stand in for the member. Placeholders fill in as they would for you." }
                 (used_line(&ctx, guild, Kind::Command, existing.as_ref().map(|c| c.id), "Used")?)
             }
@@ -587,16 +582,9 @@ async fn trigger_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let t = existing.clone().unwrap_or_default();
     let sample = Sample::new(&ctx, &page);
     let modes: Vec<(String, String)> = [Mode::Contains, Mode::StartsWith, Mode::Exact].iter().map(|m| (m.key().to_owned(), m.label().to_owned())).collect();
-    let time = page.user.local(now_ms()).strftime("%-I:%M %p").to_string();
     let above = html! {
-        div.cc-msg.cc-member {
-            img.cc-av src=(sample.avatar) alt="" width="36" height="36";
-            div.cc-msg-main {
-                div.cc-head { b { (sample.user) } span.cc-time { "Today at " (time) } }
-                div.cc-text #cc-p-said {
-                    @if t.pattern.is_empty() { span.cc-wait { "Type a phrase to see a message it answers." } } @else { (said(t.mode, &t.pattern)) }
-                }
-            }
+        div.dp-line #cc-p-said {
+            @if t.pattern.is_empty() { span.cc-wait { "Type a phrase to see a message it answers." } } @else { (said(t.mode, &t.pattern)) }
         }
     };
     // The preview sits in the first channel it answers in.
@@ -619,7 +607,7 @@ async fn trigger_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 })))
             }))
             aside.cc-side.compose-preview {
-                (preview(&ctx, &page, &sample, &first_channel, above, &t.reply, None, false))
+                (preview(&ctx, &page, &sample, &first_channel, None, Some(above), &t.reply, None, false))
                 p.muted.small { "You stand in for the member. Placeholders fill in as they would for you." }
                 (used_line(&ctx, guild, Kind::Trigger, existing.as_ref().map(|t| t.id), "Answered")?)
             }
@@ -760,7 +748,7 @@ html.same .cc-meter > span { animation: none; }
 .cc-bubble { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px 14px 13px; border-radius: 12px; background: #313338; color: #dbdee1; font-size: 13.5px; line-height: 1.4; }
 .cc-dmsg { display: flex; gap: 10px; min-width: 0; }
 .cc-bav { flex: none; width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
-.cc-bav.mark, .cc-av.mark { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
+.cc-bav.mark { display: grid; place-items: center; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
 .cc-bav.mark img { width: 16px; height: 16px; }
 .cc-bubble-main { display: flex; flex: 1; flex-direction: column; gap: 1px; min-width: 0; }
 .cc-bhead { display: flex; align-items: center; gap: 5px; }
@@ -799,42 +787,18 @@ mark.cc-match { padding: 0 2px; border-radius: 3px; color: #f2f3f5; background: 
 .cc-side > p { padding: 0 4px; }
 .cc-used-note { font-size: 12.5px; color: var(--ink-2); }
 .cc-used-note b { font-weight: 600; color: var(--ink); }
-.cc-win { overflow: hidden; border-radius: 16px; background: #313338; box-shadow: 0 30px 70px -30px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
-.cc-win-bar { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 14px; border-bottom: 1px solid #26272b; color: #80848e; }
-.cc-win-bar .icon { width: 18px; height: 18px; }
-.cc-win-bar strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #f2f3f5; font-size: 14.5px; font-weight: 600; }
-.cc-win-tag { padding: 3px 8px; border-radius: 6px; font-size: 11px; color: #b5bac1; background: rgba(255, 255, 255, 0.06); }
-.cc-preview { display: flex; flex-direction: column; justify-content: flex-end; gap: 16px; min-height: 220px; padding: 18px 14px 20px; color: #dbdee1; }
-.cc-preview [hidden] { display: none !important; }
-.cc-used { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; margin-bottom: -12px; padding-left: 50px; font-size: 12.5px; color: #949ba4; animation: fade-in 0.5s ease both 0.2s; }
-.cc-used-line { position: absolute; left: 17px; top: 9px; width: 27px; height: 12px; border-left: 2px solid #4e5058; border-top: 2px solid #4e5058; border-top-left-radius: 6px; }
-.cc-used .avatar { width: 16px; height: 16px; }
-.cc-used b { color: #f2f3f5; font-weight: 500; }
-.cc-cmd { color: #00a8fc; font-weight: 500; }
-.cc-msg { display: flex; gap: 14px; min-width: 0; }
-.cc-av { flex: none; width: 36px; height: 36px; border-radius: 50%; object-fit: cover; }
-.cc-av.mark img { width: 20px; height: 20px; }
-.cc-msg-main { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
-.cc-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.cc-head b { color: #f2f3f5; font-size: 15px; font-weight: 500; }
-.cc-head .cc-tag { height: 15px; padding: 0 4.5px; font-size: 10px; line-height: 15px; }
-.cc-time { color: #949ba4; font-size: 11.5px; }
-.cc-text { font-size: 14.5px; line-height: 1.375; white-space: pre-wrap; overflow-wrap: break-word; }
-.cc-text:empty { display: none; }
-.cc-embed { display: flex; flex-direction: column; gap: 6px; max-width: 516px; margin-top: 4px; padding: 10px 14px 12px 12px; border-left: 4px solid #f0806a; border-radius: 4px; background: #2b2d31; font-size: 13.5px; }
-.cc-embed strong { color: #f2f3f5; font-size: 15px; font-weight: 600; }
-.cc-embed strong:empty, .cc-embed p:empty { display: none; }
-.cc-embed p { white-space: pre-wrap; overflow-wrap: break-word; }
-.cc-embed img { max-width: 100%; max-height: 200px; margin-top: 4px; border-radius: 4px; object-fit: cover; }
+/* The channel (web/dc.rs), kept to the bottom as Discord keeps the newest message. */
+#cc-preview .dp-body { min-height: 220px; justify-content: flex-end; }
+#cc-preview [hidden] { display: none !important; }
+#cc-p-text:empty, #cc-p-etitle:empty, #cc-p-edesc:empty { display: none; }
+#cc-p-eimg { max-width: 100%; max-height: 200px; margin-top: 4px; border-radius: 4px; object-fit: cover; }
 .cc-wait { color: #949ba4; font-style: italic; }
 /* An empty reply: the outline of a message, and a line on how it fills. */
-.cc-ghost { display: flex; flex-direction: column; gap: 8px; max-width: 360px; margin-top: 6px; }
+.cc-ghost { align-self: stretch; display: flex; flex-direction: column; gap: 8px; max-width: 360px; margin-top: 6px; }
 .cc-ghost span { height: 9px; border-radius: 5px; background: rgba(255, 255, 255, 0.07); }
 .cc-ghost span:first-child { width: 88%; }
 .cc-ghost span:nth-child(2) { width: 56%; }
 .cc-ghost p { margin-top: 4px; color: #949ba4; font-size: 13px; }
-.cc-bot { animation: cc-arrive 0.7s var(--ease) both 0.35s; }
-@keyframes cc-arrive { from { opacity: 0; transform: translateY(14px); filter: blur(4px); } }
 @media (max-width: 560px) {
   .cc-card { padding: 14px 14px 16px; }
   .cc-card-head { flex-wrap: wrap; }
@@ -849,15 +813,16 @@ const JS: &str = r#"(() => {
   const $ = id => document.getElementById(id);
   const val = id => ($(id) || {}).value || '';
   const on = id => !!($(id) || {}).checked;
-  const here = () => (($('cc-win-chan') || {}).textContent || d.channel).trim();
+  const chan = p.querySelector('.dp-bar .clip'), cmd = p.querySelector('.dp-used .cmd');
+  const here = () => ((chan || {}).textContent || d.channel).trim();
   const fill = s => s.replaceAll('{user}', d.user).replaceAll('{mention}', '@' + d.user).replaceAll('{server}', d.server).replaceAll('{channel}', '#' + here()).replaceAll('{members}', d.members);
   const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
   const show = (id, yes) => { const el = $(id); if (el) el.hidden = !yes; };
   const update = () => {
     // A trigger's preview sits in the first channel it answers in.
     const picked = document.querySelector('#channels input:checked');
-    if ($('channels')) set('cc-win-chan', picked ? picked.closest('label').textContent.trim().replace(/^#/, '') : d.channel);
-    set('cc-p-name', '/' + (val('name').trim().replace(/^[\/!]+/, '').toLowerCase() || 'name'));
+    if ($('channels') && chan) chan.textContent = picked ? picked.closest('label').textContent.trim().replace(/^#/, '') : d.channel;
+    if (cmd) cmd.textContent = '/' + (val('name').trim().replace(/^[\/!]+/, '').toLowerCase() || 'name');
     set('cc-p-text', fill(val('reply')));
     if ($('embed')) {
       show('cc-p-embed', on('embed'));

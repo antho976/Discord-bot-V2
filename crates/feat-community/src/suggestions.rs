@@ -289,8 +289,29 @@ pub async fn on_component(ctx: &Ctx, call: &ComponentCall, args: &[&str]) -> Res
                 return ctx.reply(&call.interaction, Reply::text("Voting is closed on this suggestion.").ephemeral()).await;
             }
             let pressed = if args[0] == "up" { 1 } else { -1 };
-            let t = ctx.db.with(|c| cast_vote(c, id, call.user_id(), pressed))?;
-            ctx.update(&call.interaction, Reply::embed(embed(ctx, &s)).components(components(&s, t))).await
+            // The status is read again under the same hold as the vote, and the post is drawn
+            // from that row, so a decision saved meanwhile isn't put back to Open with its
+            // buttons on.
+            let fresh = ctx.db.with(|c| match get(c, id)? {
+                Some(s) if !s.status.is_decided() => Ok(Some((cast_vote(c, id, call.user_id(), pressed)?, s))),
+                _ => Ok(None),
+            })?;
+            let Some((t, s)) = fresh else {
+                return ctx.reply(&call.interaction, Reply::text("Voting is closed on this suggestion.").ephemeral()).await;
+            };
+            ctx.update(&call.interaction, Reply::embed(embed(ctx, &s)).components(components(&s, t))).await?;
+            // A decision that landed while that update was on its way: put it back on top.
+            if let Some(now) = ctx.db.with(|c| get(c, id))?.filter(|now| now.status != s.status || now.reason != s.reason)
+                && let Some(message) = now.message_id
+            {
+                let t = ctx.db.with(|c| tally(c, id))?;
+                let embeds = [embed(ctx, &now)];
+                let comps = components(&now, t);
+                if let Err(e) = ctx.http.update_message(Id::new(now.channel_id), Id::new(message)).embeds(Some(&embeds)).components(Some(&comps)).await {
+                    tracing::warn!(suggestion = id, error = %e, "couldn't edit the suggestion message");
+                }
+            }
+            Ok(())
         }
         "review" => {
             let settings = ctx.settings::<Settings>(guild, KEY)?;

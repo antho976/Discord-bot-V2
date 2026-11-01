@@ -3,6 +3,7 @@ use bot_core::axum::extract::{Path, Query, State};
 use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
+use bot_core::web::dc;
 use bot_core::web::ui::{self, Tone};
 use bot_core::twilight_model::channel::ChannelType;
 use bot_core::twilight_model::channel::permission_overwrite::{PermissionOverwrite, PermissionOverwriteType};
@@ -296,18 +297,8 @@ fn closed_recently(ctx: &Ctx, page: &Page, guild: u64) -> Markup {
 /// The greeting and the closing text as the member gets them: DMs from the bot, as saved.
 fn dm_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
     let [(_, greeting), (_, closing)] = mail::member_texts(s, &ctx.guild_name(guild));
-    let bot = ctx.bot_id().and_then(|b| ctx.known_name(guild, b)).unwrap_or_else(|| "The bot".to_owned());
-    let line = |label: &str, body: String, i: usize| {
-        html! {
-            div.mm-dm style={ "--s:" (i) } {
-                span.mm-bot { (ui::mark()) }
-                div.grow {
-                    div.mm-dm-by { strong { (bot) } span.mm-app { "APP" } span.mm-dm-when { (label) } }
-                    p { (body) }
-                }
-            }
-        }
-    };
+    let (bot, _) = dc::bot_identity(ctx);
+    let line = |label: &str, body: String| dc::message(ctx, page).time_text(label).render(dc::line(html! { (body) }));
     html! {
         section.block {
             div.block-head {
@@ -316,9 +307,9 @@ fn dm_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
             }
             div.mm-dms {
                 div.mm-dms-head { span.mm-at { "@" } strong { (bot) } }
-                (line("when it opens", greeting, 0))
+                (line("when it opens", greeting))
                 div.mm-dms-gap { span { "Staff answer in the thread, and their replies arrive here" } }
-                (line("when staff close it", closing, 1))
+                (line("when staff close it", closing))
             }
             @if page.can_edit() {
                 div.mm-send {
@@ -337,7 +328,6 @@ fn dm_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
 /// The thread a conversation opens in, as staff see it: the ping and the bot's note, as saved,
 /// with the viewer standing in for the member.
 fn staff_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
-    let bot = ctx.bot_id().and_then(|b| ctx.known_name(guild, b)).unwrap_or_else(|| "The bot".to_owned());
     let who = &page.user.name;
     let role = s.staff_role.and_then(|r| ctx.roles(guild).into_iter().find(|(id, _, _)| *id == r));
     let channel = s.channel.and_then(|c| ctx.text_channels(guild).into_iter().find(|(id, _)| *id == c)).map(|(_, n)| n);
@@ -350,31 +340,27 @@ fn staff_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
             @match channel {
                 None => { (ui::empty(Icon::Hash, "No staff channel", "Pick one and each conversation opens a thread there.")) },
                 Some(ch) => {
-                    div.mm-dms {
+                    div.mm-dms.mm-staff {
                         div.mm-dms-head {
                             span.mm-at { "#" } span.mm-crumb { (ch) }
                             (ui::icon(Icon::Chevron))
                             strong.clip { (who) }
                         }
-                        div.mm-dm style="--s:2" {
-                            span.mm-bot { (ui::mark()) }
-                            div.grow {
-                                div.mm-dm-by { strong { (bot) } span.mm-app { "APP" } }
-                                p {
-                                    @if let Some((_, name, color)) = &role {
-                                        span.mm-mention.role style=[(*color != 0).then(|| format!("--role:#{color:06x}"))] { "@" (name) } ", new modmail from "
-                                    } @else {
-                                        "New modmail from "
-                                    }
-                                    span.mm-mention { "@" (who) } "."
+                        (dc::message(ctx, page).time_text("").render(html! {
+                            div.dp-line {
+                                @if let Some((_, name, color)) = &role {
+                                    span.dp-ping.mm-role style=[(*color != 0).then(|| format!("--role:#{color:06x}"))] { "@" (name) } ", new modmail from "
+                                } @else {
+                                    "New modmail from "
                                 }
-                                div.embed-preview.mm-intro style={ "--embed:#" (format!("{:06x}", mail::COLOR)) } {
-                                    strong { (who) }
-                                    span { (mail::THREAD_INTRO) }
-                                }
-                                span.mm-dbtn { "Close" }
+                                span.dp-ping { "@" (who) } "."
                             }
-                        }
+                            (dc::embed(&format!("#{:06x}", mail::COLOR), html! {
+                                strong.dp-title { (who) }
+                                div.dp-desc { (mail::THREAD_INTRO) }
+                            }))
+                            (dc::buttons(dc::button("Close", dc::Style::Grey)))
+                        }))
                     }
                 }
             }
@@ -474,14 +460,11 @@ html.same .mm-conv { animation: none; }
 .mm-dms { display: flex; flex-direction: column; gap: 12px; padding: 0 0 14px; border-radius: 12px; background: #313338; overflow: hidden; }
 .mm-dms-head { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; background: #2b2d31; border-bottom: 1px solid rgba(0, 0, 0, 0.28); color: #f2f3f5; font-size: 13px; }
 .mm-at { color: #80848e; font-weight: 600; }
-.mm-dm { display: flex; gap: 11px; padding: 0 14px; animation: rise 0.4s var(--ease) both; animation-delay: calc(var(--s, 0) * 120ms + 200ms); }
-.mm-bot { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 50%; color: #fff; background: linear-gradient(145deg, var(--accent-hi), var(--accent-lo)); }
-.mm-bot .icon { width: 20px; height: 20px; }
-.mm-dm-by { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.mm-dm-by strong { color: #f2f3f5; font-size: 13.5px; font-weight: 600; }
-.mm-app { height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font: 600 9.5px/15px var(--sans); }
-.mm-dm-when { color: #949ba4; font-size: 11px; }
-.mm-dm p { max-width: 72ch; color: #dbdee1; font-size: 13.5px; line-height: 1.45; margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The bot's messages are Discord's (web/dc.rs), a size down, arriving one after the other. */
+.mm-dms > .dp-msg { padding: 0 14px; animation: rise 0.4s var(--ease) both 0.2s; }
+.mm-dms > .dp-msg ~ .dp-msg { animation-delay: 0.32s; }
+.mm-staff > .dp-msg { animation-delay: 0.44s; }
+.mm-dms .dp-post { gap: 11px; font-size: 13.5px; }
 .mm-dms-gap { display: flex; align-items: center; gap: 10px; padding: 0 14px; color: #949ba4; font-size: 11px; }
 .mm-dms-gap::before, .mm-dms-gap::after { content: ""; flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08); }
 .mm-dms-gap span { text-align: center; max-width: 70%; }
@@ -490,10 +473,7 @@ html.same .mm-conv { animation: none; }
 .mm-previews { display: flex; flex-direction: column; gap: 26px; }
 .mm-dms-head .icon { width: 13px; height: 13px; color: #80848e; transform: rotate(-90deg); }
 .mm-crumb { color: #b5bac1; font-weight: 600; }
-.mm-mention { padding: 0 2px; border-radius: 3px; font-weight: 500; color: #c9cdfb; background: rgba(88, 101, 242, 0.3); }
-.mm-mention.role { color: var(--role, #c9cdfb); background: color-mix(in oklab, var(--role, #5865f2) 10%, transparent); }
-.mm-intro { margin-top: 6px; font-size: 13px; }
-.mm-dbtn { display: inline-flex; align-items: center; height: 30px; margin-top: 8px; padding: 0 14px; border-radius: 3px; background: #4e5058; color: #fff; font-size: 13px; font-weight: 500; }
+.dp-ping.mm-role { color: var(--role, #c9cdfb); background: color-mix(in oklab, var(--role, #5865f2) 10%, transparent); }
 
 /* Laid out for the column's own width, so the sidebar and rail are already counted. */
 @container col (max-width: 700px) {
