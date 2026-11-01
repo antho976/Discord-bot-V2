@@ -98,25 +98,31 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
         style { (PreEscaped(CSS)) }
         (tabs)
         @if view == "settings" {
-            div.with-rail {
-                div.mm-main {
-                    @if let Some(ch) = s.channel.filter(|c| everyone_can_view(&ctx, guild, *c)) {
-                        div.need.alert {
-                            span.need-icon.alert { (ui::icon(Icon::Users)) }
-                            div.grow {
-                                strong { "Not private" }
-                                p.muted.small { "Everyone can read conversations in " (channel_name(&ctx, guild, ch)) ". Hide it from @everyone in Discord." }
-                            }
-                        }
+            @if let Some(ch) = s.channel.filter(|c| everyone_can_view(&ctx, guild, *c)) {
+                div.need.alert {
+                    span.need-icon.alert { (ui::icon(Icon::Users)) }
+                    div.grow {
+                        strong { "Not private" }
+                        p.muted.small { "Everyone can read conversations in " (channel_name(&ctx, guild, ch)) ". Hide it from @everyone in Discord." }
                     }
-                    (ui::settings_form(&page, &page.path("modmail/settings"), ui::card(html! {
+                }
+            }
+            // The texts beside the DMs they become, the way the member reads them.
+            div.compose {
+                (ui::settings_form(&page, &page.path("modmail/settings"), html! {
+                    (ui::section("Where they open", None, ui::card(html! {
                         (ui::field_select("channel", "Staff channel", Some("A text channel gets a thread per conversation, a forum a post. Keep it private to staff. None turns modmail off."), &channel_options, &s.channel.map(|c| c.to_string()).unwrap_or_default()))
                         (ui::field_role(&ctx, guild, "staff_role", "Staff role", Some("Pinged once when a conversation opens, and allowed to close one."), s.staff_role))
+                    })))
+                    (ui::section("Messages to the member", None, ui::card(html! {
                         (ui::field_textarea("greeting", "Greeting", Some("Sent to the member when a conversation opens. {server} is the server's name."), &s.greeting, DEFAULT_GREETING))
                         (ui::field_textarea("closing", "Closing text", Some("Sent to the member when staff close the conversation."), &s.closing, DEFAULT_CLOSING))
                     })))
+                }))
+                div.compose-preview.mm-previews {
+                    (dm_preview(&ctx, &page, guild, &s))
+                    (staff_preview(&ctx, &page, guild, &s))
                 }
-                aside.rail { (dm_preview(&ctx, &page, guild, &s)) }
             }
         } @else {
             div.with-rail {
@@ -293,9 +299,11 @@ fn dm_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
         }
     };
     html! {
-        div.rail-block {
-            h2 { "What the member gets" }
-            p.muted.small { "DMs from the bot, as saved. Save to see a change here." }
+        section.block {
+            div.block-head {
+                h2 { "What the member gets" }
+                p.muted { "DMs from the bot, as saved. Save to see a change here." }
+            }
             div.mm-dms {
                 div.mm-dms-head { span.mm-at { "@" } strong { (bot) } }
                 (line("when it opens", fill(&s.greeting, DEFAULT_GREETING), 0))
@@ -303,6 +311,54 @@ fn dm_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
                 (line("when staff close it", fill(&s.closing, DEFAULT_CLOSING), 1))
             }
             @if !page.can_edit() { p.muted.small { "Ask an admin to change these texts." } }
+        }
+    }
+}
+
+/// The thread a conversation opens in, as staff see it: the ping and the bot's note, as saved,
+/// with the viewer standing in for the member.
+fn staff_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
+    let bot = ctx.bot_id().and_then(|b| ctx.known_name(guild, b)).unwrap_or_else(|| "The bot".to_owned());
+    let who = &page.user.name;
+    let role = s.staff_role.and_then(|r| ctx.roles(guild).into_iter().find(|(id, _, _)| *id == r));
+    let channel = s.channel.and_then(|c| ctx.text_channels(guild).into_iter().find(|(id, _)| *id == c)).map(|(_, n)| n);
+    html! {
+        section.block {
+            div.block-head {
+                h2 { "What staff see" }
+                p.muted { "The thread each conversation opens, as if you wrote in." }
+            }
+            @match channel {
+                None => { (ui::empty(Icon::Hash, "No staff channel", "Pick one and each conversation opens a thread there.")) },
+                Some(ch) => {
+                    div.mm-dms {
+                        div.mm-dms-head {
+                            span.mm-at { "#" } span.mm-crumb { (ch) }
+                            (ui::icon(Icon::Chevron))
+                            strong.clip { (who) }
+                        }
+                        div.mm-dm style="--s:2" {
+                            span.mm-bot { (ui::mark()) }
+                            div.grow {
+                                div.mm-dm-by { strong { (bot) } span.mm-app { "APP" } }
+                                p {
+                                    @if let Some((_, name, color)) = &role {
+                                        span.mm-mention.role style=[(*color != 0).then(|| format!("--role:#{color:06x}"))] { "@" (name) } ", new modmail from "
+                                    } @else {
+                                        "New modmail from "
+                                    }
+                                    span.mm-mention { "@" (who) } "."
+                                }
+                                div.embed-preview.mm-intro style={ "--embed:#" (format!("{:06x}", mail::COLOR)) } {
+                                    strong { (who) }
+                                    span { (mail::THREAD_INTRO) }
+                                }
+                                span.mm-dbtn { "Close" }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -338,16 +394,18 @@ const CSS: &str = r#"
 .mm-main { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 .mm-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .mm-readings .reading { min-width: 0; }
-.mm-readings .reading:first-child { background: radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--hue) 15%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 28%, transparent); }
+.mm-readings .reading:first-child { background: radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--hue) 8%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 28%, transparent); }
 .mm-readings .reading:first-child::before { width: 100%; opacity: 1; }
 .mm-readings .mm-wait b { color: var(--waiting); }
 .mm-readings .mm-wait::before { background: linear-gradient(90deg, var(--waiting), transparent); }
 
 /* A conversation: who, then its latest message as a bubble. */
-.mm-list { display: flex; flex-direction: column; gap: 12px; }
+/* Conversations sit two or three across on a wide screen instead of one stretched card each.
+   One conversation fills the row. */
+.mm-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; }
 .mm-conv { display: flex; flex-direction: column; gap: 14px; padding: 16px 18px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.55s var(--ease) both; animation-delay: calc(var(--i, 0) * 80ms + 160ms); transition: box-shadow 0.25s, transform 0.35s var(--ease); }
 .mm-conv:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.mm-conv.waiting { background: radial-gradient(90% 120% at 100% 0%, color-mix(in oklab, var(--waiting) 9%, transparent), transparent 55%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 28%, transparent); }
+.mm-conv.waiting { background: radial-gradient(90% 120% at 100% 0%, color-mix(in oklab, var(--waiting) 5%, transparent), transparent 55%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 28%, transparent); }
 .mm-head { display: flex; align-items: center; gap: 13px; min-width: 0; }
 .mm-face { width: 44px; height: 44px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--edge-2); }
 .mm-conv.waiting .mm-face { box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px color-mix(in oklab, var(--waiting) 70%, transparent); }
@@ -371,10 +429,10 @@ const CSS: &str = r#"
 .mm-by strong { color: #f2f3f5; font-size: 12.5px; font-weight: 600; }
 .mm-tag { height: 16px; padding: 0 5px; border-radius: 4px; font: 700 9.5px/16px var(--sans); letter-spacing: 0.02em; background: var(--accent); color: var(--accent-ink); }
 .mm-msg.staff { flex-direction: row-reverse; align-self: flex-end; }
-.mm-msg.staff .mm-bubble { border-radius: 16px 16px 5px 16px; background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 26%, var(--solid)), color-mix(in oklab, var(--accent) 16%, var(--raised))); color: var(--ink); transform-origin: 100% 100%; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 30%, transparent), 0 12px 26px -16px var(--accent-glow); }
+.mm-msg.staff .mm-bubble { border-radius: 16px 16px 5px 16px; background: linear-gradient(180deg, color-mix(in oklab, var(--accent) 26%, var(--solid)), color-mix(in oklab, var(--accent) 16%, var(--raised))); color: var(--ink); transform-origin: 100% 100%; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 30%, transparent); }
 .mm-msg.staff .mm-by { justify-content: flex-end; color: var(--ink-3); }
 @keyframes mm-pop { from { opacity: 0; transform: scale(0.6); } }
-.mm-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; padding-left: 57px; }
+.mm-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; padding-left: 57px; margin-top: auto; }
 .mm-closer { display: inline-flex; align-items: center; gap: 7px; margin-right: auto; font-size: 12.5px; color: var(--ink-2); }
 .mm-closer .avatar { width: 20px; height: 20px; }
 .mm-closer strong { color: var(--ink); font-weight: 600; }
@@ -401,15 +459,24 @@ const CSS: &str = r#"
 .mm-dm-by strong { color: #f2f3f5; font-size: 13.5px; font-weight: 600; }
 .mm-app { height: 15px; padding: 0 4px; border-radius: 3px; background: #5865f2; color: #fff; font: 600 9.5px/15px var(--sans); }
 .mm-dm-when { color: #949ba4; font-size: 11px; }
-.mm-dm p { color: #dbdee1; font-size: 13.5px; line-height: 1.45; margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mm-dm p { max-width: 72ch; color: #dbdee1; font-size: 13.5px; line-height: 1.45; margin-top: 2px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mm-dms-gap { display: flex; align-items: center; gap: 10px; padding: 0 14px; color: #949ba4; font-size: 11px; }
 .mm-dms-gap::before, .mm-dms-gap::after { content: ""; flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08); }
 .mm-dms-gap span { text-align: center; max-width: 70%; }
+/* The staff thread: its channel and name, Discord's mentions, the bot's note and its button. */
+.mm-previews { display: flex; flex-direction: column; gap: 26px; }
+.mm-dms-head .icon { width: 13px; height: 13px; color: #80848e; transform: rotate(-90deg); }
+.mm-crumb { color: #b5bac1; font-weight: 600; }
+.mm-mention { padding: 0 2px; border-radius: 3px; font-weight: 500; color: #c9cdfb; background: rgba(88, 101, 242, 0.3); }
+.mm-mention.role { color: var(--role, #c9cdfb); background: color-mix(in oklab, var(--role, #5865f2) 10%, transparent); }
+.mm-intro { margin-top: 6px; font-size: 13px; }
+.mm-dbtn { display: inline-flex; align-items: center; height: 30px; margin-top: 8px; padding: 0 14px; border-radius: 3px; background: #4e5058; color: #fff; font-size: 13px; font-weight: 500; }
 
-@media (max-width: 1180px) {
+/* Laid out for the column's own width, so the sidebar and rail are already counted. */
+@container col (max-width: 700px) {
   .mm-readings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 640px) {
+@container col (max-width: 560px) {
   .mm-conv { padding: 14px; }
   .mm-head { flex-wrap: wrap; row-gap: 8px; }
   .mm-head .mm-who { flex: 1 1 calc(100% - 60px); }

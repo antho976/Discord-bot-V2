@@ -282,8 +282,10 @@ fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row, mods: &[store::ModAction],
                 }
                 span.au-kind title=(r.kind.label()) { (ui::icon(kind_icon(r.kind))) }
             }
-            div.au-body {
-                (headline(ctx, guild, r.kind, name.as_deref(), &chan, action.map(|a| a.moderator)))
+            // What happened, then what it was: under each other in a narrow column, side by side in a
+            // wide one so the details line up in a column of their own.
+            div.au-head { (headline(ctx, guild, r.kind, name.as_deref(), &chan, action.map(|a| a.moderator))) }
+            div.au-more {
                 (detail(r))
                 @if let Some(reason) = action.and_then(|a| a.reason.as_deref()) {
                     p.au-reason { span.muted { "Reason " } (reason) }
@@ -439,7 +441,7 @@ fn style() -> Markup {
 
 const STYLE: &str = r#"
 .au-main { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
-.au-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 3px; background: var(--c); box-shadow: 0 0 8px color-mix(in oklab, var(--c) 70%, transparent); flex: none; }
+.au-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 3px; background: var(--c); box-shadow: none; flex: none; }
 .au-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .au-readings .reading { min-width: 0; }
 .au-readings .reading span { display: inline-flex; align-items: center; gap: 7px; }
@@ -460,6 +462,7 @@ const STYLE: &str = r#"
 .au-list { position: relative; display: flex; flex-direction: column; }
 .au-list::before { content: ""; position: absolute; left: 77px; top: 18px; bottom: 18px; width: 2px; border-radius: 1px; background: linear-gradient(180deg, var(--edge-2), var(--edge-1)); }
 .au-entry { position: relative; display: grid; grid-template-columns: 42px 36px minmax(0, 1fr); column-gap: 18px; align-items: start; padding: 9px 10px 9px 0; border-radius: 14px; transition: background 0.18s; animation: au-in 0.5s var(--ease) both; animation-delay: calc(var(--i, 0) * 35ms + 150ms); }
+.au-entry > .au-time, .au-entry > .au-face { grid-row: 1 / span 2; }
 .au-entry:hover { background: linear-gradient(90deg, transparent 50px, color-mix(in oklab, var(--c) 7%, transparent) 90px, transparent 70%); }
 @keyframes au-in { from { opacity: 0; transform: translateX(-8px); } }
 .au-time { padding-top: 10px; font-size: 12px; color: var(--ink-3); text-align: right; }
@@ -468,9 +471,12 @@ const STYLE: &str = r#"
 .au-noface { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--raised); color: var(--ink-2); box-shadow: 0 0 0 3px var(--page), inset 0 0 0 1px var(--edge-2); }
 .au-noface .icon { width: 16px; height: 16px; }
 /* The kind, in its colour, pinned to the face. */
-.au-kind { position: absolute; right: -6px; bottom: -4px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--c); color: #0b0b10; box-shadow: 0 0 0 2.5px var(--page), 0 4px 12px -2px color-mix(in oklab, var(--c) 70%, transparent); animation: pop-in 0.45s var(--spring) both; animation-delay: calc(var(--i, 0) * 35ms + 380ms); }
+.au-kind { position: absolute; right: -6px; bottom: -4px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--c); color: #0b0b10; box-shadow: 0 0 0 2.5px var(--page); animation: pop-in 0.45s var(--spring) both; animation-delay: calc(var(--i, 0) * 35ms + 380ms); }
 .au-kind .icon { width: 11px; height: 11px; stroke-width: 2.4; }
-.au-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding-top: 8px; }
+.au-head { grid-column: 3; min-width: 0; padding-top: 8px; }
+.au-more { grid-column: 3; display: flex; flex-direction: column; gap: 6px; min-width: 0; margin-top: 6px; }
+.au-more:empty { display: none; }
+.au-plain, .au-reason { max-width: 70ch; }
 .au-line { font-size: 13.5px; color: var(--ink-2); line-height: 1.45; }
 .au-line strong { font-weight: 600; color: var(--ink); }
 .au-by { display: inline-flex; align-items: center; gap: 5px; vertical-align: -4px; padding: 1px 8px 1px 2px; border-radius: 11px; background: var(--control); }
@@ -514,16 +520,40 @@ const STYLE: &str = r#"
 .au-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
 .au-kindchip { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border-radius: 13px; font-size: 12px; color: var(--ink-2); background: color-mix(in oklab, var(--c) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--c) 22%, transparent); }
 
-@media (max-width: 1180px) {
+/* A wide column: what happened on the left, what it was in a column of its own beside it, so a
+   line of the log reads across once instead of leaving most of the width empty. */
+@container col (min-width: 1000px) {
+  .au-entry { grid-template-columns: 42px 36px minmax(0, 420px) minmax(0, 1fr); }
+  /* A hairline under the text of each line, so the eye carries across to its details. */
+  .au-entry + .au-entry::before { content: ""; position: absolute; top: 0; left: 114px; right: 10px; height: 1px; background: var(--edge-1); }
+  .au-more { grid-column: 4; grid-row: 1 / span 2; margin-top: 0; padding-top: 5px; }
+  .au-more > .au-plain:first-child, .au-more > p.muted:first-child { padding-top: 3px; }
+  .au-search { width: 300px; }
+}
+/* Laid out for the column's own width, so the sidebar and rail are already counted. */
+@container col (max-width: 700px) {
   .au-readings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 640px) {
+@container col (max-width: 600px) {
   .au-filters { flex-direction: column; align-items: stretch; }
   .au-search { width: 100%; }
   .au-entry { grid-template-columns: 36px minmax(0, 1fr); column-gap: 14px; }
-  .au-time { grid-column: 2; grid-row: 1; padding-top: 0; text-align: left; font-size: 11px; order: -1; display: none; }
+  .au-time { display: none; }
+  .au-entry > .au-face { grid-column: 1; }
+  .au-head, .au-more { grid-column: 2; }
   .au-list::before { left: 17px; }
   .au-entry:hover { background: none; }
+}
+
+/* Settings: the sections in two columns once each can hold a label beside its switch. Members,
+   the longest, has the right column to itself; the rest stack on the left without gaps. */
+.au-sets { display: flex; flex-direction: column; gap: 18px; }
+@container col (min-width: 1060px) {
+  .au-sets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto auto 1fr; gap: 18px 24px; align-items: start; }
+  .au-sets > :nth-child(1) { grid-area: 1 / 1; }
+  .au-sets > :nth-child(2) { grid-area: 2 / 1; }
+  .au-sets > :nth-child(3) { grid-area: 1 / 2 / 4 / 3; }
+  .au-sets > :nth-child(4) { grid-area: 3 / 1; }
 }
 "#;
 
@@ -534,33 +564,36 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         (style())
         (tabs(&page, "Settings"))
         div.with-rail {
-        (ui::settings_form(&page, &page.path("audit/settings"), html! {
-            (ui::section("Where it goes", Some("Nothing is logged until you pick a channel."), ui::card(html! {
-                (ui::field_channel(&ctx, guild, "channel", "Log channel", Some("Every event goes here unless one of the two below is set."), s.channel))
-                (ui::field_channel(&ctx, guild, "message_channel", "Message events", Some("Edits and deletes. None uses the log channel."), s.message_channel))
-                (ui::field_channel(&ctx, guild, "member_channel", "Member events", Some("Joins, leaves, roles, bans, timeouts and voice. None uses the log channel."), s.member_channel))
-            })))
-            (ui::section("Messages", None, ui::card(html! {
-                (ui::field_toggle("message_delete", "Deleted", Some("The author, channel, text and file names, when the bot had seen the message."), s.message_delete))
-                (ui::field_toggle("message_edit", "Edited", Some("Before and after, with a link to the message."), s.message_edit))
-                (ui::field_toggle("bulk_delete", "Bulk deleted", Some("How many messages a purge removed, and where."), s.bulk_delete))
-            })))
-            (ui::section("Members", None, ui::card(html! {
-                (ui::field_toggle("join", "Joined", Some("With the account's age. Accounts under 7 days old are flagged."), s.join))
-                (ui::field_toggle("leave", "Left", Some("With the roles they had."), s.leave))
-                (ui::field_toggle("nickname", "Nickname changed", None, s.nickname))
-                (ui::field_toggle("roles", "Roles added or removed", None, s.roles))
-                (ui::field_toggle("ban", "Banned", None, s.ban))
-                (ui::field_toggle("unban", "Unbanned", None, s.unban))
-                (ui::field_toggle("timeout", "Timed out or released", None, s.timeout))
-                (ui::field_toggle("boost", "Boosted", Some("When a member starts boosting the server."), s.boost))
-                (ui::field_toggle("voice", "Voice joins, leaves and moves", Some("Off by default. In a busy server this is most of the log."), s.voice))
-            })))
-            (ui::section("Skip", None, ui::card(html! {
-                (ui::field_toggle("ignore_bots", "Ignore bots", Some("Nothing is logged about bot accounts, including their messages."), s.ignore_bots))
-                (ui::field_channels(&ctx, guild, "ignored_channels", "Ignored channels", Some("Edits and deletes in these channels aren't logged. The log channels themselves are always skipped."), &s.ignored_channels))
-            })))
-        }))
+            (ui::settings_form(&page, &page.path("audit/settings"), html! {
+                // Members, the longest section, gets the right column to itself on a wide screen.
+                div.au-sets {
+                    (ui::section("Where it goes", Some("Nothing is logged until you pick a channel."), ui::card(html! {
+                        (ui::field_channel(&ctx, guild, "channel", "Log channel", Some("Every event goes here unless one of the two below is set."), s.channel))
+                        (ui::field_channel(&ctx, guild, "message_channel", "Message events", Some("Edits and deletes. None uses the log channel."), s.message_channel))
+                        (ui::field_channel(&ctx, guild, "member_channel", "Member events", Some("Joins, leaves, roles, bans, timeouts and voice. None uses the log channel."), s.member_channel))
+                    })))
+                    (ui::section("Messages", None, ui::card(html! {
+                        (ui::field_toggle("message_delete", "Deleted", Some("The author, channel, text and file names, when the bot had seen the message."), s.message_delete))
+                        (ui::field_toggle("message_edit", "Edited", Some("Before and after, with a link to the message."), s.message_edit))
+                        (ui::field_toggle("bulk_delete", "Bulk deleted", Some("How many messages a purge removed, and where."), s.bulk_delete))
+                    })))
+                    (ui::section("Members", None, ui::card(html! {
+                        (ui::field_toggle("join", "Joined", Some("With the account's age. Accounts under 7 days old are flagged."), s.join))
+                        (ui::field_toggle("leave", "Left", Some("With the roles they had."), s.leave))
+                        (ui::field_toggle("nickname", "Nickname changed", None, s.nickname))
+                        (ui::field_toggle("roles", "Roles added or removed", None, s.roles))
+                        (ui::field_toggle("ban", "Banned", None, s.ban))
+                        (ui::field_toggle("unban", "Unbanned", None, s.unban))
+                        (ui::field_toggle("timeout", "Timed out or released", None, s.timeout))
+                        (ui::field_toggle("boost", "Boosted", Some("When a member starts boosting the server."), s.boost))
+                        (ui::field_toggle("voice", "Voice joins, leaves and moves", Some("Off by default. In a busy server this is most of the log."), s.voice))
+                    })))
+                    (ui::section("Skip", None, ui::card(html! {
+                        (ui::field_toggle("ignore_bots", "Ignore bots", Some("Nothing is logged about bot accounts, including their messages."), s.ignore_bots))
+                        (ui::field_channels(&ctx, guild, "ignored_channels", "Ignored channels", Some("Edits and deletes in these channels aren't logged. The log channels themselves are always skipped."), &s.ignored_channels))
+                    })))
+                }
+            }))
             aside.rail { (routing(&ctx, &s)) }
         }
     };

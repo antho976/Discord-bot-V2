@@ -549,36 +549,41 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let waiting = crate::count_open(&ctx, guild)?;
+    let detection = ui::section("Detection", None, ui::card(html! {
+        (ui::field_toggle("scam_detection", "Check messages for scams", Some("Scores every message from members without Manage Messages. The honeypot works either way."), s.scam_detection))
+        div.row.gd-strict-row {
+            div.row-text {
+                label { "Strictness" }
+                p.help { "How sure the bot must be before it acts. Low catches at 8 points, only near-certain scams; normal at 5; high at 4, and expect some mistakes. Try a message on the Catches tab to see the difference." }
+            }
+            div.row-control { (strictness(s.strictness)) }
+        }
+        (ui::field_toggle("catch_ads", "Also catch commission and art ads", Some("Off by default: ads aren't scams, and a caught member is timed out."), s.catch_ads))
+        (ui::field_number("new_account_days", "New accounts", Some("Accounts younger than this count against a suspicious message. 0 turns it off."), s.new_account_days, 0, 90, Some("days")))
+    }));
+    let honeypot = ui::section("Honeypot", Some("A channel nobody has a reason to write in. Scam bots post in every channel, so anything written there is treated as a catch."), ui::card(html! {
+        (ui::field_channel(&ctx, guild, "honeypot_channel", "Honeypot channel", Some("Tell members not to post there, for example in the channel topic."), s.honeypot_channel))
+    }));
+    let caught = ui::section("When someone is caught", Some("Their messages from the last ten minutes are deleted and they're timed out."), ui::card(html! {
+        (ui::field_channel(&ctx, guild, "log_channel", "Alert channel", Some("Staff get the alert here, with buttons to remove the timeout or ban."), s.log_channel))
+        (ui::field_select("timeout_minutes", "Timeout", None,
+            &TIMEOUTS.iter().map(|(m, l)| (m.to_string(), (*l).to_owned())).collect::<Vec<_>>(), &s.timeout_minutes.to_string()))
+        (ui::field_toggle("dm_member", "Message the member", Some("A DM saying their account looked compromised and how to get the timeout lifted."), s.dm_member))
+    }));
+    let never = ui::section("Never check", None, ui::card(html! {
+        (ui::field_roles(&ctx, guild, "exempt_roles", "Roles", Some("Members with any of these roles are never checked, in the honeypot either."), &s.exempt_roles))
+        (ui::field_channels(&ctx, guild, "exempt_channels", "Channels", Some("Messages here aren't scored. Threads inside them neither."), &s.exempt_channels))
+    }));
     let body = html! {
         (style())
         (tabs(&page, waiting, "Settings"))
         div.with-rail {
             (ui::settings_form(&page, &page.path("guard/settings"), html! {
-                (ui::section("Detection", None, ui::card(html! {
-                    (ui::field_toggle("scam_detection", "Check messages for scams", Some("Scores every message from members without Manage Messages. The honeypot works either way."), s.scam_detection))
-                    div.row.gd-strict-row {
-                        div.row-text {
-                            label { "Strictness" }
-                            p.help { "How sure the bot must be before it acts. Low catches at 8 points, only near-certain scams; normal at 5; high at 4, and expect some mistakes. Try a message on the Catches tab to see the difference." }
-                        }
-                        div.row-control { (strictness(s.strictness)) }
-                    }
-                    (ui::field_toggle("catch_ads", "Also catch commission and art ads", Some("Off by default: ads aren't scams, and a caught member is timed out."), s.catch_ads))
-                    (ui::field_number("new_account_days", "New accounts", Some("Accounts younger than this count against a suspicious message. 0 turns it off."), s.new_account_days, 0, 90, Some("days")))
-                })))
-                (ui::section("Honeypot", Some("A channel nobody has a reason to write in. Scam bots post in every channel, so anything written there is treated as a catch."), ui::card(html! {
-                    (ui::field_channel(&ctx, guild, "honeypot_channel", "Honeypot channel", Some("Tell members not to post there, for example in the channel topic."), s.honeypot_channel))
-                })))
-                (ui::section("When someone is caught", Some("Their messages from the last ten minutes are deleted and they're timed out."), ui::card(html! {
-                    (ui::field_channel(&ctx, guild, "log_channel", "Alert channel", Some("Staff get the alert here, with buttons to remove the timeout or ban."), s.log_channel))
-                    (ui::field_select("timeout_minutes", "Timeout", None,
-                        &TIMEOUTS.iter().map(|(m, l)| (m.to_string(), (*l).to_owned())).collect::<Vec<_>>(), &s.timeout_minutes.to_string()))
-                    (ui::field_toggle("dm_member", "Message the member", Some("A DM saying their account looked compromised and how to get the timeout lifted."), s.dm_member))
-                })))
-                (ui::section("Never check", None, ui::card(html! {
-                    (ui::field_roles(&ctx, guild, "exempt_roles", "Roles", Some("Members with any of these roles are never checked, in the honeypot either."), &s.exempt_roles))
-                    (ui::field_channels(&ctx, guild, "exempt_channels", "Channels", Some("Messages here aren't scored. Threads inside them neither."), &s.exempt_channels))
-                })))
+                // Two columns of sections once the column is wide enough. Stacked, they keep this order.
+                div.gd-sets {
+                    div.gd-set-col { (detection) (honeypot) }
+                    div.gd-set-col { (caught) (never) }
+                }
             }))
             aside.rail { (flow(&ctx, guild, &s)) }
         }
@@ -735,7 +740,7 @@ const STYLE: &str = r#"
 /* Readings: the week, with what waits on you lit amber. */
 .gd-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .gd-readings .reading { min-width: 0; }
-.gd-readings .gd-lead { background: radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--hue) 16%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent), 0 16px 34px -22px var(--hue); }
+.gd-readings .gd-lead { background: radial-gradient(120% 130% at 0% 0%, color-mix(in oklab, var(--hue) 9%, transparent), rgba(243, 242, 248, 0.02) 70%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent); }
 .gd-readings .gd-lead::before { width: 100%; opacity: 1; }
 .gd-readings .gd-wait b { color: var(--waiting); }
 .gd-readings .gd-wait::before { background: linear-gradient(90deg, var(--waiting), transparent); }
@@ -747,12 +752,16 @@ const STYLE: &str = r#"
 .gd-list-head p { margin-top: 3px; max-width: 60ch; }
 .gd-show a { text-decoration: none; }
 .gd-count { color: var(--waiting); font-family: var(--mono); font-weight: 600; }
-.gd-list { display: flex; flex-direction: column; gap: 14px; }
+/* Catches sit two across once each still has room for the message beside its dial, so a wide
+   screen shows more of them instead of one long card. One catch fills the row. */
+.gd-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); gap: 14px; }
 
 /* One catch. */
 .gd-catch { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 176px; gap: 18px 22px; padding: 16px 18px 18px 16px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 180ms); transition: box-shadow 0.25s, transform 0.35s var(--ease); }
 .gd-catch:hover { box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.gd-catch.open { background: radial-gradient(90% 120% at 100% 0%, color-mix(in oklab, var(--waiting) 10%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 32%, transparent), 0 22px 44px -30px color-mix(in oklab, var(--waiting) 70%, transparent); }
+/* An open Release or Ban popover stays above the card under it. */
+.gd-catch:has(.gd-pop[open]) { z-index: 4; }
+.gd-catch.open { background: radial-gradient(90% 120% at 100% 0%, color-mix(in oklab, var(--waiting) 6%, transparent), transparent 60%), linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 32%, transparent); }
 .gd-what { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
 /* The message as Discord drew it. Discord's own colours: its chat grey, its name white. */
@@ -806,7 +815,7 @@ const STYLE: &str = r#"
 .gd-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
 .gd-pop-foot .btn.danger { background: var(--held); color: #1a0507; font-weight: 600; }
 .gd-hp { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 0 2px; }
-.gd-hp-ic { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 4px; border-radius: 16px; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 60%, color-mix(in oklab, var(--hue), black 20%)); box-shadow: 0 12px 26px -12px var(--hue); animation: pop-in 0.6s var(--spring) both; animation-delay: calc(var(--i, 0) * 90ms + 500ms); }
+.gd-hp-ic { display: grid; place-items: center; width: 52px; height: 52px; margin-bottom: 4px; border-radius: 16px; color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 60%, color-mix(in oklab, var(--hue), black 20%)); box-shadow: none; animation: pop-in 0.6s var(--spring) both; animation-delay: calc(var(--i, 0) * 90ms + 500ms); }
 .gd-hp-ic .icon { width: 24px; height: 24px; }
 .gd-hp strong { font-size: 14px; font-weight: 600; }
 
@@ -816,8 +825,8 @@ const STYLE: &str = r#"
 .gd-gauge svg { display: block; width: 100%; height: auto; overflow: visible; }
 .gd-track, .gd-arc { fill: none; stroke-width: 9; stroke-linecap: round; }
 .gd-track { stroke: var(--edge-1); }
-.gd-arc { stroke: var(--waiting); stroke-dasharray: 100 200; filter: drop-shadow(0 2px 8px color-mix(in oklab, var(--waiting) 55%, transparent)); animation: gd-arc 1.4s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 420ms); }
-.gd-gauge.caught .gd-arc { stroke: var(--held); filter: drop-shadow(0 2px 10px color-mix(in oklab, var(--held) 60%, transparent)); }
+.gd-arc { stroke: var(--waiting); stroke-dasharray: 100 200; animation: gd-arc 1.4s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 420ms); }
+.gd-gauge.caught .gd-arc { stroke: var(--held); }
 .gd-tick { stroke: var(--ink); stroke-width: 2.5; stroke-linecap: round; }
 @keyframes gd-arc { from { stroke-dashoffset: 100; } }
 .gd-num { position: absolute; left: 0; right: 0; bottom: -3px; display: flex; flex-direction: column; align-items: center; }
@@ -839,13 +848,13 @@ const STYLE: &str = r#"
 .gd-tsig b { font-weight: 600; color: var(--hue); }
 .gd-tsig > span:not(.meter) { color: var(--ink-2); }
 .gd-tsig .meter { grid-column: 2; height: 4px; }
-.gd-tsig .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--hue), black 20%), var(--hue)); box-shadow: 0 0 10px color-mix(in oklab, var(--hue) 50%, transparent); animation-delay: calc(var(--s, 0) * 80ms + 450ms); }
+.gd-tsig .meter > span { background: linear-gradient(90deg, color-mix(in oklab, var(--hue), black 20%), var(--hue)); box-shadow: none; animation-delay: calc(var(--s, 0) * 80ms + 450ms); }
 
 /* Settings: what a catch does, in order. */
 .gd-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
 .gd-flow::before { content: ""; position: absolute; left: 17px; top: 20px; bottom: 20px; width: 2px; border-radius: 1px; background: linear-gradient(180deg, var(--hue), color-mix(in oklab, var(--hue) 15%, transparent)); transform-origin: top; animation: grow 1.1s var(--ease) both 0.3s; }
 .gd-flow li { position: relative; display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; animation: rise 0.5s var(--ease) both; animation-delay: calc(var(--s, 0) * 110ms + 250ms); }
-.gd-flow-ic { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 12px; color: #0b0b10; background: var(--hue); box-shadow: 0 0 0 4px var(--raised), 0 8px 18px -8px var(--hue); }
+.gd-flow-ic { display: grid; place-items: center; width: 36px; height: 36px; flex: none; border-radius: 12px; color: #0b0b10; background: var(--hue); box-shadow: 0 0 0 4px var(--raised); }
 .gd-flow-ic .icon { width: 17px; height: 17px; }
 .gd-flow li div { display: flex; flex-direction: column; gap: 1px; padding-top: 1px; min-width: 0; }
 .gd-flow strong { font-size: 13.5px; font-weight: 600; }
@@ -854,14 +863,22 @@ const STYLE: &str = r#"
 .gd-flow li.muted strong { color: var(--ink-2); }
 .gd-flow.off .gd-flow-ic { filter: grayscale(1); opacity: 0.6; }
 
-@media (max-width: 1180px) {
+/* Settings: the sections in two columns once each column can hold a label beside its control. */
+.gd-sets { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px 24px; align-items: start; }
+.gd-set-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+@container col (min-width: 1060px) {
+  .gd-sets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Laid out for the column's own width, so the sidebar and rail are already counted. */
+@container col (max-width: 700px) {
   .gd-readings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 920px) {
   .row.gd-strict-row:has(> .row-control > .seg) { grid-template-columns: minmax(0, 1fr); }
   .gd-strict-row .row-control { justify-content: flex-start; }
 }
-@media (max-width: 760px) {
+@container col (max-width: 599px) {
   .gd-catch { grid-template-columns: minmax(0, 1fr); padding: 12px; }
   .gd-verdict { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; text-align: left; gap: 12px 16px; padding-top: 0; border-top: 1px solid var(--edge-1); padding-top: 14px; }
   .gd-gauge { width: 112px; }
