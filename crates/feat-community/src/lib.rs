@@ -113,9 +113,20 @@ impl Feature for Community {
     }
 
     /// Votes on the polls posted from here, as members cast and take them back, so the
-    /// dashboard can show live counts.
+    /// dashboard can show live counts. A deleted giveaway post cancels its giveaway.
     async fn on_event(&self, ctx: &Ctx, event: &Event) -> Result<()> {
         match event {
+            Event::MessageDelete(m) => {
+                if let Some(guild) = m.guild_id {
+                    giveaways::on_posts_deleted(ctx, guild.get(), m.channel_id.get(), &[m.id.get()])?;
+                }
+            }
+            Event::MessageDeleteBulk(m) => {
+                if let Some(guild) = m.guild_id {
+                    let ids: Vec<u64> = m.ids.iter().map(|i| i.get()).collect();
+                    giveaways::on_posts_deleted(ctx, guild.get(), m.channel_id.get(), &ids)?;
+                }
+            }
             Event::MessagePollVoteAdd(v) => {
                 polls::note_live_vote(v.message_id.get(), v.user_id.get());
                 ctx.db.with(|c| polls::vote(c, v.message_id.get(), v.user_id.get(), v.answer_id, true))?;

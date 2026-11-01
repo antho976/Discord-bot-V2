@@ -129,6 +129,14 @@ fn set_image(conn: &Connection, guild: u64, message: u64, image: &str) -> bot_co
     Ok(())
 }
 
+fn set_content(conn: &Connection, guild: u64, message: u64, preview: &str, image: &str) -> bot_core::rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE starboard_posts SET preview = ?3, image = ?4 WHERE guild_id = ?1 AND message_id = ?2",
+        params![guild as i64, message as i64, preview, image],
+    )?;
+    Ok(())
+}
+
 fn set_stars(conn: &Connection, guild: u64, message: u64, stars: i64) -> bot_core::rusqlite::Result<()> {
     conn.execute("UPDATE starboard_posts SET stars = ?3 WHERE guild_id = ?1 AND message_id = ?2", params![guild as i64, message as i64, stars])?;
     Ok(())
@@ -183,13 +191,72 @@ pub fn stats(conn: &Connection, guild: u64, now: i64) -> bot_core::rusqlite::Res
 
 // ---- events ----
 
-pub fn on_message_delete(ctx: &Ctx, guild: Option<Id<GuildMarker>>, channel: Id<ChannelMarker>, message: Id<MessageMarker>) -> bot_core::anyhow::Result<()> {
+/// Messages were deleted. In the starboard channel, a post a moderator took down is remembered,
+/// so its message isn't posted again. Anywhere else, a starred message that was deleted takes
+/// its post down with it.
+pub async fn on_message_delete(
+    feature: &Tickets,
+    ctx: &Ctx,
+    guild: Option<Id<GuildMarker>>,
+    channel: Id<ChannelMarker>,
+    messages: &[Id<MessageMarker>],
+) -> bot_core::anyhow::Result<()> {
     let Some(guild) = guild.map(|g| g.get()) else { return Ok(()) };
     let s = ctx.settings::<Settings>(guild, KEY)?;
     if s.star_channel == Some(channel.get()) {
-        ctx.db.with(|c| mark_removed(c, guild, message.get()).map(|_| ()))?;
+        for m in messages {
+            // The bot's own deletes (a post taken down below the threshold) aren't a moderator's.
+            if !ctx.own_message_deleted(m.get()) {
+                ctx.db.with(|c| mark_removed(c, guild, m.get()).map(|_| ()))?;
+            }
+        }
+        return Ok(());
+    }
+    let posts = ctx.db.with(|c| messages.iter().filter_map(|m| get(c, guild, m.get()).transpose()).collect::<bot_core::rusqlite::Result<Vec<Post>>>())?;
+    if posts.is_empty() {
+        return Ok(());
+    }
+    let lock = feature.star_lock(guild);
+    let _one_at_a_time = lock.lock().await;
+    for post in posts {
+        if !post.removed
+            && let Err(e) = take_down(ctx, &post).await
+        {
+            bot_core::tracing::warn!(guild, message = post.message_id, error = %e, "couldn't take down the starboard post of a deleted message");
+            continue;
+        }
+        ctx.db.with(|c| forget(c, guild, post.message_id))?;
     }
     Ok(())
+}
+
+/// A message was edited: if it's on the starboard, rewrite its post to match.
+pub async fn on_message_update(feature: &Tickets, ctx: &Ctx, guild: u64, message: &Message) -> bot_core::anyhow::Result<()> {
+    // Embeds filling in and pins send updates too; only an edit by its author changes the post.
+    if message.edited_timestamp.is_none() {
+        return Ok(());
+    }
+    let Some(post) = ctx.db.with(|c| get(c, guild, message.id.get()))?.filter(|p| !p.removed) else { return Ok(()) };
+    let lock = feature.star_lock(guild);
+    let _one_at_a_time = lock.lock().await;
+    let embed = build_embed(guild, message);
+    match ctx.http.update_message(Id::new(post.post_channel_id), Id::new(post.post_id)).embeds(Some(&[embed])).await {
+        Ok(_) => ctx.db.with(|c| set_content(c, guild, post.message_id, &preview_of(message), &image_of(message).unwrap_or_default()))?,
+        // Someone deleted the post by hand: leave it deleted.
+        Err(e) if is_not_found(&e) => ctx.db.with(|c| mark_removed(c, guild, post.post_id).map(|_| ()))?,
+        Err(e) => bot_core::tracing::warn!(guild, message = post.message_id, error = %e, "couldn't update the starboard post of an edited message"),
+    }
+    Ok(())
+}
+
+/// Delete a post from the starboard. One that is already gone counts as taken down.
+async fn take_down(ctx: &Ctx, post: &Post) -> Result<(), bot_core::twilight_http::Error> {
+    // The audit log skips the bot's own deletes when it ignores bots.
+    ctx.deleting_own_message(post.post_id);
+    match ctx.http.delete_message(Id::new(post.post_channel_id), Id::new(post.post_id)).await {
+        Err(e) if !is_not_found(&e) => Err(e),
+        _ => Ok(()),
+    }
 }
 
 pub async fn on_reaction(
@@ -207,19 +274,56 @@ pub async fn on_reaction(
     if channel.get() == star_channel || s.star_ignored.contains(&channel.get()) {
         return Ok(());
     }
-    let star_nsfw = ctx.cache.channel(Id::new(star_channel)).is_some_and(|c| c.nsfw.unwrap_or(false));
-    if !place_of(ctx, guild, channel).is_some_and(|p| may_repost(&p, star_channel, star_nsfw, &s.star_ignored)) {
-        return Ok(());
-    }
     let Some(wanted) = parse_emoji(&s.star_emoji) else { return Ok(()) };
     if emoji.is_some_and(|e| !wanted.matches(e)) {
         return Ok(());
     }
-    let _one_at_a_time = feature.star_lock.lock().await;
+    let Some(star) = Id::new_checked(star_channel) else { return Ok(()) };
+    let star_nsfw = ctx.cache.channel(star).is_some_and(|c| c.nsfw.unwrap_or(false));
+    let Some(place) = place_of(ctx, guild, channel, star) else { return Ok(()) };
+    if !may_repost(&place, star_channel, star_nsfw, &s.star_ignored) {
+        // Hidden from part of the starboard's audience, and nothing else in the way: say so on
+        // the dashboard once the message has the stars, so a quiet starboard isn't a mystery.
+        if place.hidden && emoji.is_some() && may_repost(&Place { hidden: false, ..place.clone() }, star_channel, star_nsfw, &s.star_ignored) {
+            note_hidden(ctx, guild, &place, channel, message, &wanted, s.star_threshold.max(1)).await;
+        }
+        return Ok(());
+    }
+    let lock = feature.star_lock(guild);
+    let _one_at_a_time = lock.lock().await;
     if let Err(e) = refresh(ctx, guild, channel.get(), message.get(), &s, &wanted, star_channel).await {
         bot_core::tracing::warn!(guild, message = message.get(), error = %e, "couldn't update the starboard");
     }
     Ok(())
+}
+
+/// A star in a channel the starboard won't repost from. At most one look a channel each 10
+/// minutes, and one notice a channel a week, once a message there reaches the threshold.
+async fn note_hidden(ctx: &Ctx, guild: u64, place: &Place, channel: Id<ChannelMarker>, message: Id<MessageMarker>, emoji: &Emoji, threshold: i64) {
+    static LOOKED: LazyLock<Mutex<HashMap<u64, Instant>>> = LazyLock::new(Default::default);
+    {
+        let mut looked = LOOKED.lock().unwrap();
+        looked.retain(|_, t| t.elapsed().as_secs() < 600);
+        if looked.contains_key(&place.channel) {
+            return;
+        }
+        looked.insert(place.channel, Instant::now());
+    }
+    let Ok(r) = ctx.http.message(channel, message).await else { return };
+    let Ok(m) = r.model().await else { return };
+    let raw = m.reactions.iter().find(|r| emoji.matches(&r.emoji)).map_or(0, |r| r.count as i64);
+    if raw < threshold {
+        return;
+    }
+    let name = ctx.cache.channel(Id::new(place.channel)).and_then(|c| c.name.clone()).unwrap_or_else(|| "a channel".into());
+    ctx.notify_once(
+        guild,
+        KEY,
+        &format!("star-hidden-{}", place.channel),
+        format!("Starred messages in #{name} aren't reposted: some people who can see the starboard can't see #{name}."),
+        Some(format!("/g/{guild}/{KEY}/starboard?view=settings")),
+        std::time::Duration::from_secs(7 * 86_400),
+    );
 }
 
 /// Where a starred message is, as far as the starboard cares.
@@ -229,25 +333,26 @@ pub struct Place {
     pub channel: u64,
     /// A private thread, like a ticket.
     pub private_thread: bool,
-    /// @everyone can't see the channel (a thread's parent).
+    /// Some role that can see the starboard can't see the channel (a thread's parent).
     pub hidden: bool,
     /// The channel (a thread's parent) is age-restricted.
     pub nsfw: bool,
 }
 
-/// Whether a message may be reposted: the starboard is public to the server, so nothing from a
-/// private thread or a channel @everyone can't see, nothing age-restricted unless the starboard
-/// is too, and nothing from the starboard or an ignored channel, threads included.
+/// Whether a message may be reposted: nothing from a private thread or a channel hidden from
+/// some of the people who can see the starboard, nothing age-restricted unless the starboard is
+/// too, and nothing from the starboard or an ignored channel, threads included.
 pub fn may_repost(p: &Place, star_channel: u64, star_nsfw: bool, ignored: &[u64]) -> bool {
     p.channel != star_channel && !ignored.contains(&p.channel) && !p.private_thread && !p.hidden && (!p.nsfw || star_nsfw)
 }
 
 /// Where a message is, from the cache. The cache holds every channel and every thread the bot
 /// can see (active ones arrive with the server, new ones as they're made), so None, a channel
-/// it doesn't know, means no repost rather than a guess.
-fn place_of(ctx: &Ctx, guild: u64, channel: Id<ChannelMarker>) -> Option<Place> {
-    let base = ctx.cache.role(Id::new(guild)).map(|r| r.permissions).unwrap_or_else(Permissions::empty);
-    // One cache entry at a time: the first is let go before the parent is read.
+/// it doesn't know (or a starboard it doesn't know), means no repost rather than a guess.
+fn place_of(ctx: &Ctx, guild: u64, channel: Id<ChannelMarker>, star: Id<ChannelMarker>) -> Option<Place> {
+    let roles = server_roles(ctx, guild);
+    // One cache entry at a time: each is let go before the next is read.
+    let star_overwrites = ctx.cache.channel(star).map(|c| c.permission_overwrites.clone().unwrap_or_default())?;
     let (kind, parent_id) = ctx.cache.channel(channel).map(|c| (c.kind, c.parent_id))?;
     let thread = matches!(kind, ChannelType::PublicThread | ChannelType::PrivateThread | ChannelType::AnnouncementThread);
     let private_thread = kind == ChannelType::PrivateThread;
@@ -255,24 +360,45 @@ fn place_of(ctx: &Ctx, guild: u64, channel: Id<ChannelMarker>) -> Option<Place> 
     Some(Place {
         channel: parent.id.get(),
         private_thread,
-        hidden: !everyone_sees(base, parent.permission_overwrites.as_deref().unwrap_or_default(), guild),
+        hidden: !audience_covered(&roles, guild, &star_overwrites, parent.permission_overwrites.as_deref().unwrap_or_default()),
         nsfw: parent.nsfw.unwrap_or(false),
     })
 }
 
-/// @everyone's view of a channel: the role's permissions, then the channel's overwrite for
-/// @everyone (the role shares the server's id).
-fn everyone_sees(base: Permissions, overwrites: &[PermissionOverwrite], guild: u64) -> bool {
+/// Every role of a server with its permissions, @everyone (the server's id) included.
+fn server_roles(ctx: &Ctx, guild: u64) -> Vec<(u64, Permissions)> {
+    let Some(g) = Id::new_checked(guild) else { return Vec::new() };
+    let ids: Vec<_> = ctx.cache.guild_roles(g).map(|set| set.iter().copied().collect()).unwrap_or_default();
+    let mut roles: Vec<(u64, Permissions)> = ids.into_iter().filter_map(|id| ctx.cache.role(id).map(|r| (id.get(), r.permissions))).collect();
+    if !roles.iter().any(|r| r.0 == guild) {
+        roles.push((guild, Permissions::empty()));
+    }
+    roles
+}
+
+/// Whether everyone who can see the starboard can see the channel too, judged role by role: a
+/// role's view is @everyone's permissions with its own, then the channel's overwrite for
+/// @everyone, then its own. Administrator sees everything. Overwrites for single members are
+/// left out.
+pub fn audience_covered(roles: &[(u64, Permissions)], guild: u64, star: &[PermissionOverwrite], source: &[PermissionOverwrite]) -> bool {
+    roles.iter().all(|(role, _)| !role_sees(roles, guild, *role, star) || role_sees(roles, guild, *role, source))
+}
+
+fn role_sees(roles: &[(u64, Permissions)], guild: u64, role: u64, overwrites: &[PermissionOverwrite]) -> bool {
+    let perms = |id: u64| roles.iter().find(|r| r.0 == id).map_or(Permissions::empty(), |r| r.1);
+    let base = perms(guild) | perms(role);
     if base.contains(Permissions::ADMINISTRATOR) {
         return true;
     }
     let mut view = base.contains(Permissions::VIEW_CHANNEL);
-    if let Some(o) = overwrites.iter().find(|o| o.kind == PermissionOverwriteType::Role && o.id.get() == guild) {
-        if o.deny.contains(Permissions::VIEW_CHANNEL) {
-            view = false;
-        }
-        if o.allow.contains(Permissions::VIEW_CHANNEL) {
-            view = true;
+    for id in [guild, role] {
+        if let Some(o) = overwrites.iter().find(|o| o.kind == PermissionOverwriteType::Role && o.id.get() == id) {
+            if o.deny.contains(Permissions::VIEW_CHANNEL) {
+                view = false;
+            }
+            if o.allow.contains(Permissions::VIEW_CHANNEL) {
+                view = true;
+            }
         }
     }
     view
@@ -291,14 +417,18 @@ async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Setti
     };
     let threshold = s.star_threshold.max(1);
     let raw = message.reactions.iter().find(|r| emoji.matches(&r.emoji)).map(|r| r.count as i64).unwrap_or(0);
-    // The author's own star only needs finding when it could change what happens.
-    let author_starred = !s.star_self && raw > 0 && (raw >= threshold || existing.is_some()) && author_reacted(ctx, &message, emoji).await;
-    let stars = raw - author_starred as i64;
+    // Who starred it only needs reading when it could change what happens, and then only one
+    // page: past a page of reactors a bot or the author's own star changes nothing.
+    let matters = raw > 0 && (raw >= threshold || existing.is_some()) && raw <= REACTORS_PAGE as i64;
+    let stars = if matters { counted_stars(ctx, &message, emoji, s.star_self).await.unwrap_or(raw) } else { raw };
+    // A post this new stays up when the count dips, so one member taking a star back and
+    // giving it again doesn't delete and repost it each time.
+    let young = existing.as_ref().is_some_and(|p| now_ms() - p.created_at < KEEP_MS);
     let line = format!("{} {} in <#{}>", s.star_emoji.trim(), stars, channel);
     let none = AllowedMentions::default();
 
     match existing {
-        Some(post) if stars >= threshold || !s.star_remove_below => {
+        Some(post) if stars >= threshold || !s.star_remove_below || young => {
             if post.stars == stars {
                 return Ok(());
             }
@@ -311,14 +441,10 @@ async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Setti
             }
         }
         Some(post) => {
+            // Forgotten only once it's gone, so a failed delete can't leave a post the next
+            // crossing would duplicate.
+            take_down(ctx, &post).await?;
             ctx.db.with(|c| forget(c, guild, message_id))?;
-            // The audit log skips the bot's own deletes when it ignores bots.
-            ctx.deleting_own_message(post.post_id);
-            if let Err(e) = ctx.http.delete_message(Id::new(post.post_channel_id), Id::new(post.post_id)).await
-                && !is_not_found(&e)
-            {
-                return Err(e.into());
-            }
         }
         None if stars >= threshold => {
             let embed = build_embed(guild, &message);
@@ -389,31 +515,22 @@ fn is_final(e: &bot_core::twilight_http::Error) -> bool {
     matches!(e.kind(), ErrorType::Response { status, .. } if (400..500).contains(&status.get()) && status.get() != 429)
 }
 
-/// Whether the message's author reacted with the emoji. Looks through up to 500 reactors.
-async fn author_reacted(ctx: &Ctx, message: &Message, emoji: &Emoji) -> bool {
+/// Reactors Discord returns in one request.
+const REACTORS_PAGE: u16 = 100;
+
+/// A post younger than this stays up when its count dips under the threshold.
+const KEEP_MS: i64 = 10 * 60_000;
+
+/// The stars that count, from one page of reactors: people, not bots, and the author only when
+/// `with_author`. None when the list can't be read.
+async fn counted_stars(ctx: &Ctx, message: &Message, emoji: &Emoji, with_author: bool) -> Option<i64> {
     let request = emoji.request();
-    let mut after = None;
-    for _ in 0..5 {
-        let mut req = ctx.http.reactions(message.channel_id, message.id, &request).limit(100);
-        if let Some(id) = after {
-            req = req.after(id);
-        }
-        let users = match req.await {
-            Ok(r) => match r.models().await {
-                Ok(u) => u,
-                Err(_) => return false,
-            },
-            Err(_) => return false,
-        };
-        if users.iter().any(|u| u.id == message.author.id) {
-            return true;
-        }
-        match users.last() {
-            Some(last) if users.len() == 100 => after = Some(last.id),
-            _ => return false,
-        }
-    }
-    false
+    let users = ctx.http.reactions(message.channel_id, message.id, &request).limit(REACTORS_PAGE).await.ok()?.models().await.ok()?;
+    Some(count_stars(&users, message.author.id, with_author))
+}
+
+fn count_stars(users: &[bot_core::twilight_model::user::User], author: Id<bot_core::twilight_model::id::marker::UserMarker>, with_author: bool) -> i64 {
+    users.iter().filter(|u| !u.bot && (with_author || u.id != author)).count() as i64
 }
 
 // ---- the post ----
@@ -733,11 +850,11 @@ mod tests {
         let everyone = bot_core::serde_json::json!({"guild_id": "1", "role": {"id": "1", "name": "@everyone", "color": 0, "colors": {"primary_color": 0}, "hoist": false, "managed": false, "mentionable": false, "permissions": (1u64 << 10).to_string(), "position": 0, "flags": 0}});
         ctx.cache.update(&Event::RoleCreate(bot_core::serde_json::from_value(everyone).unwrap()));
         // 10 public, 11 hidden from @everyone, 12 age-restricted; 500 a public thread in 11,
-        // 501 a private thread in 10, 502 a public thread in 10.
+        // 501 a private thread in 10, 502 a public thread in 10; 99 the starboard.
         let deny_view = bot_core::serde_json::json!([{"id": "1", "type": 0, "allow": "0", "deny": (1u64 << 10).to_string()}]);
         let none = bot_core::serde_json::json!([]);
         for (id, kind, parent, overwrites, nsfw) in
-            [(10u64, 0u8, None, &none, false), (11, 0, None, &deny_view, false), (12, 0, None, &none, true), (500, 11, Some(11u64), &none, false), (501, 12, Some(10), &none, false), (502, 11, Some(10), &none, false)]
+            [(99u64, 0u8, None, &none, false), (10, 0, None, &none, false), (11, 0, None, &deny_view, false), (12, 0, None, &none, true), (500, 11, Some(11u64), &none, false), (501, 12, Some(10), &none, false), (502, 11, Some(10), &none, false)]
         {
             let channel = bot_core::serde_json::json!({
                 "id": id.to_string(), "type": kind, "name": "x", "guild_id": "1", "parent_id": parent.map(|p| p.to_string()), "nsfw": nsfw,
@@ -745,7 +862,7 @@ mod tests {
             });
             ctx.cache.update(&Event::ChannelCreate(Box::new(ChannelCreate(bot_core::serde_json::from_value(channel).unwrap()))));
         }
-        let place = |id: u64| place_of(&ctx, 1, Id::new(id));
+        let place = |id: u64| place_of(&ctx, 1, Id::new(id), Id::new(99));
         assert_eq!(place(10), Some(Place { channel: 10, private_thread: false, hidden: false, nsfw: false }));
         assert!(place(11).unwrap().hidden && place(12).unwrap().nsfw);
         assert_eq!(place(500), Some(Place { channel: 11, private_thread: false, hidden: true, nsfw: false }));
@@ -753,8 +870,49 @@ mod tests {
         // Ignoring 10 covers its threads.
         assert!(may_repost(&place(10).unwrap(), 99, false, &[]));
         assert!(!may_repost(&place(502).unwrap(), 99, false, &[10]));
-        // Unknown to the cache: no repost.
+        // Unknown to the cache, or a starboard it doesn't know: no repost.
         assert_eq!(place(999), None);
+        assert_eq!(place_of(&ctx, 1, Id::new(10), Id::new(998)), None);
+    }
+
+    fn overwrite(role: u64, allow: Permissions, deny: Permissions) -> PermissionOverwrite {
+        PermissionOverwrite { allow, deny, id: Id::new(role), kind: PermissionOverwriteType::Role }
+    }
+
+    #[test]
+    fn the_starboards_audience_decides_what_is_hidden() {
+        let (view, none) = (Permissions::VIEW_CHANNEL, Permissions::empty());
+        // @everyone (1) sees nothing; Member (5) sees the server; Staff (6) too; Admin (7).
+        let gated = [(1, none), (5, view), (6, view), (7, Permissions::ADMINISTRATOR)];
+        let staff_only = [overwrite(1, none, view), overwrite(5, none, view), overwrite(6, view, none)];
+        // Role-gated server, ordinary channels and a starboard members see: reposted.
+        assert!(audience_covered(&gated, 1, &[], &[]));
+        // A staff channel on a starboard members see: hidden.
+        assert!(!audience_covered(&gated, 1, &[], &staff_only));
+        // A staff starboard can take the staff channel.
+        assert!(audience_covered(&gated, 1, &staff_only, &staff_only));
+        // A channel only verified members see (@everyone denied, Member allowed) on a starboard
+        // the same people see.
+        let members = [overwrite(1, none, view), overwrite(5, view, none)];
+        assert!(audience_covered(&gated, 1, &members, &members));
+        assert!(audience_covered(&gated, 1, &members, &[]));
+        // An open server: @everyone sees the starboard, so a channel hidden from it is hidden.
+        let open = [(1, view), (5, none)];
+        assert!(audience_covered(&open, 1, &[], &[]));
+        assert!(!audience_covered(&open, 1, &[], &[overwrite(1, none, view), overwrite(5, view, none)]));
+        // Administrators see everything, so they never make a channel hidden.
+        assert!(role_sees(&gated, 1, 7, &staff_only));
+    }
+
+    #[test]
+    fn bots_and_the_author_dont_count() {
+        let user = |id: u64, bot: bool| -> bot_core::twilight_model::user::User {
+            bot_core::serde_json::from_value(bot_core::serde_json::json!({"id": id.to_string(), "username": "u", "discriminator": "0", "avatar": null, "bot": bot})).unwrap()
+        };
+        let users = [user(1, false), user(2, false), user(3, true), user(4, false)];
+        assert_eq!(count_stars(&users, Id::new(4), false), 2);
+        assert_eq!(count_stars(&users, Id::new(4), true), 3);
+        assert_eq!(count_stars(&[], Id::new(4), true), 0);
     }
 
     #[test]

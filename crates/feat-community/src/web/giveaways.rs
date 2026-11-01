@@ -49,7 +49,7 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                         h2 { "This month" }
                         (month)
                     }
-                    @if let Some((g, n)) = ended.first() {
+                    @if let Some((g, n)) = ended.iter().find(|(g, _)| !g.cancelled) {
                         div.rail-block {
                             h2 { "The last result" span.muted { (channel_name(&ctx, guild, g.channel_id)) } }
                             (discord_message(&ctx, &page, g.finished_at(), post_preview(&ctx, guild, g, *n)))
@@ -251,11 +251,13 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
                             (art(g, "ended"))
                             div.grow {
                                 strong title=(g.prize) { (g.prize) }
-                                span.muted { "Ended " (text::ago(g.finished_at())) " · " (channel_name(ctx, guild, g.channel_id)) }
+                                span.muted { (if g.cancelled { "Cancelled " } else { "Ended " }) (text::ago(g.finished_at())) " · " (channel_name(ctx, guild, g.channel_id)) }
                             }
-                            (open_link(page, g.channel_id, g.message_id, true))
+                            @if !g.cancelled { (open_link(page, g.channel_id, g.message_id, true)) }
                         }
-                        @if g.winner_ids.is_empty() {
+                        @if g.cancelled {
+                            span.gv-nobody { "Cancelled: its post was deleted, so nobody was picked." }
+                        } @else if g.winner_ids.is_empty() {
                             span.gv-nobody { (gw::no_winner(*n)) }
                         } @else {
                             div.gv-won {
@@ -266,7 +268,8 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
                         }
                         div.gv-card-foot {
                             span { (winners_text(g)) " · " (entries_text(*n)) }
-                            @if edit && !g.winner_ids.is_empty() && *n > (g.winner_ids.len() + g.passed_ids.len()) as i64 {
+                            @if edit && !g.cancelled && *n > (g.winner_ids.len() + g.passed_ids.len()) as i64
+                                && (!g.winner_ids.is_empty() || gw::open_places(g) > 0) {
                                 div.cm-actions { (reroll_control(ctx, page, guild, g)) }
                             }
                         }
@@ -277,13 +280,20 @@ fn ended_list(ctx: &Ctx, page: &Page, guild: u64, ended: &[(Giveaway, i64)], edi
     }
 }
 
-/// Reroll on an ended giveaway. One winner: a button that replaces them. Several: a menu with
-/// a button per winner and one that replaces them all. Each form names who it replaces (or the
+/// Reroll on an ended giveaway. No winners: a button that draws again. One winner: a button
+/// that replaces them. Several: a menu with a button per winner and one that replaces them all
+/// (and fills any places nobody won). Each form names who it replaces (or the
 /// winners it saw), so a second click finds them already replaced and does nothing.
 fn reroll_control(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway) -> Markup {
     let action = page.path(&format!("community/giveaways/{}/reroll", g.id));
     html! {
-        @if let [only] = g.winner_ids.as_slice() {
+        @if g.winner_ids.is_empty() {
+            // The draw found nobody who could win: draw again from the entries.
+            form.inline method="post" action=(action) {
+                input type="hidden" name="from" value="";
+                button.btn.small type="submit" { "Draw again" }
+            }
+        } @else if let [only] = g.winner_ids.as_slice() {
             form.inline method="post" action=(action) {
                 input type="hidden" name="winner" value=(only);
                 button.btn.small type="submit" { "Reroll" }
@@ -453,7 +463,7 @@ pub async fn end(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u6
     owned(&ctx, guild, id).await?;
     match gw::end(&ctx, id).await? {
         EndOutcome::Ended(_) => ctx.audit(&page.user, Some(guild), KEY, format!("Ended giveaway #{id}")),
-        EndOutcome::AlreadyEnded | EndOutcome::Missing => {}
+        EndOutcome::AlreadyEnded | EndOutcome::Cancelled | EndOutcome::Missing => {}
     }
     Ok(saved(&page.path("community/giveaways")))
 }
@@ -511,14 +521,21 @@ pub async fn reroll(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<
         None => (Replace::All, Some(form.string("from").split(',').filter_map(|s| s.trim().parse().ok()).collect::<Vec<u64>>())),
     };
     match gw::reroll(&ctx, id, which, expected.as_deref()).await? {
-        RerollOutcome::Rolled { swaps, .. } => {
+        RerollOutcome::Rolled { swaps, added, .. } => {
             let names = |ids: &mut dyn Iterator<Item = u64>| ids.map(|u| ctx.display_name(guild, u)).collect::<Vec<_>>().join(", ");
             let (old, new) = (names(&mut swaps.iter().map(|s| s.0)), names(&mut swaps.iter().map(|s| s.1)));
-            ctx.audit(&page.user, Some(guild), KEY, format!("Rerolled giveaway #{id}: {new} in place of {old}"));
+            let mut what = Vec::new();
+            if !swaps.is_empty() {
+                what.push(format!("{new} in place of {old}"));
+            }
+            if !added.is_empty() {
+                what.push(format!("{} for places nobody had won", names(&mut added.iter().copied())));
+            }
+            ctx.audit(&page.user, Some(guild), KEY, format!("Rerolled giveaway #{id}: {}", what.join("; ")));
         }
         RerollOutcome::NoOneElse(role) => return Err(WebError::Bad(gw::no_one_left(role))),
         // Already replaced by the first click, or nothing to replace: the page shows how it is.
-        RerollOutcome::NotAWinner | RerollOutcome::Changed | RerollOutcome::StillRunning | RerollOutcome::Missing => {}
+        RerollOutcome::NotAWinner | RerollOutcome::Changed | RerollOutcome::StillRunning | RerollOutcome::Cancelled | RerollOutcome::Missing => {}
     }
     Ok(saved(&page.path("community/giveaways?tab=ended")))
 }

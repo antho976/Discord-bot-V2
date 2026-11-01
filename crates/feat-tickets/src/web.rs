@@ -213,7 +213,7 @@ async fn tickets_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 (ui::settings_form(&page, &page.path("tickets/settings"), ui::card(html! {
                     (ui::field_channel(&ctx, guild, "ticket_channel", "Ticket channel", Some("Tickets are private threads in this channel. The panel is posted here too."), s.ticket_channel))
                     (ui::field_role(&ctx, guild, "staff_role", "Staff role", Some("Pinged once when a ticket opens, and allowed to close any ticket."), s.staff_role))
-                    (ui::field_number("max_open", "Open tickets per member", Some("A member must close one before opening another past this number."), s.max_open, 1, 10, None))
+                    (ui::field_number("max_open", "Open tickets per member", Some("A member must close one before opening another past this number. Members also wait 10 minutes between tickets; staff don't."), s.max_open, 1, 10, None))
                     (ui::field_number("auto_close_days", "Close idle tickets after", Some("Days with no messages in the thread. 0 leaves them open."), s.auto_close_days, 0, 90, Some("days")))
                     (ui::field_text("panel_title", "Panel title", None, &s.panel_title, DEFAULT_PANEL_TITLE))
                     (ui::field_textarea("panel_text", "Panel text", Some("Shown above the Open a ticket button."), &s.panel_text, DEFAULT_PANEL_TEXT))
@@ -529,9 +529,9 @@ async fn starboard_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
                     (ui::field_channel(&ctx, guild, "star_channel", "Starboard channel", Some("Where popular messages are reposted. None turns the starboard off."), s.star_channel))
                     (ui::field_text("star_emoji", "Emoji", Some("Paste the emoji itself. For a custom one, paste it as <:name:id>."), &s.star_emoji, "⭐"))
                     (ui::field_number("star_threshold", "Stars needed", Some("A message is reposted once it has this many."), s.star_threshold, 1, 100, Some("stars")))
-                    (ui::field_toggle("star_remove_below", "Remove when it drops below", Some("Takes the post down if stars fall under the number above. Off keeps it with the lower count."), s.star_remove_below))
+                    (ui::field_toggle("star_remove_below", "Remove when it drops below", Some("Takes the post down if stars fall under the number above, once it has been up for 10 minutes. Off keeps it with the lower count."), s.star_remove_below))
                     (ui::field_toggle("star_self", "Count the author's own star", Some("Off: a member starring their own message doesn't count."), s.star_self))
-                    (ui::field_channels(&ctx, guild, "star_ignored", "Ignored channels", Some("Stars in these channels and their threads never reach the starboard. Neither do the starboard itself, private threads, channels @everyone can't see, or age-restricted channels unless the starboard is one."), &s.star_ignored))
+                    (ui::field_channels(&ctx, guild, "star_ignored", "Ignored channels", Some("Stars in these channels and their threads never reach the starboard. Neither do the starboard itself, private threads, channels that some people who can see the starboard can't see, or age-restricted channels unless the starboard is one."), &s.star_ignored))
                 })))
                 aside.rail.tk-rail.compose-preview {
                     div.rail-block {
