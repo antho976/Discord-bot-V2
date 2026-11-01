@@ -714,6 +714,9 @@ html.vt .page-body > *, html.vt .head-icon, html.vt .head-text, html.vt .head-ac
 /* The same page again (another filter, after a save): nothing re-enters; charts still draw. */
 html.same .page-body > *, html.same .head-icon, html.same .head-text, html.same .head-actions, html.same .page-glow::before,
 html.same .ov-bg img, html.same .ov-bg .art, html.same .ov-icon, html.same .ov-hello h1, html.same .ov-hello p { animation: none; }
+/* A block with an open popover sits above the blocks after it, so its form isn't painted under
+   the next block's entrance or isolation. */
+.page-body > :has(.pop[open]), .with-rail > * > :has(.pop[open]) { position: relative; z-index: 5; }
 /* A part being replaced in place (data-swap) dims if the answer takes a moment. */
 .swapping { opacity: 0.5; pointer-events: none; transition: opacity 0.2s 0.12s; }
 
