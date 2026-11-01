@@ -98,7 +98,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
 
     let body = html! {
         style { (PreEscaped(CSS)) }
-        @if q.sent.is_some() { (sent_toast("Test sent to your DMs")) }
+        (ui::sent_toast(q.sent.is_some(), "Test sent to your DMs"))
         (tabs)
         @if view == "settings" {
             @if let Some(ch) = s.channel.filter(|c| everyone_can_view(&ctx, guild, *c)) {
@@ -406,17 +406,6 @@ async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     mail::send_test(&ctx, guild, &s, page.user.id).await.map_err(WebError::Bad)?;
     ctx.audit(&page.user, Some(guild), KEY, "Sent the modmail greeting and closing text to their own DMs as a test");
     Ok(Redirect::to(&format!("{}&sent=1", page.path("modmail?view=settings"))).into_response())
-}
-
-/// A toast once the page is back, then the flag leaves the address.
-fn sent_toast(msg: &str) -> Markup {
-    // A JS string; `<` escaped so the text can't close the script.
-    let msg = format!("{msg:?}").replace('<', "\\u003c");
-    html! {
-        script { (PreEscaped(format!(
-            "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg});const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go,{{once:true}}):setTimeout(go)}})()"
-        ))) }
-    }
 }
 
 async fn close(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {

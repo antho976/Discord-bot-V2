@@ -15,6 +15,7 @@ use bot_core::twilight_model::channel::message::embed::EmbedField;
 use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::id::Id;
+use bot_core::twilight_model::user::User as DiscordUser;
 use bot_core::twilight_model::util::Timestamp;
 use bot_core::twilight_util::builder::embed::{EmbedAuthorBuilder, EmbedBuilder, EmbedFieldBuilder, EmbedFooterBuilder, ImageSource};
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, text};
@@ -195,10 +196,10 @@ impl Settings {
     }
 
     /// Messages in the log channels themselves are never logged, so a mod deleting a log
-    /// entry doesn't create another one.
-    fn skips_channel(&self, channel: u64) -> bool {
-        self.ignored_channels.contains(&channel)
-            || [self.channel, self.message_channel, self.member_channel].contains(&Some(channel))
+    /// entry doesn't create another one. A thread or forum post goes with its channel (`parent`).
+    fn skips_channel(&self, channel: u64, parent: Option<u64>) -> bool {
+        let skips = |c: u64| self.ignored_channels.contains(&c) || [self.channel, self.message_channel, self.member_channel].contains(&Some(c));
+        skips(channel) || parent.is_some_and(skips)
     }
 }
 
@@ -316,18 +317,21 @@ impl Audit {
     /// Turn a gateway event into the log entries it deserves, honouring the switches.
     async fn items(&self, ctx: &Ctx, s: &Settings, guild: u64, event: &Event) -> Vec<Item> {
         let mut out = Vec::new();
-        let is_bot = |id: u64| s.ignore_bots && ctx.cache.user(Id::new(id)).is_some_and(|u| u.bot);
+        let is_bot = |id: u64| s.ignore_bots && (ctx.bot_id() == Some(id) || ctx.cache.user(Id::new(id)).is_some_and(|u| u.bot));
         match event {
             Event::MessageDelete(m) if s.route(Kind::MessageDelete).is_some() => {
                 let channel = m.channel_id.get();
-                if s.skips_channel(channel) {
+                if s.skips_channel(channel, thread_parent(ctx, channel)) {
                     return out;
                 }
                 let before = ctx.before_message(m.id.get());
-                if before.as_ref().is_some_and(|b| is_bot(b.author_id)) {
+                // The bot's own messages it deletes (an old sticky, an expired notice) are known
+                // as its own even once the cache has dropped them.
+                let own = ctx.own_message_deleted(m.id.get());
+                if (own && s.ignore_bots) || before.as_ref().is_some_and(|b| is_bot(b.author_id)) {
                     return out;
                 }
-                let author = before.as_ref().map(|b| b.author_id);
+                let author = before.as_ref().map(|b| b.author_id).or_else(|| ctx.bot_id().filter(|_| own));
                 let content = before.as_ref().map(|b| b.content.as_str());
                 let files: Vec<String> = before.iter().flat_map(|b| b.attachments.iter().map(|u| file_name(u))).collect();
                 let mut e = embed(ctx, guild, "Message deleted", CORAL, author);
@@ -350,7 +354,7 @@ impl Audit {
             }
             Event::MessageUpdate(m) if s.route(Kind::MessageEdit).is_some() => {
                 let channel = m.channel_id.get();
-                if s.skips_channel(channel) || (s.ignore_bots && m.author.bot) {
+                if s.skips_channel(channel, thread_parent(ctx, channel)) || (s.ignore_bots && m.author.bot) {
                     return out;
                 }
                 let before = ctx.before_message(m.id.get());
@@ -369,7 +373,7 @@ impl Audit {
             }
             Event::MessageDeleteBulk(m) if s.route(Kind::BulkDelete).is_some() => {
                 let channel = m.channel_id.get();
-                if s.skips_channel(channel) {
+                if s.skips_channel(channel, thread_parent(ctx, channel)) {
                     return out;
                 }
                 let n = m.ids.len();
@@ -409,7 +413,8 @@ impl Audit {
                 if let Some(joined) = before.as_ref().and_then(|b| b.joined_at_ms) {
                     description = format!("Joined {}", rel(joined));
                 }
-                let mut e = embed(ctx, guild, "Member left", GREY, Some(user));
+                let nick = before.as_ref().and_then(|b| b.nick.clone());
+                let mut e = embed_for(ctx, guild, "Member left", GREY, &m.user, nick);
                 if !description.is_empty() {
                     e = e.description(description);
                 }
@@ -479,10 +484,17 @@ impl Audit {
             Event::BanAdd(b) => {
                 let user = b.user.id.get();
                 self.bans.lock().unwrap().insert((guild, user), Instant::now());
+                // A leave that came more than a moment ahead of its ban, and hasn't posted yet,
+                // is taken back: the ban speaks for it.
+                if self.batcher.retract(guild, Kind::Leave, user)
+                    && let Err(e) = store::forget(ctx, guild, Kind::Leave, user, now_ms() - store::MATCH_MS)
+                {
+                    bot_core::tracing::warn!(guild, error = %e, "couldn't take back a leave entry");
+                }
                 if s.route(Kind::Ban).is_none() || (s.ignore_bots && b.user.bot) {
                     return out;
                 }
-                let e = embed(ctx, guild, "Member banned", CORAL, Some(user));
+                let e = embed_for(ctx, guild, "Member banned", CORAL, &b.user, None);
                 out.push(Item { guild, kind: Kind::Ban, user: Some(user), channel: None, summary: String::new(), embed: e.build() });
             }
             Event::BanRemove(b) if s.route(Kind::Unban).is_some() => {
@@ -490,7 +502,7 @@ impl Audit {
                 if s.ignore_bots && b.user.bot {
                     return out;
                 }
-                let e = embed(ctx, guild, "Member unbanned", GREY, Some(user));
+                let e = embed_for(ctx, guild, "Member unbanned", GREY, &b.user, None);
                 out.push(Item { guild, kind: Kind::Unban, user: Some(user), channel: None, summary: String::new(), embed: e.build() });
             }
             Event::VoiceStateUpdate(v) if s.route(Kind::VoiceJoin).is_some() => {
@@ -541,7 +553,13 @@ impl Audit {
     /// Remember the entry for the dashboard and queue the embed for its channel.
     fn emit(&self, ctx: &Ctx, s: &Settings, item: Item) {
         let Some(target) = s.route(item.kind) else { return };
-        let name = item.user.map(|u| ctx.display_name(item.guild, u)).unwrap_or_default();
+        // The name the post shows, so the page and the channel agree: a member who left or was
+        // banned is named from the event, not "Unknown member".
+        let name = match (&item.embed.author, item.user) {
+            (Some(a), _) => a.name.clone(),
+            (None, Some(u)) => ctx.display_name(item.guild, u),
+            (None, None) => String::new(),
+        };
         if let Err(e) = store::record(ctx, item.guild, item.kind, item.user, &name, item.channel, &item.summary) {
             bot_core::tracing::warn!(guild = item.guild, error = %e, "couldn't store an audit entry");
         }
@@ -793,19 +811,47 @@ pub(crate) fn channel_label(ctx: &Ctx, channel: u64) -> String {
 
 /// A calm embed with the member as the author line and the time as the timestamp.
 fn embed(ctx: &Ctx, guild: u64, title: &str, color: u32, who: Option<u64>) -> EmbedBuilder {
+    let who = who.map(|user| {
+        let hash = ctx.cache.user(Id::new(user)).and_then(|u| u.avatar.map(|a| a.to_string()));
+        (user, ctx.display_name(guild, user), hash)
+    });
+    titled(title, color, who)
+}
+
+/// [`embed`] for an event that carries the member's account: by a leave, ban or unban the cache
+/// has usually dropped them, so the name and avatar come from the event.
+fn embed_for(ctx: &Ctx, guild: u64, title: &str, color: u32, user: &DiscordUser, nick: Option<String>) -> EmbedBuilder {
+    let id = user.id.get();
+    let name = event_name(nick, ctx.known_name(guild, id), user);
+    titled(title, color, Some((id, name, user.avatar.map(|a| a.to_string()))))
+}
+
+/// A member's name from a leave, ban or unban: the nickname they had when they left, else what
+/// the cache still knows, else the account's own name.
+fn event_name(nick: Option<String>, known: Option<String>, user: &DiscordUser) -> String {
+    nick.or(known).or_else(|| user.global_name.clone()).unwrap_or_else(|| user.name.clone())
+}
+
+/// `who` is `(user id, name, avatar hash)`.
+fn titled(title: &str, color: u32, who: Option<(u64, String, Option<String>)>) -> EmbedBuilder {
     let mut b = EmbedBuilder::new().title(title).color(color);
     if let Ok(ts) = Timestamp::from_micros(now_ms() * 1000) {
         b = b.timestamp(ts);
     }
-    if let Some(user) = who {
-        let hash = ctx.cache.user(Id::new(user)).and_then(|u| u.avatar.map(|a| a.to_string()));
-        let mut author = EmbedAuthorBuilder::new(ctx.display_name(guild, user));
+    if let Some((user, name, hash)) = who {
+        let mut author = EmbedAuthorBuilder::new(name);
         if let Ok(icon) = ImageSource::url(avatar_url(user, hash.as_deref())) {
             author = author.icon_url(icon);
         }
         b = b.author(author).footer(EmbedFooterBuilder::new(format!("User ID {user}")));
     }
     b
+}
+
+/// The channel a thread or forum post belongs to, from the cache.
+fn thread_parent(ctx: &Ctx, channel: u64) -> Option<u64> {
+    let c = ctx.cache.channel(Id::new_checked(channel)?)?;
+    if c.kind.is_thread() { c.parent_id.map(|p| p.get()) } else { None }
 }
 
 fn field(b: EmbedBuilder, name: &str, value: &str, inline: bool) -> EmbedBuilder {
@@ -1050,7 +1096,119 @@ mod tests {
         assert_eq!(s.route(Kind::Ban), Some(10));
         s.ban = false;
         assert_eq!(s.route(Kind::Ban), None);
-        assert!(s.skips_channel(20));
+        assert!(s.skips_channel(20, None));
+    }
+
+    #[test]
+    fn a_thread_goes_with_its_channel() {
+        let s = Settings { channel: Some(10), ignored_channels: vec![30], ..Settings::default() };
+        assert!(s.skips_channel(31, Some(30)), "a thread in an ignored channel");
+        assert!(s.skips_channel(11, Some(10)), "a thread in the log channel");
+        assert!(!s.skips_channel(31, Some(40)));
+        assert!(!s.skips_channel(31, None));
+    }
+
+    fn account(json: bot_core::serde_json::Value) -> DiscordUser {
+        let mut v = bot_core::serde_json::json!({"id": "4242", "username": "lu_99", "discriminator": "0", "avatar": "a1b2c3d4e5f60718293a4b5c6d7e8f90"});
+        v.as_object_mut().unwrap().extend(json.as_object().unwrap().clone());
+        bot_core::serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn a_member_who_is_gone_is_named_from_the_event() {
+        let user = account(bot_core::serde_json::json!({"global_name": "Lu"}));
+        assert_eq!(event_name(Some("Lulu".into()), Some("Cached".into()), &user), "Lulu");
+        assert_eq!(event_name(None, Some("Cached".into()), &user), "Cached");
+        assert_eq!(event_name(None, None, &user), "Lu");
+        assert_eq!(event_name(None, None, &account(bot_core::serde_json::json!({}))), "lu_99");
+    }
+
+    fn audit_ctx() -> Ctx {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![Arc::new(Audit::default())]).unwrap();
+        ctx
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn bans_and_unbans_name_the_member_and_store_that_name() {
+        use bot_core::twilight_model::gateway::payload::incoming::{BanAdd, BanRemove};
+        let ctx = audit_ctx();
+        let audit = Audit::default();
+        let s = Settings { channel: Some(10), ..Settings::default() };
+        let user = account(bot_core::serde_json::json!({"global_name": "Lu"}));
+        for event in [
+            Event::BanAdd(BanAdd { guild_id: Id::new(1), user: user.clone() }),
+            Event::BanRemove(BanRemove { guild_id: Id::new(1), user: user.clone() }),
+        ] {
+            let items = audit.items(&ctx, &s, 1, &event).await;
+            let author = items[0].embed.author.as_ref().unwrap();
+            assert_eq!(author.name, "Lu");
+            assert_eq!(author.icon_url.as_deref(), Some("https://cdn.discordapp.com/avatars/4242/a1b2c3d4e5f60718293a4b5c6d7e8f90.png?size=128"));
+            for item in items {
+                audit.emit(&ctx, &s, item);
+            }
+        }
+        let f = store::Filter { group: store::Group::All, search: None };
+        let names: Vec<String> = store::recent(&ctx, 1, &f, 10).unwrap().0.into_iter().map(|r| r.user_name).collect();
+        assert_eq!(names, ["Lu", "Lu"]);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_late_ban_takes_back_the_leave() {
+        use bot_core::twilight_model::gateway::payload::incoming::BanAdd;
+        let ctx = audit_ctx();
+        let audit = Audit::default();
+        let s = Settings { channel: Some(10), ..Settings::default() };
+        let user = account(bot_core::serde_json::json!({}));
+        // The leave went out to the queue before the ban arrived.
+        let leave = Item { guild: 1, kind: Kind::Leave, user: Some(4242), channel: None, summary: "Had no roles".into(), embed: embed_without_ctx("Member left") };
+        audit.emit(&ctx, &s, leave);
+        for item in audit.items(&ctx, &s, 1, &Event::BanAdd(BanAdd { guild_id: Id::new(1), user })).await {
+            audit.emit(&ctx, &s, item);
+        }
+        let titles: Vec<Option<String>> = audit.batcher.drain(10).into_iter().map(|q| q.embed.title).collect();
+        assert_eq!(titles, [Some("Member banned".to_owned())]);
+        let f = store::Filter { group: store::Group::All, search: None };
+        let kinds: Vec<Kind> = store::recent(&ctx, 1, &f, 10).unwrap().0.into_iter().map(|r| r.kind).collect();
+        assert_eq!(kinds, [Kind::Ban]);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn the_bots_own_deletes_are_ignored_with_bots() {
+        use bot_core::twilight_model::gateway::payload::incoming::MessageDelete;
+        let ctx = audit_ctx();
+        let audit = Audit::default();
+        let mut s = Settings { channel: Some(10), ..Settings::default() };
+        let delete = |id| Event::MessageDelete(MessageDelete { channel_id: Id::new(5), guild_id: Some(Id::new(1)), id: Id::new(id) });
+        // An old sticky the cache no longer has.
+        ctx.deleting_own_message(77);
+        assert!(audit.items(&ctx, &s, 1, &delete(77)).await.is_empty());
+        // Someone else's message the cache didn't have is still logged.
+        assert_eq!(audit.items(&ctx, &s, 1, &delete(78)).await.len(), 1);
+        s.ignore_bots = false;
+        assert_eq!(audit.items(&ctx, &s, 1, &delete(77)).await.len(), 1);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn moderators_of_the_rows_shown_are_found_past_two_thousand_actions() {
+        let ctx = audit_ctx();
+        let now = now_ms();
+        ctx.db
+            .with(|c| {
+                c.execute("INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id, reason) VALUES (1, ?1, 9, 'ban', 15, 'Selling accounts')", [now - 3_600_000])?;
+                let mut st = c.prepare("INSERT INTO audit_mod_actions (guild_id, at, moderator_id, action, target_id) VALUES (1, ?1, 8, 'delete', 99)")?;
+                for i in 0..2100 {
+                    st.execute([now - 1_000_000 + i])?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let since = now - 3_600_000 - store::MATCH_MS;
+        assert!(store::mod_actions(&ctx, 1, since).unwrap().iter().all(|a| a.target != Some(15)), "the capped window misses it");
+        let mods = store::mod_actions_on(&ctx, 1, &[15], since).unwrap();
+        let ban = store::moderator_for(&mods, Kind::Ban, Some(15), None, now - 3_600_000).unwrap();
+        assert_eq!((ban.moderator, ban.reason.as_deref()), (9, Some("Selling accounts")));
+        assert!(store::mod_actions_on(&ctx, 1, &[], since).unwrap().is_empty());
     }
 
     #[test]

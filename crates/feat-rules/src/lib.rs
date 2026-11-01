@@ -206,6 +206,7 @@ impl Rules {
             let ctx = ctx.clone();
             bot_core::tokio::spawn(async move {
                 bot_core::tokio::time::sleep(NOTICE_LIFETIME).await;
+                ctx.deleting_own_message(msg.id.get());
                 let _ = ctx.http.delete_message(msg.channel_id, msg.id).await;
             });
         }

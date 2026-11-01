@@ -569,7 +569,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     }));
     let body = html! {
         (style())
-        @if q.sent.is_some() { (sent_toast(&format!("Test alert sent to {}", s.log_channel.map(|c| channel_name(&ctx, c)).unwrap_or_default()))) }
+        @if q.sent.is_some() { (ui::sent_toast(true, &format!("Test alert sent to {}", s.log_channel.map(|c| channel_name(&ctx, c)).unwrap_or_default()))) }
         (tabs(&page, waiting, "Settings"))
         div.with-rail {
             (ui::settings_form(&page, &page.path("guard/settings"), html! {
@@ -699,17 +699,6 @@ async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     }
     ctx.audit(&page.user, Some(guild), KEY, format!("Sent a test scam alert to {}", channel_name(&ctx, channel)));
     Ok(Redirect::to(&format!("{}?sent=1", page.path("guard/settings"))).into_response())
-}
-
-/// "Test sent" once the page is back, then the flag leaves the address.
-fn sent_toast(msg: &str) -> Markup {
-    // A JS string; `<` escaped so a name can't close the script.
-    let msg = format!("{msg:?}").replace('<', "\\u003c");
-    html! {
-        script { (PreEscaped(format!(
-            "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg});const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go,{{once:true}}):setTimeout(go)}})()"
-        ))) }
-    }
 }
 
 async fn release(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {

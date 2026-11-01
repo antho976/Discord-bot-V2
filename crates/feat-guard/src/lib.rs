@@ -16,7 +16,7 @@ use bot_core::discord::{ComponentCall, Reply, button_row};
 use bot_core::rusqlite::{OptionalExtension, params};
 use bot_core::twilight_http::request::AuditLogReason as _;
 use bot_core::twilight_model::channel::message::component::{ButtonStyle, Component};
-use bot_core::twilight_model::channel::message::{Embed, Message};
+use bot_core::twilight_model::channel::message::{Embed, Message, MessageType};
 use bot_core::twilight_model::gateway::event::Event;
 use bot_core::twilight_model::guild::audit_log::{AuditLogChange, AuditLogEntry, AuditLogEventType};
 use bot_core::twilight_model::guild::Permissions;
@@ -288,6 +288,13 @@ impl Feature for Guard {
     }
 }
 
+/// Whether a member wrote the message. Join, boost and "started a thread" notices carry the
+/// member as author but are posted by Discord; scoring them would make a honeypot that is the
+/// system-messages channel catch every joiner.
+fn written(kind: MessageType) -> bool {
+    matches!(kind, MessageType::Regular | MessageType::Reply)
+}
+
 /// What set off a catch.
 struct Found {
     honeypot: bool,
@@ -300,6 +307,9 @@ impl Guard {
     async fn on_message(&self, ctx: &Ctx, m: &Message) -> Result<()> {
         let Some(guild) = m.guild_id.map(|g| g.get()) else { return Ok(()) };
         if m.author.bot || m.webhook_id.is_some() || m.author.system == Some(true) {
+            return Ok(());
+        }
+        if !written(m.kind) {
             return Ok(());
         }
         let s = ctx.settings::<Settings>(guild, KEY)?;
@@ -1044,6 +1054,15 @@ fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
 mod tests {
     use super::*;
     use bot_core::{Config, Db};
+
+    #[test]
+    fn only_what_members_write_is_scored() {
+        assert!(written(MessageType::Regular));
+        assert!(written(MessageType::Reply));
+        for notice in [MessageType::UserJoin, MessageType::GuildBoost, MessageType::GuildBoostTier3, MessageType::ThreadCreated, MessageType::ChannelMessagePinned] {
+            assert!(!written(notice), "{notice:?}");
+        }
+    }
 
     const G: u64 = 42;
     const U: u64 = 1_250_000_000_000_000_001;

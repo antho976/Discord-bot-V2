@@ -410,6 +410,7 @@ pub async fn send_panel(ctx: &Ctx, guild: u64) -> Result<u64, String> {
         }
     };
     if let Some((old_channel, old_message)) = s.panel {
+        ctx.deleting_own_message(old_message);
         let _ = ctx.http.delete_message(Id::new(old_channel), Id::new(old_message)).await;
     }
     let mut next = (*s).clone();

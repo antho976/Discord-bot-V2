@@ -312,6 +312,8 @@ async fn refresh(ctx: &Ctx, guild: u64, channel: u64, message_id: u64, s: &Setti
         }
         Some(post) => {
             ctx.db.with(|c| forget(c, guild, message_id))?;
+            // The audit log skips the bot's own deletes when it ignores bots.
+            ctx.deleting_own_message(post.post_id);
             if let Err(e) = ctx.http.delete_message(Id::new(post.post_channel_id), Id::new(post.post_id)).await
                 && !is_not_found(&e)
             {

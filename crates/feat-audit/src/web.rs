@@ -42,9 +42,13 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     // "Today" starts at midnight in the viewer's own timezone.
     let since = page.user.local(now_ms()).start_of_day()?.timestamp().as_millisecond();
     let today = store::today(&ctx, guild, since)?;
-    // Only the actions that can explain the entries shown.
+    // Only the actions that can explain the entries shown: on their members, from a minute
+    // before the oldest.
     let oldest = rows.last().map_or(now_ms(), |r| r.at);
-    let mods = store::mod_actions(&ctx, guild, oldest - store::MATCH_MS)?;
+    let mut targets: Vec<u64> = rows.iter().filter_map(|r| r.user_id).collect();
+    targets.sort_unstable();
+    targets.dedup();
+    let mods = store::mod_actions_on(&ctx, guild, &targets, oldest - store::MATCH_MS)?;
     let week = store::moderator_counts(&ctx, guild, now_ms() - 7 * 86_400_000, ctx.bot_id())?;
     let daily = store::daily(&ctx, guild, now_ms(), 14)?;
     let has_channel = s.channel.is_some() || s.message_channel.is_some() || s.member_channel.is_some();
@@ -574,7 +578,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         (style())
         @if q.sent.is_some() {
             @let to: Vec<String> = crate::test_destinations(&s).iter().map(|(c, _)| channel_label(&ctx, *c)).collect();
-            (sent_toast(&format!("Test entry sent to {}", to.join(" and "))))
+            (ui::sent_toast(true, &format!("Test entry sent to {}", to.join(" and "))))
         }
         (tabs(&page, "Settings"))
         div.with-rail {
@@ -679,17 +683,6 @@ async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     let names: Vec<String> = sent.iter().map(|c| channel_label(&ctx, *c)).collect();
     ctx.audit(&page.user, Some(guild), KEY, format!("Sent a test audit log entry to {}", names.join(" and ")));
     Ok(Redirect::to(&format!("{}?sent=1", page.path("audit/settings"))).into_response())
-}
-
-/// A toast once the page is back, then the flag leaves the address.
-fn sent_toast(msg: &str) -> Markup {
-    // A JS string; `<` escaped so the text can't close the script.
-    let msg = format!("{msg:?}").replace('<', "\\u003c");
-    html! {
-        script { (PreEscaped(format!(
-            "(()=>{{const go=()=>{{window.botToast&&window.botToast({msg});const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash)}};document.readyState==='loading'?addEventListener('DOMContentLoaded',go,{{once:true}}):setTimeout(go)}})()"
-        ))) }
-    }
 }
 
 async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {

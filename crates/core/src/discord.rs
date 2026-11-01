@@ -163,6 +163,10 @@ pub struct MemberSnapshot {
 #[derive(Default)]
 pub(crate) struct Snapshots {
     messages: std::collections::HashMap<u64, (std::time::Instant, MessageSnapshot)>,
+    /// A message as its last edit left it, for an edit or delete after the cache dropped it.
+    edited: std::collections::HashMap<u64, (std::time::Instant, MessageSnapshot)>,
+    /// Messages of the bot's own that it is deleting, by id.
+    own_deletes: std::collections::HashMap<u64, std::time::Instant>,
     members: std::collections::HashMap<(u64, u64), (std::time::Instant, MemberSnapshot)>,
     voice: std::collections::HashMap<(u64, u64), (std::time::Instant, Option<u64>)>,
 }
@@ -172,6 +176,12 @@ impl Snapshots {
         let keep = |t: &std::time::Instant| t.elapsed().as_secs() < 120;
         if self.messages.len() > 500 {
             self.messages.retain(|_, (t, _)| keep(t));
+        }
+        if self.edited.len() > 500 {
+            self.edited.retain(|_, (t, _)| keep(t));
+        }
+        if self.own_deletes.len() > 500 {
+            self.own_deletes.retain(|_, t| keep(t));
         }
         if self.members.len() > 500 {
             self.members.retain(|_, (t, _)| keep(t));
@@ -206,22 +216,43 @@ fn snapshot_before(ctx: &Ctx, event: &Event) {
         })
     };
     let mut snaps = ctx.snapshots.lock().unwrap();
+    // The message before this event: the cache's copy, or once the cache has dropped it (25 per
+    // channel), what its last edit left. Never an older snapshot: after "A" was edited to "B",
+    // a delete must not quote "A".
+    let before = |snaps: &mut Snapshots, id: Id<MessageMarker>| {
+        match message(id).or_else(|| snaps.edited.get(&id.get()).map(|(_, s)| s.clone())) {
+            Some(s) => snaps.messages.insert(id.get(), (now, s)),
+            None => snaps.messages.remove(&id.get()),
+        };
+    };
     match event {
         Event::MessageUpdate(m) => {
-            if let Some(s) = message(m.id) {
-                snaps.messages.insert(m.id.get(), (now, s));
+            before(&mut snaps, m.id);
+            // Updates carry the whole message: keep what this edit leaves. Without content or
+            // files (an embed-only message, or no message content intent) there's nothing to
+            // keep, and an older copy would be wrong.
+            if m.content.is_empty() && m.attachments.is_empty() {
+                snaps.edited.remove(&m.id.get());
+            } else {
+                let after = MessageSnapshot {
+                    id: m.id.get(),
+                    channel_id: m.channel_id.get(),
+                    guild_id: m.guild_id.map(|g| g.get()),
+                    author_id: m.author.id.get(),
+                    content: m.content.clone(),
+                    attachments: m.attachments.iter().map(|a| a.url.clone()).collect(),
+                };
+                snaps.edited.insert(m.id.get(), (now, after));
             }
         }
         Event::MessageDelete(m) => {
-            if let Some(s) = message(m.id) {
-                snaps.messages.insert(m.id.get(), (now, s));
-            }
+            before(&mut snaps, m.id);
+            snaps.edited.remove(&m.id.get());
         }
         Event::MessageDeleteBulk(m) => {
             for id in &m.ids {
-                if let Some(s) = message(*id) {
-                    snaps.messages.insert(id.get(), (now, s));
-                }
+                before(&mut snaps, *id);
+                snaps.edited.remove(&id.get());
             }
         }
         Event::MemberUpdate(m) => {
@@ -260,6 +291,20 @@ impl Ctx {
     /// The voice channel a member was in before the voice update being handled.
     pub fn before_voice(&self, guild_id: u64, user_id: u64) -> Option<u64> {
         self.snapshots.lock().unwrap().voice.get(&(guild_id, user_id)).and_then(|(_, c)| *c)
+    }
+
+    /// Say, just before deleting it, that a message is the bot's own (an old sticky, a notice
+    /// that expires). Its delete event then reads as the bot's even once the cache has dropped
+    /// the message, so the audit log's "Ignore bots" keeps it out.
+    pub fn deleting_own_message(&self, message_id: u64) {
+        let mut snaps = self.snapshots.lock().unwrap();
+        snaps.own_deletes.insert(message_id, std::time::Instant::now());
+        snaps.prune();
+    }
+
+    /// Whether the message just deleted is one the bot said it was deleting of its own.
+    pub fn own_message_deleted(&self, message_id: u64) -> bool {
+        self.snapshots.lock().unwrap().own_deletes.get(&message_id).is_some_and(|t| t.elapsed().as_secs() < 60)
     }
 }
 
@@ -1176,5 +1221,59 @@ mod tests {
     #[test]
     fn errors_that_arent_discords_keep_their_words() {
         assert_eq!(super::why_refused_any(&anyhow::anyhow!("no link")), "Discord refused the message: no link");
+    }
+
+    /// A message event as the gateway sends it, through the snapshot and the cache in order.
+    fn feed(ctx: &crate::Ctx, kind: &str, id: u64, content: &str) {
+        use twilight_model::gateway::payload::incoming::{MessageCreate, MessageDelete, MessageUpdate};
+        let message = serde_json::json!({
+            "id": id.to_string(), "channel_id": "7", "guild_id": "1", "content": content,
+            "author": {"id": "42", "username": "alice", "discriminator": "0", "avatar": null},
+            "timestamp": "2026-11-01T10:00:00+00:00", "edited_timestamp": null, "tts": false,
+            "mention_everyone": false, "mentions": [], "mention_roles": [], "attachments": [],
+            "embeds": [], "pinned": false, "type": 0,
+        });
+        let event = match kind {
+            "create" => super::Event::MessageCreate(Box::new(MessageCreate(serde_json::from_value(message).unwrap()))),
+            "update" => super::Event::MessageUpdate(Box::new(MessageUpdate(serde_json::from_value(message).unwrap()))),
+            _ => super::Event::MessageDelete(serde_json::from_value::<MessageDelete>(serde_json::json!({"id": id.to_string(), "channel_id": "7", "guild_id": "1"})).unwrap()),
+        };
+        super::snapshot_before(ctx, &event);
+        ctx.cache.update(&event);
+    }
+
+    #[tokio::test]
+    async fn a_deleted_message_is_quoted_as_its_last_edit_left_it() {
+        let ctx = crate::Ctx::new(crate::Config::preview(0), crate::Db::memory().unwrap()).unwrap();
+        let before = |id| ctx.before_message(id).map(|m| m.content);
+        feed(&ctx, "create", 100, "A");
+        feed(&ctx, "update", 100, "B");
+        assert_eq!(before(100).as_deref(), Some("A"), "the edit sees the text before it");
+        // 25 newer messages push it out of the cache, then it is deleted: the text is "B".
+        for i in 0..30 {
+            feed(&ctx, "create", 200 + i, "newer");
+        }
+        assert!(ctx.cache.message(twilight_model::id::Id::new(100)).is_none());
+        feed(&ctx, "delete", 100, "");
+        assert_eq!(before(100).as_deref(), Some("B"));
+
+        // Edited again after the cache dropped it: the edit's before is the last edit, not the
+        // first copy.
+        feed(&ctx, "create", 300, "one");
+        feed(&ctx, "update", 300, "two");
+        for i in 0..30 {
+            feed(&ctx, "create", 400 + i, "newer");
+        }
+        feed(&ctx, "update", 300, "three");
+        assert_eq!(before(300).as_deref(), Some("two"));
+
+        // An edit with no text to keep leaves nothing for a later delete to quote wrongly.
+        feed(&ctx, "create", 500, "first");
+        feed(&ctx, "update", 500, "");
+        for i in 0..30 {
+            feed(&ctx, "create", 600 + i, "newer");
+        }
+        feed(&ctx, "delete", 500, "");
+        assert_eq!(before(500), None);
     }
 }

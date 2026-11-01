@@ -241,6 +241,7 @@ impl Feature for Utility {
                             let ctx = ctx.clone();
                             bot_core::tokio::spawn(async move {
                                 bot_core::tokio::time::sleep(WELCOME_LIFETIME).await;
+                                ctx.deleting_own_message(id);
                                 let _ = ctx.http.delete_message(Id::new(channel), Id::new(id)).await;
                             });
                         }

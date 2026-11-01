@@ -515,9 +515,12 @@ async fn post_in(ctx: &Ctx, thread: u64, content: &str, user: Option<u64>) -> Re
         .map_err(|e| if bot_core::discord::is_not_found(&e) { "The post was deleted.".to_owned() } else { bot_core::discord::why_refused(&e) })
 }
 
+/// The name is a post title or a Twitch name, so it is escaped: a post titled
+/// `[x](https://evil)` must not become a masked link under the bot's name.
 fn fill(template: &str, r: &Review) -> String {
-    let mention = r.user_id.map(|u| format!("<@{u}>")).unwrap_or_else(|| format!("**{}**", r.name));
-    text::fill(template, &[("mention", &mention), ("name", &r.name)])
+    let name = text::escape_markdown(&r.name);
+    let mention = r.user_id.map(|u| format!("<@{u}>")).unwrap_or_else(|| format!("**{name}**"));
+    text::fill(template, &[("mention", &mention), ("name", &name)])
 }
 
 async fn ping(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
@@ -642,9 +645,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let rewards = if ready && page.can_edit() { Some(twitch::rewards(&ctx, guild).await.map_err(|e| e.to_string())) } else { None };
     let body = html! {
         style { (PreEscaped(CSS)) }
-        @if q.sent.is_some() {
-            script { (PreEscaped("(()=>{const go=()=>{window.botToast&&window.botToast(\"Test sent to your DMs\");const u=new URL(location.href);u.searchParams.delete('sent');history.replaceState(history.state,'',u.pathname+u.search+u.hash)};document.readyState==='loading'?addEventListener('DOMContentLoaded',go):setTimeout(go)})()")) }
-        }
+        (ui::sent_toast(q.sent.is_some(), "Test sent to your DMs"))
         (tabs(&ctx, &page, &s, "Settings")?)
         div.with-rail {
         div.rv-main.rv-settings {
@@ -808,7 +809,7 @@ async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let me = page.user.id;
-    let name = ctx.display_name(guild, me);
+    let name = text::escape_markdown(&ctx.display_name(guild, me));
     let ping = if s.ping_message.trim().is_empty() { DEFAULT_PING } else { s.ping_message.as_str() };
     let fill_me = |t: &str| text::fill(t, &[("mention", &format!("<@{me}>")), ("name", &name)]);
     let mut sends = vec![format!("{}\n-# Test from the dashboard: the ping, as it posts in their post.", fill_me(ping))];
@@ -1229,5 +1230,11 @@ mod tests {
         assert_eq!(fill("{mention}, your turn ({name})", &r), "**Moonfrost**, your turn (Moonfrost)");
         r.user_id = Some(42);
         assert_eq!(fill("{mention}, your turn", &r), "<@42>, your turn");
+        // A name can't turn into a masked link or bold under the bot's name.
+        r.name = "[x](https://evil)".into();
+        assert_eq!(fill("{name}", &r), r"\[x\]\(https://evil\)");
+        r.user_id = None;
+        r.name = "a**b".into();
+        assert_eq!(fill("{mention}", &r), r"**a\*\*b**");
     }
 }

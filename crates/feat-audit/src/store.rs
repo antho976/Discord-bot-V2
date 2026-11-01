@@ -138,6 +138,18 @@ pub fn record(ctx: &Ctx, guild: u64, kind: Kind, user: Option<u64>, user_name: &
     Ok(())
 }
 
+/// Drop a member's entries of one kind stored since `since`: a leave the ban that followed
+/// speaks for.
+pub fn forget(ctx: &Ctx, guild: u64, kind: Kind, user: u64, since: i64) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute(
+            "DELETE FROM audit_events WHERE guild_id = ?1 AND kind = ?2 AND user_id = ?3 AND at >= ?4",
+            params![guild as i64, kind.key(), user as i64, since],
+        )
+    })?;
+    Ok(())
+}
+
 pub fn prune(ctx: &Ctx, before: i64) -> Result<()> {
     ctx.db.with(|c| {
         c.execute("DELETE FROM audit_events WHERE at < ?1", [before])?;
@@ -198,17 +210,34 @@ pub fn mod_actions(ctx: &Ctx, guild: u64, since: i64) -> Result<Vec<ModAction>> 
         let mut st = c.prepare_cached(
             "SELECT at, moderator_id, action, target_id, channel_id, reason FROM audit_mod_actions WHERE guild_id = ?1 AND at >= ?2 ORDER BY at DESC LIMIT 2000",
         )?;
-        st.query_map(params![guild as i64, since], |r| {
-            Ok(ModAction {
-                at: r.get(0)?,
-                moderator: r.get::<_, i64>(1)? as u64,
-                action: r.get(2)?,
-                target: r.get::<_, Option<i64>>(3)?.map(|t| t as u64),
-                channel: r.get::<_, Option<i64>>(4)?.map(|c| c as u64),
-                reason: r.get(5)?,
-            })
-        })?
-        .collect()
+        st.query_map(params![guild as i64, since], mod_action)?.collect()
+    })
+}
+
+/// Moderator actions on these members since `since`, newest first: what can explain the
+/// entries a page shows, however many other actions came after them.
+pub fn mod_actions_on(ctx: &Ctx, guild: u64, targets: &[u64], since: i64) -> Result<Vec<ModAction>> {
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+    ctx.db.with(|c| {
+        let mut st = c.prepare(&format!(
+            "SELECT at, moderator_id, action, target_id, channel_id, reason FROM audit_mod_actions
+             WHERE guild_id = ?1 AND at >= ?2 AND target_id IN ({}) ORDER BY at DESC",
+            id_list(targets)
+        ))?;
+        st.query_map(params![guild as i64, since], mod_action)?.collect()
+    })
+}
+
+fn mod_action(r: &bot_core::rusqlite::Row) -> bot_core::rusqlite::Result<ModAction> {
+    Ok(ModAction {
+        at: r.get(0)?,
+        moderator: r.get::<_, i64>(1)? as u64,
+        action: r.get(2)?,
+        target: r.get::<_, Option<i64>>(3)?.map(|t| t as u64),
+        channel: r.get::<_, Option<i64>>(4)?.map(|c| c as u64),
+        reason: r.get(5)?,
     })
 }
 

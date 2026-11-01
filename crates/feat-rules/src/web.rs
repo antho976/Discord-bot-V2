@@ -35,15 +35,6 @@ struct ListQuery {
     sent: Option<String>,
 }
 
-/// The toast that says a test went out, once, after the redirect back.
-fn sent_toast(msg: Option<&str>) -> Markup {
-    html! {
-        @if let Some(msg) = msg {
-            script { (PreEscaped(format!("(() => {{ const go = () => {{ window.botToast?.({msg:?}); history.replaceState(history.state, '', location.pathname); }}; document.readyState === 'loading' ? addEventListener('DOMContentLoaded', go, {{ once: true }}) : setTimeout(go); }})()"))) }
-        }
-    }
-}
-
 /// Channels that can take rules: text and announcement channels. Forums hold posts, not
 /// messages, so sticky and media-only rules have nothing to act on there.
 fn rule_channels(ctx: &Ctx, guild: u64) -> Vec<(u64, String)> {
@@ -269,7 +260,7 @@ async fn list_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
     };
     let body = html! {
         style { (PreEscaped(CSS)) }
-        (sent_toast(toast))
+        @if let Some(toast) = toast { (ui::sent_toast(true, toast)) }
         div.ru-week {
             div.ru-stats {
                 @for (key, label, unit, about) in STATS {

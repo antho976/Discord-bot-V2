@@ -161,6 +161,7 @@ pub async fn post(ctx: &Ctx, guild: u64, channel: u64, text: &str) -> Result<(),
             }
             ctx.count(guild, "rules_sticky", 1);
             if let Some(old) = old {
+                ctx.deleting_own_message(old);
                 let _ = ctx.http.delete_message(Id::new(channel), Id::new(old)).await;
             }
             Ok(())
@@ -184,6 +185,7 @@ pub async fn remove(ctx: &Ctx, channel: u64) {
         Ok(old)
     });
     if let Ok(Some(old)) = old {
+        ctx.deleting_own_message(old);
         let _ = ctx.http.delete_message(Id::new(channel), Id::new(old)).await;
     }
 }

@@ -26,15 +26,6 @@ struct PageQuery {
     sent: Option<String>,
 }
 
-/// The toast that says a test went out, once, after the redirect back.
-fn sent_toast(shown: bool, msg: &str) -> Markup {
-    html! {
-        @if shown {
-            script { (PreEscaped(format!("(() => {{ const go = () => {{ window.botToast?.({msg:?}); history.replaceState(history.state, '', location.pathname); }}; document.readyState === 'loading' ? addEventListener('DOMContentLoaded', go, {{ once: true }}) : setTimeout(go); }})()"))) }
-        }
-    }
-}
-
 /// Members of this server with a timezone, by what their clock reads, earliest first. Then
 /// the members whose saved zone the bot no longer knows (a zone renamed in a tz update).
 /// A member counts when the cache has them or they set their zone in this server, so the grid
@@ -304,7 +295,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
     channels.extend(ctx.text_channels(guild).into_iter().map(|(id, n)| (id.to_string(), format!("#{n}"))));
     let body = html! {
         style { (PreEscaped(CSS)) }
-        (sent_toast(q.sent.is_some(), "Test notice sent"))
+        (ui::sent_toast(q.sent.is_some(), "Test notice sent"))
         div.with-rail.au {
             div.stack.au-main {
                 @if times.is_empty() && unknown.is_empty() {

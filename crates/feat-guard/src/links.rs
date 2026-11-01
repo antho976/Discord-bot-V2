@@ -56,11 +56,18 @@ const BRANDS: &[(&str, &str, usize)] = &[
     ("twitch", "twitch.tv", 0),
 ];
 
+/// Brand names looked for inside a domain name, as skeletons, longest first.
+const BRAND_WORDS: &[&str] = &["discordapp", "steamcommunity", "steampowered", "discord", "twitch", "steam", "nitro"];
+
 /// Words that turn a brand name in a domain into a fake gift or login page.
-const BAIT: &[&str] = &[
-    "gift", "nitro", "free", "claim", "promo", "drop", "trade", "offer", "giveaway", "reward", "bonus",
-    "verify", "login", "auth", "account", "secure", "support", "event", "skin", "case", "boost", "airdrop",
-];
+const BAIT: &[&str] = &["gift", "nitro", "free", "claim", "promo", "giveaway", "reward", "bonus", "verify", "login", "auth", "airdrop"];
+
+/// Words real community sites also put next to a brand (steamtradematcher.com). Bait only when
+/// the name holds nothing else, as in steam-tradeoffer.ru.
+const WEAK_BAIT: &[&str] = &["trade", "offer", "drop", "account", "secure", "support", "event", "skin", "case", "boost"];
+
+/// Second-level names under a country's domain, so `steam.co.uk` is read as the site `steam`.
+const SECOND_LEVEL: &[&str] = &["co", "com", "net", "org", "gov", "edu", "ac"];
 
 /// Top-level domains accepted for links written without `https://`.
 const BARE_TLDS: &[&str] = &[
@@ -193,16 +200,28 @@ pub fn judge(link: &Link) -> Option<(i32, String)> {
     if on_list(host, IP_LOGGERS) {
         return Some((6, format!("IP-logger link ({shown})")));
     }
+    // A real domain written in front of another one: discord.com.evil.ru,
+    // steamcommunity.com-login.xyz, discord.gift-nitro.ru.
+    if let Some(real) = official_in_front(host) {
+        return Some((8, format!("Link imitates {real} ({shown})")));
+    }
     let labels: Vec<&str> = host.split('.').collect();
-    let name_labels = &labels[..labels.len().saturating_sub(1)];
-    // A label that is a brand in disguise: dlscord, dіscord (Cyrillic і), steamcommunlty.
-    for label in name_labels {
+    // The site someone registered is `main` plus the suffix after it: in discord.fandom.com the
+    // site is fandom.com and `discord` is only a page on it.
+    let suffix = suffix_len(&labels);
+    let names = &labels[..labels.len() - suffix];
+    let main = names.last().copied().unwrap_or_default();
+    for label in names {
         for part in std::iter::once(*label).chain(label.split('-')) {
-            // `discord-nitro`: the plain brand next to other words is judged below as a fake
-            // gift domain, not as a lookalike.
-            if part != *label && BRANDS.iter().any(|(b, _, _)| part == *b) {
+            if let Some((_, real, _)) = BRANDS.iter().find(|(b, _, _)| part == *b) {
+                // The brand itself as the site's name: discord.xyz, steam.ru. As a subdomain
+                // (discord.fandom.com) or next to other words (discord-nitro) it is judged below.
+                if part == *label && *label == main {
+                    return Some((8, format!("Link imitates {real} ({shown})")));
+                }
                 continue;
             }
+            // A brand in disguise: dlscord, dіscord (Cyrillic і), steamcommunlty.
             let sk = skeleton(part);
             for (brand, real, dist) in BRANDS {
                 let close = sk == *brand || (*dist > 0 && sk.len() >= 5 && distance(&sk, brand) <= *dist);
@@ -212,24 +231,26 @@ pub fn judge(link: &Link) -> Option<(i32, String)> {
             }
         }
     }
-    let whole = skeleton(&name_labels.join(""));
-    let brand_in = ["discord", "steam", "twitch", "nitro"].into_iter().find(|b| whole.contains(b));
-    if let Some(brand) = brand_in {
-        let bait = BAIT.iter().any(|w| *w != brand && whole.contains(&skeleton(w)));
-        let shown_brand = match brand {
-            "steam" => "Steam",
-            "twitch" => "Twitch",
-            "nitro" => "Nitro",
-            _ => "Discord",
-        };
-        if bait {
-            return Some((8, format!("Fake {shown_brand} gift or login link ({shown})")));
+    // A brand next to bait in one name (discord-nitro.shop, steam-tradeoffer.ru), or a brand
+    // on a site whose name is bait (discord.gifts-claim.ru, steamcommunity.login-page.ru,
+    // discord-app.gift).
+    let skeletons: Vec<String> = labels.iter().map(|l| skeleton(l)).collect();
+    let mut glued_brand = None;
+    for (i, sk) in skeletons[..names.len()].iter().enumerate() {
+        let Some(brand) = brand_in(sk) else { continue };
+        let fake = has_word(sk, BAIT, brand)
+            || (has_word(sk, WEAK_BAIT, brand) && only_bait(sk))
+            || skeletons.iter().enumerate().any(|(j, other)| j != i && (has_word(other, BAIT, brand) || only_bait(other)));
+        if fake {
+            return Some((8, format!("Fake {} gift or login link ({shown})", brand_label(brand))));
         }
-        if brand != "nitro" {
-            return Some((2, format!("Unofficial domain using the {shown_brand} name ({shown})")));
+        if names[i] != brand && brand != "nitro" {
+            glued_brand = glued_brand.or(Some(brand));
         }
     }
-    let main = name_labels.last().copied().unwrap_or_default();
+    if let Some(brand) = glued_brand {
+        return Some((2, format!("Unofficial domain using the {} name ({shown})", brand_label(brand))));
+    }
     if GAMBLING.contains(&main) || on_list(host, GAMBLING_HOSTS) {
         return Some((4, format!("Gambling or skin-betting site ({shown})")));
     }
@@ -240,6 +261,60 @@ pub fn judge(link: &Link) -> Option<(i32, String)> {
         return Some((1, format!("Shortened link ({shown})")));
     }
     None
+}
+
+/// An official domain written at the start of a label run and followed by more host:
+/// `discord.com.evil.ru`, `steamcommunity.com-login.xyz`.
+fn official_in_front(host: &str) -> Option<&'static str> {
+    let b = host.as_bytes();
+    OFFICIAL.iter().copied().find(|d| {
+        host.match_indices(d).any(|(i, _)| (i == 0 || b[i - 1] == b'.') && matches!(b.get(i + d.len()), Some(b'.' | b'-')))
+    })
+}
+
+/// How many labels at the end of a host are the public suffix: 1 for `.com`, 2 for a
+/// country's second level like `.co.uk` or `.com.ru`.
+fn suffix_len(labels: &[&str]) -> usize {
+    let n = labels.len();
+    if n >= 3 && labels[n - 1].len() == 2 && SECOND_LEVEL.contains(&labels[n - 2]) { 2 } else { 1 }
+}
+
+/// The first brand inside a name's skeleton.
+fn brand_in(sk: &str) -> Option<&'static str> {
+    BRAND_WORDS.iter().copied().find(|b| sk.contains(b))
+}
+
+fn brand_label(brand: &str) -> &'static str {
+    match brand {
+        "steam" | "steamcommunity" | "steampowered" => "Steam",
+        "twitch" => "Twitch",
+        "nitro" => "Nitro",
+        _ => "Discord",
+    }
+}
+
+/// Whether a name's skeleton holds one of `words`, other than the brand found in it.
+fn has_word(sk: &str, words: &[&str], brand: &str) -> bool {
+    words.iter().any(|w| *w != brand && sk.contains(&skeleton(w)))
+}
+
+/// A name made of bait words with nothing else but digits, brands and up to two letters:
+/// `gifts-claim`, `steam-tradeoffers`. A name with another word in it (`steamtradematcher`) is
+/// a site of its own.
+fn only_bait(sk: &str) -> bool {
+    let mut rest = sk.to_owned();
+    let mut bait = false;
+    for w in BAIT.iter().chain(WEAK_BAIT) {
+        let w = skeleton(w);
+        if rest.contains(&w) {
+            bait = true;
+            rest = rest.replace(&w, "");
+        }
+    }
+    for b in BRAND_WORDS {
+        rest = rest.replace(b, "");
+    }
+    bait && rest.chars().filter(|c| !c.is_ascii_digit()).count() <= 2
 }
 
 /// `[discord.com](https://evil.ru)`: the text shows one site and the link opens another.
@@ -506,6 +581,47 @@ mod tests {
             "https://free-nitro.xyz",
             "https://steam-tradeoffer.ru/x",
             "discordgift.site/abc",
+        ] {
+            assert_eq!(verdict(t), Some(8), "{t}");
+        }
+    }
+
+    #[test]
+    fn brand_pages_on_other_sites_pass() {
+        // A brand as a page on an unrelated site, or next to a real word, is not an imitation.
+        for t in [
+            "https://discord.js.org/docs/packages/discord.js/main",
+            "https://discord.fandom.com/wiki/Nitro",
+            "https://www.steamtradematcher.com/",
+            "https://steam.gamebanana.com/",
+            "https://discordjs.guide/",
+        ] {
+            let v = verdict(t);
+            assert!(v.is_none_or(|w| w < 4), "{t}: {v:?}");
+        }
+        assert_eq!(verdict("https://discord.fandom.com/wiki/Nitro"), None);
+        assert_eq!(verdict("https://discord.js.org/"), None);
+        assert_eq!(verdict("https://www.steamtradematcher.com/"), Some(2));
+    }
+
+    #[test]
+    fn scam_shapes_around_a_brand_are_caught() {
+        for t in [
+            "https://discord.gift-nitro.ru/claim",
+            "https://steamcommunity.com-login.xyz/id/me",
+            "https://discord.com.verify.ru/",
+            "https://cdn.discordapp.com.files.ru/a.png",
+            "https://dlscord.com/",
+            "https://steam-tradeoffer.ru/x",
+            "https://steamtradeoffers.com/x",
+            "https://steam.co.uk/",
+            "https://discord.gifts-claim.ru/",
+            "https://steamcommunity.login-page.ru/",
+            "https://discord.nitro.xyz/",
+            "https://discord-app.gift/",
+            "https://discord-nitro.pages.dev/",
+            "https://dlscord.pages.dev/",
+            "https://free-discord-nitro-generator.com/",
         ] {
             assert_eq!(verdict(t), Some(8), "{t}");
         }
