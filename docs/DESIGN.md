@@ -12,8 +12,8 @@ wide screens on the same day, after the owner's first look.
 The dashboard wears the server. A blue-black ground; the server's own colour (`--accent`, sampled
 in the browser from the server icon) lights the active page, the primary button, switches, focus
 and the generated banner art; lilac (`--data`) carries every chart and meter; each sidebar group
-has its own hue, so a page is found by colour and its header, icon tiles and empty states take
-it, faintly. Pictures everywhere: the banner (Discord's, an uploaded one, or art drawn from the icon),
+has its own hue, so a page is found by colour: its header tile and icon tiles take it. Pictures
+everywhere: the banner (Discord's, an uploaded one, or art drawn from the icon),
 members' faces, stream thumbnails. Motion is part of the material: pages slide between each other
 (cross-document view transitions), charts draw in, bars grow, numbers count up, buttons lift and
 press. Everything respects `prefers-reduced-motion`. Copy stays dry and specific.
@@ -36,9 +36,10 @@ press. Everything respects `prefers-reduced-motion`. Copy stays dry and specific
 | `--gutter` | Page padding, 24 to 44 px with the window |
 | `--z` | The page zoom on big screens (below); divide any `vh` height by it |
 
-No coloured glows: no `box-shadow`, `drop-shadow` or `text-shadow` blur in a hue (dark depth shadows
-and 0-blur rings are fine), and colour washes behind cards at about 10% or less. The owner
-found the glows too much.
+No glows: no `box-shadow`, `drop-shadow` or `text-shadow` blur in a hue (dark depth shadows and
+0-blur rings are fine), no radial colour washes behind cards or headers, no gradient or
+rainbow meters. Cards are flat. The owner found the glows too much, twice. Pictures (the
+banner, generated server art, the giveaway art tile) are the only soft colour.
 
 Never a raw grey in feature CSS. A colour that isn't a token is fine when it is the subject's own
 (Discord's embed grey `#2b2d31`, Twitch's live red, a role's colour).
@@ -64,8 +65,8 @@ The page fills the window; nothing is capped at a fixed width and parked at the 
 ## Shell
 
 - **Server rail** (72 px, far left): the bot's mark, then each server's icon as Discord draws its
-  guild bar (round, squircle on hover, a white pill for the current one), then the bell with its
-  count and your avatar, which opens Features, People, Activity and Sign out.
+  guild bar (round, squircle on hover, a white pill for the current one), then your avatar,
+  which opens Features, People, Activity and Sign out.
 - **Sidebar** (252 px): the server's banner card (name, online state, member count), the search
   button, then Overview and the pages in groups. Each group has a hue swatch and folds like a
   Discord category; the browser remembers folds. Each page has a 26 px icon tile tinted in its
@@ -73,11 +74,20 @@ The page fills the window; nothing is capped at a fixed width and parked at the 
   glides to the next page during a view transition).
 - **Search palette**: ⌘K / Ctrl K / `/` or the search button. Pages, servers and actions, fuzzy
   matched with the matched letters lit, recent pages first, arrow keys and Enter.
+- **Bell** (`.page-corner`, top right of every page): a dropdown of the newest notices, loaded
+  when opened (`/g/{id}/notifications/peek`, which marks them seen), with "See all".
 - **Phone** (under 920 px): a top bar (menu, server, search, bell); the rail and sidebar slide in
   as a drawer.
-- **Page header** (`ui::layout`): a faint wash of the group's hue behind it, a 48 px icon tile
-  filled with the hue, the title (24 px, 600), the page's one line, then actions. One primary
-  button at most.
+- **Page header** (`ui::layout`): a 48 px icon tile filled with the hue, the title (24 px, 600),
+  the page's one line, then actions, left of the bell. One primary button at most.
+- **Page swaps**: links and forms inside the dashboard fetch their page and replace only
+  `<main>` (app.js `visit`). The sidebar, rail and their scroll stay; the pill glides; counts
+  update; a refused save is a toast. Anything else (sign-in, another server, a file, a link
+  with `target`, `download` or `data-full`) is an ordinary visit. Page setup lives in app.js
+  `mount`. A feature's inline script runs again after a swap, so it never waits for
+  `DOMContentLoaded` and passes `window.botPage.signal` to timers and document listeners.
+- **Save** sits at the end of its form (`.save-bar`). While a settings form has changes and its
+  Save is out of view, a Discord-style bar at the bottom offers Reset and Save.
 - **Overview** (`ui::layout_custom`) draws the A3 hero: banner photo (or `ui::art`), server icon
   in a ring of its colour, the greeting, then stat cards that count up, the area chart, "Needs
   you" and "Around the server" (side by side when wide), with the right column panel. The stat
@@ -122,6 +132,7 @@ Feature-specific CSS lives in the feature crate (`fn style()`), classes prefixed
 - Animate transform, opacity, filter, clip-path; never layout properties.
 - Loops (pings, drifting art) only on things that are live or decorative backgrounds, slow and
   quiet.
+- Sidebar groups animate only when opened by hand, never on a page load.
 - Coming back to the same page (another filter in the address, or after a save) is `html.same`:
   no page slide and no entrance, numbers don't count again, and only charts draw. The head
   script in `ui.rs` decides it from the referrer.
