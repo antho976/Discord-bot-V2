@@ -261,6 +261,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
     let name = ctx.guild_name(guild);
     let members = ctx.member_count(guild);
     let banner = ctx.guild_banner_url(guild);
+    let frame = super::banner::frame(ctx, guild);
     let icon_url = ctx.guild_icon_large(guild);
     let me = page.user.avatar_url();
 
@@ -284,7 +285,7 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                         details.pop.srv-pick {
                             summary.side-head aria-label={ (name) ", switch server" } {
                                 @match (&banner, &icon_url) {
-                                    (Some(b), _) => img.cover src=(b) alt="";,
+                                    (Some(b), _) => img.cover src=(b) alt="" style=[frame.map(|f| f.style())];,
                                     (None, i) => (art(i.as_deref(), true)),
                                 }
                                 div.side-head-name {

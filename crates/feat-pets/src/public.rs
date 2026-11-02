@@ -107,6 +107,7 @@ fn page(ctx: &Ctx, viewer: &MaybeUser, guild: u64, title: &str, active: &str, da
     let name = ctx.guild_name(guild);
     let icon = ctx.guild_icon_large(guild);
     let banner = ctx.guild_banner_url(guild);
+    let frame = bot_core::web::banner::frame(ctx, guild);
     let can = viewer.0.as_ref().is_some_and(|u| ctx.level(u, guild, KEY) >= Level::View);
     let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
     let markup = html! {
@@ -119,7 +120,7 @@ fn page(ctx: &Ctx, viewer: &MaybeUser, guild: u64, title: &str, active: &str, da
                 header.ov-hero.pets-pub-hero {
                     div.ov-bg {
                         @match (&banner, &icon) {
-                            (Some(b), _) => img src=(b) alt="";,
+                            (Some(b), _) => img src=(b) alt="" style=[frame.map(|f| f.style())];,
                             (None, i) => (ui::art(i.as_deref(), false)),
                         }
                     }

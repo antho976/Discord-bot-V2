@@ -258,28 +258,40 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     };
 
     let uploaded = super::banner::uploaded_at(&ctx, guild).is_some();
+    let frame = super::banner::frame(&ctx, guild);
     let body = html! {
         header.ov-head data-local {
-            // For admins the banner itself is the control: clicking it picks a new picture.
-            @let bg = html! {
+            div.ov-bg {
                 @match (&banner, &icon_large) {
-                    (Some(b), _) => img src=(b) alt="" fetchpriority="high";,
+                    (Some(b), _) => img src=(b) alt="" fetchpriority="high" style=[frame.map(|f| f.style())];,
                     (None, i) => (ui::art(i.as_deref(), true)),
                 }
-            };
+            }
+            // For admins: one button opens the editor in place, where the picture is dragged
+            // to move it, zoomed with the slider, or replaced. The banner itself never takes a
+            // click, so the tabs and links it lies behind always work.
             @if user.admin {
-                button.ov-bg.editable type="button" data-banner-pick aria-label="Change the banner" { (bg) }
                 div.ov-tools {
-                    span.ov-hint { (ui::icon(Icon::Image)) "Change banner" }
+                    button.ov-hint.btnlike type="button" data-banner-edit { (ui::icon(Icon::Image)) "Edit banner" }
+                }
+                div.ov-edit role="toolbar" aria-label="Edit the banner" hidden
+                    data-frame-action={ "/g/" (guild) "/banner/frame" }
+                    data-max-zoom=(super::banner::MAX_ZOOM) {
+                    span.ov-edit-tip { "Drag to move" }
+                    label.ov-zoom {
+                        span { "Zoom" }
+                        input type="range" min="1" max=(super::banner::MAX_ZOOM) step="0.01" value=(frame.map_or(1.0, |f| f.zoom)) data-banner-zoom;
+                    }
+                    button.ov-hint.btnlike type="button" data-banner-replace { "Replace picture" }
                     @if uploaded {
                         form.inline method="post" action={ "/g/" (guild) "/banner/remove" } data-full {
                             button.ov-hint.btnlike type="submit" { "Remove upload" }
                         }
                     }
+                    button.ov-hint.btnlike type="button" data-banner-cancel { "Cancel" }
+                    button.btn.small.primary type="button" data-banner-save { "Save" }
                 }
                 input #banner-file type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-action={ "/g/" (guild) "/banner" };
-            } @else {
-                div.ov-bg { (bg) }
             }
             div.ov-hello {
                 @match &icon_large {

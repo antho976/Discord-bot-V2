@@ -122,8 +122,7 @@ main.page:focus { outline: none; }
 .side-head { position: relative; display: flex; flex-direction: column; justify-content: flex-end; height: 88px; padding: 10px; border-radius: 12px; overflow: hidden; isolation: isolate; background: var(--raised); cursor: pointer; }
 .side-head::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, rgba(15, 15, 16, 0.15) 25%, rgba(15, 15, 16, 0.88) 100%); }
 .side-head .art, .side-head > img.cover { position: absolute; inset: 0; z-index: -2; }
-.side-head > img.cover { width: 100%; height: 100%; object-fit: cover; transition: transform 0.6s var(--ease); }
-.side-head:hover > img.cover { transform: scale(1.04); }
+.side-head > img.cover { width: 100%; height: 100%; object-fit: cover; object-position: var(--bx, 50%) var(--by, 50%); transform: scale(var(--bz, 1)); transform-origin: var(--bx, 50%) var(--by, 50%); }
 .side-head-name { display: flex; align-items: center; gap: 10px; }
 .side-head-name strong { display: block; font-size: 14px; font-weight: 600; line-height: 1.2; }
 .side-head-name .gicon { width: 28px; height: 28px; border-radius: 8px; }
@@ -440,21 +439,43 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
    air separates, lines are data. Opened every day, so nothing enters or counts up; only the
    chart draws in once. */
 .ov-head { position: relative; display: flex; flex-direction: column; padding: 0 var(--gutter); isolation: isolate; }
+/* The banner never takes a click: it lies behind the name and, past the header, behind the
+   tabs and the side panel. Its frame (--bx, --by, --bz) is the point of the picture that stays
+   put and the zoom around it, set by the editor below. */
 .ov-bg { position: absolute; inset: 0 0 auto 0; height: 300px; z-index: -1; overflow: hidden; pointer-events: none; -webkit-mask-image: linear-gradient(180deg, #000 35%, transparent); mask-image: linear-gradient(180deg, #000 35%, transparent); }
-.ov-bg img { width: 100%; height: 100%; object-fit: cover; object-position: center 40%; opacity: 0.7; display: block; }
+.ov-bg img { width: 100%; height: 100%; object-fit: cover; object-position: var(--bx, 50%) var(--by, 40%); transform: scale(var(--bz, 1)); transform-origin: var(--bx, 50%) var(--by, 40%); opacity: 0.7; display: block; user-select: none; -webkit-user-drag: none; }
 .ov-bg .art { opacity: 0.7; }
-.ov-tools { position: absolute; top: 16px; right: var(--gutter); z-index: 2; display: flex; gap: 8px; }
-button.ov-bg { display: block; padding: 0; border: 0; background: none; cursor: pointer; pointer-events: auto; }
-button.ov-bg:focus-visible { outline-offset: -4px; }
-button.ov-bg.busy { cursor: progress; }
-/* "Change banner" shows while the pointer is on the banner; the click is on the picture itself. */
+/* "Edit banner" shows while the pointer is on the header (always on touch screens). */
+.ov-tools, .ov-edit { position: absolute; top: 16px; right: var(--gutter); z-index: 2; display: flex; align-items: center; gap: 8px; }
 .ov-tools { pointer-events: none; opacity: 0; transition: opacity 0.15s; }
-.ov-head:has(> .ov-bg:hover) .ov-tools, .ov-tools:hover, .ov-head:has(> .ov-bg:focus-visible) .ov-tools, .ov-head:has(> .ov-bg.busy) .ov-tools { opacity: 1; pointer-events: auto; }
+.ov-head:hover .ov-tools, .ov-tools:focus-within { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .ov-tools { opacity: 1; pointer-events: auto; } }
 .ov-hint { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: 8px; background: rgba(20, 20, 21, 0.6); backdrop-filter: blur(16px); color: var(--ink); font: 500 12px var(--sans); border: 0; }
 .ov-hint .icon { width: 14px; height: 14px; }
 .ov-hint.btnlike { cursor: pointer; }
 .ov-hint.btnlike:hover { background: rgba(20, 20, 21, 0.85); }
-@media (hover: none) { .ov-tools { opacity: 1; pointer-events: auto; } }
+/* Editing: the picture is the handle, the name lets the drag through, one toolbar. */
+.ov-edit { flex-wrap: wrap; justify-content: flex-end; left: var(--gutter); padding: 0; }
+.ov-edit[hidden] { display: none; }
+.ov-edit .btn.small { height: 28px; border-radius: 8px; }
+.ov-edit-tip { margin-right: auto; padding: 0 10px; height: 28px; display: inline-flex; align-items: center; border-radius: 8px; background: rgba(20, 20, 21, 0.6); backdrop-filter: blur(16px); color: var(--ink-2); font-size: 12px; }
+.ov-zoom { display: inline-flex; align-items: center; gap: 10px; height: 28px; padding: 0 12px 0 10px; border-radius: 8px; background: rgba(20, 20, 21, 0.6); backdrop-filter: blur(16px); color: var(--ink-2); font: 500 12px var(--sans); }
+.ov-zoom input { width: 120px; }
+.ov-head.editing .ov-tools { display: none; }
+.ov-head.editing .ov-bg { pointer-events: auto; cursor: grab; touch-action: none; }
+.ov-head.editing .ov-bg.dragging { cursor: grabbing; }
+.ov-head.editing .ov-bg:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ov-head.editing .ov-hello { pointer-events: none; }
+.ov-head.editing.no-pic .ov-edit-tip, .ov-head.editing.no-pic .ov-zoom { display: none; }
+.ov-head.busy .ov-edit { pointer-events: none; opacity: 0.6; }
+/* A slim slider: a 2px track, the accent up to the thumb. */
+input[type="range"] { -webkit-appearance: none; appearance: none; height: 16px; background: transparent; cursor: pointer; accent-color: var(--accent); }
+input[type="range"]::-webkit-slider-runnable-track { height: 2px; border-radius: 1px; background: rgba(237, 237, 237, 0.2); }
+input[type="range"]::-moz-range-track { height: 2px; border-radius: 1px; background: rgba(237, 237, 237, 0.2); }
+input[type="range"]::-moz-range-progress { height: 2px; border-radius: 1px; background: var(--accent); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; margin-top: -5px; border-radius: 50%; background: var(--ink); border: 0; }
+input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--ink); border: 0; }
+input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .ov-hello { display: flex; align-items: center; gap: 20px; padding-top: 148px; }
 .ov-icon { width: 80px; height: 80px; border-radius: 24px; flex: none; object-fit: cover; box-shadow: 0 0 0 3px var(--page), 0 0 0 5px var(--accent); }
 .ov-icon.letter { display: grid; place-items: center; background: var(--solid); font-size: 32px; font-weight: 600; color: var(--ink); }
@@ -560,7 +581,10 @@ button.ov-bg.busy { cursor: progress; }
   .ov-bg { height: 210px; }
   .ov-hello { padding-top: 104px; gap: 16px; }
   .ov-hello h1 { font-size: 24px; }
-  .ov-tools { right: 18px; }
+  .ov-tools, .ov-edit { right: 18px; }
+  .ov-edit { left: 18px; }
+  .ov-edit-tip { display: none; }
+  .ov-zoom input { width: 88px; }
   .ov-fig b { font-size: 34px; }
   .ov-answer .area svg { height: 200px; }
   .ov-metrics { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -18px 16px; padding: 0 18px; }
@@ -1075,6 +1099,6 @@ html.vt-soft main.page .lv-step, html.same main.page .lv-step { animation: none 
 /* Toggles slide, no bounce. */
 .switch .thumb { transition: transform 0.2s cubic-bezier(0.23, 1, 0.32, 1), width 0.15s ease; }
 /* Hover never zooms pictures or springs faces. */
-.stream-card:hover img, .side-head:hover > img.cover, .sa-row:hover .sa-vt img { transform: none; }
+.stream-card:hover img, .sa-row:hover .sa-vt img { transform: none; }
 .avatars .avatar { transition: transform 0.15s ease, margin 0.15s ease; }
 .avatars .avatar:hover { transform: none; }

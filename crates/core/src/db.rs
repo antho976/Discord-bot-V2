@@ -182,4 +182,13 @@ const CORE_MIGRATIONS: &[Migration] = &[
         name: "004_admin_plus",
         sql: "ALTER TABLE dash_users ADD COLUMN admin_plus INTEGER NOT NULL DEFAULT 0;",
     },
+    // Where the banner sits in its frame: the point of the picture (percent across and down)
+    // that stays put, and how far it's zoomed. Applies to an uploaded or a Discord banner.
+    Migration {
+        name: "005_banner_frames",
+        sql: "
+        CREATE TABLE guild_banner_frames (
+            guild_id INTEGER PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL, zoom REAL NOT NULL);
+    ",
+    },
 ];
