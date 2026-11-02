@@ -86,7 +86,7 @@ impl Icon {
             Icon::Clock => (16, r#"<circle cx="8" cy="8" r="5.75"/><path d="M8 4.75V8l2.25 1.5"/>"#),
             Icon::Afk => (24, r#"<path d="M3.5 13.5a7 7 0 1 0 14 0 7 7 0 1 0-14 0M10.5 10v3.5l2.5 1.5M19 2.5a3 3 0 1 0 2.5 4.6A2.6 2.6 0 0 1 19 2.5z"/>"#),
             Icon::Moon => (16, r#"<path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z"/>"#),
-            Icon::Paw => (24, r#"<path d="M4.9 10.5a1.6 2.1 0 1 0 3.2 0 1.6 2.1 0 1 0-3.2 0M8.3 6.9a1.6 2.1 0 1 0 3.2 0 1.6 2.1 0 1 0-3.2 0M12.5 6.9a1.6 2.1 0 1 0 3.2 0 1.6 2.1 0 1 0-3.2 0M15.9 10.5a1.6 2.1 0 1 0 3.2 0 1.6 2.1 0 1 0-3.2 0M12 12.5c-2.6 0-5 2.7-5 4.8 0 1.4 1.1 2.4 2.4 2.4 1 0 1.6-.5 2.6-.5s1.6.5 2.6.5c1.3 0 2.4-1 2.4-2.4 0-2.1-2.4-4.8-5-4.8z"/>"#),
+            Icon::Paw => (24, r#"<g fill="currentColor" stroke="none"><ellipse cx="5.6" cy="10.9" rx="1.75" ry="2.25" transform="rotate(-22 5.6 10.9)"/><ellipse cx="9.3" cy="6.4" rx="1.8" ry="2.35" transform="rotate(-8 9.3 6.4)"/><ellipse cx="14.7" cy="6.4" rx="1.8" ry="2.35" transform="rotate(8 14.7 6.4)"/><ellipse cx="18.4" cy="10.9" rx="1.75" ry="2.25" transform="rotate(22 18.4 10.9)"/></g><path d="M12 12.4c-2.3 0-4.8 2.7-4.8 5 0 1.5 1.1 2.5 2.5 2.5 1 0 1.5-.45 2.3-.45s1.3.45 2.3.45c1.4 0 2.5-1 2.5-2.5 0-2.3-2.5-5-4.8-5z"/>"#),
             Icon::Shield => (24, r#"<path d="m12 3 7 3v5c0 4.6-3 8-7 10-4-2-7-5.4-7-10V6zM12.5 7v6a2.25 2.25 0 0 1-4.5 0v-1M12.5 7H14"/>"#),
             Icon::Plug => (24, r#"<path d="M6 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM8 17.5h2M16 11.5l2 2 4-4"/>"#),
             Icon::Brush => (24, r#"<path d="M5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13A1.5 1.5 0 0 1 5.5 4ZM7.5 4v16M10.5 9h6M10.5 12.5h4M10.5 16h5"/>"#),
@@ -277,8 +277,6 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                 div.scrim {}
                 div.shell {
                     nav.guilds aria-label="Servers" {
-                        a.guild.mark href="/" data-tip="Dashboard" aria-label="Dashboard home" { (mark()) }
-                        span.guilds-sep {}
                         div.guilds-list {
                             @for g in &guilds {
                                 a.guild.on[*g == guild] href={ "/g/" (g) } data-tip=(ctx.guild_name(*g)) aria-label=(ctx.guild_name(*g)) aria-current=[(*g == guild).then_some("true")] {
