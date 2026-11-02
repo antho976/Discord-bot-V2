@@ -5,7 +5,9 @@ use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::rusqlite::params;
-use bot_core::twilight_model::channel::message::AllowedMentions;
+use bot_core::twilight_model::channel::Message;
+use bot_core::twilight_model::channel::message::component::{ButtonStyle, Component};
+use bot_core::twilight_model::channel::message::{AllowedMentions, MessageType};
 use bot_core::twilight_model::id::Id;
 use bot_core::web::ui::{self, Dot, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
@@ -15,7 +17,8 @@ use serde::Deserialize;
 
 use crate::store::{self, Move, Review, Tally};
 use crate::twitch::{self, Conn};
-use crate::{DEFAULT_DONE, DEFAULT_PING, KEY, Settings};
+use crate::words;
+use crate::{DEFAULT_DONE, DEFAULT_NUDGE, DEFAULT_PING, KEY, Settings};
 
 const STATE_COOKIE: &str = "rv_twitch";
 const DAY_MS: i64 = 86_400_000;
@@ -34,7 +37,9 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/reviews/{id}/remove", post(remove))
         .route("/g/{guild}/reviews/{id}/promote", post(promote))
         .route("/g/{guild}/reviews/{id}/reopen", post(reopen))
+        .route("/g/{guild}/reviews/{id}/lock", post(lock))
         .route("/g/{guild}/reviews/{id}/notes", post(save_notes))
+        .route("/g/{guild}/reviews/{id}/thread", get(thread_view))
         .route("/g/{guild}/reviews/twitch/connect", get(twitch_connect))
         .route("/g/{guild}/reviews/twitch/disconnect", post(twitch_disconnect))
         .route("/g/{guild}/reviews/twitch/reward", post(pick_reward))
@@ -68,6 +73,11 @@ fn joins_words(page: &Page, at: i64, now: i64) -> String {
     }
 }
 
+/// "1 hour", "24 hours".
+fn hours(n: i64) -> String {
+    format!("{n} {}", if n == 1 { "hour" } else { "hours" })
+}
+
 /// "40 min", "5 h", "3 days".
 fn wait_words(ms: i64) -> String {
     let mins = (ms / 60_000).max(0);
@@ -91,6 +101,35 @@ fn points_flag() -> Markup {
 
 fn thread_url(guild: u64, thread: u64) -> String {
     format!("https://discord.com/channels/{guild}/{thread}")
+}
+
+/// "Open post": the page's script tries the Discord app (`discord://`) first and falls back to
+/// discord.com in a new tab, which is also what a middle click or a copied link opens.
+fn post_link(guild: u64, thread: u64) -> Markup {
+    html! {
+        a.rv-link href=(thread_url(guild, thread)) data-app={ "discord://-/channels/" (guild) "/" (thread) } target="_blank" rel="noreferrer noopener" {
+            (ui::icon(Icon::External)) "Open post"
+        }
+    }
+}
+
+/// The member's IdleonToolbox profile as a link named after it, or that there isn't one yet
+/// (and when the bot asked for it).
+fn toolbox_meta(page: &Page, r: &Review) -> Option<Markup> {
+    if let Some(url) = r.toolbox_link() {
+        let name = words::toolbox_profile(&url).unwrap_or_else(|| "profile".into());
+        return Some(html! { a.rv-link href=(url) target="_blank" rel="noreferrer noopener" title=(url) { (ui::icon(Icon::External)) "Toolbox: " (name) } });
+    }
+    // Only a member with a post can share one.
+    (r.thread_id.is_some() && r.user_id.is_some()).then(|| match r.nudged_at {
+        Some(at) => html! { span.rv-nolink data-tip={ "Asked in the post: " (stamp(page, at)) } { "No toolbox link" } },
+        None => html! { span.rv-nolink { "No toolbox link" } },
+    })
+}
+
+/// The tags read from the post, as small pills.
+fn tag_pills(r: &Review) -> Markup {
+    html! { @for t in &r.tags { span.rv-tag { (t) } } }
 }
 
 /// The face on a row: the member's avatar, or the name's first letter on Twitch's purple for a
@@ -119,6 +158,8 @@ fn matches_search(ctx: &Ctx, guild: u64, r: &Review, q: &str) -> bool {
     let q = q.to_lowercase();
     r.name.to_lowercase().contains(&q)
         || r.notes.to_lowercase().contains(&q)
+        || r.tags.iter().any(|t| t.to_lowercase().contains(&q))
+        || r.toolbox.as_ref().is_some_and(|t| t.to_lowercase().contains(&q))
         || r.twitch_user.as_ref().is_some_and(|t| t.to_lowercase().contains(&q))
         || r.user_id.is_some_and(|u| ctx.display_name(guild, u).to_lowercase().contains(&q))
 }
@@ -171,7 +212,7 @@ async fn queue_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
                 @if !open.is_empty() {
                     form.rv-search method="get" action=(page.path("reviews")) role="search" {
                         (ui::icon(Icon::Search))
-                        input.input type="search" name="q" value=(search.unwrap_or_default()) placeholder="Search names, members and notes" aria-label="Search the queue";
+                        input.input type="search" name="q" value=(search.unwrap_or_default()) placeholder="Search names, members, tags and notes" aria-label="Search the queue";
                         button.btn type="submit" { "Search" }
                         @if search.is_some() { a.btn.ghost href=(page.path("reviews")) { "Clear" } }
                     }
@@ -179,13 +220,14 @@ async fn queue_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, 
                 @if open.is_empty() {
                     (ui::empty(Icon::Review, "No one is waiting", &if s.channel.is_some() { "New posts in the review channel, and channel points redemptions once Twitch is connected, show up here.".to_owned() } else { "Pick the forum channel people post requests in on the Settings tab, and new posts show up here.".to_owned() }))
                 } @else if shown.is_empty() {
-                    (ui::empty(Icon::Search, "Nothing matches", "Try part of the account name, the member or a word from the notes."))
+                    (ui::empty(Icon::Search, "Nothing matches", "Try part of the account name, the member, a tag like Late game, or a word from the notes."))
                 } @else {
                     ol.rv-queue.numbered[search.is_none()] {
                         @for (i, r) in shown.iter().enumerate() {
                             (queue_row(&ctx, &page, &s, r, i + 1, search.is_none(), now))
                         }
                     }
+                    script { (PreEscaped(PAGE_JS)) }
                 }
             }
             aside.rail {
@@ -219,29 +261,48 @@ fn result_note(q: &QueueQuery) -> Option<String> {
     Some(note)
 }
 
+/// "Pinged 5 min ago", or once the member answered, "Ready for review 2 min ago", which waits
+/// on staff. The tooltip says who pressed Ping.
+fn ping_flag(ctx: &Ctx, page: &Page, r: &Review) -> Option<Markup> {
+    let pinged = r.pinged_at?;
+    let by = r.pinged_by.map(|u| format!(" by {}", ctx.display_name(page.guild_id, u))).unwrap_or_default();
+    Some(match r.ready_at {
+        Some(at) => html! { span.rv-flag.ready title={ "Pinged" (by) " " (stamp(page, pinged)) ", answered " (stamp(page, at)) } { span.dot {} "Ready for review " (text::ago(at)) } },
+        None => html! { span.rv-flag.pinged title={ "Pinged" (by) " " (stamp(page, pinged)) } { span.dot {} "Pinged " (text::ago(pinged)) } },
+    })
+}
+
 /// One request in the queue. The first, when the queue isn't filtered, is drawn larger: it's
-/// the one you take next.
+/// the one you take next. A request with a post opens on a click to what the member wrote there.
 fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, numbered: bool, now: i64) -> Markup {
     let guild = page.guild_id;
     let base = format!("reviews/{}", r.id);
     let next = numbered && place == 1;
     let since = r.eligible_at.unwrap_or(r.requested_at);
+    let talk = r.thread_id.map(|_| page.path(&format!("{base}/thread")));
     html! {
-        li.rv-row.next[next] {
+        li.rv-row.next[next].ready[r.ready_at.is_some()] data-talk=[talk.as_deref()] {
             @if numbered { span.rv-place { (place) } }
             (face(ctx, guild, r, if next { "big" } else { "" }))
             div.rv-body {
                 div.rv-title {
-                    strong { (r.name) }
+                    @if talk.is_some() {
+                        button.rv-name type="button" aria-expanded="false" aria-controls={ "talk-" (r.id) } title="Show what they wrote in the post" { (r.name) }
+                    } @else {
+                        strong { (r.name) }
+                    }
                     @if next { span.rv-next { "Up next" } }
                     @if r.redeemed_at.is_some() { (points_flag()) }
-                    @if let Some(p) = r.pinged_at { span.rv-flag.pinged title=(stamp(page, p)) { span.dot {} "Pinged " (text::ago(p)) } }
+                    @if let Some(f) = ping_flag(ctx, page, r) { (f) }
+                    (tag_pills(r))
                 }
                 @let who = who(ctx, guild, r);
-                @if who.is_some() || r.thread_id.is_some() {
+                @let toolbox = toolbox_meta(page, r);
+                @if who.is_some() || toolbox.is_some() || r.thread_id.is_some() {
                     p.rv-meta {
                         @if let Some(w) = who { span { (w) } }
-                        @if let Some(t) = r.thread_id { a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { (ui::icon(Icon::External)) "Open post" } }
+                        @if let Some(t) = toolbox { (t) }
+                        @if let Some(t) = r.thread_id { (post_link(guild, t)) }
                     }
                 }
             }
@@ -260,6 +321,11 @@ fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, num
                                     label.small for={ "done-" (r.id) } { "Closing message in the post" }
                                     textarea.input id={ "done-" (r.id) } name="message" rows="3" { (s.done_message) }
                                     p.help { "Clear it to complete without posting." }
+                                    p.help {
+                                        "The post gets a check mark reaction"
+                                        @if s.lock_hours > 0 { " and locks in " (hours(s.lock_hours)) ", or sooner if they press Lock post under the message" }
+                                        "."
+                                    }
                                 } @else {
                                     p.help { "This request has no post, so nothing is posted." }
                                 }
@@ -277,6 +343,9 @@ fn queue_row(ctx: &Ctx, page: &Page, s: &Settings, r: &Review, place: usize, num
                         }))
                     }
                 }
+            }
+            @if talk.is_some() {
+                div.rv-talk id={ "talk-" (r.id) } hidden { p.rv-talk-note { "Loading the post" } }
             }
         }
     }
@@ -378,6 +447,7 @@ async fn waitlist_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 div.rv-wl {
                     @for r in &waiting { (waitlist_card(&ctx, &page, r, now)) }
                 }
+                script { (PreEscaped(PAGE_JS)) }
             }
         }
     };
@@ -401,11 +471,13 @@ fn waitlist_card(ctx: &Ctx, page: &Page, r: &Review, now: i64) -> Markup {
                     div.rv-title {
                         strong { (r.name) }
                         @if r.redeemed_at.is_some() { (points_flag()) }
+                        (tag_pills(r))
                     }
                     p.rv-meta {
                         @if let Some(w) = who(ctx, guild, r) { span { (w) } }
                         span title=(stamp(page, r.requested_at)) { "asked " (text::ago(r.requested_at)) }
-                        @if let Some(t) = r.thread_id { a.rv-link href=(thread_url(guild, t)) target="_blank" rel="noreferrer noopener" { (ui::icon(Icon::External)) "Open post" } }
+                        @if let Some(t) = toolbox_meta(page, r) { (t) }
+                        @if let Some(t) = r.thread_id { (post_link(guild, t)) }
                     }
                 }
             }
@@ -443,6 +515,8 @@ async fn done_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     waits.sort_unstable();
     let typical = waits.get(waits.len() / 2).map(|w| wait_words(*w)).unwrap_or_else(|| "None".into());
     let removed_n = closed.iter().filter(|r| r.status == "removed").count();
+    // Posts finished before this version are left for staff to lock.
+    let timer_from = store::since_v4(&ctx);
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&ctx, &page, &s, "Done")?)
@@ -452,7 +526,10 @@ async fn done_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
                 div.reading { b data-count { (typical) } span { "Typical wait before a review" } }
                 div.reading { b data-count { (removed_n) } span { "Removed, of the last 50" } }
             }
-            p.rv-intro { "The last 50 completed or removed. Removed requests stay here so their post or redemption isn't added again. A removed one with channel points was refunded, so it can't go back to the queue." }
+            p.rv-intro {
+                "The last 50 completed or removed. Removed requests stay here so their post or redemption isn't added again. A removed one with channel points was refunded, so it can't go back to the queue."
+                @if s.lock_hours > 0 { " A finished post gets a check mark reaction and locks " (hours(s.lock_hours)) " after the review, or sooner when the member presses Lock post." }
+            }
             @if closed.is_empty() {
                 (ui::empty(Icon::Review, "Nothing finished yet", "Requests you complete or remove from the queue are listed here."))
             } @else {
@@ -478,12 +555,24 @@ async fn done_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
                                             " " (text::ago(at))
                                         }
                                     }
+                                    @if !removed && r.thread_id.is_some() {
+                                        @match r.locked_at {
+                                            Some(l) => span title=(stamp(&page, l)) { "Post locked" },
+                                            None if s.lock_hours > 0 && r.closed_at.is_some_and(|c| c >= timer_from) => span title={ "Locks " (stamp(&page, r.closed_at.unwrap_or_default() + s.lock_ms())) } { "Post open" },
+                                            None => span { "Post open" },
+                                        }
+                                    }
                                 }
                                 @if !r.notes.trim().is_empty() { p.rv-notes { (r.notes.trim()) } }
                             }
                             // A request whose points were refunded doesn't go back.
                             @if page.can_edit() && (r.status == "done" || !store::refunded(&ctx, guild, r.id)) {
-                                div.rv-acts { (ui::action_button(&page.path(&format!("reviews/{}/reopen", r.id)), "Back to queue", Tone::Muted, false)) }
+                                div.rv-acts {
+                                    @if r.status == "done" && r.thread_id.is_some() && r.locked_at.is_none() {
+                                        (ui::action_button(&page.path(&format!("reviews/{}/lock", r.id)), "Lock post", Tone::Muted, false))
+                                    }
+                                    (ui::action_button(&page.path(&format!("reviews/{}/reopen", r.id)), "Back to queue", Tone::Muted, false))
+                                }
                             }
                         }
                     }
@@ -500,16 +589,24 @@ async fn find(ctx: &Ctx, guild: u64, id: i64) -> WebResult<Review> {
     store::get(ctx, guild, id)?.ok_or(WebError::NotFound)
 }
 
-/// Post in a request's thread, pinging only its member. Nothing is sent in the preview.
-async fn post_in(ctx: &Ctx, thread: u64, content: &str, user: Option<u64>) -> Result<(), String> {
+/// Post in a request's thread, pinging only `user` (its member, or the staff member told
+/// they're ready). Nothing is sent in the preview.
+pub(crate) async fn post_in(ctx: &Ctx, thread: u64, content: &str, user: Option<u64>) -> Result<(), String> {
+    post_with(ctx, thread, content, user, &[]).await
+}
+
+/// [`post_in`] with buttons under the message.
+async fn post_with(ctx: &Ctx, thread: u64, content: &str, user: Option<u64>, components: &[Component]) -> Result<(), String> {
     if ctx.cfg.preview {
         return Ok(());
     }
-    let mentions = AllowedMentions { users: user.map(Id::new).into_iter().collect(), ..Default::default() };
+    let thread = Id::new_checked(thread).ok_or_else(|| "The post was deleted.".to_owned())?;
+    let mentions = AllowedMentions { users: user.and_then(Id::new_checked).into_iter().collect(), ..Default::default() };
     ctx.http
-        .create_message(Id::new(thread))
+        .create_message(thread)
         .content(&text::clip(content, 2000))
         .allowed_mentions(Some(&mentions))
+        .components(components)
         .await
         .map(|_| ())
         .map_err(|e| if bot_core::discord::is_not_found(&e) { "The post was deleted.".to_owned() } else { bot_core::discord::why_refused(&e) })
@@ -517,7 +614,7 @@ async fn post_in(ctx: &Ctx, thread: u64, content: &str, user: Option<u64>) -> Re
 
 /// The name is a post title or a Twitch name, so it is escaped: a post titled
 /// `[x](https://evil)` must not become a masked link under the bot's name.
-fn fill(template: &str, r: &Review) -> String {
+pub(crate) fn fill(template: &str, r: &Review) -> String {
     let name = text::escape_markdown(&r.name);
     let mention = r.user_id.map(|u| format!("<@{u}>")).unwrap_or_else(|| format!("**{name}**"));
     text::fill(template, &[("mention", &mention), ("name", &name)])
@@ -530,7 +627,8 @@ async fn ping(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, 
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let template = if s.ping_message.trim().is_empty() { DEFAULT_PING } else { s.ping_message.as_str() };
     post_in(&ctx, thread, &fill(template, &r), r.user_id).await.map_err(WebError::Bad)?;
-    store::mark_pinged(&ctx, guild, id)?;
+    // Who pressed it is told in the post when the member answers ready.
+    store::mark_pinged(&ctx, guild, id, page.user.id)?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Pinged {} for their account review", r.name));
     Ok(saved(&page.path("reviews")))
 }
@@ -543,12 +641,18 @@ async fn complete(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u
         return Ok(Redirect::to(&page.path("reviews")).into_response());
     }
     let message = form.text("message");
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    // The member can lock the post when they have no more questions; the timer does otherwise.
+    let lock = [bot_core::discord::button_row(&[(&format!("{KEY}:lock:{id}"), "Lock post", ButtonStyle::Secondary)])];
     if let Some(thread) = r.thread_id
         && !message.trim().is_empty()
-        && let Err(e) = post_in(&ctx, thread, &fill(message.trim(), &r), r.user_id).await
+        && let Err(e) = post_with(&ctx, thread, &fill(message.trim(), &r), r.user_id, if s.lock_hours > 0 { &lock } else { &[] }).await
     {
         store::claim(&ctx, guild, id, Move::Reopen, &page.user.name)?;
         return Err(WebError::Bad(format!("The closing message didn't post: {e} Clear the message to complete without it.")));
+    }
+    if let Some(thread) = r.thread_id {
+        crate::mark_done(&ctx, guild, s.channel, thread, true).await;
     }
     ctx.audit(&page.user, Some(guild), KEY, format!("Completed {}'s account review", r.name));
     let redemptions = store::set_twitch(&ctx, guild, id, "FULFILLED")?;
@@ -583,11 +687,30 @@ async fn promote(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u6
 
 async fn reopen(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
-    let r = find(&ctx, guild, id).await?;
+    find(&ctx, guild, id).await?;
     if !store::claim(&ctx, guild, id, Move::Reopen, &page.user.name)? {
         return Ok(Redirect::to(&page.path("reviews/done")).into_response());
     }
+    // Back in the queue, the post is open again and loses its done mark. Read again after the
+    // claim: the timer may have locked it in between.
+    let r = find(&ctx, guild, id).await?;
+    crate::unlock_post(&ctx, guild, &r, false).await;
+    if let Some(thread) = r.thread_id {
+        crate::mark_done(&ctx, guild, ctx.settings::<Settings>(guild, KEY)?.channel, thread, false).await;
+    }
     ctx.audit(&page.user, Some(guild), KEY, format!("Put {} back in the review queue", r.name));
+    Ok(saved(&page.path("reviews/done")))
+}
+
+/// Lock a finished request's post from the Done tab.
+async fn lock(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let r = find(&ctx, guild, id).await?;
+    if r.status != "done" || r.thread_id.is_none() || r.locked_at.is_some() {
+        return Ok(Redirect::to(&page.path("reviews/done")).into_response());
+    }
+    crate::lock_post(&ctx, guild, &r).await.map_err(|e| WebError::Bad(format!("The post didn't lock: {e} The bot needs Manage Threads in the review channel.")))?;
+    ctx.audit(&page.user, Some(guild), KEY, format!("Locked {}'s review post", r.name));
     Ok(saved(&page.path("reviews/done")))
 }
 
@@ -597,6 +720,147 @@ async fn save_notes(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<
     store::set_notes(&ctx, guild, id, &text::clip(form.text("notes").trim(), 1000))?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Changed the notes on {}'s review", r.name));
     Ok(saved(&page.path("reviews")))
+}
+
+// ---- what the member wrote ----
+
+/// One message in a post, as the queue's panel shows it.
+#[derive(Debug, Clone, Default)]
+struct Said {
+    author: u64,
+    /// A bot's message (the ping, the reminder) or Discord's own (a pin, a rename).
+    bot: bool,
+    at: i64,
+    content: String,
+    /// (full size, thumbnail) of each picture.
+    images: Vec<(String, String)>,
+    /// (link, file name) of anything else attached.
+    files: Vec<(String, String)>,
+}
+
+impl Said {
+    fn from_message(m: &Message) -> Said {
+        let (images, files) = m.attachments.iter().partition::<Vec<_>, _>(|a| a.width.is_some() || a.content_type.as_deref().is_some_and(|t| t.starts_with("image/")));
+        Said {
+            author: m.author.id.get(),
+            bot: m.author.bot || !matches!(m.kind, MessageType::Regular | MessageType::Reply),
+            at: m.timestamp.as_micros() / 1000,
+            content: m.content.clone(),
+            images: images.into_iter().map(|a| (a.url.clone(), a.proxy_url.clone())).collect(),
+            files: files.into_iter().map(|a| (a.url.clone(), a.filename.clone())).collect(),
+        }
+    }
+}
+
+/// What helps a review: the member's own messages with something in them. Bots (the ping, the
+/// reminder), other people and chatter ("thanks", "ready", "bump") are left out.
+fn useful(said: &Said, member: Option<u64>) -> bool {
+    !said.bot && member.is_none_or(|m| said.author == m) && (!said.images.is_empty() || !said.files.is_empty() || !words::is_chatter(&said.content))
+}
+
+/// How many messages of a post the panel reads: one request to Discord.
+const TALK_LIMIT: u16 = 100;
+
+/// How long a post's messages are reused, so opening and closing a row doesn't ask Discord
+/// each time.
+const TALK_CACHE: std::time::Duration = std::time::Duration::from_secs(30);
+
+type TalkCache = std::sync::Mutex<std::collections::HashMap<u64, (std::time::Instant, Vec<Said>)>>;
+static TALKS: std::sync::LazyLock<TalkCache> = std::sync::LazyLock::new(Default::default);
+
+/// A post's latest messages, oldest first, from the last 30 seconds' read if there was one.
+async fn fetch_talk(ctx: &Ctx, thread: u64) -> Result<Vec<Said>, String> {
+    if let Some((_, list)) = TALKS.lock().unwrap().get(&thread).filter(|(at, _)| at.elapsed() < TALK_CACHE) {
+        return Ok(list.clone());
+    }
+    let list = read_talk(ctx, thread).await?;
+    let mut cache = TALKS.lock().unwrap();
+    cache.retain(|_, (at, _)| at.elapsed() < TALK_CACHE);
+    cache.insert(thread, (std::time::Instant::now(), list.clone()));
+    Ok(list)
+}
+
+async fn read_talk(ctx: &Ctx, thread: u64) -> Result<Vec<Said>, String> {
+    let id = Id::new_checked(thread).ok_or_else(|| "The post was deleted.".to_owned())?;
+    let res = ctx.http.channel_messages(id).limit(TALK_LIMIT).await.map_err(|e| if bot_core::discord::is_not_found(&e) { "The post was deleted.".to_owned() } else { bot_core::discord::why_refused(&e) })?;
+    let mut list: Vec<Said> = res.models().await.map_err(|e| e.to_string())?.iter().map(Said::from_message).collect();
+    list.reverse();
+    Ok(list)
+}
+
+/// Text with its web links clickable. Only http and https become links.
+fn linked(text: &str) -> Markup {
+    html! {
+        @for piece in text.split_inclusive(char::is_whitespace) {
+            @let word = piece.trim_end();
+            @let url = word.trim_start_matches('<').trim_end_matches(['>', ')', '.', ',']);
+            @if url.starts_with("https://") || url.starts_with("http://") {
+                a href=(url) target="_blank" rel="noreferrer noopener" { (word) } (&piece[word.len()..])
+            } @else {
+                (piece)
+            }
+        }
+    }
+}
+
+/// The panel under a queue row: what the member wrote in their post, without the clutter. For
+/// someone who can edit, it also picks up tags the bot missed while it was away, and a toolbox
+/// link when the request has none (a newer one may have come from a merged second post, which
+/// this panel doesn't read).
+async fn thread_view(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::View)?;
+    let r = find(&ctx, guild, id).await?;
+    let thread = r.thread_id.ok_or(WebError::NotFound)?;
+    let talk = if ctx.cfg.preview { Ok(sample_talk(&r)) } else { fetch_talk(&ctx, thread).await };
+    let member = r.user_id.map(|u| ctx.display_name(guild, u)).unwrap_or_else(|| "The member".into());
+    let body = match talk {
+        Err(e) => html! { p.rv-talk-note { "Couldn't read the post. " (e) } },
+        Ok(all) => {
+            let shown: Vec<&Said> = all.iter().filter(|m| useful(m, r.user_id)).collect();
+            if !ctx.cfg.preview && page.can_edit() {
+                let mine = all.iter().filter(|m| !m.bot && r.user_id == Some(m.author));
+                let tags: Vec<String> = mine.clone().flat_map(|m| words::tags_in(&m.content)).collect();
+                store::add_tags(&ctx, guild, id, &tags)?;
+                if r.toolbox.is_none()
+                    && let Some(link) = mine.filter_map(|m| words::toolbox_link(&m.content)).next_back()
+                {
+                    store::set_toolbox(&ctx, guild, id, &link)?;
+                }
+            }
+            let hidden = all.len() - shown.len();
+            html! {
+                div.rv-talk-head {
+                    span { "What " (member) " wrote" @if all.len() >= TALK_LIMIT as usize { ", from the last " (TALK_LIMIT) " messages" } }
+                    (post_link(guild, thread))
+                }
+                @if shown.is_empty() {
+                    p.rv-talk-note { "Nothing beyond short replies yet." }
+                }
+                @for m in &shown {
+                    div.rv-said {
+                        span.rv-said-at title=(stamp(&page, m.at)) { (text::ago(m.at)) }
+                        div.rv-said-body {
+                            @if !m.content.trim().is_empty() { p.rv-said-text { (linked(text::clip(m.content.trim(), 2000).as_str())) } }
+                            @if !m.images.is_empty() {
+                                div.rv-said-pics {
+                                    @for (full, thumb) in &m.images {
+                                        a href=(full) target="_blank" rel="noreferrer noopener" { img src=(thumb) alt="Picture from the post" loading="lazy"; }
+                                    }
+                                }
+                            }
+                            @for (url, name) in &m.files {
+                                a.rv-link href=(url) target="_blank" rel="noreferrer noopener" { (ui::icon(Icon::External)) (name) }
+                            }
+                        }
+                    }
+                }
+                @if hidden > 0 {
+                    p.rv-talk-note { (hidden) " hidden: bot posts, short replies like thanks or ready, and other people's messages." }
+                }
+            }
+        }
+    };
+    Ok(([(header::CACHE_CONTROL, "no-store")], body).into_response())
 }
 
 async fn scan(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
@@ -653,10 +917,12 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
             (ui::section("Requests", None, ui::card(html! {
                 (ui::field_channel(&ctx, guild, "channel", "Review channel", Some("Each new post in this forum joins the queue, named after its title. A text channel works too: each new thread joins. Scan posts on the Queue tab picks up open posts and archived ones from the last 30 days."), s.channel))
                 (ui::field_number("wait_days", "Wait before another review", Some("Someone who asks again this soon after their last review waits on the waitlist, then joins the queue on their own. 0 turns the waitlist off."), s.wait_days, 0, 365, Some("days")))
+                (ui::field_number("lock_hours", "Lock finished posts after", Some("Hours after you complete a review, so the post can't fill up with chatter. The member can lock it sooner with the button under the closing message. Only their own messages ever count in a post. 0 leaves posts open."), s.lock_hours, 0, 720, Some("hours")))
             })))
             div.rv-msgs {
                 (ui::section("Messages", Some("{mention} pings the member, or names them when there's no member. {name} is the request's name."), ui::card(html! {
-                    (ui::field_textarea("ping_message", "Ping", Some("Posted in their post when you press Ping."), &s.ping_message, DEFAULT_PING))
+                    (ui::field_textarea("nudge_message", "Toolbox link reminder", Some("Posted once in a new post that has no IdleonToolbox profile link after 3 minutes. Clear it to not ask."), &s.nudge_message, DEFAULT_NUDGE))
+                    (ui::field_textarea("ping_message", "Ping", Some("Posted in their post when you press Ping. When they answer ready, the bot pings whoever pressed it."), &s.ping_message, DEFAULT_PING))
                     (ui::field_textarea("done_message", "Closing message", Some("Filled in when you complete a request. You can change or clear it each time."), &s.done_message, DEFAULT_DONE))
                     @if page.can_edit() {
                         // A form can't hold another form, so the test posts this one to its own
@@ -664,7 +930,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                         div.row.rv-test {
                             div.row-text {
                                 label { "Try them" }
-                                p.help { "Sends both to your DMs, filled in with your name, as saved." }
+                                p.help { "Sends each to your DMs, filled in with your name, as saved." }
                             }
                             div.row-control { button.btn.small type="submit" formaction=(page.path("reviews/test")) formmethod="post" formnovalidate { "Send a test" } }
                         }
@@ -710,13 +976,30 @@ fn flow(ctx: &Ctx, page: &Page, s: &Settings, conn: Option<&Conn>) -> Markup {
                     span.rv-flow-dot {}
                     div { strong { "Queues" } span { "Channel points first, then whoever has waited longest" } }
                 }
+                li.muted[s.nudge_message.trim().is_empty()] {
+                    span.rv-flow-dot {}
+                    div {
+                        strong { "Asked for a toolbox link" }
+                        span { @if s.nudge_message.trim().is_empty() { "Reminder off: nobody is asked" } @else { "Once, if their post has no IdleonToolbox link after 3 minutes" } }
+                    }
+                }
                 li {
                     span.rv-flow-dot {}
                     div { strong { "Pinged" } span { "Your ping message in their post, when you press Ping" } }
                 }
                 li {
                     span.rv-flow-dot {}
-                    div { strong { "Done" } span { "The closing message is posted" @if twitch { " and the redemption fulfilled" } } }
+                    div { strong { "Ready" } span { "They answer ready: the bot pings whoever pressed Ping, and the bell tells you" } }
+                }
+                li {
+                    span.rv-flow-dot {}
+                    div {
+                        strong { "Done" }
+                        span {
+                            "The closing message is posted, the post gets a check mark" @if twitch { ", the redemption is fulfilled" }
+                            @if s.lock_hours > 0 { ", and the post locks after " (hours(s.lock_hours)) }
+                        }
+                    }
                 }
             }
         }
@@ -812,7 +1095,11 @@ async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
     let name = text::escape_markdown(&ctx.display_name(guild, me));
     let ping = if s.ping_message.trim().is_empty() { DEFAULT_PING } else { s.ping_message.as_str() };
     let fill_me = |t: &str| text::fill(t, &[("mention", &format!("<@{me}>")), ("name", &name)]);
-    let mut sends = vec![format!("{}\n-# Test from the dashboard: the ping, as it posts in their post.", fill_me(ping))];
+    let mut sends = Vec::new();
+    if !s.nudge_message.trim().is_empty() {
+        sends.push(format!("{}\n-# Test from the dashboard: the toolbox link reminder, posted once in a post without a link.", fill_me(s.nudge_message.trim())));
+    }
+    sends.push(format!("{}\n-# Test from the dashboard: the ping, as it posts in their post.", fill_me(ping)));
     if !s.done_message.trim().is_empty() {
         sends.push(format!("{}\n-# Test from the dashboard: the closing message, posted when you complete a request.", fill_me(s.done_message.trim())));
     }
@@ -843,7 +1130,9 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     s.channel = form.channel(&ctx, guild, "channel");
     s.ping_message = text::clip(form.text("ping_message").trim(), 1500);
     s.done_message = text::clip(form.text("done_message").trim(), 1500);
+    s.nudge_message = text::clip(form.text("nudge_message").trim(), 1500);
     s.wait_days = form.int_in("wait_days", 0, 365, 7);
+    s.lock_hours = form.int_in("lock_hours", 0, 720, 24);
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed the account review settings");
     Ok(saved(&page.path("reviews/settings")))
@@ -995,6 +1284,21 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
          WHERE guild_id = ?1 AND status = 'waiting'",
         params![guild as i64, s.wait_ms()],
     )?;
+    tx.execute("UPDATE reviews SET locked_at = closed_at + 86400000 WHERE guild_id = ?1 AND name = 'juniper.fern' AND status = 'done'", [guild as i64])?;
+    // Toolbox links, tags, and the ping states: bramblepaw answered ready, Teo was just pinged.
+    let staff = MEMBERS[0].0 as i64;
+    for (name, toolbox, tags, nudged, pinged, by, ready) in [
+        ("Kasia", Some("https://idleontoolbox.com/account/misc/general?profile=Kasia"), "Late game,W5", None, None, None, None),
+        ("bramblepaw", Some("https://idleontoolbox.com/?profile=bramblepaw"), "Mid game,W4", None, Some(2 * h), Some(staff), Some(20 * 60_000)),
+        ("Noor's main", Some("https://idleontoolbox.com/dashboard?profile=Noorlet"), "Early game,W2", None, None, None, None),
+        ("Teo", None, "W3", Some(19 * h), Some(10 * 60_000), Some(staff), None),
+        ("Ines", None, "", Some(5 * h - 3 * 60_000), None, None, None),
+    ] {
+        tx.execute(
+            "UPDATE reviews SET toolbox = ?3, tags = ?4, nudged_at = ?5, pinged_at = COALESCE(?6, pinged_at), pinged_by = ?7, ready_at = ?8 WHERE guild_id = ?1 AND name = ?2 AND status = 'open'",
+            params![guild as i64, name, toolbox, tags, nudged.map(|n: i64| now - n), pinged.map(|p: i64| now - p), by, ready.map(|r: i64| now - r)],
+        )?;
+    }
     tx.execute(
         "INSERT OR REPLACE INTO reviews_twitch (guild_id, broadcaster_id, login, access_token, refresh_token, expires_at, scopes, synced_at) VALUES (?1, '1', 'antho', NULL, 'preview', 0, ?2, ?3)",
         params![guild as i64, twitch::SCOPE, now - 3 * 60_000],
@@ -1002,6 +1306,95 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
     tx.commit()?;
     Ok(())
 }
+
+/// Sample messages for the preview's panel, some of which the panel hides.
+fn sample_talk(r: &Review) -> Vec<Said> {
+    let now = now_ms();
+    let member = r.user_id.unwrap_or(1);
+    let min = 60_000;
+    let start = r.requested_at.min(now - 40 * min);
+    let link = r.toolbox_link().unwrap_or_else(|| format!("https://idleontoolbox.com/account/misc/general?profile={}", r.name));
+    let said = |author: u64, bot: bool, after: i64, content: &str| Said { author, bot, at: start + after * min, content: content.into(), ..Said::default() };
+    vec![
+        said(member, false, 0, &format!("Hi, could I get a review of {}? {}mostly stuck on sailing and my alchemy feels behind.", r.name, r.tags.first().map(|t| format!("{t}, ")).unwrap_or_default())),
+        said(1, true, 3, "Please share your IdleonToolbox profile link in this post so it's ready for your review."),
+        said(member, false, 5, &format!("here you go {link}")),
+        said(2, false, 6, "same boat as you lol"),
+        said(member, false, 8, "thanks!"),
+        said(member, false, 12, "Also not sure about my Bowman's talents, I put most points into the first tab."),
+        said(member, false, 30, "bump"),
+    ]
+}
+
+/// The reviews pages' script, run on every load and swap. "Open post" tries the Discord app
+/// first: if the page doesn't lose focus within a second (the app didn't take over), it opens
+/// discord.com in a new tab instead. A queue row opens on a click to what the member wrote,
+/// loaded the first time.
+const PAGE_JS: &str = r##"(() => {
+  const main = document.querySelector("main.page");
+  if (!main || main.dataset.rvBound) return;
+  main.dataset.rvBound = "1";
+  const signal = window.botPage?.signal;
+  const openApp = (a) => {
+    let left = false;
+    const gone = () => { left = true; };
+    const opts = { once: true, signal };
+    window.addEventListener("blur", gone, opts);
+    window.addEventListener("pagehide", gone, opts);
+    document.addEventListener("visibilitychange", gone, opts);
+    // A hidden frame, so a browser without the app shows nothing rather than an error page.
+    const f = document.createElement("iframe");
+    f.hidden = true;
+    f.src = a.dataset.app;
+    document.body.append(f);
+    setTimeout(() => {
+      f.remove();
+      window.removeEventListener("blur", gone);
+      window.removeEventListener("pagehide", gone);
+      document.removeEventListener("visibilitychange", gone);
+      // The app took over, or a prompt asking to open it has the focus: no browser tab too.
+      if (left || signal?.aborted || !document.hasFocus()) return;
+      const w = window.open(a.href, "_blank");
+      if (w) { w.opener = null; return; }
+      // The browser blocked the tab. The dashboard stays put; the next click opens the post in
+      // the browser the ordinary way.
+      a.dataset.web = "1";
+      window.botToast?.("Discord didn't open. Click Open post again to open it in the browser.", true);
+    }, 1000);
+  };
+  const toggle = (row) => {
+    const panel = row.querySelector(".rv-talk");
+    if (!panel) return;
+    const open = panel.hidden;
+    panel.hidden = !open;
+    row.classList.toggle("open", open);
+    row.querySelector(".rv-name")?.setAttribute("aria-expanded", String(open));
+    if (!open || panel.dataset.loaded) return;
+    panel.dataset.loaded = "1";
+    fetch(row.dataset.talk, { credentials: "same-origin", signal })
+      .then((res) => (res.ok ? res.text() : Promise.reject(res.status)))
+      .then((html) => { panel.innerHTML = html; })
+      .catch(() => {
+        if (signal?.aborted) return;
+        delete panel.dataset.loaded;
+        panel.innerHTML = `<p class="rv-talk-note">The post didn't load. Close it and open it again to retry.</p>`;
+      });
+  };
+  main.addEventListener("click", (e) => {
+    const a = e.target.closest("a[data-app]");
+    if (a) {
+      if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || a.dataset.web) return;
+      e.preventDefault();
+      openApp(a);
+      return;
+    }
+    const row = e.target.closest("[data-talk]");
+    if (!row || e.target.closest("a, button:not(.rv-name), form, details, input, textarea, select, label, .rv-talk")) return;
+    // Selecting text in a row isn't a click on it.
+    if (String(window.getSelection?.() || "").trim()) return;
+    toggle(row);
+  });
+})();"##;
 
 const CSS: &str = r#"
 .rv-main { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
@@ -1049,6 +1442,33 @@ const CSS: &str = r#"
 .rv-flag .dot { width: 6px; height: 6px; }
 .rv-flag.cp .dot { background: #a970ff; }
 .rv-flag.pinged .dot { background: var(--waiting); }
+/* Answered ready: waiting on staff now, so it reads like a count that waits on someone. */
+.rv-flag.ready { color: var(--signal); font-weight: 600; }
+.rv-flag.ready .dot { background: var(--signal); }
+.rv-tag { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 500; color: var(--ink-2); background: var(--veil); box-shadow: inset 0 0 0 1px var(--edge-1); white-space: nowrap; }
+.rv-nolink { color: var(--waiting); cursor: default; }
+/* The name opens what the member wrote; it reads as the name, not a button. */
+.rv-name { all: unset; font-size: 14.5px; font-weight: 600; overflow-wrap: anywhere; cursor: pointer; border-radius: 4px; }
+.rv-row.next .rv-name { font-size: 16px; letter-spacing: -0.01em; }
+.rv-name:hover { text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 3px; }
+.rv-name:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rv-row[data-talk] { cursor: pointer; }
+.rv-row[data-talk] :is(.rv-side, .rv-notes) { cursor: auto; }
+.rv-row.open { background: var(--well); }
+/* What the member wrote, under the row across its width. */
+.rv-row > .rv-talk { grid-column: 1 / -1; cursor: auto; }
+.rv-talk:not([hidden]) { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; padding: 14px 16px; border-radius: 10px; background: var(--page); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rv-talk-in 0.28s var(--ease); }
+@keyframes rv-talk-in { from { opacity: 0; transform: translateY(-4px); } }
+.rv-talk-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--ink-3); }
+.rv-talk-note { font-size: 12.5px; color: var(--ink-3); }
+.rv-said { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 12px; }
+.rv-said + .rv-said { padding-top: 12px; border-top: 1px solid var(--edge-1); }
+.rv-said-at { font-size: 12px; line-height: 20px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; cursor: default; }
+.rv-said-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.rv-said-text { font-size: 13.5px; line-height: 1.5; color: var(--ink); white-space: pre-line; overflow-wrap: anywhere; max-width: 80ch; }
+.rv-said-text a { color: var(--accent-hi); text-decoration: underline; text-underline-offset: 2px; }
+.rv-said-pics { display: flex; flex-wrap: wrap; gap: 8px; }
+.rv-said-pics img { display: block; max-width: 260px; max-height: 180px; border-radius: 8px; object-fit: cover; box-shadow: inset 0 0 0 1px var(--edge-1); }
 .rv-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; font-size: 12.5px; color: var(--ink-3); }
 .rv-meta > :not(:last-child)::after { content: "·"; margin: 0 7px; }
 .rv-link { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); transition: color 0.18s; }
@@ -1134,6 +1554,9 @@ const CSS: &str = r#"
   .rv-msgs .row + .row { border-top: 0; }
   .rv-msgs .row.rv-test { grid-column: 1 / -1; border-top: 1px solid var(--edge-1); }
 }
+@container col (min-width: 1300px) {
+  .rv-msgs .card { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 
 /* Settings: how a request moves, as dots on a line. */
 .rv-settings { gap: 30px; }
@@ -1180,6 +1603,8 @@ const CSS: &str = r#"
   .rv-done { padding: 0 14px; }
   .rv-drow { grid-template-columns: 40px minmax(0, 1fr); align-items: start; }
   .rv-drow .rv-acts { grid-column: 2; justify-content: flex-start; }
+  .rv-said { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .rv-talk:not([hidden]) { padding: 12px; }
 }
 "#;
 
@@ -1209,24 +1634,7 @@ mod tests {
 
     #[test]
     fn pings_name_people_without_a_member() {
-        let mut r = Review {
-            id: 1,
-            name: "Moonfrost".into(),
-            user_id: None,
-            thread_id: None,
-            twitch_user: None,
-            reward_id: None,
-            redemption_id: None,
-            redeemed_at: None,
-            requested_at: 0,
-            status: "open".into(),
-            notes: String::new(),
-            source: "twitch".into(),
-            pinged_at: None,
-            closed_at: None,
-            closed_by: None,
-            eligible_at: None,
-        };
+        let mut r = Review { id: 1, name: "Moonfrost".into(), status: "open".into(), source: "twitch".into(), ..Review::default() };
         assert_eq!(fill("{mention}, your turn ({name})", &r), "**Moonfrost**, your turn (Moonfrost)");
         r.user_id = Some(42);
         assert_eq!(fill("{mention}, your turn", &r), "<@42>, your turn");
@@ -1236,5 +1644,34 @@ mod tests {
         r.user_id = None;
         r.name = "a**b".into();
         assert_eq!(fill("{mention}", &r), r"**a\*\*b**");
+    }
+
+    fn said(author: u64, content: &str) -> Said {
+        Said { author, content: content.into(), ..Said::default() }
+    }
+
+    #[test]
+    fn the_panel_keeps_what_helps_a_review() {
+        assert!(useful(&said(10, "Late game, stuck on W5 sailing"), Some(10)));
+        assert!(useful(&said(10, "https://idleontoolbox.com/?profile=Mira"), Some(10)));
+        // Chatter, the bot's posts and other people's messages are left out.
+        assert!(!useful(&said(10, "thanks!"), Some(10)));
+        assert!(!useful(&said(10, "ready"), Some(10)));
+        assert!(!useful(&said(11, "Late game too, same problem"), Some(10)));
+        assert!(!useful(&Said { bot: true, ..said(10, "Share your toolbox link") }, Some(10)));
+        // A screenshot with no words is kept.
+        assert!(useful(&Said { images: vec![("a".into(), "b".into())], ..said(10, "") }, Some(10)));
+        // With no member known, anyone's helpful message shows.
+        assert!(useful(&said(11, "Bowman talents"), None));
+    }
+
+    #[test]
+    fn links_in_messages_are_clickable() {
+        let html = linked("see <https://idleontoolbox.com/?profile=Mira>, ok\njavascript:alert(1) <b>").into_string();
+        assert!(html.contains(r#"<a href="https://idleontoolbox.com/?profile=Mira" target="_blank" rel="noreferrer noopener">&lt;https://idleontoolbox.com/?profile=Mira&gt;,</a> "#), "{html}");
+        assert!(html.contains("javascript:alert(1) &lt;b&gt;"));
+        assert!(!html.contains(r#"href="javascript"#));
+        // Characters of any width don't panic.
+        assert_eq!(linked("ミラ 🐸 é").into_string(), "ミラ 🐸 é");
     }
 }
