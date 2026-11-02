@@ -1,5 +1,6 @@
-//! Suggestions: `/suggest`, the vote and review buttons, and the status changes staff make from
-//! Discord or the dashboard.
+//! Suggestions: a box. `/suggest` sends one to staff, staff decide with the Review button or on
+//! the dashboard, and the author hears the decision. Members don't vote (the owner's call,
+//! 2026-11-02); posts from before keep their old vote buttons, which now only say so.
 
 use bot_core::anyhow::{Result, anyhow};
 use bot_core::discord::{CommandCall, ComponentCall, ModalCall, Reply, avatar_url};
@@ -113,14 +114,6 @@ pub fn get(c: &Connection, id: i64) -> bot_core::rusqlite::Result<Option<Suggest
     c.query_row(&format!("SELECT {COLS} FROM suggestions WHERE id = ?1"), [id], from_row).optional()
 }
 
-pub fn tally(c: &Connection, id: i64) -> bot_core::rusqlite::Result<Tally> {
-    c.query_row(
-        "SELECT COALESCE(SUM(vote = 1), 0), COALESCE(SUM(vote = -1), 0) FROM suggestion_votes WHERE suggestion_id = ?1",
-        [id],
-        |r| Ok(Tally { up: r.get(0)?, down: r.get(1)? }),
-    )
-}
-
 /// Newest first, with vote counts.
 pub fn list(c: &Connection, guild: u64, limit: i64) -> bot_core::rusqlite::Result<Vec<(Suggestion, Tally)>> {
     let mut s = c.prepare(&format!(
@@ -133,6 +126,20 @@ pub fn list(c: &Connection, guild: u64, limit: i64) -> bot_core::rusqlite::Resul
 }
 
 /// Suggestions waiting for staff.
+/// When each suggestion since `since` (epoch ms) arrived, oldest first.
+pub fn arrivals(c: &Connection, guild: u64, since: i64) -> bot_core::rusqlite::Result<Vec<i64>> {
+    let mut s = c.prepare_cached("SELECT created_at FROM suggestions WHERE guild_id = ?1 AND created_at >= ?2 ORDER BY created_at")?;
+    s.query_map(params![id_i64(guild), since], |r| r.get(0))?.collect()
+}
+
+/// Members who sent the most suggestions since `since` (epoch ms), most first.
+pub fn top_senders(c: &Connection, guild: u64, since: i64, limit: i64) -> bot_core::rusqlite::Result<Vec<(u64, i64)>> {
+    let mut s = c.prepare_cached(
+        "SELECT author_id, COUNT(*) AS n FROM suggestions WHERE guild_id = ?1 AND created_at >= ?2 GROUP BY author_id ORDER BY n DESC, MAX(created_at) DESC LIMIT ?3",
+    )?;
+    s.query_map(params![id_i64(guild), since, limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
+}
+
 pub fn open_count(c: &Connection, guild: u64) -> bot_core::rusqlite::Result<i64> {
     c.query_row("SELECT COUNT(*) FROM suggestions WHERE guild_id = ?1 AND status = 'open'", [id_i64(guild)], |r| r.get(0))
 }
@@ -147,35 +154,6 @@ pub fn month_stats(c: &Connection, guild: u64, since: i64) -> bot_core::rusqlite
         params![id_i64(guild), since],
         |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )
-}
-
-/// Members who have cast the most votes in a server since `since` (epoch ms), most first, with
-/// their vote counts. A vote counts from when it was last cast or switched; votes from before
-/// they were dated have no time and are left out.
-pub fn top_voters(c: &Connection, guild: u64, since: i64, limit: i64) -> bot_core::rusqlite::Result<Vec<(u64, i64)>> {
-    let mut s = c.prepare_cached(
-        "SELECT v.user_id, COUNT(*) AS n FROM suggestion_votes v JOIN suggestions s ON s.id = v.suggestion_id
-         WHERE s.guild_id = ?1 AND v.at >= ?2 AND v.at > 0 GROUP BY v.user_id ORDER BY n DESC, v.user_id LIMIT ?3",
-    )?;
-    s.query_map(params![id_i64(guild), since, limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?)))?.collect()
-}
-
-/// What a vote press does: the same button again takes the vote back, the other one switches.
-pub fn next_vote(existing: Option<i64>, pressed: i64) -> Option<i64> {
-    if existing == Some(pressed) { None } else { Some(pressed) }
-}
-
-pub fn cast_vote(c: &Connection, id: i64, user: u64, pressed: i64) -> bot_core::rusqlite::Result<Tally> {
-    let existing: Option<i64> =
-        c.query_row("SELECT vote FROM suggestion_votes WHERE suggestion_id = ?1 AND user_id = ?2", params![id, id_i64(user)], |r| r.get(0)).optional()?;
-    match next_vote(existing, pressed) {
-        Some(v) => c.execute(
-            "INSERT OR REPLACE INTO suggestion_votes (suggestion_id, user_id, vote, at) VALUES (?1, ?2, ?3, ?4)",
-            params![id, id_i64(user), v, now_ms()],
-        )?,
-        None => c.execute("DELETE FROM suggestion_votes WHERE suggestion_id = ?1 AND user_id = ?2", params![id, id_i64(user)])?,
-    };
-    tally(c, id)
 }
 
 pub fn embed(ctx: &Ctx, s: &Suggestion) -> Embed {
@@ -200,13 +178,9 @@ pub fn embed(ctx: &Ctx, s: &Suggestion) -> Embed {
     b.build()
 }
 
-pub fn components(s: &Suggestion, t: Tally) -> Vec<Component> {
-    let closed = s.status.is_decided();
-    vec![row(vec![
-        button(&format!("{KEY}:sg:up:{}", s.id), &format!("Upvote · {}", t.up), ButtonStyle::Secondary, closed),
-        button(&format!("{KEY}:sg:down:{}", s.id), &format!("Downvote · {}", t.down), ButtonStyle::Secondary, closed),
-        button(&format!("{KEY}:sg:review:{}", s.id), "Review", ButtonStyle::Secondary, false),
-    ])]
+/// The post's one button: Review, for staff.
+pub fn components(_s: &Suggestion) -> Vec<Component> {
+    vec![row(vec![button(&format!("{KEY}:sg:review:{}", _s.id), "Review", ButtonStyle::Secondary, false)])]
 }
 
 pub fn command() -> Command {
@@ -229,7 +203,7 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
     }
     ctx.defer(&call.interaction, true).await?;
     let msg = match post(ctx, &settings, guild, channel, call.user_id(), content).await {
-        Ok((id, link)) => format!("Suggestion #{id} is posted: {link}"),
+        Ok((id, _)) => format!("Sent to staff as suggestion #{id}. You'll get a message when they decide."),
         Err(e) => {
             tracing::warn!(guild, error = %e, "couldn't post a suggestion");
             "Couldn't post it. Staff need to check that the bot can send messages in the suggestions channel.".to_owned()
@@ -250,7 +224,7 @@ async fn post(ctx: &Ctx, settings: &Settings, guild: u64, channel: u64, author: 
     })?;
     let s = ctx.db.with(|c| get(c, id))?.ok_or_else(|| anyhow!("suggestion vanished"))?;
     let embeds = [embed(ctx, &s)];
-    let sent = ctx.http.create_message(Id::new(channel)).embeds(&embeds).components(&components(&s, Tally::default())).await;
+    let sent = ctx.http.create_message(Id::new(channel)).embeds(&embeds).components(&components(&s)).await;
     let message = match sent {
         Ok(r) => match r.model().await {
             Ok(m) => m,
@@ -284,35 +258,8 @@ pub async fn on_component(ctx: &Ctx, call: &ComponentCall, args: &[&str]) -> Res
         return ctx.reply(&call.interaction, Reply::text("This suggestion doesn't exist any more.").ephemeral()).await;
     };
     match args[0] {
-        "up" | "down" => {
-            if s.status.is_decided() {
-                return ctx.reply(&call.interaction, Reply::text("Voting is closed on this suggestion.").ephemeral()).await;
-            }
-            let pressed = if args[0] == "up" { 1 } else { -1 };
-            // The status is read again under the same hold as the vote, and the post is drawn
-            // from that row, so a decision saved meanwhile isn't put back to Open with its
-            // buttons on.
-            let fresh = ctx.db.with(|c| match get(c, id)? {
-                Some(s) if !s.status.is_decided() => Ok(Some((cast_vote(c, id, call.user_id(), pressed)?, s))),
-                _ => Ok(None),
-            })?;
-            let Some((t, s)) = fresh else {
-                return ctx.reply(&call.interaction, Reply::text("Voting is closed on this suggestion.").ephemeral()).await;
-            };
-            ctx.update(&call.interaction, Reply::embed(embed(ctx, &s)).components(components(&s, t))).await?;
-            // A decision that landed while that update was on its way: put it back on top.
-            if let Some(now) = ctx.db.with(|c| get(c, id))?.filter(|now| now.status != s.status || now.reason != s.reason)
-                && let Some(message) = now.message_id
-            {
-                let t = ctx.db.with(|c| tally(c, id))?;
-                let embeds = [embed(ctx, &now)];
-                let comps = components(&now, t);
-                if let Err(e) = ctx.http.update_message(Id::new(now.channel_id), Id::new(message)).embeds(Some(&embeds)).components(Some(&comps)).await {
-                    tracing::warn!(suggestion = id, error = %e, "couldn't edit the suggestion message");
-                }
-            }
-            Ok(())
-        }
+        // Buttons on posts from when members could vote: they say what changed.
+        "up" | "down" => ctx.reply(&call.interaction, Reply::text("Voting is off. Staff read every suggestion and decide.").ephemeral()).await,
         "review" => {
             let settings = ctx.settings::<Settings>(guild, KEY)?;
             if !is_staff(&call.interaction, &settings) {
@@ -379,9 +326,8 @@ pub async fn set_status(ctx: &Ctx, id: i64, status: Status, reason: &str, staff:
     ctx.db.with(|c| record_status(c, id, status, &reason, staff, now_ms()))?;
     let Some(s) = ctx.db.with(|c| get(c, id))? else { return Ok(None) };
     if let Some(message) = s.message_id {
-        let t = ctx.db.with(|c| tally(c, id))?;
         let embeds = [embed(ctx, &s)];
-        let comps = components(&s, t);
+        let comps = components(&s);
         let res = ctx.http.update_message(Id::new(s.channel_id), Id::new(message)).embeds(Some(&embeds)).components(Some(&comps)).await;
         if let Err(e) = res {
             tracing::warn!(suggestion = id, error = %e, "couldn't edit the suggestion message");
@@ -500,32 +446,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pressing_twice_takes_the_vote_back() {
-        assert_eq!(next_vote(None, 1), Some(1));
-        assert_eq!(next_vote(Some(1), 1), None);
-        assert_eq!(next_vote(Some(1), -1), Some(-1));
-        assert_eq!(next_vote(Some(-1), 1), Some(1));
-    }
-
-    #[test]
-    fn one_vote_per_member_and_switching() {
-        let db = bot_core::Db::memory().unwrap();
-        db.migrate(KEY, crate::MIGRATIONS).unwrap();
-        db.with(|c| {
-            assert_eq!(cast_vote(c, 1, 10, 1)?, Tally { up: 1, down: 0 });
-            assert_eq!(cast_vote(c, 1, 11, 1)?, Tally { up: 2, down: 0 });
-            // Switching moves the vote instead of adding one.
-            assert_eq!(cast_vote(c, 1, 10, -1)?, Tally { up: 1, down: 1 });
-            // Same button again withdraws it.
-            assert_eq!(cast_vote(c, 1, 10, -1)?, Tally { up: 1, down: 0 });
-            // Other suggestions are separate.
-            assert_eq!(tally(c, 2)?, Tally::default());
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    #[test]
     fn editing_a_reply_keeps_the_decision_date() {
         let db = bot_core::Db::memory().unwrap();
         db.migrate(KEY, crate::MIGRATIONS).unwrap();
@@ -561,19 +481,13 @@ mod tests {
         db.with(|c| {
             assert_eq!(open_count(c, 1)?, 0);
             assert_eq!(month_stats(c, 1, 0)?, (0, 0, 0));
-            assert!(top_voters(c, 1, 0, 3)?.is_empty());
             c.execute("INSERT INTO suggestions (guild_id, channel_id, author_id, content, created_at) VALUES (1, 2, 3, 'a', 10)", [])?;
             c.execute(
                 "INSERT INTO suggestions (guild_id, channel_id, author_id, content, status, created_at, status_at) VALUES (1, 2, 3, 'b', 'approved', 10, 20)",
                 [],
             )?;
-            c.execute("INSERT INTO suggestion_votes (suggestion_id, user_id, vote, at) VALUES (1, 9, 1, 30), (2, 9, -1, 40), (2, 8, 1, 10)", [])?;
-            // A vote from before votes were dated.
-            c.execute("INSERT INTO suggestion_votes (suggestion_id, user_id, vote) VALUES (1, 7, 1)", [])?;
             assert_eq!(open_count(c, 1)?, 1);
             assert_eq!(month_stats(c, 1, 5)?, (2, 1, 0));
-            assert_eq!(top_voters(c, 1, 0, 3)?, vec![(9, 2), (8, 1)]);
-            assert_eq!(top_voters(c, 1, 35, 3)?, vec![(9, 1)]);
             Ok(())
         })
         .unwrap();

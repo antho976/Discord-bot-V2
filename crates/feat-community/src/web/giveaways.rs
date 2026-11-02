@@ -58,13 +58,15 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                 }
             }
         } @else {
-            @if let Some(((g, n), people)) = running.first().zip(faces.first()) {
-                (hero(&ctx, &page, guild, g, *n, people, last_hour, edit))
-            } @else {
-                (ui::empty(Icon::Gift, "Nothing running", "Start one with the button above or /giveaway start. Members enter with the button on the message."))
-            }
+            // The giveaway ending soonest and the others on the left; its post, the winners and the
+            // month in one column on the right.
             div.with-rail {
                 div.cm-main {
+                    @if let Some(((g, n), people)) = running.first().zip(faces.first()) {
+                        (hero(&ctx, &page, guild, g, *n, people, last_hour, edit))
+                    } @else {
+                        (ui::empty(Icon::Gift, "Nothing running", "Start one with the button above or /giveaway start. Members enter with the button on the message."))
+                    }
                     @if others {
                         section.cm-block {
                             h2 { "Also running" }
@@ -82,6 +84,9 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
                     }
                 }
                 aside.rail.cm-rail {
+                    @if let Some((g, n)) = running.first() {
+                        div.rail-block { (hero_post(&ctx, &page, guild, g, *n, edit)) }
+                    }
                     @if others {
                         div.rail-block {
                             h2 { "Recent winners" }
@@ -178,16 +183,22 @@ fn hero(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, people: &[u64]
                     (open_link(page, g.channel_id, g.message_id, false))
                 }
             }
-            (post_block(
-                "The post",
-                &channel_name(ctx, guild, g.channel_id),
-                discord_message(ctx, page, g.created_at, post_preview(ctx, guild, g, n)),
-                edit.then(|| html! {
-                    (ui::action_button(&page.path(&format!("community/giveaways/{}/test", g.id)), "Send a test", Tone::Muted, false))
-                    span.cm-dc-note { "DMs you how this one ends, with you as the winner." }
-                }),
-            ))
         }
+    }
+}
+
+/// The running giveaway's post as members see it, for the top of the right column.
+fn hero_post(ctx: &Ctx, page: &Page, guild: u64, g: &Giveaway, n: i64, edit: bool) -> Markup {
+    html! {
+        (post_block(
+            "The post",
+            &channel_name(ctx, guild, g.channel_id),
+            discord_message(ctx, page, g.created_at, post_preview(ctx, guild, g, n)),
+            edit.then(|| html! {
+                (ui::action_button(&page.path(&format!("community/giveaways/{}/test", g.id)), "Send a test", Tone::Muted, false))
+                span.cm-dc-note { "DMs you how this one ends, with you as the winner." }
+            }),
+        ))
     }
 }
 
