@@ -48,7 +48,6 @@ body.pets-pub { background: var(--page); }
 .pets-pub-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-top: 18px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 12.5px; }
 .pets-pub-foot a { color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
 .pets-pub-foot a:hover { color: var(--ink); }
-.pets-pub .chart-card { padding: 20px 22px 16px; }
 /* Tags over the grid: one per rarity, rarest first, and Pet+. One of each kind at a time. */
 .pets-tags { display: flex; flex-wrap: wrap; gap: 8px; }
 .pets-tag { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 13px; border-radius: 16px; background: var(--control); color: var(--ink-2); font-size: 13px; font-weight: 500; white-space: nowrap; transition: background 0.18s, color 0.18s, box-shadow 0.2s, transform 0.25s var(--spring); }
@@ -62,13 +61,40 @@ body.pets-pub { background: var(--page); }
 .pets-tag.plus { --rar: var(--plus); }
 .pets-tag.plus b { color: var(--plus); font-weight: 650; }
 .pets-tag-gap { width: 1px; align-self: stretch; margin: 4px 4px; background: var(--edge-2); }
-/* Stats: the chart beside the podium, then the breakdowns three across, each wrapping under the
-   other when the page is narrow. */
-.pets-duo, .pets-trio { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 34px 40px; }
-.pets-duo > * { flex: 1 1 440px; min-width: 0; }
-.pets-duo > :first-child { flex-grow: 1.4; }
-.pets-trio > * { flex: 1 1 300px; min-width: 0; }
-@container col (min-width: 1000px) { .pets-duo .chart svg { height: 200px; } }
+/* Stats (a sub-tab, so no lead): two columns that end together. Left, the chart with its
+   figures and the rarity table; right, a fixed column of the people and pets, one panel each. */
+.pets-st { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+@container col (min-width: 1000px) { .pets-st { grid-template-columns: minmax(0, 1fr) 440px; } }
+.pets-st-col { min-width: 0; display: flex; flex-direction: column; gap: 20px; }
+.pets-st-col > .pets-panel:last-child { flex: 1; }
+.pets-panel { min-width: 0; display: flex; flex-direction: column; gap: 14px; background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; }
+.pets-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; }
+.pets-panel-head h2 { font-size: 14px; font-weight: 500; letter-spacing: 0; }
+.pets-panel-head p { font-size: 13px; color: var(--ink-3); }
+.pets-figs { display: flex; flex-wrap: wrap; gap: 10px 36px; }
+.pets-figs div { display: flex; flex-direction: column; gap: 1px; }
+.pets-figs b { font: 600 20px/1.2 var(--sans); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pets-figs span { font-size: 12.5px; color: var(--ink-3); white-space: nowrap; }
+.pets-note-line { font-size: 12.5px; color: var(--ink-3); }
+.pets-st .area svg { height: 160px; }
+/* Ranked rows: a 28 px face or pet, a 14 px name, a thin bar and the count. */
+.pets-rank { display: flex; flex-direction: column; }
+.pets-rank-row { --rar: var(--data); display: grid; grid-template-columns: 18px 28px minmax(0, 1fr) minmax(60px, 38%) 28px; align-items: center; gap: 12px; min-height: 40px; font-size: 14px; }
+.pets-rank-row + .pets-rank-row { border-top: 1px solid var(--edge-1); }
+.pets-rank-row .i { font: 500 12px var(--mono); color: var(--ink-3); text-align: right; }
+.pets-rank-row .avatar { width: 28px; height: 28px; }
+.pets-rank-row .pa { --s: 28px; border-radius: 8px; }
+.pets-rank-row .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pets-rank-row .v, .pets-rar-row .v { font: 500 13px var(--mono); color: var(--ink-2); text-align: right; }
+.pets-thin { display: block; height: 4px; border-radius: 2px; background: var(--edge-1); overflow: hidden; }
+.pets-thin > span { display: block; height: 100%; min-width: 2px; border-radius: 2px; background: var(--rar, var(--data)); }
+/* Rarity: one row per rarity, given beside held. */
+.pets-rar { display: flex; flex-direction: column; }
+.pets-rar-row { display: grid; grid-template-columns: minmax(96px, 140px) minmax(0, 1fr) 28px minmax(0, 1fr) 28px; align-items: center; gap: 12px 14px; min-height: 40px; font-size: 14px; }
+.pets-rar-row + .pets-rar-row { border-top: 1px solid var(--edge-1); }
+.pets-rar-row.head { min-height: 24px; font-size: 12.5px; color: var(--ink-3); }
+.pets-rar-row.head span:nth-child(2), .pets-rar-row.head span:nth-child(3) { grid-column: span 2; }
+.pets-rar-row .rar { font-size: 14px; }
 @media (max-width: 920px) {
   .pets-pub-hero { min-height: 240px; padding: 14px 18px 24px; }
   .pets-pub-hero .ov-hello h1 { font-size: 28px; }
@@ -267,7 +293,7 @@ async fn collection(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path
             @if !pets.is_empty() {
                 (ui::section(cat, Some(&format!("{have} of {} collected", groups[k].1.len())), html! {
                     div.pets-grid {
-                        @for (n, p) in pets.iter().enumerate() { (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0), plus.get(&p.id).copied().unwrap_or(0), starts[k] + n)) }
+                        @for (n, p) in pets.iter().enumerate() { (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0), plus.get(&p.id).copied().unwrap_or(0), starts[k] + n, None)) }
                     }
                 }))
             }
@@ -321,80 +347,117 @@ async fn stats(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>
     let distinct_given = confirmed.iter().map(|g| g.pet_id.as_str()).collect::<HashSet<_>>().len();
     // Every giver, not the stats' top ten.
     let givers = confirmed.iter().map(|g| g.giver_id).collect::<HashSet<_>>().len();
-    let series = daily(&all, 30);
-    let collection_rarity: Vec<(Markup, i64, &str)> = store::RARITIES
-        .iter()
-        .rev()
-        .map(|r| (view::rarity(r), catalog.iter().filter(|p| p.rarity == *r).map(|p| counts.get(&p.id).copied().unwrap_or(0)).sum::<i64>(), *r))
-        .collect();
-    let mut readings = vec![("giveaways confirmed", text::num(s.confirmed))];
+    let weeks = weekly(&all, 12);
+    let held = |r: &str| catalog.iter().filter(|p| p.rarity == r).map(|p| counts.get(&p.id).copied().unwrap_or(0)).sum::<i64>();
+    let given = |r: &str| s.rarities.iter().find(|(x, _)| x == r).map(|(_, n)| *n).unwrap_or(0);
+    let rarities: Vec<(&str, i64, i64)> = store::RARITIES.iter().rev().map(|r| (*r, given(r), held(r))).collect();
+    let max_given = rarities.iter().map(|r| r.1).max().unwrap_or(0).max(1);
+    let max_held = rarities.iter().map(|r| r.2).max().unwrap_or(0).max(1);
+    let pet = |name: &str| catalog.iter().find(|p| p.name == name);
+    let mut figs = vec![("giveaways confirmed", text::num(s.confirmed))];
     if let Some(r) = s.confirmation_rate() {
-        readings.push(("confirmation rate", format!("{r}%")));
+        figs.push(("confirmation rate", format!("{r}%")));
     }
-    readings.push(("givers", text::num(givers as i64)));
-    readings.push(("different pets given", text::num(distinct_given as i64)));
-    let podium: Vec<(usize, &(u64, i64))> = [(2usize, 1usize), (1, 0), (3, 2)].into_iter().filter_map(|(place, i)| s.top_givers.get(i).map(|t| (place, t))).collect();
-    let pet_rarity = |name: &str| catalog.iter().find(|p| p.name == name).map(|p| p.rarity.clone()).unwrap_or_else(|| "common".into());
+    figs.push(("givers", text::num(givers as i64)));
+    figs.push(("different pets given", text::num(distinct_given as i64)));
+    let pct = |v: i64, max: i64| if v > 0 { format!("width:{:.1}%", v as f64 * 100.0 / max as f64) } else { "width:0;min-width:0".to_owned() };
+    let top_giver = s.top_givers.first().map(|t| t.1).unwrap_or(1).max(1);
+    let top_pet = s.top_pets.first().map(|t| t.2).unwrap_or(1).max(1);
     let body = html! {
-        (view::readings(&readings))
-        @let by_rarity = view::section("The collection, by rarity", Some("Copies the server holds of each rarity."), None, view::hbars(&collection_rarity));
-        @if s.confirmed == 0 {
-            (ui::empty(Icon::Chart, "No confirmed giveaways yet", "Stats fill in as staff confirm pet giveaways."))
-            (by_rarity)
-        } @else {
-            div.pets-duo {
-                (view::section("Confirmed giveaways", Some("Each day of the last 30, in UTC."), None, html! {
-                    div.card.chart-card { (ui::bar_chart(&series, "var(--data)", "giveaways")) }
-                }))
-                (view::section("Top givers", Some("Members whose giveaways went through."), None, html! {
-                    div.podium {
-                        @for (place, (u, n)) in &podium {
-                            div class={ "step p" (place) } {
-                                img.avatar src=(ctx.member_avatar(guild, *u)) alt="" loading="lazy";
-                                strong { (ctx.display_name(guild, *u)) }
-                                span.muted.small { (text::num(*n)) (if *n == 1 { " pet given" } else { " pets given" }) }
-                                div.block { (place) }
+        div.pets-st {
+            div.pets-st-col {
+                section.pets-panel {
+                    div.pets-panel-head { h2 { "Confirmed giveaways" } p { "Each week of the last 12, in UTC." } }
+                    div.pets-figs { @for (label, v) in &figs { div { b { (v) } span { (label) } } } }
+                    @if s.confirmed == 0 {
+                        (ui::empty(Icon::Chart, "No confirmed giveaways yet", "The chart fills in as staff confirm pet giveaways."))
+                    } @else {
+                        (ui::area_chart_series(&weeks, "giveaways"))
+                    }
+                    @if s.expired + s.cancelled > 0 {
+                        p.pets-note-line { (text::num(s.expired)) " expired and " (text::num(s.cancelled)) " cancelled. The rate counts finished giveaways only." }
+                    }
+                }
+                section.pets-panel {
+                    div.pets-panel-head { h2 { "By rarity" } p { "Pets given in confirmed giveaways, and copies the server holds." } }
+                    div.pets-rar {
+                        div.pets-rar-row.head aria-hidden="true" { span {} span { "Given" } span { "In the collection" } }
+                        @for (r, g, h) in &rarities {
+                            div class={ "pets-rar-row r-" (r) } {
+                                (view::rarity(r))
+                                span.pets-thin { span style=(pct(*g, max_given)) {} }
+                                span.v aria-label={ (g) " given" } { (text::num(*g)) }
+                                span.pets-thin { span style=(pct(*h, max_held)) {} }
+                                span.v aria-label={ (h) " held" } { (text::num(*h)) }
                             }
                         }
                     }
-                    @if s.top_givers.len() > 3 {
-                        (view::hbars(&s.top_givers.iter().skip(3).map(|(u, n)| (view::person(&ctx, guild, *u), *n, "")).collect::<Vec<_>>()))
-                    }
-                }))
-            }
-            div.pets-trio {
-                (view::section("Most given", None, None, view::hbars(&s.top_pets.iter().map(|(name, emoji, n)| {
-                    let r = pet_rarity(name);
-                    (html! { span.pc { (view::art(emoji, None, &r, "sm")) span { (name) } } }, *n, "")
-                }).collect::<Vec<_>>())))
-                @if !s.rarities.is_empty() {
-                    (view::section("Given, by rarity", None, None, view::hbars(&s.rarities.iter().map(|(r, n)| (view::rarity(r), *n, r.as_str())).collect::<Vec<_>>())))
                 }
-                (by_rarity)
             }
-        }
-        @if s.expired + s.cancelled > 0 {
-            p.muted.small { (text::num(s.expired)) " expired and " (text::num(s.cancelled)) " cancelled. The rate counts finished giveaways only." }
+            div.pets-st-col {
+                section.pets-panel {
+                    div.pets-panel-head { h2 { "Top givers" } p { "Confirmed giveaways each." } }
+                    @if s.top_givers.is_empty() {
+                        p.pets-note-line { "Members show here once one of their giveaways is confirmed." }
+                    } @else {
+                        div.pets-rank {
+                            @for (i, (u, n)) in s.top_givers.iter().take(8).enumerate() {
+                                div.pets-rank-row {
+                                    span.i { (i + 1) }
+                                    img.avatar src=(ctx.member_avatar(guild, *u)) alt="" loading="lazy";
+                                    span.nm { (ctx.display_name(guild, *u)) }
+                                    span.pets-thin { span style=(pct(*n, top_giver)) {} }
+                                    span.v { (text::num(*n)) }
+                                }
+                            }
+                        }
+                    }
+                }
+                section.pets-panel {
+                    div.pets-panel-head { h2 { "Most given" } p { "Pets that changed hands most." } }
+                    @if s.top_pets.is_empty() {
+                        p.pets-note-line { "Pets show here once a giveaway of them is confirmed." }
+                    } @else {
+                        div.pets-rank {
+                            @for (i, (name, emoji, n)) in s.top_pets.iter().take(8).enumerate() {
+                                @let p = pet(name);
+                                @let r = p.map(|p| p.rarity.as_str()).unwrap_or("common");
+                                div.pets-rank-row {
+                                    span.i { (i + 1) }
+                                    (view::art(emoji, p.and_then(Pet::image_url).as_deref(), r, "sm"))
+                                    span.nm { (name) }
+                                    span.pets-thin { span style=(pct(*n, top_pet)) {} }
+                                    span.v { (text::num(*n)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     };
     page(&ctx, &viewer, guild, "Pet giveaway stats", "Stats", "pets/giveaways", body)
 }
 
-/// Confirmed giveaways per day for the last `days` days, oldest first, labelled "Oct 3".
-fn daily(all: &[Giveaway], days: i64) -> Vec<(String, i64)> {
+/// Confirmed giveaways per week for the last `weeks` weeks (Monday to Sunday, UTC), oldest
+/// first, each labelled by its Monday ("Oct 3"); the current week is "This week".
+fn weekly(all: &[Giveaway], weeks: i64) -> Vec<(String, i64)> {
     let tz = jiff::tz::TimeZone::UTC;
     let today = jiff::Timestamp::now().to_zoned(tz.clone()).date();
+    let monday = today.checked_sub(jiff::Span::new().days(i64::from(today.weekday().to_monday_zero_offset()))).unwrap_or(today);
     let mut per: HashMap<jiff::civil::Date, i64> = HashMap::new();
     for g in all.iter().filter(|g| g.status == Status::Confirmed) {
         let at = g.closed_at.unwrap_or(g.recorded_at);
         if let Ok(ts) = jiff::Timestamp::from_millisecond(at) {
-            *per.entry(ts.to_zoned(tz.clone()).date()).or_default() += 1;
+            let d = ts.to_zoned(tz.clone()).date();
+            let start = d.checked_sub(jiff::Span::new().days(i64::from(d.weekday().to_monday_zero_offset()))).unwrap_or(d);
+            *per.entry(start).or_default() += 1;
         }
     }
-    (0..days)
+    (0..weeks)
         .rev()
-        .filter_map(|back| today.checked_sub(jiff::Span::new().days(back)).ok())
-        .map(|d| (format!("{} {}", month(d.month()), d.day()), per.get(&d).copied().unwrap_or(0)))
+        .filter_map(|ago| monday.checked_sub(jiff::Span::new().weeks(ago)).ok().map(|d| (ago, d)))
+        .map(|(ago, d)| (if ago == 0 { "This week".to_owned() } else { format!("{} {}", month(d.month()), d.day()) }, per.get(&d).copied().unwrap_or(0)))
         .collect()
 }
 
