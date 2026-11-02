@@ -103,16 +103,19 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
         (tabs)
         @if view == "settings" {
             @if let Some(ch) = s.channel.filter(|c| everyone_can_view(&ctx, guild, *c)) {
-                div.need.alert {
-                    span.need-icon.alert { (ui::icon(Icon::Users)) }
-                    div.grow {
-                        strong { "Not private" }
-                        p.muted.small { "Everyone can read conversations in " (channel_name(&ctx, guild, ch)) ". Hide it from @everyone in Discord." }
+                section.mm-panel.mm-alert {
+                    div.need.alert {
+                        span.need-icon.alert { (ui::icon(Icon::Users)) }
+                        div.grow {
+                            strong { "Not private" }
+                            span { "Everyone can read conversations in " (channel_name(&ctx, guild, ch)) ". Hide it from @everyone in Discord." }
+                        }
                     }
                 }
             }
-            // The texts beside the DMs they become, the way the member reads them.
-            div.compose {
+            // The texts beside the DMs they become, one at a time: what the member gets, or the
+            // thread staff see. The side blocks sit under it so the columns end together.
+            div.compose.mm-compose {
                 (ui::settings_form(&page, &page.path("modmail/settings"), html! {
                     (ui::section("Where they open", None, ui::card(html! {
                         (ui::field_select("channel", "Staff channel", Some("A text channel gets a thread per conversation, a forum a post. Keep it private to staff. None turns modmail off."), &channel_options, &s.channel.map(|c| c.to_string()).unwrap_or_default()))
@@ -123,57 +126,84 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
                         (ui::field_textarea("closing", "Closing text", Some("Sent to the member when staff close the conversation."), &s.closing, DEFAULT_CLOSING))
                     })))
                 }))
-                div.compose-preview.mm-previews {
-                    (dm_preview(&ctx, &page, guild, &s))
-                    (staff_preview(&ctx, &page, guild, &s))
+                aside.rail.mm-rail.compose-preview {
+                    div.rail-block.mm-previews {
+                        div.mm-pv-head {
+                            div.seg role="group" aria-label="Which side" {
+                                label { input type="radio" name="mm-which" value="member" checked; "What the member gets" }
+                                label { input type="radio" name="mm-which" value="staff"; "What staff see" }
+                            }
+                        }
+                        div.mm-pv.mm-pv-member { (dm_preview(&ctx, &page, guild, &s)) }
+                        div.mm-pv.mm-pv-staff { (staff_preview(&ctx, &page, guild, &s)) }
+                    }
+                    div.rail-block {
+                        h2 { "Modmail" }
+                        (figures(&stats, true))
+                    }
+                    (closed_recently(&ctx, &page, guild))
+                }
+            }
+        } @else if view == "closed" {
+            // A sub-tab: the closed conversations, the numbers and where they open on the right.
+            div.with-rail.mm-cols {
+                section.mm-panel {
+                    h2 { "Closed conversations" @if rows.len() == 100 { span.muted { "the latest 100" } } }
+                    @if rows.is_empty() {
+                        (ui::empty(Icon::Mail, "Nothing closed yet", "Closed conversations stay here with who closed them."))
+                    } @else {
+                        div.mm-list { @for c in &rows { (conversation(&ctx, &page, guild, c, now)) } }
+                    }
+                }
+                aside.rail.mm-rail {
+                    div.rail-block {
+                        h2 { "Modmail" }
+                        (figures(&stats, true))
+                    }
+                    div.rail-block {
+                        h2 { "Opened, last 14 days" span.muted { (stats.opened_week) " this week" } }
+                        (ui::area_chart(&opened_per_day(&ctx, &page, guild, now, 14), "opened"))
+                    }
+                    (where_they_open(&ctx, guild, &s, &base))
                 }
             }
         } @else {
-            div.with-rail {
-                div.mm-main {
-                    div.readings.mm-readings {
-                        div.reading { b data-count { (stats.open) } span { "Open now" } }
-                        div.reading.mm-wait[stats.waiting > 0] { b data-count { (stats.waiting) } span { "Waiting on staff" } }
-                        div.reading { b data-count { (stats.opened_week) } span { "Opened this week" } }
-                        div.reading { b data-count { (stats.closed_week) } span { "Closed this week" } }
+            // The answer first: how many are open, the two weeks they came from, where they
+            // open and who closed the last ones; then the open conversations themselves.
+            @let days = opened_per_day(&ctx, &page, guild, now, 28);
+            @let (before, recent) = days.split_at(14);
+            section.mm-panel.mm-lead {
+                div.mm-lead-main {
+                    div.mm-lead-head {
+                        div.mm-big {
+                            b { (stats.open) }
+                            span { @if stats.open == 1 { "conversation open" } @else { "conversations open" } }
+                        }
+                        (figures(&stats, false))
                     }
-                    @if rows.is_empty() {
-                        @if view == "closed" {
-                            (ui::empty(Icon::Mail, "Nothing closed yet", "Closed conversations stay here with who closed them."))
-                        } @else if s.channel.is_none() {
-                            (ui::empty(Icon::Mail, "Modmail is off", "Pick a staff channel in Settings. Conversations show up here when members DM the bot."))
-                        } @else {
-                            (ui::empty(Icon::Mail, "No open conversations", "Conversations show up here when members DM the bot."))
+                    div.mm-chart {
+                        h2 {
+                            "Opened per day"
+                            span.muted { "last 14 days" @if before.iter().any(|d| d.1 > 0) { ", the 14 before dashed" } }
                         }
-                    } @else {
-                        div.mm-list {
-                            @for (i, c) in rows.iter().enumerate() { (conversation(&ctx, &page, guild, c, now, i)) }
-                        }
-                        @if rows.len() == 100 { p.muted.small { "Showing the latest 100." } }
+                        (ui::area_chart_vs(recent, Some(before), "opened"))
                     }
                 }
-                aside.rail {
+                div.mm-lead-side {
+                    (where_they_open(&ctx, guild, &s, &base))
                     (closed_recently(&ctx, &page, guild))
-                    div.rail-block {
-                        h2 { "Where they open" }
-                        div.mini {
-                            span.mm-rail-ic { (ui::icon(Icon::Hash)) }
-                            div.grow {
-                                @match s.channel {
-                                    Some(ch) => { span { (channel_name(&ctx, guild, ch)) } span.muted { "A thread for each conversation" } },
-                                    None => { span { "No staff channel" } span.muted { a href={ (base) "?view=settings" } { "Pick one in Settings" } } },
-                                }
-                            }
-                        }
-                        @if let Some(role) = s.staff_role {
-                            @if let Some((_, name, color)) = ctx.roles(guild).into_iter().find(|(id, _, _)| *id == role) {
-                                div.mini {
-                                    span.mm-rail-ic style=[(color != 0).then(|| format!("--role:#{color:06x}"))] { (ui::icon(Icon::Bell)) }
-                                    div.grow { span { "@" (name) } span.muted { "Pinged when one opens" } }
-                                }
-                            }
-                        }
+                }
+            }
+            section.mm-panel {
+                h2 { "Open conversations" @if rows.len() == 100 { span.muted { "the latest 100" } } }
+                @if rows.is_empty() {
+                    @if s.channel.is_none() {
+                        (ui::empty(Icon::Mail, "Modmail is off", "Pick a staff channel in Settings. Conversations show up here when members DM the bot."))
+                    } @else {
+                        (ui::empty(Icon::Mail, "No open conversations", "Conversations show up here when members DM the bot."))
                     }
+                } @else {
+                    div.mm-list { @for c in &rows { (conversation(&ctx, &page, guild, c, now)) } }
                 }
             }
         }
@@ -181,70 +211,135 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
     Ok(ui::layout(&ctx, &page, "Modmail", None, body).into_response())
 }
 
-/// One conversation: who, how long it's waited and on whom, and its latest message as a chat
-/// bubble, the member's on the left and staff's on the right with their face.
-fn conversation(ctx: &Ctx, page: &Page, guild: u64, c: &Conv, now: i64, i: usize) -> Markup {
+/// Conversations opened on each of the last `days` days in the viewer's time, oldest first.
+fn opened_per_day(ctx: &Ctx, page: &Page, guild: u64, now: i64, days: i64) -> Vec<(String, i64)> {
+    let opened: Vec<i64> = ctx
+        .db
+        .with(|c| {
+            let mut st = c.prepare_cached("SELECT opened_at FROM modmail WHERE guild_id = ?1 AND opened_at > ?2")?;
+            st.query_map(bot_core::rusqlite::params![guild as i64, now - (days + 1) * 86_400_000], |r| r.get(0))?.collect()
+        })
+        .unwrap_or_default();
+    let today = page.user.local(now).date();
+    (0..days)
+        .rev()
+        .filter_map(|back| today.checked_sub(bot_core::jiff::Span::new().days(back)).ok())
+        .map(|day| {
+            let n = opened.iter().filter(|at| page.user.local(**at).date() == day).count() as i64;
+            (day.strftime("%b %-d").to_string(), n)
+        })
+        .collect()
+}
+
+/// The figures beside the lead number, or in a side block with the open count too.
+fn figures(stats: &mail::Stats, with_open: bool) -> Markup {
+    html! {
+        div.mm-figs {
+            @if with_open { div { b { (stats.open) } span { "open now" } } }
+            div.hot[stats.waiting > 0] {
+                b { (stats.waiting) }
+                span { @if stats.waiting > 0 { span.dot.waiting {} } "waiting on staff" }
+            }
+            div { b { (stats.opened_week) } span { "opened this week" } }
+            div { b { (stats.closed_week) } span { "closed this week" } }
+        }
+    }
+}
+
+/// The staff channel and the role pinged, or where to pick them.
+fn where_they_open(ctx: &Ctx, guild: u64, s: &Settings, base: &str) -> Markup {
+    html! {
+        div.rail-block {
+            h2 { "Where they open" }
+            div.mm-line {
+                span.mm-ic { (ui::icon(Icon::Hash)) }
+                div.grow {
+                    @match s.channel {
+                        Some(ch) => { strong { (channel_name(ctx, guild, ch)) } span { "A thread for each conversation" } },
+                        None => { strong { "No staff channel" } span { a href={ (base) "?view=settings" } { "Pick one in Settings" } } },
+                    }
+                }
+            }
+            @if let Some(role) = s.staff_role {
+                @if let Some((_, name, _)) = ctx.roles(guild).into_iter().find(|(id, _, _)| *id == role) {
+                    div.mm-line {
+                        span.mm-ic { (ui::icon(Icon::Bell)) }
+                        div.grow { strong { "@" (name) } span { "Pinged when one opens" } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One conversation as a row: the member's face and name, their latest message (or staff's,
+/// with the staff face), where it stands, and the buttons, in columns that line up down the
+/// list.
+fn conversation(ctx: &Ctx, page: &Page, guild: u64, c: &Conv, now: i64) -> Markup {
     let name = c.name(ctx, guild);
     let staff_wrote = !c.waiting_on_staff();
     let stamp = |ms: i64| page.user.local(ms).strftime("%b %-d, %H:%M").to_string();
     let earlier = (c.messages - 1).max(0);
     let waiting = c.is_open() && c.waiting_on_staff();
     html! {
-        article.mm-conv.closed[!c.is_open()] style={ "--i:" (i.min(6)) } {
-            header.mm-head {
-                img.avatar.mm-face src=(ctx.member_avatar(guild, c.user_id)) alt="" width="40" height="40" loading="lazy";
-                div.grow.mm-who {
-                    strong.clip { (name) }
+        article.mm-row {
+            div.mm-face {
+                img.avatar src=(ctx.member_avatar(guild, c.user_id)) alt="" width="28" height="28" loading="lazy";
+                @if c.is_open() { span class={ "mm-turn " (if waiting { "staff" } else { "member" }) } {} }
+            }
+            div.mm-body {
+                strong.clip { (name) }
+                span {
                     span title=(stamp(c.opened_at)) { "Opened " (text::ago(c.opened_at)) }
+                    @if earlier > 0 { " · " (earlier) @if earlier == 1 { " earlier message" } @else { " earlier messages" } }
                 }
+            }
+            div.mm-convo {
+                @if !c.preview.is_empty() {
+                    @if staff_wrote {
+                        div.mm-reply {
+                            img.avatar src=(ctx.member_avatar(guild, c.last_author)) alt="" width="20" height="20" loading="lazy";
+                            p {
+                                strong { (ctx.display_name(guild, c.last_author)) } " " (c.preview)
+                                " " time.mm-time datetime=(c.last_at) title=(stamp(c.last_at)) { (text::ago(c.last_at)) }
+                            }
+                        }
+                    } @else {
+                        p.mm-said {
+                            (c.preview)
+                            " " time.mm-time datetime=(c.last_at) title=(stamp(c.last_at)) { (text::ago(c.last_at)) }
+                        }
+                    }
+                }
+                @if !c.is_open() {
+                    div.mm-reply {
+                        @if let Some(by) = c.closed_by {
+                            img.avatar src=(ctx.member_avatar(guild, by)) alt="" width="20" height="20" loading="lazy";
+                        }
+                        p {
+                            @match c.closed_by {
+                                Some(by) => { "Closed by " strong { (ctx.display_name(guild, by)) } },
+                                None => { "Closed in Discord" },
+                            }
+                            @if let Some(at) = c.closed_at { " " time datetime=(at) title=(stamp(at)) { (text::ago(at)) } }
+                        }
+                    }
+                }
+            }
+            div.mm-state {
                 @if waiting {
-                    span.mm-state.wait title={ "Waiting " (mail::span((now - c.last_at) / 1000)) ", since " (stamp(c.last_at)) } {
-                        span.dot.waiting {} "Waiting " (short_wait((now - c.last_at) / 1000))
+                    span.badge.warn title={ "Waiting " (mail::span((now - c.last_at) / 1000)) ", since " (stamp(c.last_at)) } {
+                        "Waiting " (short_wait((now - c.last_at) / 1000))
                     }
                 } @else if c.is_open() {
-                    span.mm-state { "Waiting on " (name) }
+                    span.badge { "Waiting on " (name) }
                 } @else {
-                    span.mm-state { (ui::icon(Icon::Check)) "Closed" }
+                    span.badge { "Closed" }
                 }
             }
-            div.mm-thread {
-                @if earlier > 0 {
-                    p.mm-earlier { (earlier) @if earlier == 1 { " earlier message" } @else { " earlier messages" } }
-                }
-                @if !c.preview.is_empty() {
-                    div.mm-msg.staff[staff_wrote] {
-                        @if staff_wrote {
-                            img.avatar src=(ctx.member_avatar(guild, c.last_author)) alt="" width="28" height="28" loading="lazy";
-                        }
-                        div.mm-bubble {
-                            @if staff_wrote {
-                                div.mm-by { strong { (ctx.display_name(guild, c.last_author)) } span { "staff" } }
-                            }
-                            p {
-                                (c.preview)
-                                time.mm-time datetime=(c.last_at) title=(stamp(c.last_at)) { (text::ago(c.last_at)) }
-                            }
-                        }
-                    }
-                }
-            }
-            footer.mm-foot {
-                @if !c.is_open() {
-                    span.mm-closer {
-                        @match c.closed_by {
-                            Some(by) => {
-                                img.avatar src=(ctx.member_avatar(guild, by)) alt="" width="20" height="20" loading="lazy";
-                                span { "Closed by " strong { (ctx.display_name(guild, by)) } }
-                            },
-                            None => { span { "Closed in Discord" } },
-                        }
-                        @if let Some(at) = c.closed_at { time datetime=(at) title=(stamp(at)) { (text::ago(at)) } }
-                    }
-                }
-                div.mm-acts {
-                    a.btn.small.outline href=(thread_url(guild, c.thread_id)) target="_blank" rel="noopener" { (ui::icon(Icon::External)) "Open thread" }
-                    @if page.can_edit() && c.is_open() { (ui::action_button(&page.path(&format!("modmail/{}/close", c.id)), "Close", Tone::Bad, true)) }
-                }
+            div.mm-acts {
+                a.btn.small href=(thread_url(guild, c.thread_id)) target="_blank" rel="noopener" { (ui::icon(Icon::External)) "Open thread" }
+                @if page.can_edit() && c.is_open() { (ui::action_button(&page.path(&format!("modmail/{}/close", c.id)), "Close", Tone::Bad, true)) }
             }
         }
     }
@@ -273,14 +368,14 @@ fn closed_recently(ctx: &Ctx, page: &Page, guild: u64) -> Markup {
                 p.muted.small { "Closed conversations show up here with who closed them." }
             }
             @for c in &recent {
-                div.mini.mm-closed-line {
+                div.mm-line {
                     span.mm-pair {
-                        img.avatar src=(ctx.member_avatar(guild, c.user_id)) alt="" width="30" height="30" loading="lazy";
-                        @if let Some(by) = c.closed_by { img.avatar.mm-by-face src=(ctx.member_avatar(guild, by)) alt="" width="18" height="18" loading="lazy"; }
+                        img.avatar src=(ctx.member_avatar(guild, c.user_id)) alt="" width="28" height="28" loading="lazy";
+                        @if let Some(by) = c.closed_by { img.avatar.mm-by-face src=(ctx.member_avatar(guild, by)) alt="" width="16" height="16" loading="lazy"; }
                     }
                     div.grow {
-                        span { (c.name(ctx, guild)) }
-                        span.muted {
+                        strong { (c.name(ctx, guild)) }
+                        span {
                             @match c.closed_by {
                                 Some(by) => { "by " (ctx.display_name(guild, by)) },
                                 None => { "in Discord" },
@@ -300,11 +395,8 @@ fn dm_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
     let (bot, _) = dc::bot_identity(ctx);
     let line = |label: &str, body: String| dc::message(ctx, page).time_text(label).render(dc::line(html! { (body) }));
     html! {
-        section.block {
-            div.block-head {
-                h2 { "What the member gets" }
-                p.muted { "DMs from the bot, as saved. Save to see a change here." }
-            }
+        div.mm-pv-body {
+            p.muted.small { "DMs from the bot, as saved. Save to see a change here." }
             div.mm-dms {
                 div.mm-dms-head { span.mm-at { "@" } strong { (bot) } }
                 (line("when it opens", greeting))
@@ -314,7 +406,7 @@ fn dm_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
             @if page.can_edit() {
                 div.mm-send {
                     form.inline method="post" action=(page.path("modmail/test")) {
-                        button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send to my DMs" }
+                        button.btn.small type="submit" { (ui::icon(Icon::Mail)) "Send to my DMs" }
                     }
                     span.muted.small { "Both texts, as saved, in your own DMs from the bot." }
                 }
@@ -332,11 +424,8 @@ fn staff_preview(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
     let role = s.staff_role.and_then(|r| ctx.roles(guild).into_iter().find(|(id, _, _)| *id == r));
     let channel = s.channel.and_then(|c| ctx.text_channels(guild).into_iter().find(|(id, _)| *id == c)).map(|(_, n)| n);
     html! {
-        section.block {
-            div.block-head {
-                h2 { "What staff see" }
-                p.muted { "The thread each conversation opens, as if you wrote in." }
-            }
+        div.mm-pv-body {
+            p.muted.small { "The thread each conversation opens, as if you wrote in." }
             @match channel {
                 None => { (ui::empty(Icon::Hash, "No staff channel", "Pick one and each conversation opens a thread there.")) },
                 Some(ch) => {
@@ -405,88 +494,142 @@ async fn close(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64,
 }
 
 const CSS: &str = r#"
-.mm-main { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
-.mm-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.mm-readings .reading { min-width: 0; }
-.mm-readings .mm-wait b { color: var(--waiting); }
-.mm-readings .mm-wait::before { background: linear-gradient(90deg, var(--waiting), transparent); }
+/* ---- Modmail in the house style (2026-11-02), the same shapes as Tickets ----
+   Every section and side block is one kind of bordered panel; never a panel inside a panel.
+   The Open tab leads with the open count and its chart; Closed and Settings get the same
+   panels without it. Flat: no gradients, glows, pings or entrances of their own. */
+.mm-panel { min-width: 0; display: flex; flex-direction: column; gap: 14px; background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; }
+.mm-panel h2, .mm-rail .rail-block > h2, .mm-compose h2 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 14px; font-weight: 500; }
+.mm-panel h2 .muted, .mm-rail h2 .muted { font-size: 12px; font-weight: 400; }
+.mm-panel .empty, .mm-rail .empty { background: none; box-shadow: none; padding: 6px 0; }
+.mm-panel .empty-icon, .mm-rail .empty-icon { animation: none; background: var(--control); color: var(--ink-2); box-shadow: none; }
+.mm-alert { padding: 12px 20px; }
+.mm-alert .need { margin: 0; padding: 0; }
+.mm-alert .need:hover { background: none; }
+.mm-alert .need .grow > span { font-size: 13px; color: var(--ink-3); }
 
-/* A conversation: who and how long they've waited, then its latest message as a bubble.
-   Conversations sit two or three across on a wide screen instead of one stretched card each.
-   One conversation fills the row. */
-.mm-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 12px; }
-.mm-conv { display: flex; flex-direction: column; gap: 14px; padding: 18px 20px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.4s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms + 100ms); }
-.mm-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.mm-face { width: 40px; height: 40px; }
-.mm-who { display: flex; flex-direction: column; gap: 1px; }
-.mm-who strong { font-size: 15px; font-weight: 600; }
-.mm-who span { font-size: 12.5px; color: var(--ink-3); }
-.mm-state { flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-3); }
-.mm-state .icon { width: 14px; height: 14px; }
-.mm-state.wait { color: var(--waiting); font-weight: 600; gap: 8px; }
-.mm-state.wait .dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--waiting); animation: ping 2.2s ease-out infinite 1s; }
-/* The thread sits under the name, on the same left edge. */
-.mm-thread { display: flex; flex-direction: column; gap: 8px; padding-left: 52px; }
-.mm-earlier { font-size: 12.5px; color: var(--ink-3); }
-.mm-msg { display: flex; align-items: flex-end; gap: 8px; max-width: min(560px, 100%); }
-.mm-msg > .avatar { width: 28px; height: 28px; }
-.mm-bubble { min-width: 0; padding: 9px 13px; border-radius: 14px 14px 14px 4px; background: #2b2d31; color: #dbdee1; }
-.mm-bubble p { font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; }
-.mm-time { float: right; margin: 4px 0 0 12px; font-size: 11.5px; line-height: 1.5; color: #949ba4; }
-.mm-by { display: flex; align-items: baseline; gap: 6px; margin-bottom: 1px; font-size: 12px; color: var(--ink-3); }
-.mm-by strong { color: var(--ink); font-size: 13px; font-weight: 600; }
-.mm-msg.staff { flex-direction: row-reverse; align-self: flex-end; }
-.mm-msg.staff .mm-bubble { border-radius: 14px 14px 4px 14px; background: color-mix(in oklab, var(--accent) 16%, var(--raised)); color: var(--ink); }
-.mm-msg.staff .mm-time { color: var(--ink-3); }
-.mm-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; padding-left: 52px; margin-top: auto; }
-.mm-closer { display: inline-flex; align-items: center; gap: 7px; margin-right: auto; font-size: 12.5px; color: var(--ink-2); }
-.mm-closer .avatar { width: 20px; height: 20px; }
-.mm-closer strong { color: var(--ink); font-weight: 600; }
-.mm-closer time { margin-left: 3px; color: var(--ink-3); }
-.mm-acts { display: flex; gap: 6px; align-items: center; }
-/* Back on the same page after a close or another tab: no entrance again. */
-html.same .mm-conv { animation: none; }
+/* Two columns: the main one and a right column of one fixed width, each side block a panel. */
+.with-rail.mm-cols { grid-template-columns: minmax(0, 1fr) 400px; gap: 16px; }
+.mm-rail { min-width: 0; background: none; box-shadow: none; padding: 0; gap: 16px; border-radius: 0; }
+.mm-rail > .rail-block { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; }
+.mm-rail > .rail-block + .rail-block { margin-top: 0; padding-top: 18px; border-top: 1px solid var(--edge-1); }
+.mm-rail .area svg { height: 80px; }
+/* Only the lead chart draws in; a side chart is just there. */
+.mm-rail .area .line, .mm-rail .area .fill, .mm-rail .area-end { animation: none; }
+@media (max-width: 1180px) { .with-rail.mm-cols { grid-template-columns: minmax(0, 1fr) 320px; } }
+@media (max-width: 920px) { .with-rail.mm-cols { grid-template-columns: minmax(0, 1fr); } }
 
-/* The rail. */
-.mm-rail-ic { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--edge-2); color: var(--role, var(--hue)); }
-.mm-rail-ic .icon { width: 15px; height: 15px; }
-.mm-pair { position: relative; flex: none; width: 30px; height: 30px; }
-.mm-pair > .avatar:first-child { width: 30px; height: 30px; }
-.mm-by-face { position: absolute; right: -5px; bottom: -4px; width: 18px; height: 18px; box-shadow: 0 0 0 2px var(--raised); }
-.mm-ago { flex: none; font-size: 12px; color: var(--ink-3); }
+/* The lead: one panel, the answer on the left, where they open and the last closed past a
+   hairline on the right. */
+.mm-lead { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 0; padding: 0; }
+.mm-lead-main { min-width: 0; display: flex; flex-direction: column; gap: 22px; padding: 20px 22px 18px; }
+.mm-lead-side { min-width: 0; display: flex; flex-direction: column; padding: 18px 20px; border-left: 1px solid var(--edge-1); }
+.mm-lead-head { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 16px 40px; }
+.mm-big { display: flex; align-items: baseline; gap: 12px; }
+.mm-big b { font: 600 48px/1 var(--sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.mm-big span { font-size: 14px; color: var(--ink-2); }
+.mm-chart { display: flex; flex-direction: column; gap: 12px; }
+.mm-lead .area svg { height: 170px; }
+@container col (max-width: 1100px) {
+  .mm-lead { grid-template-columns: minmax(0, 1fr); }
+  .mm-lead-side { border-left: 0; border-top: 1px solid var(--edge-1); }
+}
+
+/* Figures: in a row beside the lead number, two across in a side block. */
+.mm-figs { display: flex; flex-wrap: wrap; gap: 12px 36px; }
+.mm-figs > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mm-figs b { font: 600 20px/1.2 var(--sans); letter-spacing: -0.01em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mm-figs span { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.mm-figs .hot b { color: var(--waiting); }
+.mm-figs .dot { width: 6px; height: 6px; }
+.mm-rail .mm-figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+
+/* Side lines: a 28 px face or icon, a 14 px name, a 13 px muted line. */
+.mm-line { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.mm-line .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mm-line strong { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mm-line .grow > span { font-size: 13px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mm-ic { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 8px; background: var(--control); color: var(--ink-2); }
+.mm-ic .icon { width: 15px; height: 15px; }
+.mm-pair { position: relative; flex: none; width: 28px; height: 28px; }
+.mm-pair > .avatar:first-child { width: 28px; height: 28px; }
+.mm-by-face { position: absolute; right: -4px; bottom: -3px; width: 16px; height: 16px; box-shadow: 0 0 0 2px var(--raised); }
+.mm-ago { flex: none; margin-left: auto; font-size: 12px; color: var(--ink-3); }
 .rail-block h2 a { font-weight: 400; }
 
-/* The member's DMs from the bot, on Discord's own colours. */
-.mm-dms { display: flex; flex-direction: column; gap: 12px; padding: 0 0 14px; border-radius: 12px; background: #313338; overflow: hidden; }
+/* ---- a conversation, as a row (the same columns as a ticket) ---- */
+.mm-list { display: flex; flex-direction: column; }
+.mm-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "face body state" "face convo convo" "face acts acts"; gap: 8px 14px; align-items: start; padding: 14px 0; }
+.mm-row + .mm-row { border-top: 1px solid var(--edge-1); }
+.mm-row:first-child { padding-top: 2px; }
+.mm-row:last-child { padding-bottom: 0; }
+.mm-face { grid-area: face; position: relative; width: 28px; height: 28px; }
+.mm-face .avatar { width: 28px; height: 28px; }
+.mm-turn { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 2px var(--raised); }
+.mm-turn.staff { background: var(--waiting); }
+.mm-turn.member { background: var(--live); }
+.mm-body { grid-area: body; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mm-body strong { font-size: 14px; font-weight: 500; }
+.mm-body > span { font-size: 13px; color: var(--ink-3); }
+.mm-convo { grid-area: convo; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mm-convo:empty { display: none; }
+.mm-said { align-self: flex-start; max-width: 100%; padding: 6px 11px; border-radius: 4px 12px 12px 12px; background: var(--well); color: var(--ink-2); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mm-reply { display: flex; align-items: flex-start; gap: 8px; min-width: 0; font-size: 13px; line-height: 20px; color: var(--ink-3); }
+.mm-reply .avatar { width: 20px; height: 20px; flex: none; }
+.mm-reply p { min-width: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mm-reply strong { color: var(--ink-2); font-weight: 500; }
+.mm-time { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.mm-said .mm-time { margin-left: 4px; }
+.mm-state { grid-area: state; display: flex; }
+.mm-acts { grid-area: acts; display: grid; grid-template-columns: 112px 112px; gap: 6px; }
+.mm-acts form { display: flex; }
+.mm-acts .btn { width: 100%; }
+.mm-acts .btn .icon { width: 14px; height: 14px; }
+@container col (min-width: 700px) {
+  .mm-row { grid-template-columns: 28px minmax(0, 1fr) auto auto; grid-template-areas: "face body state acts" "face convo convo convo"; column-gap: 20px; }
+  .mm-state { padding-top: 3px; }
+}
+@container col (min-width: 1250px) {
+  .mm-row { grid-template-columns: 28px minmax(0, 0.8fr) minmax(0, 1.4fr) 140px auto; grid-template-areas: "face body convo state acts"; column-gap: 24px; }
+}
+
+/* ---- settings beside the DMs they become ----
+   The form is the panel with its Save inside; the previews take a fixed column, one at a time,
+   Discord at three quarters, with the side blocks under them. */
+.compose.mm-compose { gap: 16px; }
+@container col (min-width: 1000px) {
+  .compose.mm-compose:has(> .compose-preview) { grid-template-columns: minmax(0, 1fr) 500px; row-gap: 0; }
+}
+@container col (min-width: 1000px) and (max-width: 1200px) {
+  .compose.mm-compose:has(> .compose-preview) { grid-template-columns: minmax(0, 1fr) 440px; }
+}
+.mm-compose > form.settings { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; display: flex; flex-direction: column; gap: 6px; }
+.mm-compose > form.settings fieldset { display: flex; flex-direction: column; gap: 18px; }
+.mm-compose > form.settings .block { gap: 4px; }
+.mm-compose > form.settings .block + .block { padding-top: 18px; border-top: 1px solid var(--edge-1); }
+.mm-compose > form.settings .card { background: none; border: 0; padding: 0; border-radius: 0; }
+.mm-compose > form.settings .save-bar { padding-top: 8px; }
+.mm-compose > form.settings textarea { min-height: 84px; }
+.mm-compose > .compose-preview.mm-rail { position: static; }
+.mm-previews { gap: 12px; }
+.mm-pv-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.compose-preview:has(input[value="staff"]:checked) .mm-pv-member, .compose-preview:has(input[value="member"]:checked) .mm-pv-staff { display: none; }
+.mm-pv-body { display: flex; flex-direction: column; gap: 12px; }
+
+/* The member's DMs from the bot, on Discord's own colours, at three quarters. */
+.mm-dms { zoom: 0.75; display: flex; flex-direction: column; gap: 12px; padding: 0 0 14px; border-radius: 12px; background: #313338; overflow: hidden; }
 .mm-dms-head { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px; background: #2b2d31; border-bottom: 1px solid rgba(0, 0, 0, 0.28); color: #f2f3f5; font-size: 13px; }
 .mm-at { color: #80848e; font-weight: 600; }
-/* The bot's messages are Discord's (web/dc.rs), a size down, arriving one after the other. */
-.mm-dms > .dp-msg { padding: 0 14px; animation: rise 0.4s var(--ease) both 0.2s; }
-.mm-dms > .dp-msg ~ .dp-msg { animation-delay: 0.32s; }
-.mm-staff > .dp-msg { animation-delay: 0.44s; }
+.mm-dms > .dp-msg { padding: 0 14px; }
 .mm-dms .dp-post { gap: 11px; font-size: 13.5px; }
 .mm-dms-gap { display: flex; align-items: center; gap: 10px; padding: 0 14px; color: #949ba4; font-size: 11px; }
 .mm-dms-gap::before, .mm-dms-gap::after { content: ""; flex: 1; height: 1px; background: rgba(255, 255, 255, 0.08); }
 .mm-dms-gap span { text-align: center; max-width: 70%; }
-.mm-send { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 12px; }
+.mm-send { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
 /* The staff thread: its channel and name, Discord's mentions, the bot's note and its button. */
-.mm-previews { display: flex; flex-direction: column; gap: 26px; }
 .mm-dms-head .icon { width: 13px; height: 13px; color: #80848e; transform: rotate(-90deg); }
 .mm-crumb { color: #b5bac1; font-weight: 600; }
 .dp-ping.mm-role { color: var(--role, #c9cdfb); background: color-mix(in oklab, var(--role, #5865f2) 10%, transparent); }
-
-/* Laid out for the column's own width, so the sidebar and rail are already counted. */
-@container col (max-width: 700px) {
-  .mm-readings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@container col (max-width: 560px) {
-  .mm-conv { padding: 14px 16px; }
-  .mm-head { flex-wrap: wrap; row-gap: 4px; }
-  .mm-head .mm-who { flex: 1 1 calc(100% - 52px); }
-  .mm-state { margin-left: 52px; }
-  .mm-thread, .mm-foot { padding-left: 0; }
-  .mm-foot { justify-content: flex-start; }
-}
 "#;
 
 #[cfg(test)]
