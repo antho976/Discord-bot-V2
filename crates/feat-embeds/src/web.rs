@@ -150,11 +150,11 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                     div.eb-card {
                         div.eb-col {
                             section.eb-grp {
-                                (group_head(chat_icon(), "Message text", None))
+                                (group_head("Message text", None))
                                 (text_field("content", "Text above the embed", "Optional. Mentions of members ping them, and so do mentions of roles anyone can mention. @everyone and @here don't.", &d.content, true, Some(model::MAX_CONTENT), 2, "content", ""))
                             }
                             section.eb-grp {
-                                (group_head(ui::icon(Icon::Brush), "Embed", None))
+                                (group_head("Embed", None))
                                 div.eb-f data-part="bar" {
                                     div.eb-lab { label for="color" { "Colour" } }
                                     div.eb-colours {
@@ -178,7 +178,7 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                         }
                         div.eb-col {
                             section.eb-grp.eb-fblock {
-                                (group_head(fields_icon(), "Fields", Some(html! { span.muted.small #eb-fcount {} })))
+                                (group_head("Fields", Some(html! { span.muted.small #eb-fcount {} })))
                                 div #eb-rows {
                                     @for (i, f) in rows.iter().enumerate() { (field_row(&i.to_string(), f)) }
                                 }
@@ -186,7 +186,7 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                                 template #eb-ftpl { (field_row("__I__", &Field::default())) }
                             }
                             section.eb-grp {
-                                (group_head(ui::icon(Icon::Image), "Pictures and footer", None))
+                                (group_head("Pictures and footer", None))
                                 div.eb-2 {
                                     (text_field("image", "Image", "Large, under the fields.", &d.image, false, None, 1, "img", "https://cdn.discordapp.com/.../banner.png"))
                                     (text_field("thumbnail", "Thumbnail", "Small, at the top right.", &d.thumbnail, false, None, 1, "th", "https://"))
@@ -255,7 +255,7 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                 }
             }
         }
-        (ui::section("Sent", Some("Embeds posted from here. Edit one to change the message in Discord."), html! {
+        div.eb-sentp { (ui::section("Sent", Some("Embeds posted from here. Edit one to change the message in Discord."), html! {
             @if sent.is_empty() {
                 (ui::empty(Icon::Log, "Nothing sent yet", "Messages you send from the composer are listed here so you can edit them later."))
             } @else {
@@ -295,7 +295,7 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
                     }
                 }
             }
-        }))
+        })) }
         script { (PreEscaped(JS)) }
     };
     Ok(ui::layout(ctx, page, "Embed builder", None, body))
@@ -327,30 +327,11 @@ fn face_of(ctx: &Ctx, page: &Page, name: &str) -> Option<String> {
     id.map(|id| ctx.member_avatar(page.guild_id, id as u64))
 }
 
-fn group_head(ic: Markup, title: &str, extra: Option<Markup>) -> Markup {
+fn group_head(title: &str, extra: Option<Markup>) -> Markup {
     html! {
         div.eb-grp-head {
-            span.eb-grp-ic { (ic) }
             h3 { (title) }
             @if let Some(x) = extra { (x) }
-        }
-    }
-}
-
-/// A speech bubble, for the message text.
-fn chat_icon() -> Markup {
-    html! {
-        svg.icon viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" {
-            (PreEscaped(r#"<path d="M5 4.5h14A1.5 1.5 0 0 1 20.5 6v9.5A1.5 1.5 0 0 1 19 17h-9l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5V6A1.5 1.5 0 0 1 5 4.5zM8 9h8M8 12.5h5"/>"#))
-        }
-    }
-}
-
-/// Name and value pairs, for the fields.
-fn fields_icon() -> Markup {
-    html! {
-        svg.icon viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" {
-            (PreEscaped(r#"<path d="M5.5 4.5h4A1.5 1.5 0 0 1 11 6v4a1.5 1.5 0 0 1-1.5 1.5h-4A1.5 1.5 0 0 1 4 10V6a1.5 1.5 0 0 1 1.5-1.5ZM14.5 4.5h4A1.5 1.5 0 0 1 20 6v4a1.5 1.5 0 0 1-1.5 1.5h-4A1.5 1.5 0 0 1 13 10V6a1.5 1.5 0 0 1 1.5-1.5ZM4 15h16M4 19h11"/>"#))
         }
     }
 }
@@ -760,6 +741,51 @@ fieldset.eb { min-width: 0; margin: 0; padding: 0; border: 0; }
   .dc-embed > .dc-th { width: 64px; height: 64px; }
   .eb-sacts .m-hide { display: none; }
 }
+
+/* ---- house style (2026-11-02) ----
+   The editor is one bordered panel; the preview takes a 500 px column with the send controls in
+   a panel under it. While the editor is two columns, the preview window runs the editor's full
+   height (the post sits at the bottom, as in a channel), so both columns end together; narrower,
+   the preview keeps its own height and stays in view. Sent is a panel of its own below. Neutral
+   chrome: no tinted icon tiles or chips; the embeds' own colours stay. */
+.eb-card, .eb-send, .eb-sentp > section.block { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; box-shadow: none; }
+.eb-sentp { min-width: 0; }
+.page-body:has(> #eb-form) { gap: 16px; }
+.eb-sentp > section.block { padding: 18px 20px; }
+.eb-sentp > section.block > .block-head h2 { font-size: 14px; font-weight: 500; }
+.eb-grp-head h3 { font-size: 14px; font-weight: 500; }
+.eb-tpl.on { background: var(--selected); box-shadow: inset 0 0 0 1px var(--edge-2); }
+.eb-pick:hover { transform: none; }
+.eb-sw:hover { transform: none; }
+.eb-note { background: var(--raised); box-shadow: none; border: 1px solid var(--edge-1); }
+.eb-note-ic { width: auto; height: auto; color: var(--ink-2); background: none; }
+.eb-error { animation: none; }
+.dc { animation: none; }
+.dc .hl { background: color-mix(in oklab, var(--data) 16%, transparent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--data) 16%, transparent); }
+.dc img.hl { box-shadow: 0 0 0 2px var(--data); }
+.eb-total-bar > span { background: var(--data); }
+.eb-send { padding: 18px 20px; gap: 12px; }
+.eb-win { border-radius: 14px; box-shadow: none; border: 1px solid var(--edge-1); }
+/* Discord at three quarters of its size, the same as the other previews. */
+.eb-win .dc { zoom: 0.75; }
+.eb-win-body { min-height: 200px; }
+fieldset.eb.compose { gap: 16px; }
+@container col (min-width: 1000px) { fieldset.eb.compose { grid-template-columns: minmax(0, 1fr) 440px; } }
+@container col (min-width: 1400px) {
+  fieldset.eb.compose { grid-template-columns: minmax(0, 1fr) 500px; align-items: stretch; }
+  fieldset.eb.compose > .compose-preview { position: static; }
+  .eb-side .eb-win { flex: 1; display: flex; flex-direction: column; }
+  .eb-side .eb-win-body { flex: 1; max-height: none; }
+}
+.eb-sent { grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 8px; }
+.eb-srow, .eb-srow.cur { background: var(--well); box-shadow: none; border-radius: 10px; }
+.eb-srow:hover { transform: none; box-shadow: none; background: var(--hover); }
+.eb-srow.cur { box-shadow: inset 0 0 0 1px var(--edge-3); }
+.eb-srow .badge.accent { background: var(--control); color: var(--ink-2); }
+.eb-chan-chip { background: var(--control); color: var(--ink-2); }
+.eb-chan-chip .icon { color: var(--ink-3); }
+.eb-sentp .empty { background: none; box-shadow: none; padding: 4px 0; border-radius: 0; }
+.eb-sentp .empty-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--control); color: var(--ink-2); box-shadow: none; animation: none; }
 "##;
 
 const JS: &str = r##"

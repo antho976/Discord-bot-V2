@@ -243,7 +243,7 @@ async fn list_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
                     @let top = counts.iter().copied().max().unwrap_or(0).max(1);
                     div.ru-stat {
                         div.ru-stat-head {
-                            b data-count { (text::num(total)) }
+                            b { (text::num(total)) }
                             span { (label) }
                         }
                         div.ru-bars role="img" aria-label={ (about) ": " (counts.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(", ")) } {
@@ -339,12 +339,11 @@ struct EditQuery {
     channel: Option<u64>,
 }
 
-/// A rule section's head: its icon tile, title and one line, and the switch that turns it on
+/// A rule section's head: its title and one line, and the switch that turns it on
 /// when it has one.
-fn sec_head(ic: Markup, title: &str, line: &str, switch: Option<(&str, &str, bool)>) -> Markup {
+fn sec_head(title: &str, line: &str, switch: Option<(&str, &str, bool)>) -> Markup {
     html! {
         div.ru-sec-head {
-            span.ru-sec-ic { (ic) }
             div.grow {
                 @match switch {
                     Some((id, ..)) => h2 { label for=(id) { (title) } },
@@ -389,7 +388,6 @@ async fn edit_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
                 @if existing.is_some() { input type="hidden" name="was" value=(r.channel); }
                 div.card.ru-sec data-rule="channel" {
                     div.ru-sec-head {
-                        span.ru-sec-ic { (ui::icon(Icon::Hash)) }
                         div.grow {
                             h2 { label for="channel" { "Channel" } }
                             p.help { "Each channel has one set of rules. Threads in it aren't affected." }
@@ -398,25 +396,25 @@ async fn edit_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
                     }
                 }
                 div.card.ru-sec data-rule="media" {
-                    (sec_head(rule_icon(Kind::Media), "Media only", "Removes messages with no attachment and no link. The owner and people with Manage Messages can still talk.", Some(("media_only", "Media only", r.media_only))))
+                    (sec_head("Media only", "Removes messages with no attachment and no link. The owner and people with Manage Messages can still talk.", Some(("media_only", "Media only", r.media_only))))
                     div.ru-sec-body {
                         (ui::field_toggle("media_notice", "Say why", Some("Posts a notice that removes itself after 6 seconds, at most once every 10 seconds."), r.media_notice))
                     }
                 }
                 div.card.ru-sec data-rule="purge" {
-                    (sec_head(rule_icon(Kind::Purge), "Auto-purge", "Clears out messages once they reach the age you set.", None))
+                    (sec_head("Auto-purge", "Clears out messages once they reach the age you set.", None))
                     div.ru-sec-body {
                         (ui::field_text("purge", "Delete messages older than", Some("Like 30m, 12h or 7d, up to 90 days. Pinned messages and the sticky message stay. Empty leaves messages alone."), &limit_input(r.purge_after_mins), "Off"))
                     }
                 }
                 div.card.ru-sec data-rule="thread" {
-                    (sec_head(rule_icon(Kind::Thread), "Auto-thread", "Starts a thread on each new message, for replies.", Some(("thread", "Thread on every message", r.thread))))
+                    (sec_head("Auto-thread", "Starts a thread on each new message, for replies.", Some(("thread", "Thread on every message", r.thread))))
                     div.ru-sec-body {
                         (ui::field_text("thread_name", "Thread name", Some("{user}, {date} and {text}, the start of the message, are filled in."), &r.thread_name, DEFAULT_THREAD_NAME))
                     }
                 }
                 div.card.ru-sec data-rule="sticky" {
-                    (sec_head(rule_icon(Kind::Sticky), "Sticky message", "Keeps one message from the bot at the bottom of the channel.", None))
+                    (sec_head("Sticky message", "Keeps one message from the bot at the bottom of the channel.", None))
                     div.ru-sec-body {
                         (ui::field_textarea("sticky", "Message", Some("Posted again at the bottom of the channel, and the previous copy deleted. Empty turns it off."), &r.sticky, "Read the pinned rules before posting."))
                         (ui::field_number("sticky_every", "Repost after", Some("New messages since the last copy. The bot waits for a 3 second pause, or 30 seconds at most."), r.sticky_every, 1, 100, Some("messages")))
@@ -726,6 +724,52 @@ html.same .ru-bar { animation: none; }
   .ru-sec-head > .grow { flex: 1 1 180px; }
   .ru-sec-pick { width: 100%; }
 }
+/* ---- house style (2026-11-02) ----
+   The week leads, as one flat panel. The channels follow two to a row, each a panel; rows end
+   together. Rule tiles are flat cells: a rule that's on reads in full ink, one that's off is
+   quiet. No hue-tinted icon tiles, no lighting-up on load. The edit page is one settings panel
+   with Save inside it, beside a 420 px preview panel that stays in view. */
+.ru-stats, .ru-card, .ru-edit > form.settings, .ru-side > .rail-block { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; box-shadow: none; }
+.ru-card { padding: 18px 20px; }
+.ru-card:hover { transform: none; box-shadow: none; }
+.ru-name strong { font-size: 14px; font-weight: 500; letter-spacing: 0; }
+.ru-name span { font-size: 13px; }
+.ru-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@container col (min-width: 1000px) { .ru-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ru-tile { background: var(--well); }
+.ru-tile.on { background: var(--solid); box-shadow: none; }
+.ru-tile { flex-direction: row; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; }
+.ru-ti { width: 16px; height: 16px; flex: none; border-radius: 0; }
+.ru-tile.on .ru-ti { color: var(--ink); background: none; }
+.ru-tile .ru-tl { color: var(--ink-3); font-weight: 500; }
+.ru-tile.on .ru-tl { color: var(--ink); }
+.ru-tile.on .ru-tv { color: var(--ink-2); }
+.ru-grid .ru-tile.on .ru-ti, .ru-tile.pop .ru-ti { animation: none; }
+.ru-msg { box-shadow: none; }
+.ru-msg .dp-post { font-size: 15px; }
+.ru-msg .dp-msg { zoom: 0.8; }
+.ru-sticky-cap .icon { color: var(--ink-3); }
+.ru-acts .btn { min-width: 64px; justify-content: center; }
+.ru-week + .empty { background: var(--raised); box-shadow: none; border: 1px solid var(--edge-1); border-radius: 14px; }
+.ru-week + .empty .empty-icon { background: var(--control); color: var(--ink-2); box-shadow: none; animation: none; }
+/* Edit page: the sections are parts of one panel, split by hairlines. */
+.ru-edit { grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; }
+.ru-edit > form.settings { padding: 4px 20px 18px; }
+.ru-edit .ru-sec, .ru-edit .ru-sec.card { background: none; border: 0; border-radius: 0; padding: 0; }
+.ru-edit .settings fieldset > .ru-sec + .ru-sec { border-top: 1px solid var(--edge-1); }
+.ru-sec-head h2 { font-size: 14px; font-weight: 500; }
+.ru-edit > form.settings .save-bar { position: static; padding-top: 14px; border-top: 1px solid var(--edge-1); }
+.ru-side { background: none; box-shadow: none; padding: 0; }
+.ru-side > .rail-block { padding: 18px 20px; }
+.ru-side .rail-block > h2 { font-size: 14px; font-weight: 500; }
+@container col (min-width: 1080px) {
+  .ru-edit .settings fieldset { gap: 0 20px; }
+  .ru-edit .settings fieldset > .ru-sec + .ru-sec { border-top: 0; }
+  .ru-edit .ru-sec:is([data-rule="media"], [data-rule="purge"], [data-rule="thread"], [data-rule="sticky"]) { border-top: 1px solid var(--edge-1) !important; }
+  .ru-edit .ru-sec:is([data-rule="purge"], [data-rule="thread"]) { padding-left: 20px; border-left: 1px solid var(--edge-1); }
+}
+@media (max-width: 1300px) { .ru-edit { grid-template-columns: minmax(0, 1fr) 380px; } }
+@media (max-width: 1100px) { .ru-edit { grid-template-columns: minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) {
   .ru-grid .ru-tile.on .ru-ti, .ru-tile.pop .ru-ti, .ru-bar { animation: none; }
 }
