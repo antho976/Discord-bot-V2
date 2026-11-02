@@ -1,5 +1,7 @@
 use bot_core::axum::Router;
 use bot_core::axum::extract::{Path, Query, State};
+use bot_core::axum::http::StatusCode;
+use bot_core::axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use bot_core::axum::response::IntoResponse;
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
@@ -10,6 +12,7 @@ use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 use serde::Deserialize;
 
+use crate::pictures::{self, MAX_PER_REPLY, MAX_REPLY_BYTES};
 use crate::{CardEmbed, CustomCommand, KEY, Kind, MAX_COMMANDS, MAX_TRIGGERS, Mode, Settings, Trigger, valid_name};
 
 pub fn routes() -> Router<Ctx> {
@@ -21,6 +24,9 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/commands/responder", get(responder_page))
         .route("/g/{guild}/commands/responder/edit", get(trigger_edit).post(trigger_save))
         .route("/g/{guild}/commands/responder/{id}/delete", post(trigger_delete))
+        .route("/g/{guild}/commands/pictures/{kind}/{id}", post(add_picture))
+        .route("/g/{guild}/commands/picture/{pid}", get(picture))
+        .route("/g/{guild}/commands/picture/{pid}/remove", post(remove_picture))
 }
 
 fn tabs(page: &Page, s: &Settings, active: &str) -> Markup {
@@ -91,16 +97,13 @@ async fn commands_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let count = |id: u32| uses.get(&(Kind::Command.key().to_owned(), id)).map_or(0, |u| u.0);
     let top = s.commands.iter().map(|c| count(c.id)).max().unwrap_or(0).max(1);
     let favourite = s.commands.iter().filter(|c| count(c.id) > 0).max_by_key(|c| count(c.id));
+    let pics = pictures::by_item(&ctx, guild)?;
+    let pics_of = |kind: Kind, id: u32| pics.get(&(kind, id)).map_or(&[][..], Vec::as_slice);
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, &s, "Commands"))
         div.with-rail {
             div.cc-main {
-                div.readings {
-                    div.reading { b data-count { (s.commands.len()) " of " (MAX_COMMANDS) } span { "commands" } }
-                    div.reading { b data-count { (text::num(total)) } span { "uses, all time" } }
-                    @if let Some(c) = favourite { div.reading { b.cc-fav { span.cc-sigil { "/" } (c.name) } span { "used most" } } }
-                }
                 @if s.commands.is_empty() {
                     (ui::empty(Icon::Slash, "No custom commands yet", "Add one to answer a slash command with your own text, like /links or /rules."))
                 } @else {
@@ -127,24 +130,31 @@ async fn commands_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                         }
                                         (usage(&uses, Kind::Command, c.id, top, ("use", "uses")))
                                     }
-                                    (reply_bubble(&ctx, &sample, None, &c.reply, c.embed.as_ref(), c.ephemeral))
+                                    (reply_bubble(&ctx, &page, &sample, None, &c.reply, pics_of(Kind::Command, c.id), c.embed.as_ref(), c.ephemeral))
                                 }
                             }
                         }
                     }
                 }
             }
-            aside.rail {
-                (placeholder_block())
+            aside.rail.cc-rail {
+                div.rail-block.cc-figs {
+                    div.readings {
+                        div.reading { b { (s.commands.len()) " of " (MAX_COMMANDS) } span { "commands" } }
+                        div.reading { b { (text::num(total)) } span { "uses, all time" } }
+                        @if let Some(c) = favourite { div.reading { b.cc-fav { span.cc-sigil { "/" } (c.name) } span { "used most" } } }
+                    }
+                }
                 div.rail-block {
                     h2 { "Text commands" }
                     form.stack method="post" action=(page.path("commands/options")) {
                         fieldset.cc-fs disabled[!page.can_edit()] {
                             (ui::switch_row("text_commands", "Answer !name in chat", Some("Members can type !links as well as /links, like on the old bot. Each answers once every 5 seconds in a channel."), s.text_commands))
                         }
-                        @if page.can_edit() { div { button.btn.small type="submit" { "Save" } } }
+                        @if page.can_edit() { div.cc-save { button.btn.primary.small type="submit" { "Save" } } }
                     }
                 }
+                (placeholder_block())
             }
         }
     };
@@ -180,7 +190,8 @@ fn bot_av(ctx: &Ctx) -> (String, Markup) {
 
 /// A small copy of the exchange for a list row, in Discord's colours: what the member said (for
 /// a trigger), then the bot's reply with placeholders filled, and the embed under it.
-fn reply_bubble(ctx: &Ctx, sample: &Sample, said: Option<Markup>, reply: &str, embed: Option<&CardEmbed>, ephemeral: bool) -> Markup {
+#[allow(clippy::too_many_arguments)]
+fn reply_bubble(ctx: &Ctx, page: &Page, sample: &Sample, said: Option<Markup>, reply: &str, pics: &[i64], embed: Option<&CardEmbed>, ephemeral: bool) -> Markup {
     let (name, face) = bot_av(ctx);
     html! {
         div.cc-bubble {
@@ -198,6 +209,11 @@ fn reply_bubble(ctx: &Ctx, sample: &Sample, said: Option<Markup>, reply: &str, e
                 div.cc-bubble-main {
                     div.cc-bhead { b { (name) } span.cc-tag { "APP" } }
                     @if !reply.trim().is_empty() { p.cc-btext { (sample.fill(reply.trim())) } }
+                    @if !pics.is_empty() {
+                        div.cc-bpics {
+                            @for id in pics { img src=(picture_src(page, *id)) alt="" width="56" height="56" loading="lazy"; }
+                        }
+                    }
                     @if let Some(e) = embed {
                         div.cc-bembed {
                             @if !e.title.is_empty() { strong { (sample.fill(&e.title)) } }
@@ -247,7 +263,7 @@ impl Sample {
 /// (shown over it as Discord does); `said` is the member's message it answers, drawn first. The
 /// page script fills it as you type.
 #[allow(clippy::too_many_arguments)]
-fn preview(ctx: &Ctx, page: &Page, sample: &Sample, channel: &str, used: Option<&str>, said: Option<Markup>, reply: &str, embed: Option<&CardEmbed>, ephemeral: bool) -> Markup {
+fn preview(ctx: &Ctx, page: &Page, sample: &Sample, channel: &str, used: Option<&str>, said: Option<Markup>, reply: &str, pics: &[i64], embed: Option<&CardEmbed>, ephemeral: bool) -> Markup {
     let e = embed.cloned().unwrap_or_default();
     let img_ok = e.image.trim().starts_with("https://");
     let bot = dc::message(ctx, page);
@@ -263,12 +279,16 @@ fn preview(ctx: &Ctx, page: &Page, sample: &Sample, channel: &str, used: Option<
                 }
                 (bot.render(html! {
                     div.dp-line #cc-p-text { (sample.fill(reply)) }
+                    // Discord puts the pictures under the text and over the embed.
+                    div.cc-p-pics #cc-p-pics data-n=(pics.len()) hidden[pics.is_empty()] {
+                        @for id in pics { img src=(picture_src(page, *id)) alt=""; }
+                    }
                     div.dp-embed #cc-p-embed hidden[embed.is_none()] style="--embed:#f0806a" {
                         strong.dp-title #cc-p-etitle { (sample.fill(&e.title)) }
                         p.dp-desc #cc-p-edesc { (sample.fill(&e.description)) }
                         img #cc-p-eimg src=[img_ok.then_some(e.image.trim())] alt="" hidden[!img_ok];
                     }
-                    div.cc-ghost #cc-p-ghost hidden[!(reply.trim().is_empty() && embed.is_none())] {
+                    div.cc-ghost #cc-p-ghost hidden[!(reply.trim().is_empty() && embed.is_none() && pics.is_empty())] {
                         span {} span {}
                         p { "Write the reply and it shows here as members will see it." }
                     }
@@ -317,6 +337,10 @@ async fn command_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let sample = Sample::new(&ctx, &page);
     let title = if existing.is_some() { "Edit command" } else { "Add a command" };
     let used = format!("/{}", if c.name.is_empty() { "name" } else { &c.name });
+    let pics = match &existing {
+        Some(c) => pictures::list(&ctx, guild, Kind::Command, c.id)?,
+        None => Vec::new(),
+    };
     let body = html! {
         style { (PreEscaped(CSS)) }
         (back(&page.path("commands"), "All commands"))
@@ -329,6 +353,7 @@ async fn command_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 })))
                 (ui::section("Reply", Some("{user}, {mention}, {server}, {channel} and {members} are filled in. Only {mention} pings."), ui::card(html! {
                     (ui::field_textarea("reply", "Message", None, &c.reply, "Twitch: twitch.tv/antho, schedule in #announcements"))
+                    (pictures_field(&page, Kind::Command, existing.as_ref().map(|c| c.id), &pics))
                     (ui::field_toggle("ephemeral", "Only they see it", Some("For the slash command. A !name reply is always public."), c.ephemeral))
                 })))
                 (ui::section("Embed", None, html! { div.cc-ecard { (ui::card(html! {
@@ -339,7 +364,7 @@ async fn command_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 })) } }))
             }))
             aside.cc-side.compose-preview {
-                (preview(&ctx, &page, &sample, &sample.channel, Some(&used), None, &c.reply, c.embed.as_ref(), c.ephemeral))
+                (preview(&ctx, &page, &sample, &sample.channel, Some(&used), None, &c.reply, &pics, c.embed.as_ref(), c.ephemeral))
                 p.muted.small { "You stand in for the member. Placeholders fill in as they would for you." }
                 (used_line(&ctx, guild, Kind::Command, existing.as_ref().map(|c| c.id), "Used")?)
             }
@@ -384,7 +409,11 @@ async fn command_save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         }
     }
     let reply = text::clip(form.text("reply").trim(), 2000);
-    if reply.is_empty() && embed.is_none() {
+    let has_pics = match pos {
+        Some(i) => !pictures::list(&ctx, guild, Kind::Command, s.commands[i].id)?.is_empty(),
+        None => false,
+    };
+    if reply.is_empty() && embed.is_none() && !has_pics {
         return Err(WebError::Bad("Write a reply, or add an embed.".into()));
     }
     let before = s.registered().iter().map(|(n, d)| (n.to_string(), d.to_string())).collect::<Vec<_>>();
@@ -413,6 +442,7 @@ async fn command_delete(State(ctx): State<Ctx>, user: User, Path((guild, id)): P
     let gone = s.commands.remove(i);
     ctx.save_settings(guild, KEY, &s)?;
     crate::forget_uses(&ctx, guild, Kind::Command, id)?;
+    pictures::forget(&ctx, guild, Kind::Command, id)?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Deleted /{}", gone.name));
     reregister(&ctx, guild);
     Ok(saved(&page.path("commands")))
@@ -468,20 +498,16 @@ async fn responder_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
     let sample = Sample::new(&ctx, &page);
     let count = |id: u32| uses.get(&(Kind::Trigger.key().to_owned(), id)).map_or(0, |u| u.0);
     let top = s.triggers.iter().map(|t| count(t.id)).max().unwrap_or(0).max(1);
+    let pics = pictures::by_item(&ctx, guild)?;
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, &s, "Auto-responder"))
         div.with-rail {
             div.cc-main {
-                div.readings {
-                    div.reading { b data-count { (s.triggers.len()) " of " (MAX_TRIGGERS) } span { "triggers" } }
-                    div.reading { b data-count { (text::num(total)) } span { "replies, all time" } }
-                }
                 @if s.triggers.is_empty() {
                     (ui::empty(Icon::Slash, "No triggers yet", "Add a phrase, like \"when is stream\", and the reply the bot posts when a message has it."))
                 } @else {
-                    p.muted.small.cc-order-note { "Checked in number order; the first match answers." }
-                    div.cc-list {
+                    div.cc-list.cc-rows {
                         @for (i, t) in s.triggers.iter().enumerate() {
                             article.cc-card {
                                 header.cc-card-head {
@@ -505,15 +531,22 @@ async fn responder_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u6
                                         }
                                         (usage(&uses, Kind::Trigger, t.id, top, ("reply", "replies")))
                                     }
-                                    (reply_bubble(&ctx, &sample, Some(said(t.mode, &t.pattern)), &t.reply, None, false))
+                                    (reply_bubble(&ctx, &page, &sample, Some(said(t.mode, &t.pattern)), &t.reply, pics.get(&(Kind::Trigger, t.id)).map_or(&[][..], Vec::as_slice), None, false))
                                 }
                             }
                         }
                     }
                 }
             }
-            aside.rail {
-                (test_block(&ctx, &page, &s, test.as_deref(), channel))
+            aside.rail.cc-rail {
+                div.rail-block.cc-figs.small {
+                    div.readings {
+                        div.reading { b { (s.triggers.len()) " of " (MAX_TRIGGERS) } span { "triggers" } }
+                        div.reading { b { (text::num(total)) } span { "replies, all time" } }
+                    }
+                    @if !s.triggers.is_empty() { p.muted.small.cc-order-note { "Checked in number order; the first match answers." } }
+                }
+                (test_block(&ctx, &page, &s, &pics, test.as_deref(), channel))
                 (placeholder_block())
             }
         }
@@ -534,7 +567,7 @@ fn ordinal(n: usize) -> String {
 }
 
 /// Try a message against the triggers with the same matching the bot uses. Nothing is posted.
-fn test_block(ctx: &Ctx, page: &Page, s: &Settings, test: Option<&str>, channel: Option<u64>) -> Markup {
+fn test_block(ctx: &Ctx, page: &Page, s: &Settings, pics: &std::collections::HashMap<(Kind, u32), Vec<i64>>, test: Option<&str>, channel: Option<u64>) -> Markup {
     let guild = page.guild_id;
     let mut channels = vec![(String::new(), "Any channel".to_owned())];
     channels.extend(ctx.text_channels(guild).into_iter().map(|(id, n)| (id.to_string(), format!("#{n}"))));
@@ -560,7 +593,7 @@ fn test_block(ctx: &Ctx, page: &Page, s: &Settings, test: Option<&str>, channel:
                                 span { (t.mode.label()) " “" (t.pattern) "”" }
                             }
                             @if channel.is_none() && !t.channels.is_empty() { p.muted.small { "It answers only in " (channel_list(ctx, guild, t)) ". Pick a channel to check." } }
-                            (reply_bubble(ctx, &sample, Some(html! { (said) }), &t.reply, None, false))
+                            (reply_bubble(ctx, page, &sample, Some(html! { (said) }), &t.reply, pics.get(&(Kind::Trigger, t.id)).map_or(&[][..], Vec::as_slice), None, false))
                         }
                         None => {
                             div.cc-hit { (ui::badge("No match", Tone::Muted)) span.muted { "No trigger answers this" @if channel.is_some() { " here" } "." } }
@@ -590,6 +623,10 @@ async fn trigger_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     // The preview sits in the first channel it answers in.
     let first_channel = t.channels.first().map(|c| channel_name(&ctx, guild, *c).trim_start_matches('#').to_owned()).unwrap_or_else(|| sample.channel.clone());
     let title = if existing.is_some() { "Edit trigger" } else { "Add a trigger" };
+    let pics = match &existing {
+        Some(t) => pictures::list(&ctx, guild, Kind::Trigger, t.id)?,
+        None => Vec::new(),
+    };
     let body = html! {
         style { (PreEscaped(CSS)) }
         (back(&page.path("commands/responder"), "All triggers"))
@@ -602,12 +639,13 @@ async fn trigger_edit(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 })))
                 (ui::section("Reply", Some("{user}, {mention}, {server}, {channel} and {members} are filled in. Only {mention} pings."), ui::card(html! {
                     (ui::field_textarea("reply", "Message", None, &t.reply, "Streams are Tuesday and Friday at 8 pm. Schedule in #announcements."))
+                    (pictures_field(&page, Kind::Trigger, existing.as_ref().map(|t| t.id), &pics))
                     (ui::field_number("cooldown", "Cooldown", Some("After it answers, it stays quiet this long across the server."), t.cooldown_secs, 0, 86_400, Some("seconds")))
                     (ui::field_channels(&ctx, guild, "channels", "Only in", Some("None picked answers everywhere. Threads in these channels count too."), &t.channels))
                 })))
             }))
             aside.cc-side.compose-preview {
-                (preview(&ctx, &page, &sample, &first_channel, None, Some(above), &t.reply, None, false))
+                (preview(&ctx, &page, &sample, &first_channel, None, Some(above), &t.reply, &pics, None, false))
                 p.muted.small { "You stand in for the member. Placeholders fill in as they would for you." }
                 (used_line(&ctx, guild, Kind::Trigger, existing.as_ref().map(|t| t.id), "Answered")?)
             }
@@ -633,7 +671,11 @@ async fn trigger_save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         return Err(WebError::Bad("Type the phrase to look for.".into()));
     }
     let reply = text::clip(form.text("reply").trim(), 2000);
-    if reply.is_empty() {
+    let has_pics = match pos {
+        Some(i) => !pictures::list(&ctx, guild, Kind::Trigger, s.triggers[i].id)?.is_empty(),
+        None => false,
+    };
+    if reply.is_empty() && !has_pics {
         return Err(WebError::Bad("Write the reply.".into()));
     }
     let mode = Mode::from_key(&form.string("mode"));
@@ -658,8 +700,116 @@ async fn trigger_delete(State(ctx): State<Ctx>, user: User, Path((guild, id)): P
     let gone = s.triggers.remove(i);
     ctx.save_settings(guild, KEY, &s)?;
     crate::forget_uses(&ctx, guild, Kind::Trigger, id)?;
+    pictures::forget(&ctx, guild, Kind::Trigger, id)?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Deleted the reply to “{}”", gone.pattern));
     Ok(saved(&page.path("commands/responder")))
+}
+
+// ---- pictures ----
+
+const MB: usize = 1024 * 1024;
+
+/// A reply picture's address on the dashboard.
+fn picture_src(page: &Page, id: i64) -> String {
+    page.path(&format!("commands/picture/{id}"))
+}
+
+/// One picture in the strip on an edit page, with its remove button for editors.
+fn picture_tile(page: &Page, id: Option<i64>) -> Markup {
+    html! {
+        figure.cc-pic {
+            img src=[id.map(|id| picture_src(page, id))] alt="" loading="lazy";
+            @if page.can_edit() {
+                button.icon-btn.small type="button" aria-label="Remove this picture" data-confirm="Remove" data-cc-remove=(id.map(|id| page.path(&format!("commands/picture/{id}/remove"))).unwrap_or_default()) { (ui::icon(Icon::Trash)) }
+            }
+        }
+    }
+}
+
+/// The pictures sent with a reply: a strip of small tiles, and a way to add and remove them. Each
+/// change is kept at once (the page's script sends it), apart from the form's Save. A new command
+/// or trigger gets them once it's saved, since they hang on its id.
+fn pictures_field(page: &Page, kind: Kind, id: Option<u32>, ids: &[i64]) -> Markup {
+    let noun = if kind == Kind::Command { "command" } else { "trigger" };
+    html! {
+        div.row.cc-pics-field {
+            div.row-text {
+                label for=[id.filter(|_| page.can_edit()).map(|_| "cc-pic-file")] { "Pictures" }
+                p.help { "Sent with the reply, up to " (MAX_PER_REPLY) ", " (MAX_REPLY_BYTES / MB) " MB together. Large ones are shrunk; a GIF goes as it is. Kept as soon as you add or remove one." }
+            }
+            @match id {
+                None => { p.cc-pics-later { "Save the " (noun) " first, then add pictures here." } }
+                Some(id) => {
+                    div.cc-pics #cc-pics data-max=(MAX_PER_REPLY) data-limit=(MAX_REPLY_BYTES) {
+                        @for pid in ids { (picture_tile(page, Some(*pid))) }
+                        @if page.can_edit() {
+                            div.cc-pic.add hidden[ids.len() >= MAX_PER_REPLY] {
+                                button.btn.small.outline type="button" data-cc-pick { (ui::icon(Icon::Plus)) "Add" }
+                                input #cc-pic-file type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-action=(page.path(&format!("commands/pictures/{}/{id}", kind.key())));
+                            }
+                        }
+                    }
+                    template #cc-pic-tpl { (picture_tile(page, None)) }
+                }
+            }
+        }
+    }
+}
+
+/// "/links", or "the reply to “gm”", for the audit log.
+fn item_name(s: &Settings, kind: Kind, id: u32) -> Option<String> {
+    match kind {
+        Kind::Command => s.commands.iter().find(|c| c.id == id).map(|c| format!("/{}", c.name)),
+        Kind::Trigger => s.triggers.iter().find(|t| t.id == id).map(|t| format!("the reply to “{}”", t.pattern)),
+    }
+}
+
+/// The body is the picture itself, shrunk by the page's script. It's read only after the access
+/// check, so someone without access can't make the bot buffer uploads. Answers with the new
+/// picture's id.
+async fn add_picture(State(ctx): State<Ctx>, user: User, Path((guild, kind, id)): Path<(u64, String, u32)>, body: bot_core::axum::body::Body) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let kind = match kind.as_str() {
+        "command" => Kind::Command,
+        "trigger" => Kind::Trigger,
+        _ => return Err(WebError::NotFound),
+    };
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let Some(name) = item_name(&s, kind, id) else { return Err(WebError::Bad("That was deleted. Add it again.".into())) };
+    let Ok(body) = bot_core::axum::body::to_bytes(body, MAX_REPLY_BYTES).await else {
+        return Err(WebError::Bad(format!("That picture is over {} MB. Pick a smaller one.", MAX_REPLY_BYTES / MB)));
+    };
+    let mime = bot_core::web::banner::sniff(&body).ok_or_else(|| WebError::Bad("That file isn't a PNG, JPEG, WebP or GIF picture.".into()))?;
+    let pid = pictures::add(&ctx, guild, kind, id, mime, &body)?.map_err(|full| WebError::Bad(full.message()))?;
+    ctx.audit(&page.user, Some(guild), KEY, format!("Added a picture to {name}"));
+    Ok(pid.to_string().into_response())
+}
+
+/// A reply picture, for the dashboard. Its id never names another picture, so it's kept for good.
+async fn picture(State(ctx): State<Ctx>, user: User, Path((guild, pid)): Path<(u64, i64)>) -> WebResult {
+    ctx.page(&user, guild, KEY, Level::View)?;
+    let (mime, data) = pictures::get(&ctx, guild, pid)?.ok_or(WebError::NotFound)?;
+    Ok(([(CONTENT_TYPE, mime), (CACHE_CONTROL, "private, max-age=31536000, immutable".to_owned())], data).into_response())
+}
+
+/// Sent by the page's script; answers with nothing. The last picture of a reply with no text and
+/// no embed stays, so the reply never ends up empty.
+async fn remove_picture(State(ctx): State<Ctx>, user: User, Path((guild, pid)): Path<(u64, i64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let Some(p) = pictures::find(&ctx, guild, pid)? else { return Ok(StatusCode::NO_CONTENT.into_response()) };
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let only_pictures = match p.kind {
+        Kind::Command => s.commands.iter().find(|c| c.id == p.item).is_some_and(|c| c.reply.trim().is_empty() && c.embed.is_none()),
+        Kind::Trigger => s.triggers.iter().find(|t| t.id == p.item).is_some_and(|t| t.reply.trim().is_empty()),
+    };
+    if only_pictures && pictures::list(&ctx, guild, p.kind, p.item)?.len() <= 1 {
+        return Err(WebError::Bad("The reply is only this picture. Write a message and save it first, then remove the picture.".into()));
+    }
+    if pictures::remove(&ctx, guild, pid)? {
+        let name = item_name(&s, p.kind, p.item).unwrap_or_else(|| "a deleted reply".into());
+        ctx.audit(&page.user, Some(guild), KEY, format!("Removed a picture from {name}"));
+    }
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 // ---- preview ----
@@ -687,6 +837,15 @@ pub fn seed(ctx: &Ctx, guild: u64) -> bot_core::anyhow::Result<()> {
         s.triggers.push(Trigger { id, mode, pattern: pattern.into(), reply: reply.into(), channels, cooldown_secs });
     }
     ctx.save_settings(guild, KEY, &s)?;
+    // A sample picture under /links and the "when is stream" reply, from the preview's own.
+    let sample = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/preview");
+    pictures::forget(ctx, guild, Kind::Command, 1)?;
+    pictures::forget(ctx, guild, Kind::Trigger, 5)?;
+    for (kind, id, file) in [(Kind::Command, 1, "stream.jpg"), (Kind::Command, 1, "lake.jpg"), (Kind::Trigger, 5, "stream.jpg")] {
+        if let Ok(bytes) = std::fs::read(sample.join(file)) {
+            pictures::add(ctx, guild, kind, id, "image/jpeg", &bytes)?.ok();
+        }
+    }
     let now = now_ms();
     let h = 3_600_000;
     let mut conn = ctx.db.lock();
@@ -803,6 +962,84 @@ mark.cc-match { padding: 0 2px; border-radius: 3px; color: #f2f3f5; background: 
   .cc-card { padding: 14px 14px 16px; }
   .cc-card-head { flex-wrap: wrap; }
 }
+/* ---- house style (2026-11-02) ----
+   Two columns: the commands (or triggers) as panels on the left; on the right, a 420 px column
+   of panels: the figures, the settings, the placeholders or the test. Triggers run one to a row,
+   in the order they're checked. The edit pages are one settings panel, Save inside, beside the
+   preview at three quarters of its size. Neutral chrome; the data colour for the use meters. */
+.cc-card, .cc-rail > .rail-block, .cc-edit > form.settings { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; box-shadow: none; }
+.cc-card { padding: 18px 20px; }
+.cc-card:hover { box-shadow: none; }
+.page-body > .with-rail:has(> .cc-rail) { grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; }
+.cc-main { gap: 16px; }
+.cc-list { gap: 16px; }
+@container col (min-width: 1000px) { .cc-list:not(.cc-rows) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.cc-rows { grid-template-columns: minmax(0, 1fr); }
+.cc-name, .cc-phrase { font-size: 14px; font-weight: 500; letter-spacing: 0; }
+.cc-sigil { color: var(--ink-3); }
+.cc-acts .btn { min-width: 64px; justify-content: center; }
+.cc-meter > span { animation: none; }
+.cc-about { font-size: 13px; }
+.cc-alias, .cc-warn, .cc-last { font-size: 13px; }
+.cc-rail { position: static; background: none; box-shadow: none; padding: 0; gap: 16px; }
+.cc-rail > .rail-block { padding: 18px 20px; }
+.cc-rail > .rail-block + .rail-block { margin-top: 0; padding-top: 18px; border-top: 1px solid var(--edge-1); }
+.cc-rail .rail-block > h2 { font-size: 14px; font-weight: 500; }
+.cc-figs .readings { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 12px 16px; }
+.cc-figs .reading { min-width: 0; }
+.cc-figs .reading b { font-size: 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-figs.small .reading b { font-size: 18px; }
+.cc-save { display: flex; justify-content: flex-end; }
+.cc-ph { font-size: 13px; }
+.cc-result { animation: none; }
+.cc-order-note { margin: 0; padding-top: 12px; border-top: 1px solid var(--edge-1); }
+.page-body:has(> .compose.cc-edit) { gap: 16px; }
+.cc-back { margin-bottom: 0; }
+/* Edit pages. */
+.cc-edit > form.settings { padding: 4px 20px 18px; gap: 0; }
+.cc-edit > form.settings > fieldset { gap: 0; }
+.cc-edit > form.settings section.block { gap: 4px; padding: 16px 0 6px; }
+.cc-edit > form.settings section.block + section.block { border-top: 1px solid var(--edge-1); }
+.cc-edit > form.settings .block-head h2 { font-size: 14px; font-weight: 500; }
+.cc-edit > form.settings .card { background: none; border: 0; padding: 0; border-radius: 0; }
+.cc-edit > form.settings .save-bar { position: static; padding-top: 14px; border-top: 1px solid var(--edge-1); }
+/* Beside the form, the channel runs the form's full height with the reply at the bottom, as in
+   Discord, so the two columns end together. */
+@container col (min-width: 760px) {
+  .compose.cc-edit { grid-template-columns: minmax(0, 1fr) minmax(320px, 440px); gap: 16px; align-items: stretch; }
+  .compose.cc-edit > .compose-preview { position: static; }
+  .cc-side > #cc-preview { flex: 1; display: flex; flex-direction: column; }
+  .cc-side #cc-preview > .dp { flex: 1; display: flex; flex-direction: column; }
+  .cc-side #cc-preview .dp-body { flex: 1; }
+}
+@container col (min-width: 1300px) {
+  .compose.cc-edit { grid-template-columns: minmax(0, 1fr) 500px; }
+}
+.cc-side .dp { zoom: 0.75; max-width: none; box-shadow: 0 0 0 1px var(--edge-1); }
+.cc-side .dp-body { min-height: 0; }
+#cc-preview .dp-body { min-height: 200px; }
+@media (max-width: 1300px) { .page-body > .with-rail:has(> .cc-rail) { grid-template-columns: minmax(0, 1fr) 360px; } }
+/* Pictures. In a list row, small squares under the text. On an edit page, a strip of 96 px tiles
+   under the message; in the preview, Discord's own layout: one picture as it is, more in a grid. */
+.cc-bpics { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.cc-bpics img { width: 56px; height: 56px; border-radius: 4px; object-fit: cover; background: #2b2d31; }
+.cc-pics-field { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.cc-pics { display: flex; flex-wrap: wrap; gap: 8px; }
+.cc-pic { position: relative; flex: none; width: 96px; height: 96px; margin: 0; border-radius: 8px; overflow: hidden; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.cc-pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.cc-pic .icon-btn { position: absolute; top: 4px; right: 4px; width: 26px; height: 26px; border-radius: 7px; background: rgba(8, 8, 14, 0.72); color: #fff; }
+.cc-pic .icon-btn .icon { width: 14px; height: 14px; }
+.cc-pic .icon-btn.armed { width: auto; padding: 0 8px; font-size: 12px; font-weight: 600; background: var(--held); color: #1a0507; }
+.cc-pic.add { display: grid; place-items: center; background: none; box-shadow: inset 0 0 0 1px var(--edge-2); }
+.cc-pic.add[hidden] { display: none; }
+.cc-pic.add .btn.busy { pointer-events: none; opacity: 0.6; }
+.cc-pics-later { font-size: 13px; color: var(--ink-3); }
+.cc-p-pics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; max-width: 420px; margin-top: 4px; }
+.cc-p-pics img { display: block; width: 100%; aspect-ratio: 1; border-radius: 4px; object-fit: cover; background: #2b2d31; }
+.cc-p-pics[data-n="1"] { grid-template-columns: minmax(0, 1fr); }
+.cc-p-pics[data-n="1"] img { width: auto; max-width: 100%; max-height: 300px; aspect-ratio: auto; }
+.cc-p-pics[data-n="3"] img:first-child { grid-row: span 2; height: 100%; aspect-ratio: auto; contain: size; }
+@media (max-width: 1100px) { .page-body > .with-rail:has(> .cc-rail) { grid-template-columns: minmax(0, 1fr); } }
 "#;
 
 /// Keeps the preview in step with the form as you type.
@@ -834,7 +1071,7 @@ const JS: &str = r#"(() => {
     if ($('ephemeral')) show('cc-p-eph', on('ephemeral'));
     // Nothing to say yet: a faint outline of a message instead of an empty one.
     const embedOn = $('embed') ? on('embed') && !!(val('embed_title').trim() || val('embed_desc').trim() || val('embed_image').trim().startsWith('https://')) : false;
-    show('cc-p-ghost', !val('reply').trim() && !embedOn);
+    show('cc-p-ghost', !val('reply').trim() && !embedOn && !document.querySelector('#cc-p-pics img'));
     const said = $('cc-p-said');
     if ($('pattern') && said) {
       // The member's message with the phrase marked, so it shows which part matches.
@@ -858,6 +1095,84 @@ const JS: &str = r#"(() => {
   };
   // Until the page is swapped out (app.js).
   const signal = window.botPage?.signal;
+  // Pictures: each one is kept as soon as it's added or removed, so the form's unsaved text stays.
+  const strip = $('cc-pics');
+  if (strip) {
+    const add = strip.querySelector('.cc-pic.add'), pick = strip.querySelector('[data-cc-pick]'), file = $('cc-pic-file');
+    const max = +strip.dataset.max, limit = +strip.dataset.limit;
+    const fail = m => window.botToast?.(m, true);
+    // A refusal comes back as the dashboard's notice page; its sentence is the message.
+    const why = async r => {
+      try { return new DOMParser().parseFromString(await r.text(), 'text/html').querySelector('main p')?.textContent || ''; } catch (_) { return ''; }
+    };
+    const sync = () => {
+      const tiles = [...strip.querySelectorAll('.cc-pic:not(.add)')];
+      if (add) add.hidden = tiles.length >= max;
+      const pp = $('cc-p-pics');
+      if (pp) {
+        pp.replaceChildren(...tiles.map(t => { const i = document.createElement('img'); i.src = t.querySelector('img').src; i.alt = ''; return i; }));
+        pp.dataset.n = tiles.length;
+        pp.hidden = !tiles.length;
+      }
+      update();
+    };
+    pick?.addEventListener('click', () => file.click(), { signal });
+    file?.addEventListener('change', async () => {
+      const f = file.files?.[0];
+      file.value = '';
+      if (!f) return;
+      if (!/^image\/(png|jpeg|webp|gif)$/.test(f.type)) return fail('Pick a PNG, JPEG, WebP or GIF picture');
+      pick.classList.add('busy');
+      try {
+        // Shrunk to 1600 px on its longest side; a GIF goes as it is, so it keeps moving.
+        let body = f, type = f.type;
+        if (type !== 'image/gif') {
+          const bmp = await createImageBitmap(f);
+          const k = Math.min(1, 1600 / bmp.width, 1600 / bmp.height);
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(bmp.width * k));
+          c.height = Math.max(1, Math.round(bmp.height * k));
+          const g = c.getContext('2d');
+          g.imageSmoothingQuality = 'high';
+          g.drawImage(bmp, 0, 0, c.width, c.height);
+          body = await new Promise(res => c.toBlob(res, 'image/webp', 0.86));
+          type = 'image/webp';
+          if (!body) { body = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.88)); type = 'image/jpeg'; }
+        }
+        if (body.size > limit) throw new Error('That picture is over ' + Math.round(limit / 1048576) + ' MB. Pick a smaller one.');
+        const r = await fetch(file.dataset.action, { method: 'POST', headers: { 'content-type': type }, body, credentials: 'same-origin' });
+        if (!r.ok) throw new Error(await why(r) || "The picture didn't go through");
+        const id = (await r.text()).trim();
+        const tile = $('cc-pic-tpl').content.firstElementChild.cloneNode(true);
+        tile.querySelector('img').src = file.dataset.action.replace(/pictures\/\w+\/\d+$/, 'picture/' + id);
+        const rm = tile.querySelector('[data-cc-remove]');
+        if (rm) rm.dataset.ccRemove = file.dataset.action.replace(/pictures\/\w+\/\d+$/, 'picture/' + id + '/remove');
+        strip.insertBefore(tile, add);
+        sync();
+        window.botToast?.('Picture added');
+      } catch (err) {
+        fail(err.message || "The picture didn't go through");
+      } finally {
+        pick.classList.remove('busy');
+      }
+    }, { signal });
+    // A remove button asks once (app.js arms it); the second click removes.
+    strip.addEventListener('click', async e => {
+      const b = e.target.closest('[data-cc-remove]');
+      if (!b || e.defaultPrevented || !b.classList.contains('armed')) return;
+      b.disabled = true;
+      try {
+        const r = await fetch(b.dataset.ccRemove, { method: 'POST', credentials: 'same-origin' });
+        if (!r.ok) throw new Error(await why(r) || "The picture wasn't removed");
+        b.closest('.cc-pic').remove();
+        sync();
+        window.botToast?.('Picture removed');
+      } catch (err) {
+        b.disabled = false;
+        fail(err.message || "The picture wasn't removed");
+      }
+    }, { signal });
+  }
   document.addEventListener('input', update, { signal });
   document.addEventListener('change', update, { signal });
   update();

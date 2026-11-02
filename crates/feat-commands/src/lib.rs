@@ -1,6 +1,7 @@
 //! Custom commands and the auto-responder: slash commands each server defines on the
 //! dashboard (also usable as `!name` in chat), and replies to messages that match a phrase.
 
+mod pictures;
 mod web;
 
 use std::collections::{HashMap, HashSet};
@@ -296,6 +297,15 @@ const MIGRATIONS: &[Migration] = &[Migration {
             uses INTEGER NOT NULL DEFAULT 0, last_at INTEGER NOT NULL,
             PRIMARY KEY (guild_id, kind, item_id));
     ",
+}, Migration {
+    // Pictures sent with a command's or trigger's reply (pictures.rs).
+    name: "002_pictures",
+    sql: "
+        CREATE TABLE commands_pictures (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER NOT NULL, kind TEXT NOT NULL,
+            item_id INTEGER NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL, added_at INTEGER NOT NULL);
+        CREATE INDEX commands_pictures_by_reply ON commands_pictures(guild_id, kind, item_id, id);
+    ",
 }];
 
 /// How long a `!name` command stays quiet in a channel after it answers.
@@ -364,11 +374,26 @@ impl Feature for Commands {
         let server = ctx.guild_name(guild);
         let f = Fill { user: &name, user_id: user, server: &server, channel: call.channel_id().unwrap_or_default(), members: ctx.member_count(guild) };
         let (content, embed, mentions) = build_reply(&c.reply, c.embed.as_ref(), &f);
-        let mut reply = Reply { content: (!content.is_empty()).then_some(content), embeds: embed.into_iter().collect(), ..Default::default() }.mentions(mentions);
-        if c.ephemeral {
-            reply = reply.ephemeral();
+        let files = reply_files(ctx, guild, Kind::Command, c.id);
+        if files.is_empty() {
+            let mut reply = Reply { content: (!content.is_empty()).then_some(content), embeds: embed.into_iter().collect(), ..Default::default() }.mentions(mentions);
+            if c.ephemeral {
+                reply = reply.ephemeral();
+            }
+            ctx.reply(&call.interaction, reply).await?;
+        } else {
+            // Uploading the pictures can take longer than Discord waits for an answer, so say
+            // "thinking" first and post the reply with them after.
+            ctx.defer(&call.interaction, c.ephemeral).await?;
+            let embeds: Vec<Embed> = embed.into_iter().collect();
+            ctx.interaction()
+                .update_response(&call.interaction.token)
+                .content((!content.is_empty()).then_some(content.as_str()))
+                .embeds(Some(&embeds))
+                .allowed_mentions(Some(&mentions))
+                .attachments(&files)
+                .await?;
         }
-        ctx.reply(&call.interaction, reply).await?;
         self.used(guild, Kind::Command, c.id);
         Ok(())
     }
@@ -393,6 +418,14 @@ impl Feature for Commands {
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         web::seed(ctx, guild)
     }
+}
+
+/// A reply's pictures as files. When they can't be read, the reply goes without them.
+fn reply_files(ctx: &Ctx, guild: u64, kind: Kind, id: u32) -> Vec<bot_core::twilight_model::http::attachment::Attachment> {
+    pictures::files(ctx, guild, kind, id).unwrap_or_else(|e| {
+        bot_core::tracing::warn!(guild, error = %e, "couldn't read a reply's pictures");
+        Vec::new()
+    })
 }
 
 /// Whether a member wrote the message. "Started a thread", pins and channel renames carry the
@@ -431,7 +464,7 @@ impl Commands {
             if !cooled_down(&mut self.cooldowns.lock().unwrap(), quiet, BANG_COOLDOWN_SECS, Instant::now()) {
                 return Ok(());
             }
-            self.send(ctx, guild, m, &c.reply, c.embed.as_ref()).await;
+            self.send(ctx, guild, m, &c.reply, c.embed.as_ref(), (Kind::Command, c.id)).await;
             self.used(guild, Kind::Command, c.id);
             return Ok(());
         }
@@ -445,18 +478,23 @@ impl Commands {
         if !cooled_down(&mut self.cooldowns.lock().unwrap(), Quiet::Trigger { guild, id: t.id }, t.cooldown_secs, Instant::now()) {
             return Ok(());
         }
-        self.send(ctx, guild, m, &t.reply, None).await;
+        self.send(ctx, guild, m, &t.reply, None, (Kind::Trigger, t.id)).await;
         self.used(guild, Kind::Trigger, t.id);
         Ok(())
     }
 
-    async fn send(&self, ctx: &Ctx, guild: u64, m: &Message, reply: &str, embed: Option<&CardEmbed>) {
+    /// Answer a message with a command's or trigger's reply (`item`), its pictures attached.
+    async fn send(&self, ctx: &Ctx, guild: u64, m: &Message, reply: &str, embed: Option<&CardEmbed>, item: (Kind, u32)) {
         let name = m.member.as_ref().and_then(|p| p.nick.clone()).or_else(|| m.author.global_name.clone()).unwrap_or_else(|| m.author.name.clone());
         let server = ctx.guild_name(guild);
         let f = Fill { user: &name, user_id: m.author.id.get(), server: &server, channel: m.channel_id.get(), members: ctx.member_count(guild) };
         let (content, embed, mentions) = build_reply(reply, embed, &f);
         let embeds: Vec<Embed> = embed.into_iter().collect();
+        let files = reply_files(ctx, guild, item.0, item.1);
         let mut req = ctx.http.create_message(m.channel_id).embeds(&embeds).allowed_mentions(Some(&mentions));
+        if !files.is_empty() {
+            req = req.attachments(&files);
+        }
         if !content.is_empty() {
             req = req.content(&content);
         }
