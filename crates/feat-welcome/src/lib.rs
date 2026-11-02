@@ -1,5 +1,6 @@
 //! Welcome and goodbye messages with a card, auto-roles, roles back on rejoin, invite tracking.
 
+pub mod banners;
 pub mod card;
 pub mod invites;
 pub mod roles;
@@ -32,9 +33,14 @@ pub struct Settings {
     pub welcome_text: String,
     /// Attach the welcome card image to the message.
     pub welcome_card: bool,
+    /// Take the welcome card's pictures in turn rather than at random.
+    pub welcome_pictures_in_order: bool,
     pub goodbye_on: bool,
     pub goodbye_channel: Option<u64>,
     pub goodbye_text: String,
+    /// Attach a goodbye card, like the welcome card, to the goodbye.
+    pub goodbye_card: bool,
+    pub goodbye_pictures_in_order: bool,
     /// Roles given to everyone who joins.
     pub autoroles: Vec<u64>,
     /// Give the auto-roles to bots too.
@@ -53,9 +59,12 @@ impl Default for Settings {
             welcome_channel: None,
             welcome_text: DEFAULT_WELCOME.into(),
             welcome_card: false,
+            welcome_pictures_in_order: false,
             goodbye_on: false,
             goodbye_channel: None,
             goodbye_text: DEFAULT_GOODBYE.into(),
+            goodbye_card: false,
+            goodbye_pictures_in_order: false,
             autoroles: Vec::new(),
             autorole_bots: false,
             rejoin_on: true,
@@ -89,7 +98,7 @@ pub fn fill(template: &str, vars: &[(&str, &str)]) -> String {
     out
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
+pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
     name: "001_welcome",
     sql: "
         CREATE TABLE welcome_invites (
@@ -112,6 +121,17 @@ const MIGRATIONS: &[Migration] = &[Migration {
     sql: "
         CREATE TABLE welcome_invite_names (
             guild_id INTEGER NOT NULL, code TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (guild_id, code));
+    ",
+}, Migration {
+    // Pictures drawn behind the welcome and goodbye cards, and which one each card used last.
+    name: "003_card_pictures",
+    sql: "
+        CREATE TABLE welcome_banners (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, guild_id INTEGER NOT NULL, kind TEXT NOT NULL,
+            mime TEXT NOT NULL, data BLOB NOT NULL, added_at INTEGER NOT NULL);
+        CREATE INDEX welcome_banners_by_card ON welcome_banners(guild_id, kind, id);
+        CREATE TABLE welcome_banner_turn (
+            guild_id INTEGER NOT NULL, kind TEXT NOT NULL, last_id INTEGER NOT NULL, PRIMARY KEY (guild_id, kind));
     ",
 }];
 
@@ -267,7 +287,8 @@ impl Welcome {
                 .and_then(|b| b.nick)
                 .or_else(|| m.user.global_name.clone())
                 .unwrap_or_else(|| m.user.name.clone());
-            if let Err(e) = post_goodbye(ctx, &s, guild, channel, &name).await {
+            let avatar = bot_core::discord::avatar_url(user, m.user.avatar.map(|a| a.to_string()).as_deref());
+            if let Err(e) = post_goodbye(ctx, &s, guild, channel, &name, &m.user.name, &avatar).await {
                 bot_core::tracing::warn!(guild, channel, error = %e, "couldn't post a goodbye");
                 notify_failure(ctx, guild, "goodbye", format!("Goodbyes aren't being posted. {}", why_refused(&e)));
             }
@@ -303,13 +324,38 @@ fn goodbye_text(ctx: &Ctx, s: &Settings, guild: u64, name: &str, count: Option<i
     fill_message(ctx, &s.goodbye_text, DEFAULT_GOODBYE, guild, &name, &name, count)
 }
 
-/// Post the goodbye message for a member called `name` in `channel`. Mentions nobody. Used for
-/// real leaves and for the dashboard's test button.
-pub async fn post_goodbye(ctx: &Ctx, s: &Settings, guild: u64, channel: u64, name: &str) -> Result<()> {
+/// Post the goodbye message for a member called `name` in `channel`, with the goodbye card
+/// when it's on. Mentions nobody. Used for real leaves and for the dashboard's test button.
+pub async fn post_goodbye(ctx: &Ctx, s: &Settings, guild: u64, channel: u64, name: &str, username: &str, avatar_url: &str) -> Result<()> {
     let count = if s.goodbye_text.contains("{count}") { member_total(ctx, guild).await } else { None };
     let text = goodbye_text(ctx, s, guild, name, count);
-    ctx.say(channel, &text).await?;
+    if !s.goodbye_card {
+        ctx.say(channel, &text).await?;
+        return Ok(());
+    }
+    let channel = Id::new_checked(channel).ok_or_else(|| anyhow!("Pick a goodbye channel first."))?;
+    let mut files = Vec::new();
+    match draw_card(ctx, s, guild, banners::Kind::Goodbye, &[name, username], None, avatar_url).await {
+        Ok(png) => files.push(Attachment::from_bytes("goodbye.png".into(), png, 1)),
+        Err(e) => bot_core::tracing::warn!(guild, error = %e, "couldn't draw the goodbye card"),
+    }
+    let none = AllowedMentions::default();
+    ctx.http.create_message(channel).content(&text).attachments(&files).allowed_mentions(Some(&none)).await?;
     Ok(())
+}
+
+/// Draw a welcome or goodbye card over the next of its pictures, or the plain card when it has
+/// none (or they can't be read).
+pub async fn draw_card(ctx: &Ctx, s: &Settings, guild: u64, kind: banners::Kind, names: &[&str], number: Option<i64>, avatar_url: &str) -> Result<Vec<u8>> {
+    let in_order = match kind {
+        banners::Kind::Welcome => s.welcome_pictures_in_order,
+        banners::Kind::Goodbye => s.goodbye_pictures_in_order,
+    };
+    let picture = banners::pick(ctx, guild, kind, in_order).unwrap_or_else(|e| {
+        bot_core::tracing::warn!(guild, error = %e, "couldn't read the card pictures");
+        None
+    });
+    card::render(ctx, kind, names, &ctx.guild_name(guild), number, avatar_url, picture.as_deref()).await
 }
 
 /// Post the welcome message for `user` in the welcome channel: text, plus the card when on.
@@ -324,7 +370,7 @@ pub async fn post_welcome(ctx: &Ctx, s: &Settings, guild: u64, user: u64, name: 
 
     let mut files = Vec::new();
     if s.welcome_card {
-        match card::render(ctx, &[name, username], &ctx.guild_name(guild), count, avatar_url).await {
+        match draw_card(ctx, s, guild, banners::Kind::Welcome, &[name, username], count, avatar_url).await {
             Ok(png) => files.push(Attachment::from_bytes("welcome.png".into(), png, 1)),
             Err(e) => bot_core::tracing::warn!(guild, error = %e, "couldn't draw the welcome card"),
         }

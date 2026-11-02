@@ -33,7 +33,7 @@ pub fn uploaded_at(ctx: &Ctx, guild: u64) -> Option<i64> {
 }
 
 /// What kind of image these bytes are, from their first bytes. Anything else is refused.
-fn sniff(bytes: &[u8]) -> Option<&'static str> {
+pub fn sniff(bytes: &[u8]) -> Option<&'static str> {
     match bytes {
         [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
         [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),

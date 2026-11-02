@@ -685,6 +685,7 @@ dependencies = [
  "bot-core",
  "bot-render",
  "maud",
+ "rand",
  "serde",
 ]
 
