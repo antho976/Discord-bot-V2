@@ -242,6 +242,16 @@ Feature-specific CSS lives in the feature crate (`fn style()`), classes prefixed
 
 ## Motion rules
 
+**Current policy (2026-11-02, supersedes the entrance and loop rules below):** one block at the end
+of app.css decides what moves, and wins over feature styles. Nothing enters or idles on a working
+page (no rising blocks, arriving previews, pulsing or blinking dots, drifting art). Kept: charts
+drawing once (line 0.9 s, fill 0.7 s, bars 0.5 s with 12 ms steps, meters 0.6 s), the levels
+podium rising, the app-connection countdown, busy spinners, a refused delete shaking, popovers
+growing from their trigger in 0.16 s. Between pages: a 120/180 ms cross-fade, the sidebar still.
+Between tabs of one page: only what changed cross-fades and the scroll position stays. Buttons
+press (scale 0.97), never lift; toggles slide without bounce; the search palette doesn't animate;
+hover never zooms pictures. A feature that wants motion adds it to the policy's kept list.
+
 - The overview is opened every day: no block entrance, no count-up, no parallax. Only its chart
   draws in on the first load.
 - Entrances elsewhere: page blocks rise 10 px out of a 3 px blur, about 60 ms apart (CSS on

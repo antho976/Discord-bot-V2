@@ -1032,3 +1032,49 @@ a.pk-row:hover { background: var(--hover); }
 .pk-dot { width: 8px; height: 8px; margin-top: 10px; border-radius: 50%; }
 .pk-row.new .pk-dot { background: var(--accent); }
 .peek-pop .peek-none { padding: 28px 16px; text-align: center; color: var(--ink-3); font-size: 13px; }
+
+/* ================================================================ motion policy (2026-11-02)
+   One place decides what moves, after the owner found the motion "weird". It comes last and wins
+   over the features' own styles on purpose.
+   - Nothing enters or idles by itself on a working page: no rising blocks, arriving previews,
+     pulsing dots, blinking tags, drifting art, spinning or floating tiles.
+   - Kept, because each says something: charts drawing once (faster), the levels podium rising,
+     the app-connection countdown draining, spinners on busy buttons, a refused delete shaking,
+     popovers opening from their trigger, the phone drawer, toasts.
+   - Moving between pages is a short cross-fade; between tabs of one page only what changed fades
+     (html.vt-soft, above). Feedback is quick: hover changes colour, press scales a little. */
+main.page *, main.page *::before, main.page *::after, .side *, .side *::before, .side *::after { animation: none !important; }
+main.page .area .line { animation: line-in 0.9s var(--ease) both 0.05s !important; }
+main.page .area .fill { animation: area-in 0.7s var(--ease) both 0.2s !important; }
+main.page .area-end { animation: fade-in 0.2s ease both 0.8s !important; }
+main.page .chart rect.bar, main.page .mini-bars rect.bar { animation: grow 0.5s var(--ease) both !important; animation-delay: calc(var(--i, 0) * 12ms) !important; }
+main.page .meter > span { animation: fill 0.6s var(--ease) both 0.1s !important; }
+main.page .lv-step { animation: lv-raise 0.6s var(--ease) both !important; }
+main.page .cn-ttl-bar > span { animation: cn-drain var(--secs) linear forwards !important; }
+main.page .btn.busy::before, .btn.busy::before { animation: spin 0.6s linear infinite !important; }
+main.page .btn.armed { animation: shake 0.3s var(--ease) !important; }
+main.page .pop[open] > .pop-body, .side .pop[open] > .pop-body { animation: pop-open 0.16s var(--ease) both !important; }
+/* Same page again or another tab of it: charts stay drawn. */
+html.same main.page .area .line, html.same main.page .area .fill, html.same main.page .area-end, html.same main.page .chart rect.bar, html.same main.page .mini-bars rect.bar, html.same main.page .meter > span,
+html.vt-soft main.page .area .line, html.vt-soft main.page .area .fill, html.vt-soft main.page .area-end, html.vt-soft main.page .chart rect.bar, html.vt-soft main.page .mini-bars rect.bar, html.vt-soft main.page .meter > span,
+html.vt-soft main.page .lv-step, html.same main.page .lv-step { animation: none !important; }
+/* Popovers grow from their trigger (no blur, no drop). */
+@keyframes pop-open { from { opacity: 0; transform: scale(0.97); } }
+/* Between pages: a short cross-fade, no rise and no scale; the sidebar is the same on both sides. */
+::view-transition-old(page) { animation: vt-fade-out 0.12s ease both; }
+::view-transition-new(page) { animation: vt-fade-in 0.18s ease both; }
+::view-transition-old(side), ::view-transition-new(side) { animation: none; }
+::view-transition-group(tab-line), ::view-transition-group(nav-pill) { animation-duration: 0.22s; animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1); }
+/* The search palette opens from the keyboard many times a day: no animation. */
+.palette.open, .pal-box, .pal-item { animation: none !important; }
+/* Buttons press, they don't lift. */
+.btn { transition: background-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.1s var(--ease); }
+.btn:hover { transform: none; }
+.btn:active { transform: scale(0.97); transition-duration: 0.06s; }
+.icon-btn:active, .chip:active { transform: scale(0.97); }
+/* Toggles slide, no bounce. */
+.switch .thumb { transition: transform 0.2s cubic-bezier(0.23, 1, 0.32, 1), width 0.15s ease; }
+/* Hover never zooms pictures or springs faces. */
+.stream-card:hover img, .side-head:hover > img.cover, .sa-row:hover .sa-vt img { transform: none; }
+.avatars .avatar { transition: transform 0.15s ease, margin 0.15s ease; }
+.avatars .avatar:hover { transform: none; }
