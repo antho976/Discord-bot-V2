@@ -13,7 +13,8 @@
    "category": "Legacy Companions",
    "rarity": "legendary",
    "description": "The royal ruler of all doots.",
-   "bonus": "",
+   "bonus": "All Divinities from World 5 count as Active",
+   "plus_bonus": "All Divinities count as Active, and 1.25x Divinity PTS gain",
    "image": ""
   },
   {
@@ -21,9 +22,10 @@
    "name": "Rift Slug",
    "emoji": "🐌",
    "category": "Legacy Companions",
-   "rarity": "uncommon",
+   "rarity": "epic",
    "description": "A slimy traveler from between dimensions.",
-   "bonus": "",
+   "bonus": "+25 Lv for all Talents",
+   "plus_bonus": "+35 Lv for all Talents",
    "image": ""
   },
   {
@@ -32,8 +34,9 @@
    "emoji": "🐏",
    "category": "Legacy Companions",
    "rarity": "rare",
-   "description": "A legendary ram with dedotated power.",
-   "bonus": "",
+   "description": "A ram with dedotated power.",
+   "bonus": "You can use Storage Chest anywhere in Quickref",
+   "plus_bonus": "Use Storage Chest from anywhere, and +30% Carry Capacity",
    "image": ""
   },
   {
@@ -41,9 +44,10 @@
    "name": "Crystal Custard",
    "emoji": "🍮",
    "category": "Legacy Companions",
-   "rarity": "uncommon",
+   "rarity": "rare",
    "description": "A shimmering dessert-shaped companion.",
-   "bonus": "",
+   "bonus": "+100% Drop Rate and Class Exp",
+   "plus_bonus": "+130% Drop Rate and Class Exp",
    "image": ""
   },
   {
@@ -51,9 +55,10 @@
    "name": "Sheepie",
    "emoji": "🐑",
    "category": "Legacy Companions",
-   "rarity": "common",
+   "rarity": "uncommon",
    "description": "A fluffy and gentle woolly friend.",
-   "bonus": "",
+   "bonus": "All big bubbles in Alchemy count as equipped",
+   "plus_bonus": "All big bubbles in Alchemy count as equipped",
    "image": ""
   },
   {
@@ -63,7 +68,8 @@
    "category": "Legacy Companions",
    "rarity": "uncommon",
    "description": "A colorful multi-formed critter.",
-   "bonus": "",
+   "bonus": "+5% All Skill Efficiency",
+   "plus_bonus": "+8% All Skill Efficiency",
    "image": ""
   },
   {
@@ -71,9 +77,10 @@
    "name": "Bored Bean",
    "emoji": "😐",
    "category": "Legacy Companions",
-   "rarity": "common",
+   "rarity": "uncommon",
    "description": "A bean that has seen it all.",
-   "bonus": "",
+   "bonus": "+5% AFK Gains Rate for Fighting and Skills",
+   "plus_bonus": "+8% AFK Gains Rate for Fighting and Skills",
    "image": ""
   },
   {
@@ -83,7 +90,8 @@
    "category": "Legacy Companions",
    "rarity": "common",
    "description": "A jiggly blob of goo.",
-   "bonus": "",
+   "bonus": "+25% Golden Balls earned in Arcade for Upgrades",
+   "plus_bonus": "+50% Golden Balls earned in Arcade for Upgrades",
    "image": ""
   },
   {
@@ -91,9 +99,10 @@
    "name": "Sandy Pot",
    "emoji": "🏺",
    "category": "Legacy Companions",
-   "rarity": "uncommon",
+   "rarity": "common",
    "description": "A dusty pot from ancient sands.",
-   "bonus": "",
+   "bonus": "+15 Base All Stats (STR/AGI/WIS/LUK)",
+   "plus_bonus": "+20 Base All Stats (STR/AGI/WIS/LUK)",
    "image": ""
   },
   {
@@ -103,7 +112,8 @@
    "category": "Legacy Companions",
    "rarity": "common",
    "description": "A sturdy block with attitude.",
-   "bonus": "",
+   "bonus": "+20% All Skill EXP",
+   "plus_bonus": "+30% All Skill EXP",
    "image": ""
   },
   {
@@ -113,7 +123,8 @@
    "category": "Legacy Companions",
    "rarity": "common",
    "description": "A classic ribbiting companion.",
-   "bonus": "",
+   "bonus": "+10% Total Damage",
+   "plus_bonus": "+15% Total Damage",
    "image": ""
   },
   {
@@ -123,7 +134,8 @@
    "category": "Fallen Spirits",
    "rarity": "legendary",
    "description": "A massive stone guardian from forgotten times.",
-   "bonus": "",
+   "bonus": "10x Total Damage",
+   "plus_bonus": "15x Total Damage",
    "image": ""
   },
   {
@@ -131,9 +143,10 @@
    "name": "Samurai Guardian",
    "emoji": "⚔️",
    "category": "Fallen Spirits",
-   "rarity": "legendary",
+   "rarity": "epic",
    "description": "A noble warrior spirit bound to protect.",
-   "bonus": "",
+   "bonus": "3x Villager EXP and +25 Opals",
+   "plus_bonus": "4x Villager EXP and +33 Opals",
    "image": ""
   },
   {
@@ -141,9 +154,10 @@
    "name": "Rift Jocund",
    "emoji": "🃏",
    "category": "Fallen Spirits",
-   "rarity": "rare",
+   "rarity": "epic",
    "description": "A mischievous jester from the rift.",
-   "bonus": "",
+   "bonus": "2x Kills for Opening Portals and Deathnote",
+   "plus_bonus": "3x Kills for Opening Portals and Deathnote",
    "image": ""
   },
   {
@@ -151,9 +165,10 @@
    "name": "Leek Spirit",
    "emoji": "🥬",
    "category": "Fallen Spirits",
-   "rarity": "uncommon",
+   "rarity": "rare",
    "description": "A vegetable spirit with surprising power.",
-   "bonus": "",
+   "bonus": "3.50x faster Equinox Bar Fill Rate",
+   "plus_bonus": "5.00x faster Equinox Bar Fill Rate",
    "image": ""
   },
   {
@@ -163,7 +178,8 @@
    "category": "Fallen Spirits",
    "rarity": "rare",
    "description": "A crystalline capybara radiating calm energy.",
-   "bonus": "",
+   "bonus": "1.75x Lab EXP and Divinity EXP Gain",
+   "plus_bonus": "2.00x Lab EXP and Divinity EXP Gain",
    "image": ""
   },
   {
@@ -171,9 +187,10 @@
    "name": "Biggole Mole",
    "emoji": "🕳️",
    "category": "Fallen Spirits",
-   "rarity": "uncommon",
+   "rarity": "rare",
    "description": "An oversized mole that digs deeper than most.",
-   "bonus": "",
+   "bonus": "3d Printer samples grow +1%/day for 100 days",
+   "plus_bonus": "3d Printer samples grow +2%/day for 100 days",
    "image": ""
   },
   {
@@ -181,9 +198,10 @@
    "name": "Gigafrog",
    "emoji": "🐸",
    "category": "Fallen Spirits",
-   "rarity": "rare",
+   "rarity": "uncommon",
    "description": "A colossal amphibian of immense power.",
-   "bonus": "",
+   "bonus": "+25% Carry Capacity for all item types",
+   "plus_bonus": "+35% Carry Capacity for all item types",
    "image": ""
   },
   {
@@ -191,9 +209,10 @@
    "name": "Mashed Potato",
    "emoji": "🥔",
    "category": "Fallen Spirits",
-   "rarity": "common",
+   "rarity": "uncommon",
    "description": "A squishy spud spirit — surprisingly fierce.",
-   "bonus": "",
+   "bonus": "+5% Ballot Bonus Multi (World 2 feature)",
+   "plus_bonus": "+8% Ballot Bonus Multi (World 2 feature)",
    "image": ""
   },
   {
@@ -203,7 +222,8 @@
    "category": "Fallen Spirits",
    "rarity": "uncommon",
    "description": "A worm that defies gravity.",
-   "bonus": "",
+   "bonus": "+30 Talent Points for all classes",
+   "plus_bonus": "+40 Talent Points for all classes",
    "image": ""
   },
   {
@@ -211,9 +231,10 @@
    "name": "Poisonic Frog",
    "emoji": "☠️",
    "category": "Fallen Spirits",
-   "rarity": "rare",
+   "rarity": "common",
    "description": "A toxic amphibian dripping venom.",
-   "bonus": "",
+   "bonus": "+15% Defence",
+   "plus_bonus": "+20% Defence",
    "image": ""
   },
   {
@@ -223,7 +244,8 @@
    "category": "Fallen Spirits",
    "rarity": "common",
    "description": "A refreshing water spirit.",
-   "bonus": "",
+   "bonus": "+15% Drop Rate",
+   "plus_bonus": "+20% Drop Rate",
    "image": ""
   },
   {
@@ -231,9 +253,10 @@
    "name": "Green Mushroom",
    "emoji": "🍄",
    "category": "Fallen Spirits",
-   "rarity": "uncommon",
+   "rarity": "common",
    "description": "A glowing fungal friend from the deep forest.",
-   "bonus": "",
+   "bonus": "+15% Accuracy",
+   "plus_bonus": "+20% Accuracy",
    "image": ""
   },
   {
@@ -243,7 +266,8 @@
    "category": "Shallow Waters",
    "rarity": "legendary",
    "description": "An enormous whale-like beast of the shallows.",
-   "bonus": "",
+   "bonus": "10x Class EXP and +10 Legend Talent PTS",
+   "plus_bonus": "15x Class EXP and +15 Legend Talent PTS",
    "image": ""
   },
   {
@@ -251,9 +275,10 @@
    "name": "Balloonfish",
    "emoji": "🎈",
    "category": "Shallow Waters",
-   "rarity": "uncommon",
+   "rarity": "epic",
    "description": "A fish that inflates like a balloon.",
-   "bonus": "",
+   "bonus": "4x Coins from monsters, and 4x Masterclass drops",
+   "plus_bonus": "6x Coins from monsters, and 6x Masterclass drops",
    "image": ""
   },
   {
@@ -261,9 +286,10 @@
    "name": "Pufferblob",
    "emoji": "🐡",
    "category": "Shallow Waters",
-   "rarity": "common",
+   "rarity": "epic",
    "description": "A puffy blob drifting through the tides.",
-   "bonus": "",
+   "bonus": "+50% Meritocracy Bonus Multi (World 7 feature)",
+   "plus_bonus": "+75% Meritocracy Bonus Multi (World 7 feature)",
    "image": ""
   },
   {
@@ -271,9 +297,10 @@
    "name": "Shellslug",
    "emoji": "🐚",
    "category": "Shallow Waters",
-   "rarity": "common",
+   "rarity": "rare",
    "description": "A slug that carries its home on its back.",
-   "bonus": "",
+   "bonus": "1.75x Daily Reef Coral (World 7 feature)",
+   "plus_bonus": "2.00x Daily Reef Coral (World 7 feature)",
    "image": ""
   },
   {
@@ -283,7 +310,8 @@
    "category": "Shallow Waters",
    "rarity": "rare",
    "description": "A dazzling cephalopod made of crystal.",
-   "bonus": "",
+   "bonus": "+40% Ballot Bonus Multi (World 2 feature)",
+   "plus_bonus": "+50% Ballot Bonus Multi (World 2 feature)",
    "image": ""
   },
   {
@@ -291,9 +319,10 @@
    "name": "Eamsy Earl",
    "emoji": "🦐",
    "category": "Shallow Waters",
-   "rarity": "uncommon",
+   "rarity": "rare",
    "description": "A noble shrimp of distinguished taste.",
-   "bonus": "",
+   "bonus": "+1 Grade for 2 Gallery Showcases (World 7 feature)",
+   "plus_bonus": "+1 Grade for 3 Gallery Showcases (World 7 feature)",
    "image": ""
   },
   {
@@ -301,9 +330,10 @@
    "name": "Litterfish",
    "emoji": "🐟",
    "category": "Shallow Waters",
-   "rarity": "common",
+   "rarity": "uncommon",
    "description": "A small fish that collects ocean debris.",
-   "bonus": "",
+   "bonus": "1.25x Artifact Find chance (World 5 feature)",
+   "plus_bonus": "1.50x Artifact Find chance (World 5 feature)",
    "image": ""
   },
   {
@@ -313,7 +343,8 @@
    "category": "Shallow Waters",
    "rarity": "uncommon",
    "description": "A sharp-nosed fish built for speed.",
-   "bonus": "",
+   "bonus": "+1 Friend Bonus slot",
+   "plus_bonus": "+1 Friend Bonus slot and +25% Friend Bonuses",
    "image": ""
   },
   {
@@ -321,9 +352,10 @@
    "name": "Equinox Broadbass",
    "emoji": "🐠",
    "category": "Shallow Waters",
-   "rarity": "rare",
+   "rarity": "uncommon",
    "description": "A rare bass that only appears at the equinox.",
-   "bonus": "",
+   "bonus": "1.50x Coins from monsters",
+   "plus_bonus": "2.50x Coins from monsters",
    "image": ""
   },
   {
@@ -331,9 +363,10 @@
    "name": "Mafioso",
    "emoji": "🎩",
    "category": "Shallow Waters",
-   "rarity": "rare",
+   "rarity": "common",
    "description": "A shady fish with connections.",
-   "bonus": "",
+   "bonus": "+15% faster Alchemy Brew Speed",
+   "plus_bonus": "+25% faster Alchemy Brew Speed",
    "image": ""
   },
   {
@@ -341,9 +374,10 @@
    "name": "Baby Boa",
    "emoji": "🐍",
    "category": "Shallow Waters",
-   "rarity": "uncommon",
+   "rarity": "common",
    "description": "A tiny sea serpent just learning to swim.",
-   "bonus": "",
+   "bonus": "+10% Class EXP",
+   "plus_bonus": "+15% Class EXP",
    "image": ""
   },
   {
@@ -351,9 +385,10 @@
    "name": "Purp Mushroom",
    "emoji": "🍄",
    "category": "Shallow Waters",
-   "rarity": "uncommon",
+   "rarity": "common",
    "description": "A purple aquatic mushroom glowing underwater.",
-   "bonus": "",
+   "bonus": "+5% Golden Food bonus",
+   "plus_bonus": "+7% Golden Food bonus",
    "image": ""
   },
   {
@@ -361,9 +396,10 @@
    "name": "Bubba the Seal",
    "emoji": "🦭",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "uncommon",
    "description": "A lovable chonky seal named Bubba.",
-   "bonus": "",
+   "bonus": "+30% Gallery Bonus Multi (World 7 feature)",
+   "plus_bonus": "+50% Gallery Bonus Multi (World 7 feature)",
    "image": ""
   },
   {
@@ -371,9 +407,10 @@
    "name": "Santa Snake",
    "emoji": "🐍",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "common",
    "description": "A festive serpent spreading holiday cheer.",
-   "bonus": "",
+   "bonus": "+25% Class EXP, +25% Drop Rate, 1.01x Class EXP, and 1.01x Drop Rate",
+   "plus_bonus": "+50% Class EXP, +50% Drop Rate, 1.01x Class EXP, and 1.01x Drop Rate",
    "image": ""
   },
   {
@@ -381,9 +418,10 @@
    "name": "Santas Little Helper",
    "emoji": "🎅",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "uncommon",
    "description": "Santa's most trusted tiny companion.",
-   "bonus": "",
+   "bonus": "3x bonuses from Orion, Poppy, and Bubba (and all future Clickers)",
+   "plus_bonus": "5x bonuses from Orion, Poppy, and Bubba (and all future Clickers)",
    "image": ""
   },
   {
@@ -391,9 +429,10 @@
    "name": "Cool Bird",
    "emoji": "🐦",
    "category": "Exclusive Companions",
-   "rarity": "rare",
+   "rarity": "common",
    "description": "The coolest bird you have ever seen.",
-   "bonus": "",
+   "bonus": "4x Coins from Mobs",
+   "plus_bonus": "6x Coins from Mobs",
    "image": ""
   },
   {
@@ -401,9 +440,10 @@
    "name": "Axolotl",
    "emoji": "🦎",
    "category": "Exclusive Companions",
-   "rarity": "rare",
+   "rarity": "common",
    "description": "An adorable pink aquatic salamander.",
-   "bonus": "",
+   "bonus": "+50% AFK Gains",
+   "plus_bonus": "+70% AFK Gains",
    "image": ""
   },
   {
@@ -411,9 +451,10 @@
    "name": "Mallay",
    "emoji": "🦆",
    "category": "Exclusive Companions",
-   "rarity": "uncommon",
+   "rarity": "common",
    "description": "A mysterious mallard with hidden talents.",
-   "bonus": "",
+   "bonus": "1.30x Drop Rate",
+   "plus_bonus": "1.50x Drop Rate",
    "image": ""
   },
   {
@@ -421,9 +462,10 @@
    "name": "Spirit Reindeer",
    "emoji": "🦌",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "uncommon",
    "description": "A ghostly reindeer glowing with spirit energy.",
-   "bonus": "",
+   "bonus": "2.00x Gold Ball Shop Bonuses",
+   "plus_bonus": "2.50x Gold Ball Shop Bonuses",
    "image": ""
   },
   {
@@ -431,9 +473,10 @@
    "name": "RIP Tide",
    "emoji": "🌊",
    "category": "Exclusive Companions",
-   "rarity": "rare",
+   "rarity": "epic",
    "description": "A dangerous tidal spirit from the deep.",
-   "bonus": "",
+   "bonus": "+30% AFK gains for World 7 skills, and +1 Worldclass Showcase Slot in Gallery",
+   "plus_bonus": "+40% AFK gains for World 7 skills, and +2 Worldclass Showcase Slots in Gallery",
    "image": ""
   },
   {
@@ -441,9 +484,10 @@
    "name": "Squirrel",
    "emoji": "🐿️",
    "category": "Exclusive Companions",
-   "rarity": "common",
+   "rarity": "uncommon",
    "description": "A hyperactive nut-hoarding buddy.",
-   "bonus": "",
+   "bonus": "1.50x Kills for Opening Portals and Deathnote",
+   "plus_bonus": "1.75x Kills for Opening Portals and Deathnote",
    "image": ""
   },
   {
@@ -451,9 +495,10 @@
    "name": "Mr Pig",
    "emoji": "🐷",
    "category": "Exclusive Companions",
-   "rarity": "uncommon",
+   "rarity": "common",
    "description": "A distinguished pig of fine manners.",
-   "bonus": "",
+   "bonus": "2x Friend Bonuses, +2 Friend Bonus Slots, Auto Loot, Storage Quickref Usage, Infinite Teleporting",
+   "plus_bonus": "2.5x Friend Bonuses, +3 Friend Bonus Slots, Auto Loot, Storage Quickref Usage, Infinite Teleporting",
    "image": ""
   },
   {
@@ -461,9 +506,10 @@
    "name": "Wild Boar",
    "emoji": "🐗",
    "category": "Exclusive Companions",
-   "rarity": "uncommon",
+   "rarity": "rare",
    "description": "A fierce tusked beast from the wilds.",
-   "bonus": "",
+   "bonus": "+15% Hat Rack Bonus Multi",
+   "plus_bonus": "+25% Hat Rack Bonus Multi",
    "image": ""
   },
   {
@@ -471,9 +517,10 @@
    "name": "Whale",
    "emoji": "🐳",
    "category": "Exclusive Companions",
-   "rarity": "rare",
+   "rarity": "uncommon",
    "description": "A majestic ocean giant.",
-   "bonus": "",
+   "bonus": "2x Class EXP gain and 2x All Skill EXP gain",
+   "plus_bonus": "2.5x Class EXP gain and 2.5x All Skill EXP gain",
    "image": ""
   },
   {
@@ -483,7 +530,8 @@
    "category": "Exclusive Companions",
    "rarity": "common",
    "description": "A cheeky chipmunk full of energy.",
-   "bonus": "",
+   "bonus": "2x Total Damage, and 2x Class EXP gain",
+   "plus_bonus": "2.5x Total Damage, and 2.5x Class EXP gain",
    "image": ""
   },
   {
@@ -493,7 +541,8 @@
    "category": "Exclusive Companions",
    "rarity": "common",
    "description": "A soft and fluffy hopping friend.",
-   "bonus": "",
+   "bonus": "3x Class EXP gain",
+   "plus_bonus": "4x Class EXP gain",
    "image": ""
   },
   {
@@ -501,9 +550,10 @@
    "name": "Panda",
    "emoji": "🐼",
    "category": "Exclusive Companions",
-   "rarity": "rare",
+   "rarity": "common",
    "description": "A gentle bamboo-loving bear.",
-   "bonus": "",
+   "bonus": "2x Refinery Salts produced (affects POW produced in Refinery)",
+   "plus_bonus": "3x Refinery Salts produced (affects POW produced in Refinery)",
    "image": ""
   },
   {
@@ -511,9 +561,10 @@
    "name": "Hedgehog",
    "emoji": "🦔",
    "category": "Exclusive Companions",
-   "rarity": "uncommon",
+   "rarity": "common",
    "description": "A tiny spiky ball of cuteness.",
-   "bonus": "",
+   "bonus": "+200% Gold Balls gained from the Arcade,",
+   "plus_bonus": "+300% Gold Balls gained from the Arcade,",
    "image": ""
   },
   {
@@ -521,9 +572,10 @@
    "name": "JelloFish",
    "emoji": "🪼",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "uncommon",
    "description": "",
    "bonus": "1.50x Research EXP gain (World 7 feature)",
+   "plus_bonus": "1.80x Research EXP gain (World 7 feature)",
    "image": ""
   },
   {
@@ -531,9 +583,10 @@
    "name": "Koi Fish",
    "emoji": "🐟",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "uncommon",
    "description": "",
-   "bonus": "100x Gaming bits gained (World 5 feature)",
+   "bonus": "100x Gaming Bits gained (World 5 feature)",
+   "plus_bonus": "500x Gaming Bits gained (World 5 feature)",
    "image": ""
   },
   {
@@ -541,9 +594,10 @@
    "name": "Neonscale",
    "emoji": "🐉",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "uncommon",
    "description": "",
-   "bonus": "1 new Research shape, shows up after you get to research lv. 20",
+   "bonus": "+1 new Research Shape, shows up after you get Research LV. 20",
+   "plus_bonus": "+1 Research Shape, and a new 1.50x Research EXP multi",
    "image": ""
   },
   {
@@ -551,9 +605,10 @@
    "name": "Boomy Mine",
    "emoji": "💣",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "rare",
    "description": "",
-   "bonus": "20x total spelunking POW, and 2x Minehead Currency gain!",
+   "bonus": "20x total Spelunking POW, and 2x Minehead Currency Gain!",
+   "plus_bonus": "30x total Spelunking POW, and 3x Minehead Currency Gain!",
    "image": ""
   },
   {
@@ -561,9 +616,10 @@
    "name": "Glimbo",
    "emoji": "✨",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "uncommon",
    "description": "",
-   "bonus": "1.60x extra kills and 2x Artifact find chance",
+   "bonus": "1.60x Kills multi, and 2x Artifact Find Chance for Sailing!",
+   "plus_bonus": "2x Kills multi, and 3x Artifact Find Chance for Sailing!",
    "image": ""
   },
   {
@@ -571,9 +627,10 @@
    "name": "Deckhand Pirate",
    "emoji": "🏴‍☠️",
    "category": "Exclusive Companions",
-   "rarity": "rare",
+   "rarity": "epic",
    "description": "A loyal pirate companion ready to sail the seas.",
-   "bonus": "",
+   "bonus": "Multiplies ALL Research Grid bonuses by 1.15x (World 7 feature)",
+   "plus_bonus": "Multiplies ALL Research Grid bonuses by 1.25x (World 7 feature)",
    "image": ""
   },
   {
@@ -583,7 +640,8 @@
    "category": "Exclusive Companions",
    "rarity": "rare",
    "description": "A sweet and creamy companion with a cool personality.",
-   "bonus": "",
+   "bonus": "+2500% additive Gold Food bonus effect",
+   "plus_bonus": "+4000% additive Gold Food bonus effect",
    "image": ""
   },
   {
@@ -591,9 +649,10 @@
    "name": "Rift Hivemind",
    "emoji": "🧠",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "rare",
    "description": "A collective consciousness from the rift, buzzing with prismatic energy.",
-   "bonus": "50% Prisma Bubble bonus multi and +5 Prisma Bubble",
+   "bonus": "+50% Prisma Bubble bonus multi and +5 Prisma Bubbles",
+   "plus_bonus": "+75% Prisma Bubble bonus multi and +7 Prisma Bubbles",
    "image": ""
   },
   {
@@ -601,9 +660,10 @@
    "name": "Mechanical Mouse",
    "emoji": "🐭",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "common",
    "description": "A clockwork rodent engineered for maximum efficiency.",
    "bonus": "2x Construction Build Speed",
+   "plus_bonus": "3x Construction Build Speed",
    "image": ""
   },
   {
@@ -611,9 +671,10 @@
    "name": "Cryosnake",
    "emoji": "🐍",
    "category": "Exclusive Companions",
-   "rarity": "legendary",
+   "rarity": "common",
    "description": "A frigid serpent radiating icy power that freezes upgrade costs.",
    "bonus": "All Upgrade Vault upgrades are 50% cheaper!",
+   "plus_bonus": "All Upgrade Vault upgrades are 75% cheaper!",
    "image": ""
   }
  ]

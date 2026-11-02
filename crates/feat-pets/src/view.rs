@@ -1,5 +1,5 @@
 //! Pieces shared by the dashboard and the public pages: pet art tinted in its rarity's colour,
-//! the collection grid, giveaway cards and rows with the giver and winner's faces, horizontal
+//! the collection grid (rarest first in each category, with each pet's bonus and its Pet+ copies), giveaway cards and rows with the giver and winner's faces, horizontal
 //! bars, and the styles the core stylesheet doesn't have.
 
 use std::collections::HashMap;
@@ -11,6 +11,10 @@ use crate::store::{self, Giveaway, Pet, Status};
 use bot_core::web::ui;
 
 pub const STYLE: &str = r#"
+/* Pet+, the upgraded version of a pet: its own colour, apart from the rarities'. */
+:root { --plus: #f383d8; }
+.pets-plus { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 9px; font-size: 11px; font-weight: 650; letter-spacing: 0.01em; white-space: nowrap; color: var(--plus); background: color-mix(in oklab, var(--plus) 15%, transparent); }
+
 /* Rarity reads as its name after a dot in its colour. */
 .rar { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--ink-2); white-space: nowrap; }
 .rar::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--rar); }
@@ -38,6 +42,11 @@ pub const STYLE: &str = r#"
 .pets-tile.missing .pets-name { color: var(--ink-3); font-weight: 500; }
 .pets-tile.missing .pets-rname { color: var(--ink-3); }
 .pets-tile.missing:hover .pets-art { opacity: 0.6; }
+.pets-bonus { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; margin-top: 6px; font-size: 11.5px; line-height: 1.35; color: var(--ink-2); }
+.pets-tile.missing .pets-bonus { color: var(--ink-3); }
+.pets-tile .pets-plus { position: absolute; top: 8px; left: 9px; }
+/* A server with its Pet+ gets a ring in the Pet+ colour. */
+.pets-tile.has-plus { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--plus) 38%, var(--edge-1)); }
 
 /* The collection's progress: a ring that draws in and a meter per category, one colour. */
 .pets-hero { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 44px; align-items: center; padding: 22px 26px; border-radius: var(--r-card); background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
@@ -172,6 +181,7 @@ pub const STYLE: &str = r#"
 .r-common { --rar: var(--ink-2); }
 .r-uncommon { --rar: #4fd08a; }
 .r-rare { --rar: #5aa9ff; }
+.r-epic { --rar: #b48cff; }
 .r-legendary { --rar: #ffc24d; }
 @keyframes pets-in { from { opacity: 0; transform: translateY(14px) scale(0.9); filter: blur(3px); } }
 @keyframes pets-ring { from { stroke-dashoffset: 100; } }
@@ -199,7 +209,7 @@ pub fn style() -> Markup {
     html! { style { (PreEscaped(STYLE)) } }
 }
 
-/// Categories in the order the catalog lists them, each with its pets.
+/// Categories in the order the catalog lists them, each with its pets, rarest first.
 pub fn groups(catalog: &[Pet]) -> Vec<(String, Vec<&Pet>)> {
     let mut groups: Vec<(String, Vec<&Pet>)> = Vec::new();
     for p in catalog {
@@ -208,7 +218,7 @@ pub fn groups(catalog: &[Pet]) -> Vec<(String, Vec<&Pet>)> {
             None => groups.push((p.category.clone(), vec![p])),
         }
     }
-    groups
+    groups.into_iter().map(|(c, list)| (c, store::sorted(list))).collect()
 }
 
 /// Reading cards whose figures count up as they come into view.
@@ -266,15 +276,15 @@ pub fn collection_hero(groups: &[(String, Vec<&Pet>)], counts: &HashMap<String, 
     }
 }
 
-/// A pet on the collection grid: faded when the server has none, with how many it has and its
-/// rarity. `i` is its place in the page's wave of arrivals.
-pub fn collection_tile(p: &Pet, count: i64, i: usize) -> Markup {
+/// A pet on the collection grid: faded when the server has none, with how many it has (and how
+/// many are Pet+), its rarity and its bonus. `i` is its place in the page's wave of arrivals.
+pub fn collection_tile(p: &Pet, count: i64, plus: i64, i: usize) -> Markup {
     let rarity = store::clean_rarity(&p.rarity);
-    let detail = if !p.bonus.is_empty() { p.bonus.as_str() } else if !p.description.is_empty() { p.description.as_str() } else { p.name.as_str() };
-    let tip = format!("{}: {}", store::rarity_label(rarity), detail);
+    let bonus = if p.bonus.is_empty() { p.description.as_str() } else { p.bonus.as_str() };
     html! {
-        div class={ "pets-tile r-" (rarity) @if count == 0 { " missing" } } style={ "--i:" (i) } data-tip=(tip) {
+        div class={ "pets-tile r-" (rarity) @if count == 0 { " missing" } @if plus > 0 { " has-plus" } } style={ "--i:" (i) } data-tip=(tile_tip(p, count, plus)) {
             @if count > 0 { span.pets-n aria-label={ (count) " in the collection" } { "×" (count) } }
+            @if plus > 0 { span.pets-plus aria-label={ (plus) " of them Pet+" } { "Pet+" @if plus > 1 { " ×" (plus) } } }
             span.pets-art aria-hidden="true" {
                 @match p.image_url() {
                     Some(src) => img src=(src) alt="" loading="lazy";,
@@ -283,8 +293,27 @@ pub fn collection_tile(p: &Pet, count: i64, i: usize) -> Markup {
             }
             span.pets-name { (p.name) }
             span.pets-rname { (store::rarity_label(rarity)) @if count == 0 { span.sr { ", not collected yet" } } }
+            @if !bonus.is_empty() { span.pets-bonus { (bonus) } }
         }
     }
+}
+
+/// A tile's hover text: "Legendary. +25 Lv for all Talents. Pet+: +35 Lv for all Talents."
+fn tile_tip(p: &Pet, count: i64, plus: i64) -> String {
+    let mut t = store::rarity_label(&p.rarity).to_owned();
+    for part in [p.bonus.as_str(), p.description.as_str()] {
+        if !part.is_empty() {
+            t.push_str(&format!(". {part}"));
+            break;
+        }
+    }
+    if !p.plus_bonus.is_empty() {
+        t.push_str(&format!(". Pet+: {}", p.plus_bonus));
+    }
+    if plus > 0 && plus < count {
+        t.push_str(&format!(". {plus} of the {count} are Pet+"));
+    }
+    t
 }
 
 /// A pet's picture, or its emoji, on a tile tinted in its rarity's colour. `size` is "sm",
@@ -440,6 +469,40 @@ pub fn person(ctx: &Ctx, guild: u64, user: u64) -> Markup {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    fn pet(id: &str, rarity: &str) -> Pet {
+        Pet {
+            id: id.into(),
+            name: id.into(),
+            emoji: String::new(),
+            category: "Legacy".into(),
+            rarity: rarity.into(),
+            description: String::new(),
+            bonus: "+25 Lv for all Talents".into(),
+            plus_bonus: "+35 Lv for all Talents".into(),
+            image: String::new(),
+            guild: 1,
+            picture: None,
+        }
+    }
+
+    #[test]
+    fn groups_put_the_rarest_first() {
+        let cat = [pet("a", "common"), pet("b", "legendary"), pet("c", "rare"), pet("d", "common"), pet("e", "epic")];
+        let g = groups(&cat);
+        assert_eq!(g[0].1.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["b", "e", "c", "a", "d"]);
+    }
+
+    #[test]
+    fn tiles_show_the_bonus_and_pet_plus() {
+        let p = pet("rift-slug", "epic");
+        let html = collection_tile(&p, 3, 1, 0).into_string();
+        assert!(html.contains("has-plus") && html.contains("r-epic") && html.contains("+25 Lv for all Talents"));
+        assert_eq!(tile_tip(&p, 3, 1), "Epic. +25 Lv for all Talents. Pet+: +35 Lv for all Talents. 1 of the 3 are Pet+");
+        assert!(!collection_tile(&p, 0, 0, 0).into_string().contains("pets-plus"));
+    }
+
     #[test]
     fn until_reads_well() {
         let now = bot_core::now_ms();

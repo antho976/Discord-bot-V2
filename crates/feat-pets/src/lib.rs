@@ -1,7 +1,7 @@
 //! Idleon companion collection, pet giveaways and public pet pages.
 //!
-//! Members submit pets they gave the server with `/pet add`; staff approve them on the dashboard
-//! and they join the collection. Moderators record pet giveaways (giver to winner, with an
+//! Members submit pets they gave the server with `/pet add`, the pet or its Pet+ (the upgraded
+//! version); staff approve them on the dashboard and they join the collection. Moderators record pet giveaways (giver to winner, with an
 //! expiry), the bot DMs both, warns 15 minutes before expiry and cancels on expiry, and an editor
 //! confirms the hand-over. Three public pages show the collection, giveaways and stats.
 
@@ -21,7 +21,7 @@ use bot_core::twilight_model::channel::message::component::{ButtonStyle, Compone
 use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
 use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
-use bot_core::twilight_util::builder::command::{CommandBuilder, IntegerBuilder, StringBuilder, SubCommandBuilder};
+use bot_core::twilight_util::builder::command::{BooleanBuilder, CommandBuilder, IntegerBuilder, StringBuilder, SubCommandBuilder};
 use bot_core::twilight_util::builder::embed::{EmbedBuilder, EmbedFieldBuilder, EmbedFooterBuilder, ImageSource};
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Happening, Icon, Migration, NavItem, Need, Overview, feature_async, now_ms, text};
 use serde::{Deserialize, Serialize};
@@ -79,14 +79,16 @@ impl Feature for Pets {
                 .option(
                     SubCommandBuilder::new("add", "Submit a pet you gave the server, for staff to approve")
                         .option(pet_opt("Which pet"))
-                        .option(qty_opt("How many, 1 if left out")),
+                        .option(qty_opt("How many, 1 if left out"))
+                        .option(BooleanBuilder::new("plus", "Its Pet+, the upgraded version")),
                 )
                 .option(SubCommandBuilder::new("list", "The server's collection"))
                 .option(SubCommandBuilder::new("mine", "Pets you've added and what's waiting for approval"))
                 .option(
                     SubCommandBuilder::new("remove", "Take pets out of the collection (staff)")
                         .option(pet_opt("Which pet"))
-                        .option(qty_opt("How many, 1 if left out")),
+                        .option(qty_opt("How many, 1 if left out"))
+                        .option(BooleanBuilder::new("plus", "True for Pet+ copies only, false for plain ones only")),
                 )
                 .build(),
         ]
@@ -146,15 +148,21 @@ impl Feature for Pets {
                 let Some(pet) = store::find_pet(ctx, guild, opts.str("pet").unwrap_or_default())? else {
                     return ctx.reply(&call.interaction, Reply::text("That pet isn't in the catalog. Pick one from the list.").ephemeral()).await;
                 };
+                let plus = opts.bool("plus").unwrap_or(false);
                 let issued = now_ms() / 1000;
-                let confirm = format!("{KEY}:confirm:{}:{qty}:{issued}", pet.id);
+                let confirm = format!("{KEY}:confirm:{}:{qty}:{issued}:{}", pet.id, u8::from(plus));
                 let cancel = format!("{KEY}:cancel");
                 let mut e = EmbedBuilder::new()
                     .color(COLOR)
-                    .title(format!("Submit {}{} {}?", qty_label(qty), pet.icon(), pet.name))
+                    .title(format!("Submit {}{} {}{}?", qty_label(qty), pet.icon(), pet.name, version(plus)))
                     .description("Staff review submissions on the dashboard before they join the collection.")
                     .field(EmbedFieldBuilder::new("Rarity", store::rarity_label(&pet.rarity)).inline())
-                    .field(EmbedFieldBuilder::new("Quantity", qty.to_string()).inline());
+                    .field(EmbedFieldBuilder::new("Quantity", qty.to_string()).inline())
+                    .field(EmbedFieldBuilder::new("Version", if plus { "Pet+" } else { "Plain, not Pet+" }).inline());
+                let bonus = if plus && !pet.plus_bonus.is_empty() { &pet.plus_bonus } else { &pet.bonus };
+                if !bonus.is_empty() {
+                    e = e.field(EmbedFieldBuilder::new(if plus { "Pet+ bonus" } else { "Bonus" }, text::clip(bonus, 1000)));
+                }
                 if let Some(img) = pet.embed_image(&ctx.cfg.public_url).and_then(|u| ImageSource::url(u).ok()) {
                     e = e.thumbnail(img);
                 }
@@ -182,12 +190,26 @@ impl Feature for Pets {
                 let Some(pet) = store::find_pet(ctx, guild, opts.str("pet").unwrap_or_default())? else {
                     return ctx.reply(&call.interaction, Reply::text("That pet isn't in the catalog.").ephemeral()).await;
                 };
-                let removed = store::remove_owned(ctx, guild, &pet.id, qty, None)?;
+                let plus = opts.bool("plus");
+                let removed = store::remove_owned(ctx, guild, &pet.id, qty, None, plus)?;
+                let which = match plus {
+                    Some(true) => " Pet+",
+                    Some(false) => " plain",
+                    None => "",
+                };
                 let msg = if removed == 0 {
-                    format!("The collection has no {} {}.", pet.icon(), pet.name)
+                    format!("The collection has no{which} {} {}.", pet.icon(), pet.name)
                 } else {
                     let left = store::owned_counts(ctx, guild)?.get(&pet.id).copied().unwrap_or(0);
-                    format!("Removed {}{} {}. {} left.", qty_label(removed), pet.icon(), pet.name, if left == 0 { "None".to_owned() } else { left.to_string() })
+                    let left_plus = store::plus_counts(ctx, guild)?.get(&pet.id).copied().unwrap_or(0);
+                    format!(
+                        "Removed {}{} {}{}. {} left.",
+                        qty_label(removed),
+                        pet.icon(),
+                        pet.name,
+                        if plus == Some(true) { " (Pet+)" } else { "" },
+                        copies_line(left, left_plus)
+                    )
                 };
                 ctx.reply(&call.interaction, Reply::text(msg).ephemeral()).await?;
             }
@@ -202,14 +224,15 @@ impl Feature for Pets {
         let typed = call.opts().focused().map(|(_, v)| v.to_lowercase()).unwrap_or_default();
         let removing = call.opts().sub().is_some_and(|(s, _)| s == "remove");
         let owned = store::owned_counts(ctx, guild)?;
+        let plus = if removing { store::plus_counts(ctx, guild)? } else { Default::default() };
         let choices = store::catalog(ctx, guild)?
             .into_iter()
             .filter(|p| !removing || owned.contains_key(&p.id))
             .filter(|p| typed.is_empty() || p.name.to_lowercase().contains(&typed) || p.category.to_lowercase().contains(&typed) || p.id.contains(&typed))
             .map(|p| {
                 let label = match owned.get(&p.id) {
-                    Some(n) if removing => format!("{} {} (×{n} owned)", p.icon(), p.name),
-                    _ => format!("{} {} ({})", p.icon(), p.name, p.category),
+                    Some(n) if removing => format!("{} {} ({} owned)", p.icon(), p.name, copies_line(*n, plus.get(&p.id).copied().unwrap_or(0))),
+                    _ => format!("{} {} ({}, {})", p.icon(), p.name, store::rarity_label(&p.rarity), p.category),
                 };
                 (text::clip(&label, 100), p.id)
             })
@@ -220,7 +243,9 @@ impl Feature for Pets {
     async fn on_component(&self, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
         let Some(guild) = call.guild_id() else { return Ok(()) };
         match call.args().as_slice() {
-            ["confirm", pet_id, qty, issued] => {
+            // Dialogs from before Pet+ have no last part.
+            ["confirm", pet_id, qty, issued, rest @ ..] => {
+                let plus = rest.first() == Some(&"1");
                 let issued: i64 = issued.parse().unwrap_or(0);
                 if now_ms() / 1000 - issued > CONFIRM_SECS {
                     return ctx.update(&call.interaction, Reply::text("This expired. Run /pet add again.")).await;
@@ -236,16 +261,16 @@ impl Feature for Pets {
                 {
                     return Ok(());
                 }
-                store::submit(ctx, guild, &pet.id, user, qty)?;
+                store::submit(ctx, guild, &pet.id, user, qty, plus)?;
                 ctx.notify(
                     Some(guild),
                     KEY,
-                    format!("{} submitted {}{} for approval", ctx.display_name(guild, user), qty_label(qty), pet.name),
+                    format!("{} submitted {}{}{} for approval", ctx.display_name(guild, user), qty_label(qty), pet.name, version(plus)),
                     Some(format!("/g/{guild}/{KEY}/approvals")),
                 );
                 let e = EmbedBuilder::new()
                     .color(COLOR)
-                    .title(format!("Submitted {}{} {}", qty_label(qty), pet.icon(), pet.name))
+                    .title(format!("Submitted {}{} {}{}", qty_label(qty), pet.icon(), pet.name, version(plus)))
                     .description("It joins the collection once staff approve it. You'll get a DM either way if your DMs are open.")
                     .build();
                 ctx.update(&call.interaction, Reply::embed(e)).await?;
@@ -309,6 +334,21 @@ fn qty_label(n: i64) -> String {
     if n > 1 { format!("{n}× ") } else { String::new() }
 }
 
+/// After a pet's name: " (Pet+)" for its upgraded version.
+pub(crate) fn version(plus: bool) -> &'static str {
+    if plus { " (Pet+)" } else { "" }
+}
+
+/// "3", or "3, 1 of them Pet+".
+fn copies_line(total: i64, plus: i64) -> String {
+    match (total, plus) {
+        (0, _) => "None".into(),
+        (t, 0) => t.to_string(),
+        (t, p) if p == t => format!("{t}, all Pet+"),
+        (t, p) => format!("{t}, {p} of them Pet+"),
+    }
+}
+
 /// "Mira and Teo", or "Mira and 2 more" when `more` people are left out.
 fn names_line(names: &[String], more: usize) -> String {
     if more == 0 {
@@ -341,8 +381,9 @@ fn public_link(ctx: &Ctx, guild: u64, page: &str) -> Option<String> {
 /// One page of `/pet list`: owned pets grouped by category.
 fn list_page(ctx: &Ctx, guild: u64, page: i64) -> Result<(Embed, Vec<Component>)> {
     let counts = store::owned_counts(ctx, guild)?;
+    let plus = store::plus_counts(ctx, guild)?;
     let total: i64 = counts.values().sum();
-    let catalog = store::catalog(ctx, guild)?;
+    let catalog = store::sorted(store::catalog(ctx, guild)?);
     let mut lines: Vec<String> = Vec::new();
     for cat in store::categories(ctx, guild)? {
         let owned: Vec<&Pet> = catalog.iter().filter(|p| p.category == cat && counts.contains_key(&p.id)).collect();
@@ -353,7 +394,19 @@ fn list_page(ctx: &Ctx, guild: u64, page: i64) -> Result<(Embed, Vec<Component>)
         lines.push(format!("**{cat}**  ·  {} of {kinds}", owned.len()));
         for p in owned {
             let n = counts[&p.id];
-            lines.push(format!("{} {}{}  ·  {}", p.icon(), p.name, if n > 1 { format!(" ×{n}") } else { String::new() }, store::rarity_label(&p.rarity)));
+            let pn = plus.get(&p.id).copied().unwrap_or(0);
+            lines.push(format!(
+                "{} {}{}{}  ·  {}",
+                p.icon(),
+                p.name,
+                if n > 1 { format!(" ×{n}") } else { String::new() },
+                match pn {
+                    0 => String::new(),
+                    k if k == n => "  ·  Pet+".to_owned(),
+                    k => format!("  ·  {k} Pet+"),
+                },
+                store::rarity_label(&p.rarity)
+            ));
         }
     }
     let per = 20;
@@ -388,8 +441,8 @@ fn my_pets(ctx: &Ctx, guild: u64, user: u64) -> Result<Embed> {
     let find = |id: &str| catalog.iter().find(|p| p.id == id);
     let mine = store::contributions(ctx, guild, user)?;
     let waiting = store::pending_for(ctx, guild, user)?;
-    // Pet id -> (count, latest), in the order first seen (newest first).
-    let mut by_pet: BTreeMap<usize, (String, i64, i64)> = BTreeMap::new();
+    // Pet id -> (count, latest, Pet+ count), in the order first seen (newest first).
+    let mut by_pet: BTreeMap<usize, (String, i64, i64, i64)> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
     for o in &mine {
         let idx = match order.iter().position(|p| *p == o.pet_id) {
@@ -399,16 +452,22 @@ fn my_pets(ctx: &Ctx, guild: u64, user: u64) -> Result<Embed> {
                 order.len() - 1
             }
         };
-        let e = by_pet.entry(idx).or_insert_with(|| (o.pet_id.clone(), 0, o.added_at));
+        let e = by_pet.entry(idx).or_insert_with(|| (o.pet_id.clone(), 0, o.added_at, 0));
         e.1 += 1;
         e.2 = e.2.max(o.added_at);
+        e.3 += i64::from(o.plus);
     }
     let mut lines = Vec::new();
     if !by_pet.is_empty() {
         lines.push("**In the collection**".to_owned());
-        for (pet_id, n, at) in by_pet.values().take(20) {
+        for (pet_id, n, at, pn) in by_pet.values().take(20) {
             let Some(p) = find(pet_id) else { continue };
-            lines.push(format!("{} {}{}  ·  <t:{}:R>", p.icon(), p.name, if *n > 1 { format!(" ×{n}") } else { String::new() }, at / 1000));
+            let plus = match *pn {
+                0 => String::new(),
+                k if k == *n => " (Pet+)".to_owned(),
+                k => format!(" ({k} Pet+)"),
+            };
+            lines.push(format!("{} {}{}{plus}  ·  <t:{}:R>", p.icon(), p.name, if *n > 1 { format!(" ×{n}") } else { String::new() }, at / 1000));
         }
     }
     if !waiting.is_empty() {
@@ -418,7 +477,7 @@ fn my_pets(ctx: &Ctx, guild: u64, user: u64) -> Result<Embed> {
         lines.push("**Waiting for approval**".to_owned());
         for w in waiting.iter().take(15) {
             let Some(p) = find(&w.pet_id) else { continue };
-            lines.push(format!("{} {}{}  ·  <t:{}:R>", p.icon(), qty_label(w.quantity), p.name, w.requested_at / 1000));
+            lines.push(format!("{} {}{}{}  ·  <t:{}:R>", p.icon(), qty_label(w.quantity), p.name, version(w.plus), w.requested_at / 1000));
         }
     }
     let approved = mine.len() as i64;
@@ -524,10 +583,17 @@ fn preview_rows(ctx: &Ctx, guild: u64) -> Result<()> {
                 )?;
             }
         }
-        for (pet, by, n, ago_h) in [("rift-slug", 4, 1, 2), ("panda", 6, 2, 5), ("crystal-capybara", 2, 1, 20), ("bunny", 9, 1, 30)] {
+        // Some copies are Pet+: (pet, how many of its copies).
+        for (pet, n) in [("king-doot", 1), ("slime", 2), ("pufferblob", 1), ("whale", 1)] {
             tx.execute(
-                "INSERT INTO pets_pending (guild_id, pet_id, user_id, quantity, requested_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![guild as i64, pet, m[by] as i64, n, now - ago_h * hour],
+                "UPDATE pets_owned SET plus = 1 WHERE id IN (SELECT id FROM pets_owned WHERE guild_id = ?1 AND pet_id = ?2 ORDER BY id LIMIT ?3)",
+                params![guild as i64, pet, n],
+            )?;
+        }
+        for (pet, by, n, ago_h, plus) in [("rift-slug", 4, 1, 2, true), ("panda", 6, 2, 5, false), ("crystal-capybara", 2, 1, 20, false), ("bunny", 9, 1, 30, true)] {
+            tx.execute(
+                "INSERT INTO pets_pending (guild_id, pet_id, user_id, quantity, requested_at, plus) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![guild as i64, pet, m[by] as i64, n, now - ago_h * hour, plus],
             )?;
         }
         for (pet, by, status, ago_h, reason) in [("hedgehog", 5, "approved", 26, ""), ("gigafrog", 7, "rejected", 50, "Already counted last week.")] {
@@ -601,6 +667,17 @@ mod tests {
         assert_eq!(cmds.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["pet"]);
         let subs: Vec<&str> = cmds[0].options.iter().map(|o| o.name.as_str()).collect();
         assert_eq!(subs, ["add", "list", "mine", "remove"]);
+        let add: Vec<&str> = cmds[0].options[0].options.as_deref().unwrap_or_default().iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(add, ["pet", "quantity", "plus"]);
+    }
+
+    #[test]
+    fn copies_read_well() {
+        assert_eq!(super::copies_line(3, 0), "3");
+        assert_eq!(super::copies_line(3, 1), "3, 1 of them Pet+");
+        assert_eq!(super::copies_line(2, 2), "2, all Pet+");
+        assert_eq!(super::copies_line(0, 0), "None");
+        assert_eq!(super::version(true), " (Pet+)");
     }
 
     #[test]

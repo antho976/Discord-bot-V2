@@ -9,3 +9,6 @@ bot-core.workspace = true
 maud.workspace = true
 serde.workspace = true
 
+
+[dev-dependencies]
+rustls.workspace = true

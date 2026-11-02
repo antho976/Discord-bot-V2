@@ -49,6 +49,19 @@ body.pets-pub { background: var(--page); }
 .pets-pub-foot a { color: var(--ink-2); display: inline-flex; align-items: center; gap: 6px; }
 .pets-pub-foot a:hover { color: var(--ink); }
 .pets-pub .chart-card { padding: 20px 22px 16px; }
+/* Tags over the grid: one per rarity, rarest first, and Pet+. One of each kind at a time. */
+.pets-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.pets-tag { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 13px; border-radius: 16px; background: var(--control); color: var(--ink-2); font-size: 13px; font-weight: 500; white-space: nowrap; transition: background 0.18s, color 0.18s, box-shadow 0.2s, transform 0.25s var(--spring); }
+.pets-tag:hover { background: var(--hover); color: var(--ink); }
+.pets-tag:active { transform: scale(0.96); }
+.pets-tag[class*=" r-"]::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--rar); }
+.pets-tag.r-common::before { background: var(--ink-3); }
+.pets-tag .n { color: var(--ink-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.pets-tag.on { color: var(--ink); background: color-mix(in oklab, var(--rar, var(--accent)) 16%, var(--control)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar, var(--accent)) 55%, transparent); }
+.pets-tag.on .n { color: var(--ink-2); }
+.pets-tag.plus { --rar: var(--plus); }
+.pets-tag.plus b { color: var(--plus); font-weight: 650; }
+.pets-tag-gap { width: 1px; align-self: stretch; margin: 4px 4px; background: var(--edge-2); }
 /* Stats: the chart beside the podium, then the breakdowns three across, each wrapping under the
    other when the page is narrow. */
 .pets-duo, .pets-trio { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 34px 40px; }
@@ -116,14 +129,80 @@ fn page(ctx: &Ctx, viewer: &MaybeUser, guild: u64, title: &str, active: &str, da
 #[derive(Deserialize)]
 struct CollectionQuery {
     owned: Option<String>,
+    /// Only pets of this rarity.
+    rarity: Option<String>,
+    /// Only pets with Pet+ copies.
+    plus: Option<String>,
+}
+
+/// Which pets the collection page shows.
+#[derive(Clone, Copy, PartialEq)]
+struct Filter<'a> {
+    owned: bool,
+    rarity: Option<&'a str>,
+    plus: bool,
+}
+
+impl Filter<'_> {
+    fn href(&self, guild: u64) -> String {
+        let mut q: Vec<String> = Vec::new();
+        if self.owned {
+            q.push("owned=1".into());
+        }
+        if let Some(r) = self.rarity {
+            q.push(format!("rarity={r}"));
+        }
+        if self.plus {
+            q.push("plus=1".into());
+        }
+        if q.is_empty() { format!("/p/{guild}/pets") } else { format!("/p/{guild}/pets?{}", q.join("&")) }
+    }
+    fn keeps(&self, p: &Pet, counts: &HashMap<String, i64>, plus: &HashMap<String, i64>) -> bool {
+        (!self.owned || counts.contains_key(&p.id)) && self.rarity.is_none_or(|r| store::clean_rarity(&p.rarity) == r) && (!self.plus || plus.contains_key(&p.id))
+    }
+}
+
+/// The tags over the grid: every rarity, then Pet+, each with how many pets it would show.
+fn tags(guild: u64, f: Filter, catalog: &[Pet], counts: &HashMap<String, i64>, plus: &HashMap<String, i64>) -> Markup {
+    let n = |g: Filter| catalog.iter().filter(|p| g.keeps(p, counts, plus)).count();
+    let all = Filter { rarity: None, ..f };
+    let with_plus = Filter { plus: !f.plus, ..f };
+    html! {
+        nav.pets-tags aria-label="Filter by rarity" {
+            a.pets-tag.on[f.rarity.is_none()] href=(all.href(guild)) aria-current=[f.rarity.is_none().then_some("true")] { "All rarities" span.n { (n(all)) } }
+            @for r in store::RARITIES.iter().rev() {
+                @let g = Filter { rarity: Some(r), ..f };
+                @let on = f.rarity == Some(*r);
+                @let k = n(g);
+                @if k > 0 || on {
+                    a class={ "pets-tag r-" (r) @if on { " on" } } href=(if on { all.href(guild) } else { g.href(guild) }) aria-current=[on.then_some("true")] {
+                        (store::rarity_label(r)) span.n { (k) }
+                    }
+                }
+            }
+            @if !plus.is_empty() || f.plus {
+                span.pets-tag-gap aria-hidden="true" {}
+                a.pets-tag.plus.on[f.plus] href=(with_plus.href(guild)) aria-current=[f.plus.then_some("true")] data-tip="Pets the server has the Pet+ of, the upgraded version" {
+                    b { "Pet+" } span.n { (n(Filter { plus: true, ..f })) }
+                }
+            }
+        }
+    }
 }
 
 async fn collection(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>, Query(q): Query<CollectionQuery>) -> WebResult {
     check(&ctx, guild)?;
     let catalog = store::catalog(&ctx, guild)?;
     let counts = store::owned_counts(&ctx, guild)?;
+    let plus = store::plus_counts(&ctx, guild)?;
     let total: i64 = counts.values().sum();
     let only_owned = q.owned.is_some();
+    let f = Filter {
+        owned: only_owned,
+        rarity: q.rarity.as_deref().and_then(|r| store::RARITIES.iter().copied().find(|x| *x == r)),
+        plus: q.plus.is_some(),
+    };
+    let filtered = f.rarity.is_some() || f.plus;
     let legendary: i64 = catalog.iter().filter(|p| p.rarity == "legendary").map(|p| counts.get(&p.id).copied().unwrap_or(0)).sum();
     let week = store::first_added_since(&ctx, guild, now_ms() - 7 * 86_400_000)?;
     let groups = view::groups(&catalog);
@@ -133,12 +212,12 @@ async fn collection(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path
     stars.truncate(4);
     let shown: Vec<(&String, Vec<&&Pet>, usize)> = groups
         .iter()
-        .map(|(cat, list)| (cat, list.iter().filter(|p| !only_owned || counts.contains_key(&p.id)).collect::<Vec<_>>(), list.iter().filter(|p| counts.contains_key(&p.id)).count()))
+        .map(|(cat, list)| (cat, list.iter().filter(|p| f.keeps(p, &counts, &plus)).collect::<Vec<_>>(), list.iter().filter(|p| counts.contains_key(&p.id)).count()))
         .collect();
     let starts: Vec<usize> = shown.iter().scan(0, |n, (_, l, _)| { let at = *n; *n += l.len(); Some(at) }).collect();
     let body = html! {
         (view::collection_hero(&groups, &counts, week))
-        @if !stars.is_empty() {
+        @if !stars.is_empty() && !filtered {
             (view::section("Rarest in the collection", None, None, html! {
                 div.pets-spot {
                     @for (i, p) in stars.iter().enumerate() {
@@ -148,6 +227,7 @@ async fn collection(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path
                             (view::pet_art(p, "xl"))
                             div.t {
                                 strong { (p.name) }
+                                @if let Some(k) = plus.get(&p.id) { span.pets-plus { "Pet+" @if *k > 1 { " ×" (k) } } }
                                 (view::rarity(r))
                                 @if !p.bonus.is_empty() { p { (p.bonus) } } @else if !p.description.is_empty() { p { (p.description) } }
                             }
@@ -168,19 +248,26 @@ async fn collection(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path
             "Faded pets aren't in the collection yet.".to_owned()
         }), Some(html! {
             nav.seg aria-label="Which pets" {
-                a.on[!only_owned] href={ "/p/" (guild) "/pets" } aria-current=[(!only_owned).then_some("true")] { "Every companion" }
-                a.on[only_owned] href={ "/p/" (guild) "/pets?owned=1" } aria-current=[only_owned.then_some("true")] { "Only owned" }
+                a.on[!only_owned] href=(Filter { owned: false, ..f }.href(guild)) aria-current=[(!only_owned).then_some("true")] { "Every companion" }
+                a.on[only_owned] href=(Filter { owned: true, ..f }.href(guild)) aria-current=[only_owned.then_some("true")] { "Only owned" }
             }
         }), html! {
-            @if total == 0 {
+            (tags(guild, f, &catalog, &counts, &plus))
+            @if total == 0 && !only_owned && !filtered {
                 (ui::empty(Icon::Paw, "The collection is empty", "Members add pets with /pet add in Discord, and they show here once staff approve them."))
+            } @else if shown.iter().all(|(_, l, _)| l.is_empty()) {
+                (ui::empty(Icon::Search, "No pets match", &match (f.rarity, f.plus, only_owned) {
+                    (_, true, _) => "The server has no Pet+ of these yet. Pick another tag, or All rarities.".to_owned(),
+                    (Some(r), _, true) => format!("The server has no {} pets yet. Show every companion to see them all.", store::rarity_label(r).to_lowercase()),
+                    _ => "Pick another tag, or All rarities.".to_owned(),
+                }))
             }
         }))
         @for (k, (cat, pets, have)) in shown.iter().enumerate() {
             @if !pets.is_empty() {
                 (ui::section(cat, Some(&format!("{have} of {} collected", groups[k].1.len())), html! {
                     div.pets-grid {
-                        @for (n, p) in pets.iter().enumerate() { (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0), starts[k] + n)) }
+                        @for (n, p) in pets.iter().enumerate() { (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0), plus.get(&p.id).copied().unwrap_or(0), starts[k] + n)) }
                     }
                 }))
             }
