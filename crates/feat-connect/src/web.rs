@@ -111,11 +111,11 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
                 p { "Tally, Avex and PCs can't connect until RELAY_PUBLIC_URL is set. The Relay app still pairs through a connected PC." }
             }
         }
-        div.with-rail {
+        div.with-rail.cn-cols {
             div.cn-main {
                 section.cn-block {
                     div.cn-head {
-                        h2 { "Waiting for an answer" @if !pending.is_empty() { span.count-pill { (pending.len()) } } }
+                        h2 { "Waiting for an answer" @if !pending.is_empty() { span.tab-count { (pending.len()) } } }
                         p.muted { "Requests from Relay, Tally, Avex and your PCs land here and in the approvers' DMs. Allow one only if the app shows the same code." }
                     }
                     @if pending.is_empty() {
@@ -148,11 +148,13 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
                                     }
                                     div.grow {
                                         strong.clip { (h.name) }
-                                        span.cn-seen { (match h.last_seen_at {
-                                            Some(t) => format!("Checked in {}", text::ago(t)),
-                                            None => "Not checked in yet".into(),
-                                        }) }
-                                        span.muted.small { "Connected " (since_month(&page, h.created_at)) }
+                                        span.cn-seen {
+                                            span.cn-seen-when { (match h.last_seen_at {
+                                                Some(t) => format!("Checked in {}", text::ago(t)),
+                                                None => "Not checked in yet".into(),
+                                            }) }
+                                            " · connected " (since_month(&page, h.created_at))
+                                        }
                                     }
                                     @if page.can_edit() {
                                         (ui::action_button(&page.path(&format!("connect/hosts/{}/forget", h.id)), "Forget", Tone::Bad, true))
@@ -164,14 +166,14 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
                 }
             }
 
-            aside.rail {
+            aside.rail.cn-rail {
                 div.rail-block {
                     h2 { "Approvers" span.tab-count { (approvers.len()) } }
                     p.muted.small { "Each gets the DM. The first answer counts." }
                     div.cn-aps {
                         @for id in &approvers {
                             div.mini.cn-ap {
-                                img.avatar src=(ctx.member_avatar(guild, *id)) alt="" width="30" height="30" loading="lazy";
+                                img.avatar src=(ctx.member_avatar(guild, *id)) alt="" width="28" height="28" loading="lazy";
                                 div.grow {
                                     strong { (name_in(&ctx, guild, *id)) }
                                     span.muted { @if *id == ctx.cfg.owner_id { "Bot owner" } @else { "Approver" } }
@@ -318,7 +320,7 @@ fn decision(ctx: &Ctx, guild: u64, r: &Request, now: i64) -> Markup {
         div.cn-dec {
             span.cn-face {
                 @match r.decided_by {
-                    Some(by) => img.avatar src=(ctx.member_avatar(guild, by)) alt="" width="30" height="30" loading="lazy";,
+                    Some(by) => img.avatar src=(ctx.member_avatar(guild, by)) alt="" width="28" height="28" loading="lazy";,
                     None => span.cn-dec-none aria-hidden="true" { (device_icon(&r.kind)) },
                 }
                 span class={ "cn-mark " (mark) } aria-hidden="true" { (ui::icon(ic)) }
@@ -502,74 +504,81 @@ async fn import(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, body
 }
 
 const CSS: &str = r#"
-.cn-note { display: flex; align-items: center; gap: 12px; padding: 11px 16px 11px 12px; border-radius: 14px; background: linear-gradient(90deg, color-mix(in oklab, var(--waiting) 11%, transparent), color-mix(in oklab, var(--waiting) 2%, transparent) 75%); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 22%, transparent); font-size: 13px; color: var(--ink-2); }
-.cn-note-ic { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; flex: none; color: var(--waiting); background: color-mix(in oklab, var(--waiting) 16%, transparent); }
-.cn-main { display: flex; flex-direction: column; gap: 38px; min-width: 0; }
+/* House style (2026-11-02): every section and side block is one bordered panel; the device and
+   its code lead, in neutral chrome; the time left is the one meter, in the data colour. Two
+   columns: the requests and the PCs, then a 420 px column of the approvers and the decisions. */
+.cn-note, .cn-block, .cn-rail > .rail-block { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; }
+.cn-note { display: flex; align-items: center; gap: 12px; padding: 12px 20px; font-size: 13px; color: var(--ink-2); }
+.cn-note-ic { display: grid; place-items: center; flex: none; color: var(--waiting); }
+.cn-cols { grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; align-items: stretch; }
+.cn-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.cn-main > .cn-block:last-child { flex: 1; }
 .cn-block { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .cn-head { display: flex; flex-direction: column; gap: 4px; }
-.cn-head h2 { display: flex; align-items: center; gap: 9px; font-size: 16px; }
-.cn-head h2 .tab-count { margin-left: 0; }
+.cn-head h2, .cn-rail .rail-block > h2 { display: flex; align-items: center; justify-content: flex-start; gap: 8px; font-size: 14px; font-weight: 500; }
+.cn-head h2 .tab-count, .cn-rail h2 .tab-count { margin-left: 0; }
 .cn-head p { font-size: 13px; max-width: 72ch; }
-.rail-block h2 .tab-count { margin-left: 0; margin-right: auto; }
-.rail-block h2:has(.tab-count) { justify-content: flex-start; gap: 8px; }
+.cn-rail { position: static; background: none; box-shadow: none; padding: 0; gap: 16px; }
+.cn-rail > .rail-block + .rail-block { margin-top: 0; padding-top: 18px; border-top: 1px solid var(--edge-1); }
+.cn-rail > .rail-block:last-child { flex: 1; }
+.cn-block .empty { background: none; box-shadow: none; padding: 4px 0; border-radius: 0; }
+.cn-block .empty-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--control); color: var(--ink-2); box-shadow: none; animation: none; }
+.cn-block .empty-icon .icon { width: 16px; height: 16px; }
 
-/* A request: the device on the left, the code it shows on the right, as keys that drop in one
-   after another. The first is lit in the page's hue: it's the next to answer. */
-/* Requests side by side once the column has room for two; a lone one fills the column. */
-.cn-reqs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); gap: 12px; }
-.cn-req { container: cnreq / inline-size; position: relative; display: flex; flex-direction: column; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.018)); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; isolation: isolate; }
-.cn-req.first { background: linear-gradient(180deg, rgba(243, 242, 248, 0.055), rgba(243, 242, 248, 0.02)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 40%, transparent); }
-.cn-req-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 20px 22px 18px; }
-.cn-tile { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 17px; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 24%, transparent); }
-.cn-req.first .cn-tile { color: #0b0b10; background: linear-gradient(150deg, color-mix(in oklab, var(--hue), white 25%), var(--hue) 55%, color-mix(in oklab, var(--hue), black 22%)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); animation: pop-in 0.6s var(--spring) both 0.15s; }
-.cn-tile .icon { width: 28px; height: 28px; }
+/* A request: the device on the left, the code it shows on the right. Requests follow one another
+   in the panel, split by a hairline; no box inside the box. */
+.cn-reqs { display: flex; flex-direction: column; }
+.cn-req { container: cnreq / inline-size; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.cn-req + .cn-req { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--edge-1); }
+.cn-req-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; }
+.cn-tile { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 12px; color: var(--ink-2); background: var(--solid); }
+.cn-tile .icon { width: 24px; height: 24px; }
 .cn-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.cn-kind { align-self: flex-start; display: inline-flex; align-items: center; height: 20px; padding: 0 8px; margin-bottom: 4px; border-radius: 10px; font-size: 11px; font-weight: 600; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); }
-.cn-name { font-size: 19px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.2; overflow-wrap: anywhere; }
+.cn-kind { align-self: flex-start; display: inline-flex; align-items: center; height: 20px; padding: 0 8px; margin-bottom: 4px; border-radius: 6px; font-size: 11px; font-weight: 500; color: var(--ink-2); background: var(--control); }
+.cn-name { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; overflow-wrap: anywhere; }
 .cn-ask { color: var(--ink-2); font-size: 13px; }
 .cn-codebox { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .cn-lbl { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
-.cn-code { display: flex; gap: 6px; perspective: 420px; }
-.cn-key { display: grid; place-items: center; width: 44px; height: 54px; border-radius: 12px; font: 600 27px/1 var(--mono); color: var(--ink); background: linear-gradient(180deg, rgba(243, 242, 248, 0.1), rgba(243, 242, 248, 0.035)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -2px 0 rgba(0, 0, 0, 0.35), inset 0 0 0 1px var(--edge-2), 0 8px 18px -10px rgba(0, 0, 0, 0.8); transform-origin: 50% 0; animation: cn-key 0.75s var(--spring) both; animation-delay: calc(var(--i, 0) * 150ms + var(--k) * 80ms + 300ms); }
-.cn-req.first .cn-key { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -2px 0 rgba(0, 0, 0, 0.35), inset 0 0 0 1px color-mix(in oklab, var(--hue) 50%, transparent); }
-@keyframes cn-key { from { opacity: 0; transform: translateY(-12px) rotateX(80deg); filter: blur(3px); } }
-.cn-stuck { display: flex; align-items: center; gap: 9px; margin: -4px 22px 16px; padding: 9px 12px; border-radius: 11px; font-size: 12.5px; color: var(--waiting); background: color-mix(in oklab, var(--waiting) 10%, transparent); }
+.cn-code { display: flex; gap: 6px; }
+.cn-key { display: grid; place-items: center; width: 40px; height: 48px; border-radius: 10px; font: 600 24px/1 var(--mono); color: var(--ink); background: var(--solid); box-shadow: inset 0 0 0 1px var(--edge-2); }
+.cn-stuck { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 13px; color: var(--waiting); }
 .cn-stuck .icon { width: 15px; height: 15px; }
-.cn-req-foot { margin-top: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 215px) auto; align-items: center; gap: 12px 22px; padding: 12px 22px; border-top: 1px solid var(--edge-1); background: rgba(7, 7, 11, 0.24); }
+.cn-req-foot { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, 215px) auto; align-items: center; gap: 12px 22px; }
 .cn-ap-acts { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.cn-dm { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 12.5px; color: var(--ink-2); }
+.cn-dm { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13px; color: var(--ink-2); }
 .cn-dm .avatars .avatar { width: 24px; height: 24px; }
-.cn-nodm { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 8px; color: var(--waiting); background: color-mix(in oklab, var(--waiting) 15%, transparent); }
-.cn-nodm .icon { width: 14px; height: 14px; }
+.cn-nodm { display: grid; place-items: center; flex: none; color: var(--waiting); }
+.cn-nodm .icon { width: 15px; height: 15px; }
 .cn-ttl { display: flex; flex-direction: column; gap: 5px; min-width: 0; color: var(--ink-3); }
 .cn-ttl-bar { display: block; height: 4px; border-radius: 2px; background: var(--edge-1); overflow: hidden; }
-/* Fills to the time left, then drains for real as the request runs out. */
-.cn-ttl-bar > span { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--hue), color-mix(in oklab, var(--hue), white 35%)); transform-origin: left; transform: scaleX(var(--left)); animation: cn-fill 0.9s var(--ease) both 0.4s, cn-drain var(--secs) linear 1.3s forwards; }
-@keyframes cn-fill { from { transform: scaleX(0); } to { transform: scaleX(var(--left)); } }
+/* The bar is the time left; it drains with the real clock, nothing else moves. */
+.cn-ttl-bar > span { display: block; height: 100%; border-radius: 2px; background: var(--data); transform-origin: left; transform: scaleX(var(--left)); animation: cn-drain var(--secs) linear forwards; }
 @keyframes cn-drain { from { transform: scaleX(var(--left)); } to { transform: scaleX(0); } }
 .cn-acts { display: flex; gap: 8px; }
-.cn-acts .btn { height: 36px; padding: 0 16px; }
+.cn-acts .btn { width: 92px; justify-content: center; }
 
-/* Connected PCs. */
-.cn-pcs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap: 12px; }
-.cn-pc { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 14px 16px; border-radius: 16px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
-.cn-pc:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.cn-pc-tile { position: relative; display: grid; place-items: center; width: 46px; height: 46px; flex: none; border-radius: 14px; color: var(--hue); background: color-mix(in oklab, var(--hue) 14%, transparent); }
-.cn-pc-tile .icon { width: 24px; height: 24px; }
-.cn-pc-tile .dot { position: absolute; right: -3px; bottom: -3px; width: 12px; height: 12px; box-shadow: 0 0 0 3px var(--page); }
-.cn-pc-tile .dot.live { box-shadow: 0 0 0 3px var(--page); }
+/* Connected PCs: one row each, the same size as the rows in the right column. */
+.cn-pcs { display: flex; flex-direction: column; gap: 2px; }
+.cn-pc { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 0; }
+.cn-pc-tile { position: relative; display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 8px; color: var(--ink-2); background: var(--control); }
+.cn-pc-tile .icon { width: 16px; height: 16px; }
+.cn-pc-tile .dot { position: absolute; right: -3px; bottom: -3px; width: 10px; height: 10px; box-shadow: 0 0 0 2.5px var(--raised); }
+.cn-pc-tile .dot.live { box-shadow: 0 0 0 2.5px var(--raised); }
 .cn-pc .grow { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.cn-pc strong { font-size: 14px; font-weight: 600; }
-.cn-seen { font-size: 12.5px; color: var(--ink-2); }
-.cn-pc.live .cn-seen { color: var(--live); }
-.cn-import { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-radius: 14px; border: 1px dashed var(--edge-2); }
+.cn-pc strong { font-size: 14px; font-weight: 500; }
+.cn-seen { font-size: 13px; color: var(--ink-3); }
+.cn-pc.live .cn-seen-when { color: var(--live); }
+.cn-pc .btn, .cn-ap .btn { min-width: 76px; justify-content: center; }
+.cn-import { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--edge-1); }
 .cn-import-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .cn-import input[type="file"] { width: auto; flex: 1; min-width: 180px; max-width: 360px; height: auto; padding: 6px; }
 
-/* Approvers and decisions, in the rail. */
-.cn-aps { display: flex; flex-direction: column; gap: 4px; }
-.cn-ap { padding: 4px 0; }
-.cn-ap .grow strong { font-size: 13.5px; font-weight: 600; }
+/* Approvers and decisions, in the right column. */
+.cn-aps { display: flex; flex-direction: column; gap: 2px; }
+.cn-ap { padding: 4px 0; gap: 12px; }
+.cn-ap > .avatar { width: 28px !important; height: 28px !important; }
+.cn-ap .grow strong { font-size: 14px; font-weight: 500; }
+.cn-ap .grow .muted { font-size: 13px; }
 .cn-ap .btn { opacity: 0; transition: opacity 0.15s; }
 .cn-ap:hover .btn, .cn-ap .btn:focus-visible, .cn-ap .btn.armed { opacity: 1; }
 @media (hover: none) { .cn-ap .btn { opacity: 1; } }
@@ -581,37 +590,38 @@ const CSS: &str = r#"
 .cn-add .help { margin: 0; }
 .cn-add .btn { align-self: flex-end; margin-top: 4px; }
 .cn-decs { display: flex; flex-direction: column; gap: 2px; }
-.cn-dec { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 7px 8px; margin: 0 -8px; border-radius: 12px; font-size: 13px; transition: background 0.18s; }
+.cn-dec { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 6px 8px; margin: 0 -8px; border-radius: 10px; font-size: 14px; transition: background 0.18s; }
 .cn-dec:hover { background: var(--well); }
-.cn-face { position: relative; flex: none; width: 30px; height: 30px; }
-.cn-face .avatar { display: block; width: 30px; height: 30px; }
-.cn-dec-none { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: var(--ink-3); background: var(--control); }
-.cn-dec-none .icon { width: 16px; height: 16px; }
-.cn-mark { position: absolute; right: -4px; bottom: -4px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; box-shadow: 0 0 0 2.5px var(--raised); }
-.cn-mark .icon { width: 10px; height: 10px; stroke-width: 2.4; }
+.cn-face { position: relative; flex: none; width: 28px; height: 28px; }
+.cn-face .avatar { display: block; width: 28px; height: 28px; }
+.cn-dec-none { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--ink-3); background: var(--control); }
+.cn-dec-none .icon { width: 15px; height: 15px; }
+.cn-mark { position: absolute; right: -4px; bottom: -4px; display: grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; box-shadow: 0 0 0 2.5px var(--raised); }
+.cn-mark .icon { width: 9px; height: 9px; stroke-width: 2.4; }
 .cn-mark.ok { background: var(--live); color: #062014; }
 .cn-mark.no { background: var(--held); color: #1a0507; }
 .cn-mark.gone { background: var(--solid); color: var(--ink-2); box-shadow: 0 0 0 2.5px var(--raised), inset 0 0 0 1px var(--edge-2); }
 .cn-dec .grow { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .cn-dec p { color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
-.cn-dec p strong { color: var(--ink); font-weight: 600; }
-.cn-dec p strong.cn-dev { font-weight: 500; }
-/* A request card lays itself out for its own width: the who and when on one line, then the
-   time left beside the answer, then everything stacked on a phone. */
+.cn-dec p strong { color: var(--ink); font-weight: 500; }
+.cn-dec .muted.small { font-size: 13px; }
+@media (max-width: 1300px) { .cn-cols { grid-template-columns: minmax(0, 1fr) 380px; } }
+@media (max-width: 1100px) { .cn-cols { grid-template-columns: minmax(0, 1fr); } }
+/* A request lays itself out for its own width: the who and when on one line, then the time
+   left beside the answer, then everything stacked on a phone. */
 @container cnreq (max-width: 759px) {
   .cn-req-foot { grid-template-columns: minmax(0, 1fr) auto; }
   .cn-dm { grid-column: 1 / -1; }
 }
 @container cnreq (max-width: 540px) {
-  .cn-req-top { grid-template-columns: auto minmax(0, 1fr); gap: 14px; padding: 16px; }
-  .cn-tile { width: 48px; height: 48px; border-radius: 15px; }
-  .cn-tile .icon { width: 24px; height: 24px; }
-  .cn-name { font-size: 17px; }
-  .cn-codebox { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; padding: 10px 12px 10px 14px; border-radius: 14px; background: rgba(7, 7, 11, 0.3); box-shadow: inset 0 0 0 1px var(--edge-1); }
-  .cn-key { width: 40px; height: 48px; font-size: 24px; }
-  .cn-stuck { margin: -2px 16px 14px; }
-  .cn-req-foot { grid-template-columns: minmax(0, 1fr); padding: 12px 16px 14px; }
-  .cn-acts .btn { flex: 1; }
+  .cn-req-top { grid-template-columns: auto minmax(0, 1fr); gap: 14px; }
+  .cn-tile { width: 40px; height: 40px; }
+  .cn-tile .icon { width: 20px; height: 20px; }
+  .cn-name { font-size: 16px; }
+  .cn-codebox { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; }
+  .cn-key { width: 36px; height: 44px; font-size: 22px; }
+  .cn-req-foot { grid-template-columns: minmax(0, 1fr); }
+  .cn-acts .btn { flex: 1; width: auto; }
   .cn-acts form.inline { display: flex; flex: 1; }
 }
 @media (prefers-reduced-motion: reduce) { .cn-ttl-bar > span { animation: none; } }

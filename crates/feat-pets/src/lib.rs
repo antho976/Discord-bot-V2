@@ -1,7 +1,9 @@
 //! Idleon companion collection, pet giveaways and public pet pages.
 //!
 //! Members submit pets they gave the server with `/pet add`, the pet or its Pet+ (the upgraded
-//! version); staff approve them on the dashboard and they join the collection. Moderators record pet giveaways (giver to winner, with an
+//! version); staff approve them on the dashboard and they join the collection. `/pet mine` shows
+//! a member their own pets and submissions with their status, and lets them remove their own
+//! (withdraw a waiting submission, or take their copies out) without asking staff. Moderators record pet giveaways (giver to winner, with an
 //! expiry), the bot DMs both, warns 15 minutes before expiry and cancels on expiry, and an editor
 //! confirms the hand-over. Three public pages show the collection, giveaways and stats.
 
@@ -12,12 +14,10 @@ pub mod store;
 mod view;
 mod web;
 
-use std::collections::BTreeMap;
-
 use bot_core::anyhow::Result;
 use bot_core::discord::{CommandCall, ComponentCall, Reply, button_row};
 use bot_core::twilight_model::application::command::{Command, CommandType};
-use bot_core::twilight_model::channel::message::component::{ButtonStyle, Component};
+use bot_core::twilight_model::channel::message::component::{ActionRow, ButtonStyle, Component, SelectMenu, SelectMenuOption, SelectMenuType};
 use bot_core::twilight_model::channel::message::{AllowedMentions, Embed};
 use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
@@ -26,11 +26,11 @@ use bot_core::twilight_util::builder::embed::{EmbedBuilder, EmbedFieldBuilder, E
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Happening, Icon, Migration, NavItem, Need, Overview, feature_async, now_ms, text};
 use serde::{Deserialize, Serialize};
 
-use store::{Giveaway, Pet, Status};
+use store::{Giveaway, MyCopies, Pending, Pet, Status};
 
 pub const KEY: &str = "pets";
 const COLOR: u32 = 0xf0806a;
-/// A `/pet add` confirmation button stops working after this long.
+/// A `/pet add` or `/pet mine` confirmation button stops working after this long.
 const CONFIRM_SECS: i64 = 15 * 60;
 const WARN_BEFORE_MS: i64 = 15 * 60 * 1000;
 const DAY_MS: i64 = 24 * 3_600_000;
@@ -83,7 +83,7 @@ impl Feature for Pets {
                         .option(BooleanBuilder::new("plus", "Its Pet+, the upgraded version")),
                 )
                 .option(SubCommandBuilder::new("list", "The server's collection"))
-                .option(SubCommandBuilder::new("mine", "Pets you've added and what's waiting for approval"))
+                .option(SubCommandBuilder::new("mine", "Your pets and submissions with their status. Remove your own from here"))
                 .option(
                     SubCommandBuilder::new("remove", "Take pets out of the collection (staff)")
                         .option(pet_opt("Which pet"))
@@ -155,7 +155,7 @@ impl Feature for Pets {
                 let mut e = EmbedBuilder::new()
                     .color(COLOR)
                     .title(format!("Submit {}{} {}{}?", qty_label(qty), pet.icon(), pet.name, version(plus)))
-                    .description("Staff review submissions on the dashboard before they join the collection.")
+                    .description("Staff review submissions before they join the collection. Check on it, or take it back, with /pet mine.")
                     .field(EmbedFieldBuilder::new("Rarity", store::rarity_label(&pet.rarity)).inline())
                     .field(EmbedFieldBuilder::new("Quantity", qty.to_string()).inline())
                     .field(EmbedFieldBuilder::new("Version", if plus { "Pet+" } else { "Plain, not Pet+" }).inline());
@@ -174,8 +174,8 @@ impl Feature for Pets {
                 ctx.reply(&call.interaction, Reply::embed(embed).components(rows)).await?;
             }
             "mine" => {
-                let embed = my_pets(ctx, guild, call.user_id())?;
-                ctx.reply(&call.interaction, Reply::embed(embed).ephemeral()).await?;
+                let (embed, rows) = my_pets(ctx, guild, call.user_id(), None)?;
+                ctx.reply(&call.interaction, Reply::embed(embed).components(rows).ephemeral()).await?;
             }
             "remove" => {
                 let staff = call
@@ -272,6 +272,7 @@ impl Feature for Pets {
                     .color(COLOR)
                     .title(format!("Submitted {}{} {}{}", qty_label(qty), pet.icon(), pet.name, version(plus)))
                     .description("It joins the collection once staff approve it. You'll get a DM either way if your DMs are open.")
+                    .field(EmbedFieldBuilder::new("Status and removal", "Run /pet mine to see whether it's approved, and to withdraw it or remove your pets yourself, no need to ask staff."))
                     .build();
                 ctx.update(&call.interaction, Reply::embed(e)).await?;
             }
@@ -280,6 +281,67 @@ impl Feature for Pets {
             }
             ["list", page] => {
                 let (embed, rows) = list_page(ctx, guild, page.parse().unwrap_or(0))?;
+                ctx.update(&call.interaction, Reply::embed(embed).components(rows)).await?;
+            }
+            // `/pet mine`: a pick from the menu asks first.
+            ["mine"] => {
+                let user = call.user_id();
+                let picked = call.data.values.first().map(String::as_str).unwrap_or_default();
+                let (embed, rows) = match ask_remove(ctx, guild, user, picked)? {
+                    Some(asked) => asked,
+                    None => my_pets(ctx, guild, user, Some("That's no longer yours to remove. Here's what you have now."))?,
+                };
+                ctx.update(&call.interaction, Reply::embed(embed).components(rows)).await?;
+            }
+            ["back"] => {
+                let (embed, rows) = my_pets(ctx, guild, call.user_id(), None)?;
+                ctx.update(&call.interaction, Reply::embed(embed).components(rows)).await?;
+            }
+            ["wd", _, issued] | ["rm", _, _, _, issued] if expired(issued) => {
+                let (embed, rows) = my_pets(ctx, guild, call.user_id(), Some("That question expired, so nothing was removed. Pick it again."))?;
+                ctx.update(&call.interaction, Reply::embed(embed).components(rows)).await?;
+            }
+            ["wd", id, issued] => {
+                let user = call.user_id();
+                if !first_press(nonce(issued)) {
+                    return Ok(());
+                }
+                let note = match store::withdraw(ctx, guild, user, id.parse().unwrap_or(0))? {
+                    Some(w) => {
+                        let what = submission_name(ctx, guild, &w);
+                        ctx.notify(Some(guild), KEY, format!("{} withdrew their {what} submission", ctx.display_name(guild, user)), Some(format!("/g/{guild}/{KEY}/approvals")));
+                        format!("Withdrew your {what} submission.")
+                    }
+                    None => "That submission was already reviewed or withdrawn, so nothing changed.".to_owned(),
+                };
+                let (embed, rows) = my_pets(ctx, guild, user, Some(&note))?;
+                ctx.update(&call.interaction, Reply::embed(embed).components(rows)).await?;
+            }
+            ["rm", pet_id, plus, qty, issued] => {
+                let user = call.user_id();
+                if !first_press(nonce(issued)) {
+                    return Ok(());
+                }
+                let plus = *plus == "1";
+                let qty: i64 = qty.parse::<i64>().unwrap_or(1).clamp(1, 1000);
+                let name = store::pet(ctx, guild, pet_id)?.map(|p| format!("{} {}{}", p.icon(), p.name, version(plus))).unwrap_or_else(|| pet_id.to_string());
+                let note = if store::giving_away(ctx, guild, user, pet_id)? {
+                    format!("{name} is in a giveaway of yours that waits for its hand-over, so it stays until that's done.")
+                } else {
+                    match store::remove_mine(ctx, guild, user, pet_id, plus, qty)? {
+                        0 => format!("You have no {name} in the collection, so nothing changed."),
+                        n => {
+                            ctx.notify(
+                                Some(guild),
+                                KEY,
+                                format!("{} took {}{name} out of the collection", ctx.display_name(guild, user), qty_label(n)),
+                                Some(format!("/g/{guild}/{KEY}")),
+                            );
+                            format!("Took {}{name} out of the collection.", qty_label(n))
+                        }
+                    }
+                };
+                let (embed, rows) = my_pets(ctx, guild, user, Some(&note))?;
                 ctx.update(&call.interaction, Reply::embed(embed).components(rows)).await?;
             }
             _ => {}
@@ -328,6 +390,16 @@ fn first_press(message: u64) -> bool {
     }
     seen.push_back(message);
     true
+}
+
+/// A question's issue time, as the key that keeps a double press from removing twice.
+fn nonce(issued: &str) -> u64 {
+    issued.parse().unwrap_or(0)
+}
+
+/// True when a `/pet mine` question was asked longer ago than buttons stay good.
+fn expired(issued: &str) -> bool {
+    now_ms() - issued.parse::<i64>().unwrap_or(0) > CONFIRM_SECS * 1000
 }
 
 fn qty_label(n: i64) -> String {
@@ -435,62 +507,166 @@ fn list_page(ctx: &Ctx, guild: u64, page: i64) -> Result<(Embed, Vec<Component>)
     Ok((e.build(), rows))
 }
 
-/// `/pet mine`: what a member has added or given, and what's waiting.
-fn my_pets(ctx: &Ctx, guild: u64, user: u64) -> Result<Embed> {
+/// "👑 2× King Doot (Pet+)" for a submission.
+fn submission_name(ctx: &Ctx, guild: u64, w: &Pending) -> String {
+    let (icon, name) = store::pet(ctx, guild, &w.pet_id).ok().flatten().map(|p| (p.icon().to_owned(), p.name)).unwrap_or_else(|| ("🐾".into(), w.pet_id.clone()));
+    format!("{icon} {}{name}{}", qty_label(w.quantity), version(w.plus))
+}
+
+/// What a member can remove from `/pet mine`, as the menu's values: `w:{id}` withdraws a waiting
+/// submission, `c:{pet}:{0|1}` takes their plain or Pet+ copies of a pet out.
+fn mine_value_copies(c: &MyCopies) -> String {
+    format!("c:{}:{}", c.pet_id, u8::from(c.plus))
+}
+
+/// `/pet mine`: a member's pets in the collection, their submissions with each one's status, and
+/// a menu to remove any of their own. `note` goes on top, after a removal.
+fn my_pets(ctx: &Ctx, guild: u64, user: u64, note: Option<&str>) -> Result<(Embed, Vec<Component>)> {
     let catalog = store::catalog(ctx, guild)?;
     let find = |id: &str| catalog.iter().find(|p| p.id == id);
-    let mine = store::contributions(ctx, guild, user)?;
-    let waiting = store::pending_for(ctx, guild, user)?;
-    // Pet id -> (count, latest, Pet+ count), in the order first seen (newest first).
-    let mut by_pet: BTreeMap<usize, (String, i64, i64, i64)> = BTreeMap::new();
-    let mut order: Vec<String> = Vec::new();
-    for o in &mine {
-        let idx = match order.iter().position(|p| *p == o.pet_id) {
-            Some(i) => i,
-            None => {
-                order.push(o.pet_id.clone());
-                order.len() - 1
-            }
-        };
-        let e = by_pet.entry(idx).or_insert_with(|| (o.pet_id.clone(), 0, o.added_at, 0));
-        e.1 += 1;
-        e.2 = e.2.max(o.added_at);
-        e.3 += i64::from(o.plus);
-    }
+    let copies = store::my_copies(ctx, guild, user)?;
+    let subs = store::submissions_of(ctx, guild, user, 40)?;
+    let waiting: Vec<&Pending> = subs.iter().filter(|w| w.status == "pending").collect();
+    // Rejections from the last 30 days; older ones are settled.
+    let since = now_ms() - 30 * DAY_MS;
+    let rejected: Vec<&Pending> = subs.iter().filter(|w| w.status == "rejected" && w.reviewed_at.unwrap_or(0) >= since).collect();
     let mut lines = Vec::new();
-    if !by_pet.is_empty() {
-        lines.push("**In the collection**".to_owned());
-        for (pet_id, n, at, pn) in by_pet.values().take(20) {
-            let Some(p) = find(pet_id) else { continue };
-            let plus = match *pn {
-                0 => String::new(),
-                k if k == *n => " (Pet+)".to_owned(),
-                k => format!(" ({k} Pet+)"),
-            };
-            lines.push(format!("{} {}{}{plus}  ·  <t:{}:R>", p.icon(), p.name, if *n > 1 { format!(" ×{n}") } else { String::new() }, at / 1000));
+    if let Some(n) = note {
+        lines.push(format!("**{n}**"));
+        lines.push(String::new());
+    }
+    if !copies.is_empty() {
+        lines.push("**Approved, in the collection**".to_owned());
+        for c in copies.iter().take(15) {
+            let Some(p) = find(&c.pet_id) else { continue };
+            lines.push(format!("{} {}{}{}  ·  <t:{}:R>", p.icon(), p.name, if c.count > 1 { format!(" ×{}", c.count) } else { String::new() }, version(c.plus), c.latest / 1000));
+        }
+        if copies.len() > 15 {
+            lines.push(format!("and {} more", copies.len() - 15));
         }
     }
-    if !waiting.is_empty() {
-        if !lines.is_empty() {
+    let mut block = |title: &str, list: &[&Pending], reason: bool| {
+        if list.is_empty() {
+            return;
+        }
+        if !lines.is_empty() && lines.last().is_some_and(|l| !l.is_empty()) {
             lines.push(String::new());
         }
-        lines.push("**Waiting for approval**".to_owned());
-        for w in waiting.iter().take(15) {
+        lines.push(format!("**{title}**"));
+        for w in list.iter().take(10) {
             let Some(p) = find(&w.pet_id) else { continue };
-            lines.push(format!("{} {}{}{}  ·  <t:{}:R>", p.icon(), qty_label(w.quantity), p.name, version(w.plus), w.requested_at / 1000));
+            let at = if reason { w.reviewed_at.unwrap_or(w.requested_at) } else { w.requested_at };
+            let why = if reason && !w.reason.is_empty() { format!("  ·  {}", text::clip(&w.reason, 120)) } else { String::new() };
+            lines.push(format!("{} {}{}{}  ·  <t:{}:R>{why}", p.icon(), qty_label(w.quantity), p.name, version(w.plus), at / 1000));
         }
-    }
-    let approved = mine.len() as i64;
+    };
+    block("Waiting for approval", &waiting, false);
+    block("Rejected", &rejected, true);
+    let held: i64 = copies.iter().map(|c| c.count).sum();
     let pending: i64 = waiting.iter().map(|w| w.quantity).sum();
-    let desc = if lines.is_empty() { "You haven't added any pets yet. Use /pet add to submit one.".to_owned() } else { lines.join("\n") };
-    Ok(EmbedBuilder::new()
+    let nothing = copies.is_empty() && waiting.is_empty() && rejected.is_empty();
+    let desc = if nothing && note.is_none() {
+        "You haven't added any pets yet. Use /pet add to submit one.".to_owned()
+    } else if nothing {
+        format!("{}\nYou have no pets in the collection and nothing waiting.", lines.join("\n"))
+    } else {
+        lines.join("\n")
+    };
+    let mut e = EmbedBuilder::new()
         .color(COLOR)
         .title(format!("{}'s pets", ctx.display_name(guild, user)))
-        .description(desc)
-        .field(EmbedFieldBuilder::new("Approved", text::num(approved)).inline())
+        .description(text::clip(&desc, 4000))
+        .field(EmbedFieldBuilder::new("Approved", text::num(held)).inline())
         .field(EmbedFieldBuilder::new("Waiting", text::num(pending)).inline())
-        .field(EmbedFieldBuilder::new("Submitted", text::num(approved + pending)).inline())
-        .build())
+        .field(EmbedFieldBuilder::new("Rejected", text::num(rejected.len() as i64)).inline());
+    // The menu: waiting submissions first (they can be withdrawn), then copies.
+    let mut options: Vec<SelectMenuOption> = Vec::new();
+    for w in waiting.iter().take(10) {
+        let Some(p) = find(&w.pet_id) else { continue };
+        options.push(SelectMenuOption {
+            default: false,
+            description: Some(format!("Waiting for approval. Withdraw it, sent {}", text::ago(w.requested_at))),
+            emoji: None,
+            label: text::clip(&format!("{} {}{}{}", p.icon(), qty_label(w.quantity), p.name, version(w.plus)), 100),
+            value: format!("w:{}", w.id),
+        });
+    }
+    for c in &copies {
+        if options.len() >= 25 {
+            break;
+        }
+        let Some(p) = find(&c.pet_id) else { continue };
+        options.push(SelectMenuOption {
+            default: false,
+            description: Some(if c.count > 1 { format!("In the collection, {} copies. Take them out", c.count) } else { "In the collection. Take it out".to_owned() }),
+            emoji: None,
+            label: text::clip(&format!("{} {}{}{}", p.icon(), p.name, if c.count > 1 { format!(" ×{}", c.count) } else { String::new() }, version(c.plus)), 100),
+            value: mine_value_copies(c),
+        });
+    }
+    let mut rows = Vec::new();
+    if !options.is_empty() {
+        e = e.footer(EmbedFooterBuilder::new("Pick one in the menu to remove it. You'll be asked to confirm first."));
+        rows.push(Component::ActionRow(ActionRow {
+            id: None,
+            components: vec![Component::SelectMenu(SelectMenu {
+                id: None,
+                channel_types: None,
+                custom_id: format!("{KEY}:mine"),
+                default_values: None,
+                disabled: false,
+                kind: SelectMenuType::Text,
+                max_values: Some(1),
+                min_values: Some(1),
+                options: Some(options),
+                placeholder: Some("Remove one of your pets".into()),
+                required: None,
+            })],
+        }));
+    }
+    Ok((e.build(), rows))
+}
+
+/// The question after a pick in `/pet mine`'s menu, with buttons to remove or keep. None when the
+/// pick isn't the member's to remove any more.
+fn ask_remove(ctx: &Ctx, guild: u64, user: u64, picked: &str) -> Result<Option<(Embed, Vec<Component>)>> {
+    let issued = now_ms();
+    let keep = format!("{KEY}:back");
+    match picked.split(':').collect::<Vec<_>>().as_slice() {
+        ["w", id] => {
+            let id: i64 = id.parse().unwrap_or(0);
+            let Some(w) = store::submissions_of(ctx, guild, user, 100)?.into_iter().find(|w| w.id == id && w.status == "pending") else { return Ok(None) };
+            let what = submission_name(ctx, guild, &w);
+            let go = format!("{KEY}:wd:{id}:{issued}");
+            let e = EmbedBuilder::new()
+                .color(COLOR)
+                .title(format!("Withdraw {what}?"))
+                .description("Staff won't review it. To send it again later, use /pet add.")
+                .build();
+            Ok(Some((e, vec![button_row(&[(&go, "Withdraw it", ButtonStyle::Danger), (&keep, "Keep it", ButtonStyle::Secondary)])])))
+        }
+        ["c", pet_id, plus] => {
+            let plus = *plus == "1";
+            let Some(c) = store::my_copies(ctx, guild, user)?.into_iter().find(|c| c.pet_id == *pet_id && c.plus == plus) else { return Ok(None) };
+            let name = store::pet(ctx, guild, pet_id)?.map(|p| format!("{} {}{}", p.icon(), p.name, version(plus))).unwrap_or_else(|| pet_id.to_string());
+            let one = format!("{KEY}:rm:{pet_id}:{}:1:{issued}", u8::from(plus));
+            let all = format!("{KEY}:rm:{pet_id}:{}:{}:{issued}", u8::from(plus), c.count);
+            let all_label = format!("Remove all {}", c.count);
+            let mut buttons: Vec<(&str, &str, ButtonStyle)> = vec![(&one, if c.count > 1 { "Remove 1" } else { "Remove it" }, ButtonStyle::Danger)];
+            if c.count > 1 {
+                buttons.push((&all, &all_label, ButtonStyle::Danger));
+            }
+            buttons.push((&keep, "Keep", ButtonStyle::Secondary));
+            let held = if c.count > 1 { format!("You have {} copies of it in the collection. ", c.count) } else { String::new() };
+            let e = EmbedBuilder::new()
+                .color(COLOR)
+                .title(format!("Take {name} out of the collection?"))
+                .description(format!("{held}Only your own copies are removed. Staff are told, and only they can put it back."))
+                .build();
+            Ok(Some((e, vec![button_row(&buttons)])))
+        }
+        _ => Ok(None),
+    }
 }
 
 // ---- what the bot sends on its own, also sent as tests from the dashboard ----
@@ -667,6 +843,7 @@ mod tests {
         assert_eq!(cmds.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["pet"]);
         let subs: Vec<&str> = cmds[0].options.iter().map(|o| o.name.as_str()).collect();
         assert_eq!(subs, ["add", "list", "mine", "remove"]);
+        assert!(cmds[0].options[2].description.len() <= 100);
         let add: Vec<&str> = cmds[0].options[0].options.as_deref().unwrap_or_default().iter().map(|o| o.name.as_str()).collect();
         assert_eq!(add, ["pet", "quantity", "plus"]);
     }
@@ -690,5 +867,45 @@ mod tests {
         // Old dialogs fall out; the list stays small.
         assert!(super::first_press(1));
         assert!(super::SUBMITTED.lock().unwrap().len() <= super::SUBMITTED_KEEP);
+    }
+
+    /// `/pet mine` lists a member's own pets with their status and offers only theirs to remove,
+    /// with ids that fit Discord's 100 characters and parse back into the handlers' shapes.
+    #[test]
+    fn mine_offers_only_your_own() {
+        use bot_core::twilight_model::channel::message::component::Component;
+        let rt = bot_core::tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _in = rt.enter();
+        let ctx = bot_core::Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(super::Pets)]).unwrap();
+        let (g, mira, oskar) = (45, 7, 8);
+        super::store::ensure_seeded(&ctx, g).unwrap();
+        super::store::add_owned(&ctx, g, "slime", mira, mira, 2, true, "Antho").unwrap();
+        super::store::add_owned(&ctx, g, "frog", oskar, oskar, 1, false, "Antho").unwrap();
+        let w = super::store::submit(&ctx, g, "king-doot", mira, 1, false).unwrap();
+        let r = super::store::submit(&ctx, g, "molti", mira, 1, false).unwrap();
+        super::store::review(&ctx, g, &[r], false, "Antho", "Already counted").unwrap();
+
+        let (embed, rows) = super::my_pets(&ctx, g, mira, None).unwrap();
+        let desc = embed.description.unwrap();
+        assert!(desc.contains("Approved, in the collection") && desc.contains("Slime ×2 (Pet+)"));
+        assert!(desc.contains("Waiting for approval") && desc.contains("King Doot"));
+        assert!(desc.contains("Rejected") && desc.contains("Already counted"));
+        assert!(!desc.contains("Frog"), "Oskar's pet isn't Mira's");
+        let Component::ActionRow(row) = &rows[0] else { panic!("a menu row") };
+        let Component::SelectMenu(menu) = &row.components[0] else { panic!("a menu") };
+        let values: Vec<&str> = menu.options.as_ref().unwrap().iter().map(|o| o.value.as_str()).collect();
+        assert_eq!(values, [format!("w:{w}"), "c:slime:1".to_owned()]);
+
+        // Picking asks first; the buttons carry what to remove.
+        let (_, rows) = super::ask_remove(&ctx, g, mira, "c:slime:1").unwrap().unwrap();
+        let Component::ActionRow(row) = &rows[0] else { panic!("buttons") };
+        let ids: Vec<String> = row.components.iter().map(|c| match c { Component::Button(b) => b.custom_id.clone().unwrap(), _ => String::new() }).collect();
+        assert!(ids[0].starts_with("pets:rm:slime:1:1:") && ids[1].starts_with("pets:rm:slime:1:2:") && ids[2] == "pets:back");
+        assert!(ids.iter().all(|i| i.len() <= 100));
+        assert!(super::ask_remove(&ctx, g, mira, "c:frog:0").unwrap().is_none(), "not hers to remove");
+        assert!(super::ask_remove(&ctx, g, oskar, &format!("w:{w}")).unwrap().is_none(), "not his to withdraw");
+        assert!(super::ask_remove(&ctx, g, mira, &format!("w:{r}")).unwrap().is_none(), "already decided");
+        assert!(!super::expired(&bot_core::now_ms().to_string()) && super::expired("0"));
     }
 }

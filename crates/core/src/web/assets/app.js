@@ -70,6 +70,16 @@
     } else pill.remove();
     return best;
   };
+  // The sidebar page a path belongs to: the longest link that matches, as markNav decides it.
+  const navFor = (path) => {
+    let best = null, len = -1;
+    $$(".side-links .nav").forEach((a) => {
+      const p = a.dataset.path || new URL(a.href).pathname;
+      const hit = path === p || (a.dataset.path && path.startsWith(p + "/"));
+      if (hit && p.length > len) { best = p; len = p.length; }
+    });
+    return best;
+  };
   const current = markNav();
   // Keep the current page in view in a long list, without moving a list the person scrolled.
   const list = $(".side-links");
@@ -117,7 +127,7 @@
       else if (now && twin) now.replaceWith(twin.cloneNode(true));
     });
     $$(".bell").forEach((b) => {
-      const twin = doc.querySelector(".page-corner .bell, .topbar .bell");
+      const twin = doc.querySelector(".side-foot .bell, .topbar .bell");
       const now = $(".count", b), next = twin && twin.querySelector(".count");
       if (now && !next) now.remove();
       else if (next) { now ? now.replaceWith(next.cloneNode(true)) : b.append(next.cloneNode(true)); }
@@ -154,11 +164,11 @@
         href: a.href,
       });
     });
-    $$(".guilds-list .guild").forEach((a) => {
+    $$(".srv-menu .guild").forEach((a) => {
       const img = $("img", a);
-      out.push({ kind: "Servers", label: a.dataset.tip, about: "server switch", hint: a.classList.contains("on") ? "You're here" : "Switch server", img: img?.src, letter: img ? "" : a.textContent.trim(), href: a.href });
+      out.push({ kind: "Servers", label: a.dataset.name, about: "server switch", hint: a.classList.contains("on") ? "You're here" : "Switch server", img: img?.src, letter: img ? "" : a.dataset.name.slice(0, 1).toUpperCase(), href: a.href });
     });
-    const bell = $(".guilds .bell");
+    const bell = $(".topbar a.bell");
     if (bell) out.push({ kind: "Go to", label: "Notifications", about: "bell alerts unread notices", hint: bell.querySelector(".count") ? bell.querySelector(".count").textContent + " new" : "Nothing new", hue: "core", icon: bell.querySelector("svg").outerHTML, href: bell.href });
     $$(".account-menu a.menu-item").forEach((a) => {
       out.push({ kind: "Go to", label: a.textContent.trim(), about: "admin settings", hint: "Admin", hue: "core", icon: $("svg", a)?.outerHTML || "", href: a.href });
@@ -305,7 +315,7 @@
     const el = e.target.closest?.("[data-tip]");
     if (!el || el === tipFor) return;
     const r = el.getBoundingClientRect();
-    if (el.closest(".guilds") && innerWidth > 920) showTip(el, esc(el.dataset.tip), r.right, r.top + r.height / 2, "right");
+    if (el.closest(".side-foot") && innerWidth > 920) showTip(el, esc(el.dataset.tip), r.left + r.width / 2, r.top);
     else showTip(el, tipHtml(el.dataset.tip), r.left + r.width / 2, r.top);
   });
   document.addEventListener("pointerout", (e) => {
@@ -331,7 +341,7 @@
       cur.style.left = p[0] + "%";
       dot.style.left = p[0] + "%";
       dot.style.top = p[1] + "%";
-      showTip(plot, `<b>${esc(String(p[3]))} ${esc(unit)}</b>${esc(i === pts.length - 1 ? "Today" : p[2])}`, r.left + (p[0] / 100) * r.width, r.top + (p[1] / 100) * r.height - 4);
+      showTip(plot, `<b>${esc(String(p[3]))} ${esc(unit)}</b>${esc(i === pts.length - 1 && fig.dataset.today !== "0" ? "Today" : p[2])}${p[4] ? " · " + esc(p[4]) : ""}`, r.left + (p[0] / 100) * r.width, r.top + (p[1] / 100) * r.height - 4);
     };
     plot.addEventListener("pointermove", (e) => at(e.clientX));
     plot.addEventListener("pointerleave", () => { plot.classList.remove("hovering"); hideTip(); });
@@ -339,7 +349,9 @@
 
   // ---------------------------------------------------------------- numbers count up
   const fmt = new Intl.NumberFormat("en-US");
-  const countUp = (el) => {
+  // Numbers are read, not watched: they show their value at once (the house style).
+  const countUp = (el) => { el.classList.add("counted"); };
+  const countUpOld = (el) => {
     // Only a plain figure with a short unit ("1,284", "66 h", "+42", "7%"), never a time or date.
     const m = el.textContent.trim().match(/^([+\-]?)(\d[\d,]*)(\s?[A-Za-z%]{0,5})$/);
     if (!m || calm || root.classList.contains("same")) { el.classList.add("counted"); return; }
@@ -426,20 +438,6 @@
     (window.requestIdleCallback || setTimeout)(run);
   }
 
-
-  // ---------------------------------------------------------------- hero parallax
-  if (!calm) {
-    let ticking = false;
-    addEventListener("scroll", () => {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(() => {
-        const hero = $(".ov-bg img, .ov-bg .art");
-        if (hero) hero.style.translate = `0 ${Math.min(scrollY, 400) * 0.35}px`;
-        ticking = false;
-      });
-    }, { passive: true });
-  }
 
   // ---------------------------------------------------------------- banner upload
   document.addEventListener("change", async (e) => {
@@ -684,7 +682,7 @@
           else history.pushState({ boost: 1 }, "", to.href);
         }
         root.classList.toggle("same", same);
-        if (same || calm || !document.startViewTransition) root.classList.remove("vt");
+        if (calm || !document.startViewTransition) root.classList.remove("vt");
         // Edits survive the page coming back to itself, except after that form's own save:
         // then the page shows what was saved.
         const kept = same && !opts.saving ? carry(dirty) : null;
@@ -702,7 +700,12 @@
         if (!same) fresh.focus({ preventScroll: true });
       };
       unbusy();
-      if (!same && !calm && document.startViewTransition) {
+      // Another tab or filter of the same page (Giveaways Running to Ended, a filter, All time
+      // to This week): the header, tabs and sidebar hold still and only what changed cross-fades
+      // in place. Another page from the sidebar moves as a whole.
+      const sibling = same || (!!navFor(to.pathname) && navFor(to.pathname) === navFor(location.pathname));
+      root.classList.toggle("vt-soft", sibling);
+      if (!calm && document.startViewTransition) {
         // html.vt stays until the next swap: taking it off would restart the entrances.
         root.classList.add("vt");
         document.startViewTransition(swap);

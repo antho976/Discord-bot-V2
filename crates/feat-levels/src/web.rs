@@ -69,62 +69,55 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         .map(|(_, n)| n)
         .unwrap_or_else(|| "general".into());
 
-    let form = ui::settings_form(&page, &page.path("levels/settings"), html! {
-        // Two columns of sections once the column is wide enough (CSS, .lv-cols).
-        div.lv-cols {
-            (section("Earning XP", None, ui::card(html! {
-                (ui::field_number("xp_min", "XP per message, lowest", None, s.xp_min, 0, 1000, Some("XP")))
-                (ui::field_number("xp_max", "XP per message, highest", Some("Each message earns a random amount between the two."), s.xp_max, 0, 1000, Some("XP")))
-                (ui::field_number("cooldown_secs", "Cooldown", Some("Messages inside this window after one that earned XP earn nothing."), s.cooldown_secs, 0, 3600, Some("seconds")))
-                (ui::field_number("voice_xp", "Voice XP", Some("Per minute in a voice channel with someone else. 0 turns it off."), s.voice_xp, 0, 1000, Some("XP / min")))
-                (ui::field_toggle("voice_require_active", "Only unmuted voice counts", Some("Muted or deafened members earn no voice XP."), s.voice_require_active))
-                (ui::field_number("reaction_xp", "Reaction XP", Some("For adding a reaction, with the same cooldown. 0 turns it off."), s.reaction_xp, 0, 1000, Some("XP")))
-            })))
-            (section("Level curve", Some(&format!("Levels 1 to 5 start at {} XP.", first_levels.join(", "))), ui::card(html! {
-                @if custom {
-                    (ui::field_custom("Custom table", Some("This server uses a custom XP table carried over from the old bot. Switch it off to use the curve below."), html! {
-                        label.switch { input type="checkbox" name="keep_custom" checked; span.track { span.thumb {} } }
-                    }))
-                }
-                (ui::field_number("curve_base", "First level", Some("XP needed to go from level 0 to 1."), s.curve_base, 1, 100_000, Some("XP")))
-                (ui::field_text("curve_factor", "Growth per level", Some("Each level costs this many times the one before. 1.2 means 20% more."), &s.curve_factor.to_string(), "1.2"))
-            })))
-            (section("Level-up messages", None, ui::card(html! {
-                (ui::field_toggle("announce", "Post level-ups", None, s.announce))
-                (ui::field_channel(&ctx, guild, "announce_channel", "Channel", Some("None posts in the channel where they levelled up."), s.announce_channel))
-                (ui::field_toggle("announce_ping", "Mention the member", None, s.announce_ping))
-                (ui::field_number("announce_min_level", "Start at level", Some("Quieter: skip messages for the first few levels."), s.announce_min_level as i64, 0, 500, None))
-                (ui::field_text("message", "Message", Some("{user} is the member, {level} the new level."), &s.message, crate::DEFAULT_MESSAGE))
-            })))
-            (section("Weekly board", Some("The board starts over every Monday at 00:00 UTC. The top three are kept for a week and shown on the leaderboard."), ui::card(html! {
-                (ui::field_toggle("weekly_post", "Post the top three", Some("When the week ends, with how much XP each gained. Names show without a ping."), s.weekly_post))
-                (ui::field_channel(&ctx, guild, "weekly_channel", "Channel", None, s.weekly_channel))
-                @if page.can_edit() {
-                    (ui::field_custom("Test the post", Some("Posts this week's top three so far to the saved channel, marked as a test."), html! {
-                        button.btn.small.outline type="submit" formaction=(page.path("levels/test-week")) formmethod="post" formnovalidate { (ui::icon(Icon::Mail)) "Send a test" }
-                    }))
-                }
-            })))
-            (section("Prestige", None, ui::card(html! {
-                (ui::field_number("prestige_level", "Prestige from level", Some("Members at this level or higher can use /level prestige to start over at level 0 and rank above everyone with less prestige. 0 turns it off."), s.prestige_level as i64, 0, 500, None))
-                (ui::field_number("prestige_bonus", "Bonus per prestige", Some("Extra XP from messages, voice and reactions, for each prestige."), s.prestige_bonus, 0, 100, Some("%")))
-            })))
-            (section("Streaks", Some("A streak counts the days in a row, in UTC, a member earned XP. Streaks show on /level rank and the leaderboard while the bonus is on."), ui::card(html! {
-                (ui::field_number("streak_bonus", "Bonus per day", Some("Extra XP from messages, voice and reactions for each day in a row after the first. 0 turns the bonus off."), s.streak_bonus, 0, 100, Some("%")))
-                (ui::field_number("streak_max", "Bonus cap", Some("The streak bonus stops growing here."), s.streak_max, 0, 500, Some("%")))
-            })))
-            (section("No XP in", None, ui::card(html! {
-                (ui::field_channels(&ctx, guild, "no_xp_channels", "Text channels", Some("Threads in these channels earn nothing too."), &s.no_xp_channels))
-                (ui::field_custom_wide("Voice channels", Some("Time in these earns nothing, and neither does their text chat."), chips("no_xp_voice", &voice_channels(&ctx, guild), &s.no_xp_channels)))
-                (ui::field_custom_wide("Categories", Some("Every channel and thread in these earns nothing."), chips("no_xp_categories", &ctx.categories(guild), &s.no_xp_categories)))
-                (ui::field_roles(&ctx, guild, "no_xp_roles", "Roles", Some("Members with any of these roles earn nothing."), &s.no_xp_roles))
-                (ui::field_toggle("stack_rewards", "Keep earlier reward roles", Some("Off: members only keep the reward role for their highest level."), s.stack_rewards))
-            })))
+    let max = climb.iter().copied().max().unwrap_or(1).max(1) as f64;
+    // Each column is a stack of panels. The level-up message sits beside its preview, the curve
+    // beside the climb it draws; Save closes the last panel.
+    let earning = panel("Earning XP", None, html! {
+        (ui::field_number("xp_min", "XP per message, lowest", None, s.xp_min, 0, 1000, Some("XP")))
+        (ui::field_number("xp_max", "XP per message, highest", Some("Each message earns a random amount between the two."), s.xp_max, 0, 1000, Some("XP")))
+        (ui::field_number("cooldown_secs", "Cooldown", Some("Messages inside this window after one that earned XP earn nothing."), s.cooldown_secs, 0, 3600, Some("seconds")))
+        (ui::field_number("voice_xp", "Voice XP", Some("Per minute in a voice channel with someone else. 0 turns it off."), s.voice_xp, 0, 1000, Some("XP / min")))
+        (ui::field_toggle("voice_require_active", "Only unmuted voice counts", Some("Muted or deafened members earn no voice XP."), s.voice_require_active))
+        (ui::field_number("reaction_xp", "Reaction XP", Some("For adding a reaction, with the same cooldown. 0 turns it off."), s.reaction_xp, 0, 1000, Some("XP")))
+    });
+    let prestige = panel("Prestige", None, html! {
+        (ui::field_number("prestige_level", "Prestige from level", Some("Members at this level or higher can use /level prestige to start over at level 0 and rank above everyone with less prestige. 0 turns it off."), s.prestige_level as i64, 0, 500, None))
+        (ui::field_number("prestige_bonus", "Bonus per prestige", Some("Extra XP from messages, voice and reactions, for each prestige."), s.prestige_bonus, 0, 100, Some("%")))
+    });
+    let streaks = panel("Streaks", Some("A streak counts the days in a row, in UTC, a member earned XP. Streaks show on /level rank and the leaderboard while the bonus is on."), html! {
+        (ui::field_number("streak_bonus", "Bonus per day", Some("Extra XP from messages, voice and reactions for each day in a row after the first. 0 turns the bonus off."), s.streak_bonus, 0, 100, Some("%")))
+        (ui::field_number("streak_max", "Bonus cap", Some("The streak bonus stops growing here."), s.streak_max, 0, 500, Some("%")))
+    });
+    let messages = panel("Level-up messages", None, html! {
+        (ui::field_toggle("announce", "Post level-ups", None, s.announce))
+        (ui::field_channel(&ctx, guild, "announce_channel", "Channel", Some("None posts in the channel where they levelled up."), s.announce_channel))
+        (ui::field_toggle("announce_ping", "Mention the member", None, s.announce_ping))
+        (ui::field_number("announce_min_level", "Start at level", Some("Quieter: skip messages for the first few levels."), s.announce_min_level as i64, 0, 500, None))
+        (ui::field_text("message", "Message", Some("{user} is the member, {level} the new level."), &s.message, crate::DEFAULT_MESSAGE))
+    });
+    let curve_panel = panel("Level curve", Some(&format!("Levels 1 to 5 start at {} XP.", first_levels.join(", "))), html! {
+        @if custom {
+            (ui::field_custom("Custom table", Some("This server uses a custom XP table carried over from the old bot. Switch it off to use the curve below."), html! {
+                label.switch { input type="checkbox" name="keep_custom" checked; span.track { span.thumb {} } }
+            }))
+        }
+        (ui::field_number("curve_base", "First level", Some("XP needed to go from level 0 to 1."), s.curve_base, 1, 100_000, Some("XP")))
+        (ui::field_text("curve_factor", "Growth per level", Some("Each level costs this many times the one before. 1.2 means 20% more."), &s.curve_factor.to_string(), "1.2"))
+    });
+    let weekly = panel("Weekly board", Some("The board starts over every Monday at 00:00 UTC. The top three are kept for a week and shown on the leaderboard."), html! {
+        (ui::field_toggle("weekly_post", "Post the top three", Some("When the week ends, with how much XP each gained. Names show without a ping."), s.weekly_post))
+        (ui::field_channel(&ctx, guild, "weekly_channel", "Channel", None, s.weekly_channel))
+        @if page.can_edit() {
+            (ui::field_custom("Test the post", Some("Posts this week's top three so far to the saved channel, marked as a test."), html! {
+                button.btn.small.outline type="submit" formaction=(page.path("levels/test-week")) formmethod="post" formnovalidate { (ui::icon(Icon::Mail)) "Send a test" }
+            }))
         }
     });
-    let max = climb.iter().copied().max().unwrap_or(1).max(1) as f64;
-    let rail = html! {
-        div.rail-block {
+    let reward_roles = panel("Reward roles", Some("Which role comes at which level is set on the Rewards tab."), html! {
+        (ui::field_toggle("stack_rewards", "Keep earlier reward roles", Some("Off: members only keep the reward role for their highest level."), s.stack_rewards))
+    });
+    let preview = html! {
+        section.lv-panel.lv-preview {
             h2 { "What members see" }
             (dc::channel(Some(&channel), "", dc::message(&ctx, &page).id("lv-msg").off(!s.announce).render(html! {
                 div.dp-line #lv-say data-who=(who) data-level=(who_level) {
@@ -140,15 +133,16 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 @else { "Level-ups aren't posted. Members still see their level with /level rank." }
             }
             @if page.can_edit() {
-                form.lv-send method="post" action=(page.path("levels/test")) {
-                    button.btn.small.outline type="submit" { (ui::icon(Icon::Mail)) "Send a test" }
+                div.lv-send {
+                    button.btn.small.outline type="submit" formaction=(page.path("levels/test")) formmethod="post" formnovalidate { (ui::icon(Icon::Mail)) "Send a test" }
                     span.muted { "Your own level-up, with the saved message" }
                 }
             }
         }
-        div.rail-block.lv-curve {
-            h2 { "The climb" }
-            p.muted.small { "XP a member needs in all to reach each level." }
+    };
+    let climb_panel = html! {
+        section.lv-panel.lv-curve {
+            div.block-head { h2 { "The climb" } p.muted { "XP a member needs in all to reach each level." } }
             div.mini-bars {
                 svg #lv-curve viewBox={ "0 0 " (CURVE_LEVELS * 10 - 4) " 60" } preserveAspectRatio="none" role="img" aria-label="XP to reach levels 1 to 30" {
                     @for (i, xp) in climb.iter().enumerate() {
@@ -159,7 +153,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                 }
             }
             div.axis { span { "Level 1" } span { "15" } span { "30" } }
-            div.rail-nums {
+            div.lv-stats-head {
                 @for l in [10usize, 20, 30] {
                     div { b #{ "lv-at-" (l) } { (compact(climb[l - 1])) } span { "Level " (l) } }
                 }
@@ -167,12 +161,34 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
             @if custom { p.muted.small { "Drawn from the custom table carried over from the old bot." } }
         }
     };
+    let no_xp = html! {
+        section.lv-panel.lv-sec {
+            h2 { "No XP in" }
+            div.lv-rows {
+                (ui::field_channels(&ctx, guild, "no_xp_channels", "Text channels", Some("Threads in these channels earn nothing too."), &s.no_xp_channels))
+                (ui::field_custom_wide("Voice channels", Some("Time in these earns nothing, and neither does their text chat."), chips("no_xp_voice", &voice_channels(&ctx, guild), &s.no_xp_channels)))
+                (ui::field_custom_wide("Categories", Some("Every channel and thread in these earns nothing."), chips("no_xp_categories", &ctx.categories(guild), &s.no_xp_categories)))
+                (ui::field_roles(&ctx, guild, "no_xp_roles", "Roles", Some("Members with any of these roles earn nothing."), &s.no_xp_roles))
+            }
+            // The form's Save, at the end of its last panel (app.js finds it by .save-bar).
+            @if page.can_edit() {
+                div.save-bar { button.btn.primary type="submit" { "Save" } }
+            } @else {
+                p.muted.small { "You can view these settings. Ask an admin for edit access to change them." }
+            }
+        }
+    };
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Settings"))
-        div.with-rail {
-            div.stack.lv-form { (form) }
-            aside.rail { (rail) }
+        form.settings.lv-settings method="post" action=(page.path("levels/settings")) {
+            fieldset disabled[!page.can_edit()] {
+                div.lv-grid {
+                    div.lv-col { (earning) (prestige) (streaks) }
+                    div.lv-col { (messages) (curve_panel) (weekly) (reward_roles) }
+                    div.lv-col.lv-side { (preview) (climb_panel) (no_xp) }
+                }
+            }
         }
         script { (PreEscaped(SETTINGS_JS)) }
         (ui::sent_toast(q.sent.is_some(), if q.sent.as_deref() == Some("week") { "Test sent to the weekly channel" } else { "Test level-up sent" }))
@@ -347,22 +363,8 @@ html.same .lv-place, html.same .lv-step { animation: none; }
 .lv-earn dd { margin: 0; color: var(--ink-2); }
 .lv-n { width: 14px; flex: none; font-size: 12.5px; font-weight: 500; color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: center; }
 .lv-gain { font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
-/* Readings stretch to share their row, so the page's answer spans the column. */
-.readings.lv-readings > .reading { flex: 1 1 160px; }
 
-/* Settings: sections in two columns once there's room for both. */
-.lv-cols { display: flex; flex-direction: column; gap: 28px; }
-@container col (min-width: 1080px) {
-  .lv-cols { display: block; columns: 2; column-gap: 28px; }
-  .lv-cols > .lv-sec { break-inside: avoid; margin-bottom: 28px; }
-  .lv-cols > .lv-sec:last-child { margin-bottom: 0; }
-}
-/* Save sits under the sections it saves, closer than the next block. */
-.lv-form .settings { gap: 16px; }
 
-/* Sections: the heading and its line, then the card, 12 px apart. */
-.lv-sec { gap: 12px; }
-.lv-sec .block-head p { max-width: 68ch; }
 
 /* Rewards: the climb. A track runs down through each reward's level, drawn in on arrival. */
 .lv-ladder { position: relative; display: flex; flex-direction: column; gap: 12px; }
@@ -400,18 +402,11 @@ html.same .lv-place, html.same .lv-step { animation: none; }
 .lv-near .mini { padding: 4px 0; }
 .lv-near .mini .lv-gap { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* Settings: the rail shows what members will see and how the curve climbs. */
-/* The shared Discord preview, at the rail's tighter size. */
-.rail .dp-bar { gap: 6px; height: 38px; padding: 0 12px; font-size: 13.5px; }
-.rail .dp-bar .icon { width: 16px; height: 16px; }
-.rail .dp-body { padding: 12px 14px 16px; }
-.rail .dp-post { gap: 12px; font-size: 14px; }
 .lv-note { font-size: 12px; }
 .lv-send { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .lv-send .muted { font-size: 12px; }
 .lv-curve .mini-bars svg { height: 92px; }
 .lv-curve .axis { display: flex; justify-content: space-between; color: var(--ink-3); font-size: 12px; margin-top: 6px; }
-.lv-curve .rail-nums b { font-size: 21px; }
 
 /* Import: a drop zone that takes the whole card. */
 .lv-drop { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 36px 20px 30px; border-radius: 16px; text-align: center; border: 1.5px dashed var(--edge-3); background: var(--well); transition: border-color 0.2s, background 0.3s, transform 0.3s var(--ease); }
@@ -433,15 +428,7 @@ html.same .lv-place, html.same .lv-step { animation: none; }
 .lv-result.ok .lv-res-ic { background: var(--live); color: #062014; }
 .lv-result.bad { background: color-mix(in oklab, var(--held) 9%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--held) 28%, transparent); }
 .lv-result.bad .lv-res-ic { background: var(--held); color: #1a0507; }
-.lv-local { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 16px 18px; }
-.lv-local .grow p { font-size: 12.5px; margin-top: 2px; overflow-wrap: anywhere; }
-.lv-local code { color: var(--ink-2); }
-.lv-main { gap: 30px; }
-/* Import: the upload beside what happens, once the page is wide enough for both. */
-.lv-import { display: flex; flex-direction: column; gap: 30px; }
-@container col (min-width: 1000px) {
-  .lv-import { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: 30px 36px; align-items: start; }
-}
+.lv-main { gap: 16px; }
 .lv-steps { display: flex; flex-direction: column; gap: 12px; }
 .lv-steps .mini { align-items: flex-start; }
 .lv-steps .mini .lv-n { margin-top: 1px; font-size: 13px; }
@@ -456,22 +443,138 @@ html.same .lv-place, html.same .lv-step { animation: none; }
   .lv-card { grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "reach" "acts"; }
   .lv-acts { justify-content: flex-start; }
 }
+
+/* ---- the house style (2026-11-02) ----
+   Every section and side block sits in one kind of bordered panel; never a panel inside a panel.
+   The leaderboard (the feature's main page) leads with the podium; the other tabs get the same
+   panels and colour but no lead number. Nothing counts up or moves by itself. */
+.lv-panel, .lv-rail > .rail-block { display: flex; flex-direction: column; gap: 14px; min-width: 0; background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; }
+.lv-panel h2, .lv-rail .rail-block > h2 { font-size: 14px; font-weight: 500; }
+.lv-panel .block-head p { font-size: 13px; }
+.lv-rail { background: none; box-shadow: none; padding: 0; gap: 16px; }
+.lv-rail > .rail-block + .rail-block { margin-top: 0; padding-top: 18px; border-top: 1px solid var(--edge-1); }
+.lb { gap: 16px; }
+.with-rail:has(> .lv-rail) { gap: 16px; }
+
+/* Leaderboard: the podium's steps stand on the panel's bottom edge. */
+.lv-podpanel { padding-bottom: 0; overflow: hidden; }
+.lv-pod { border-bottom: 0; margin-top: -8px; }
+.lv-step { background: var(--well); }
+.lv-place.p1 .lv-step { background: var(--solid); border-color: var(--edge-2); }
+/* The list: one row size, 28 px faces, 14 px names, 13 px lines. */
+.lv-list { gap: 10px; }
+.lv-list .list-head { min-height: 36px; }
+.lv-list .rank { margin: 0 -10px; padding: 8px 10px; gap: 12px; }
+.lv-list .rank .avatar { width: 28px !important; height: 28px !important; }
+.lv-list .rank .who strong { font-size: 14px; font-weight: 500; }
+.lv-list .rank .who .muted { font-size: 13px; }
+.lv-list .rank .progress .muted { font-size: 12px; }
+.lv-list .rank .xp { font-size: 13px; }
+@media (min-width: 821px) { .lv-list .rank { grid-template-columns: 24px 28px minmax(100px, 240px) minmax(0, 1fr) auto auto; } }
+.lv-list .list-head h2 { white-space: nowrap; }
+.lv-list .list-head form { flex: 0 1 260px; min-width: 0; }
+.lv-list .input.search { width: 100%; }
+/* The rail's figure is a side number, not a second lead. */
+.lv-rail .big-num { font-size: 26px; font-weight: 600; }
+/* Rail rows share the list's size: 28 px faces, 14 px names, 13 px lines. */
+.lv-rail .mini { gap: 10px; }
+.lv-rail .mini > .avatar { width: 28px !important; height: 28px !important; }
+.lv-rail .mini .grow > span:first-child { font-size: 14px; }
+.lv-rail .mini .grow > .muted { font-size: 13px; }
+.lv-rail .lv-gain, .lv-near .mini .lv-gap { font-size: 13px; }
+
+/* Panel heads on the other tabs: the heading and its line on the left, small figures on the right. */
+.lv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px 32px; flex-wrap: wrap; }
+.lv-head > .block-head { flex: 1 1 320px; min-width: 0; }
+.lv-stats-head { display: flex; gap: 12px 28px; flex-wrap: wrap; }
+.lv-stats-head > div { display: flex; flex-direction: column; min-width: 0; }
+.lv-stats-head b { font-size: 20px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lv-stats-head span { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+
+/* Rewards: the climb is rows in the panel, not cards in it. The level sits on a neutral node; the
+   role keeps its own colour on its dot. Nodes and rows arrive with the page, without a spring. */
+.lv-climb { gap: 18px; }
+.lv-ladder { gap: 0; }
+.lv-ladder::before { left: 23px; top: 30px; bottom: 30px; width: 1px; background: var(--edge-2); }
+.lv-rung { grid-template-columns: 48px minmax(0, 1fr); gap: 16px; }
+.lv-node { width: 48px; height: 48px; background: var(--solid); box-shadow: 0 0 0 1px var(--edge-2), 0 0 0 6px var(--raised); animation: none; }
+.lv-node b { font-size: 17px; font-weight: 600; }
+.lv-card { padding: 14px 0; border-radius: 0; background: none; box-shadow: none; animation: none; }
+.lv-rung + .lv-rung .lv-card { border-top: 1px solid var(--edge-1); }
+.lv-rung:hover .lv-card { box-shadow: none; }
+.lv-role { font-size: 14px; font-weight: 500; }
+.lv-who { font-size: 13px; }
+.lv-who .avatar { width: 28px; height: 28px; }
+.lv-who b { font-weight: 500; }
+.lv-acts .btn { min-width: 76px; justify-content: center; }
+.lv-add .lv-node { background: var(--raised); box-shadow: 0 0 0 6px var(--raised); border-color: var(--edge-2); }
+.lv-add .lv-card { box-shadow: none; padding: 14px 0; }
+.lv-rail > .lv-near { gap: 8px; }
+.lv-near .mini { padding: 3px 0; }
+.lv-near > h2 { margin-bottom: 4px; }
+.lv-rail .chart svg { height: 120px; }
+/* An empty state inside a panel is a line, not a second box; its icon is neutral and still. */
+.lv-panel .empty, .lv-rail .empty { padding: 6px 0; border-radius: 0; background: none; box-shadow: none; }
+.lv-panel .empty-icon, .lv-rail .empty-icon { background: var(--control); color: var(--ink-2); box-shadow: none; animation: none; }
+.lv-rung .lv-card { padding: 16px 0; }
+
+/* Settings: three columns of panels once the page is wide enough; the third, sized to the
+   preview, holds what members see and the climb beside the settings that shape them. */
+.lv-settings > fieldset { display: block; }
+.lv-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.lv-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; container: lvcol / inline-size; }
+@container col (min-width: 1000px) {
+  .lv-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) clamp(320px, 30%, 440px); align-items: start; }
+}
+.lv-sec { gap: 6px; }
+.lv-sec > .block-head { margin-bottom: 2px; }
+.lv-rows .row { padding: 12px 0; }
+.lv-rows .row:last-child { padding-bottom: 2px; }
+.lv-sec > .save-bar { padding-top: 14px; }
+/* A narrow column puts each label over its control; switches stay beside theirs. */
+@container lvcol (max-width: 470px) {
+  .lv-rows .row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .lv-rows .row:has(.row-control > .switch) { grid-template-columns: minmax(0, 1fr) auto; }
+}
+.lv-preview { gap: 12px; }
+.lv-preview .dp { zoom: 0.75; max-width: none; }
+.lv-curve { gap: 10px; }
+.lv-curve .lv-stats-head { justify-content: space-between; padding-top: 4px; }
+
+/* Import: the upload beside what is here now and what an import does. */
+.lv-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@container col (min-width: 1000px) { .lv-split { grid-template-columns: minmax(0, 1fr) clamp(320px, 30%, 440px); } }
+.lv-col2 { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.lv-upload { gap: 16px; }
+/* The drop zone takes the room left, so both columns end together. */
+.lv-col2 > .lv-upload:last-child { flex: 1; }
+.lv-upload .lv-drop { flex: 1; justify-content: center; }
+.lv-go { margin-top: 0; }
+.lv-local code { color: var(--ink-2); overflow-wrap: anywhere; }
+.lv-what { gap: 16px; }
+.lv-what .lv-stats-head { justify-content: space-between; padding-bottom: 16px; border-bottom: 1px solid var(--edge-1); }
+.lv-what .lv-steps { gap: 12px; }
+.lv-steps .mini .grow > span:first-child { font-size: 14px; }
+.lv-steps .mini .grow > .muted { font-size: 13px; }
 "#;
 
-/// A titled section: the heading and its one line, then the body, on one left edge.
-fn section(title: &str, hint: Option<&str>, body: Markup) -> Markup {
+/// A settings panel: the heading and its one line, then its rows. No card inside: the panel is
+/// the card.
+fn panel(title: &str, hint: Option<&str>, rows: Markup) -> Markup {
     html! {
-        section.block.lv-sec {
+        section.lv-panel.lv-sec {
             div.block-head { h2 { (title) } @if let Some(h) = hint { p.muted { (h) } } }
-            (body)
+            div.lv-rows { (rows) }
         }
     }
 }
 
-/// Reading cards whose figures count up as they scroll into view.
-fn readings(items: &[(&str, String)]) -> Markup {
-    html! { div.readings.lv-readings { @for (label, value) in items { div.reading { b data-count { (value) } span { (label) } } } } }
+
+/// Small figures for a panel's head on the tabs that have no lead number.
+fn headstats(items: &[(&str, String)]) -> Markup {
+    html! { div.lv-stats-head { @for (label, value) in items { div { b { (value) } span { (label) } } } } }
 }
+
 
 /// "740", "25.9k", "1.2M": XP short enough for a rail figure.
 fn compact(n: i64) -> String {
@@ -833,8 +936,8 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     };
     let board_q = if board == Board::Week { "board=week&" } else { "" };
 
-    let main = html! {
-        style { (PreEscaped(CSS)) }
+    // All time or this week: the podium's head, or the list's when there is no podium.
+    let board_seg = html! {
         div.lv-board {
             nav.seg aria-label="Board" {
                 a.on[board == Board::All] href=(page.path("levels")) aria-current=[(board == Board::All).then_some("true")] { "All time" }
@@ -842,87 +945,35 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
             }
             @if board == Board::Week { span.muted.small { "XP gained since Monday 00:00 UTC" } }
         }
+    };
+    let main = html! {
+        style { (PreEscaped(CSS)) }
         @if !podium.is_empty() {
-            // Second, first, third, left to right. Each step carries the place and its figures;
-            // the figures share one line across the three.
-            div.lv-pod {
-                @for (place, i) in [(2usize, 1usize), (1, 0), (3, 2)] {
-                    @if let Some((_, m, gain)) = podium.get(i) {
-                        div class={ "lv-place p" (place) } {
-                            img.avatar src=(avatar(m.user_id)) alt="" loading="lazy";
-                            strong.lv-pname { (name(m.user_id)) }
-                            // Each fact stays whole when the line wraps on a phone.
-                            @let more = extras(m);
-                            @if !more.is_empty() {
-                                span.lv-extra { @for (i, fact) in more.split(" · ").enumerate() { @if i > 0 { " · " } span { (fact) } } }
-                            }
-                            div.lv-step {
-                                span.lv-rank aria-label={ "Place " (place) } { (place) }
-                                dl.lv-stats {
-                                    div { dt { "Level" } dd { (s.progress(m.xp).level) } }
-                                    @match gain {
-                                        Some(g) => { div { dt { "This week" } dd { "+" (text::num(*g)) } } },
-                                        None => { div { dt { "XP" } dd { (text::num(m.xp)) } } },
-                                    }
-                                    div data-tip=(counted) { dt { "Messages" } dd { (text::num(m.messages)) } }
+            // The lead: the top three on their steps, which stand on the panel's bottom edge.
+            section.lv-panel.lv-podpanel {
+                (board_seg)
+                // Second, first, third, left to right. Each step carries the place and its figures;
+                // the figures share one line across the three.
+                div.lv-pod {
+                    @for (place, i) in [(2usize, 1usize), (1, 0), (3, 2)] {
+                        @if let Some((_, m, gain)) = podium.get(i) {
+                            div class={ "lv-place p" (place) } {
+                                img.avatar src=(avatar(m.user_id)) alt="" loading="lazy";
+                                strong.lv-pname { (name(m.user_id)) }
+                                // Each fact stays whole when the line wraps on a phone.
+                                @let more = extras(m);
+                                @if !more.is_empty() {
+                                    span.lv-extra { @for (i, fact) in more.split(" · ").enumerate() { @if i > 0 { " · " } span { (fact) } } }
                                 }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        div.list-head {
-            h2 { @if podium.is_empty() { "Members" } @else { "Everyone else" } }
-            @if board == Board::All {
-                form method="get" action=(page.path("levels")) {
-                    input.input.search type="search" name="q" value=(search.unwrap_or_default()) placeholder="Search members";
-                }
-            }
-        }
-        @if rows.is_empty() && podium.is_empty() {
-            @if search.is_some() {
-                (ui::empty(Icon::Users, "No match", "Nobody with XP matches that name or ID."))
-            } @else if board == Board::Week {
-                (ui::empty(Icon::Trophy, "Nobody has earned XP this week", "The board starts over every Monday at 00:00 UTC and fills as members chat."))
-            } @else {
-                (ui::empty(Icon::Trophy, "Nobody has XP yet", "Members show up here once they chat, or after you import XP from the old bot."))
-            }
-        } @else if rows.is_empty() && search.is_none() {
-            p.muted.small { @if board == Board::Week { "Everyone who earned XP this week is on the podium so far." } @else { "Everyone with XP is on the podium so far." } }
-        } @else {
-            // Two columns on a wide screen, filled top to bottom: the first half, then the rest.
-            @let half = rows.len().div_ceil(2);
-            div.ranks style={ "--rows:" (half.max(1)) } {
-                @for (i, (place, m, gain)) in rows.iter().enumerate() {
-                    @let p = s.progress(m.xp);
-                    div.rank.col2[i == half] {
-                        span.pos { (place) }
-                        img.avatar src=(avatar(m.user_id)) alt="" width="28" height="28" loading="lazy";
-                        @let more = extras(m);
-                        div.who { strong { (name(m.user_id)) } span.muted.small { "Level " (p.level) @if !more.is_empty() { " · " (more) } } }
-                        @if let Some(g) = gain {
-                            @let pct = (g * 100 / leader).clamp(0, 100);
-                            div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% of first place" } }
-                            span.xp { "+" (text::num(*g)) small { " XP" } }
-                        } @else {
-                            @let pct = if p.needed > 0 { (p.into * 100 / p.needed).clamp(0, 100) } else { 0 };
-                            div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% to level " (p.level + 1) } }
-                            span.xp { (text::num(m.xp)) small { " XP" } }
-                            @if page.can_edit() {
-                                details.pop.set-xp {
-                                    summary.btn.small.outline { "Set XP" }
-                                    div.pop-body {
-                                        form.stack method="post" action=(page.path(&format!("levels/members/{}", m.user_id))) {
-                                            div.inline-form {
-                                                input.input.num type="number" name="xp" value=(m.xp) min="0" aria-label="XP";
-                                                button.btn.primary type="submit" { "Set" }
-                                            }
-                                            @if s.prestige_on() {
-                                                label.lv-prestige { span.muted.small { "Prestige" } input.input.num type="number" name="prestige" value=(m.prestige) min="0" max="1000"; }
-                                            }
+                                div.lv-step {
+                                    span.lv-rank aria-label={ "Place " (place) } { (place) }
+                                    dl.lv-stats {
+                                        div { dt { "Level" } dd { (s.progress(m.xp).level) } }
+                                        @match gain {
+                                            Some(g) => { div { dt { "This week" } dd { "+" (text::num(*g)) } } },
+                                            None => { div { dt { "XP" } dd { (text::num(m.xp)) } } },
                                         }
-                                        p.muted.small { "Their level and reward roles follow the new XP." }
+                                        div data-tip=(counted) { dt { "Messages" } dd { (text::num(m.messages)) } }
                                     }
                                 }
                             }
@@ -930,14 +981,76 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     }
                 }
             }
-            @if matched > rows.len() as i64 {
-                p.muted.small { "Showing the top " (rows.len()) " of " (text::num(matched)) " matches. Type more of the name to narrow it." }
+        }
+        section.lv-panel.lv-list {
+            div.list-head {
+                // Without a podium (a later page, a search) the board switch heads the list.
+                @if podium.is_empty() { (board_seg) } @else { h2 { "Everyone else" } }
+                @if board == Board::All {
+                    form method="get" action=(page.path("levels")) {
+                        input.input.search type="search" name="q" value=(search.unwrap_or_default()) placeholder="Search members";
+                    }
+                }
             }
-            @if search.is_none() && pages > 1 {
-                div.inline-form {
-                    @if n > 0 { a.btn.small.outline href={ (page.path("levels")) "?" (board_q) "page=" (n - 1) } { "Previous" } }
-                    span.muted.small { "Page " (n + 1) " of " (pages) }
-                    @if n + 1 < pages { a.btn.small.outline href={ (page.path("levels")) "?" (board_q) "page=" (n + 1) } { "Next" } }
+            @if rows.is_empty() && podium.is_empty() {
+                @if search.is_some() {
+                    (ui::empty(Icon::Users, "No match", "Nobody with XP matches that name or ID."))
+                } @else if board == Board::Week {
+                    (ui::empty(Icon::Trophy, "Nobody has earned XP this week", "The board starts over every Monday at 00:00 UTC and fills as members chat."))
+                } @else {
+                    (ui::empty(Icon::Trophy, "Nobody has XP yet", "Members show up here once they chat, or after you import XP from the old bot."))
+                }
+            } @else if rows.is_empty() && search.is_none() {
+                p.muted.small { @if board == Board::Week { "Everyone who earned XP this week is on the podium so far." } @else { "Everyone with XP is on the podium so far." } }
+            } @else {
+                // Two columns on a wide screen, filled top to bottom: the first half, then the rest.
+                @let half = rows.len().div_ceil(2);
+                div.ranks style={ "--rows:" (half.max(1)) } {
+                    @for (i, (place, m, gain)) in rows.iter().enumerate() {
+                        @let p = s.progress(m.xp);
+                        div.rank.col2[i == half] {
+                            span.pos { (place) }
+                            img.avatar src=(avatar(m.user_id)) alt="" width="28" height="28" loading="lazy";
+                            @let more = extras(m);
+                            div.who { strong { (name(m.user_id)) } span.muted.small { "Level " (p.level) @if !more.is_empty() { " · " (more) } } }
+                            @if let Some(g) = gain {
+                                @let pct = (g * 100 / leader).clamp(0, 100);
+                                div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% of first place" } }
+                                span.xp { "+" (text::num(*g)) small { " XP" } }
+                            } @else {
+                                @let pct = if p.needed > 0 { (p.into * 100 / p.needed).clamp(0, 100) } else { 0 };
+                                div.progress { span.meter { span style={ "width:" (pct) "%" } {} } span.muted.small { (pct) "% to level " (p.level + 1) } }
+                                span.xp { (text::num(m.xp)) small { " XP" } }
+                                @if page.can_edit() {
+                                    details.pop.set-xp {
+                                        summary.btn.small.outline { "Set XP" }
+                                        div.pop-body {
+                                            form.stack method="post" action=(page.path(&format!("levels/members/{}", m.user_id))) {
+                                                div.inline-form {
+                                                    input.input.num type="number" name="xp" value=(m.xp) min="0" aria-label="XP";
+                                                    button.btn.primary type="submit" { "Set" }
+                                                }
+                                                @if s.prestige_on() {
+                                                    label.lv-prestige { span.muted.small { "Prestige" } input.input.num type="number" name="prestige" value=(m.prestige) min="0" max="1000"; }
+                                                }
+                                            }
+                                            p.muted.small { "Their level and reward roles follow the new XP." }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                @if matched > rows.len() as i64 {
+                    p.muted.small { "Showing the top " (rows.len()) " of " (text::num(matched)) " matches. Type more of the name to narrow it." }
+                }
+                @if search.is_none() && pages > 1 {
+                    div.inline-form {
+                        @if n > 0 { a.btn.small.outline href={ (page.path("levels")) "?" (board_q) "page=" (n - 1) } { "Previous" } }
+                        span.muted.small { "Page " (n + 1) " of " (pages) }
+                        @if n + 1 < pages { a.btn.small.outline href={ (page.path("levels")) "?" (board_q) "page=" (n + 1) } { "Next" } }
+                    }
                 }
             }
         }
@@ -945,8 +1058,44 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let week_block = html! {
         div.rail-block {
             h2 { "XP earned this week" }
-            div.big-num { b data-count { (text::num(week.1)) } }
+            div.big-num { b { (text::num(week.1)) } }
             span.muted.small { "by " (text::num(week.0)) @if week.0 == 1 { " member" } @else { " members" } " since Monday" }
+        }
+    };
+    // Last week's top three, kept for a week: on both boards.
+    let last = crate::last_week(&ctx, guild)?;
+    let last_block = html! {
+        div.rail-block {
+            h2 { "Last week" }
+            @match &last {
+                Some((_, winners)) => {
+                    div.lv-last {
+                        @for (i, (u, gain)) in winners.iter().enumerate() {
+                            div.mini {
+                                span.lv-n { (i + 1) }
+                                img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="24" height="24" loading="lazy";
+                                div.grow { span { (ctx.display_name(guild, *u)) } }
+                                span.lv-gain { "+" (text::num(*gain)) small { " XP" } }
+                            }
+                        }
+                    }
+                },
+                None => { p.muted.small { "The top three show here once this week ends." } },
+            }
+            p.muted.small {
+                @match s.weekly_channel.filter(|_| s.weekly_post).and_then(|c| ctx.text_channels(guild).into_iter().find(|x| x.0 == c)) {
+                    Some((_, ch)) => { "Posted to #" (ch) " when each week ends." },
+                    None => { "Not posted anywhere. " @if page.can_edit() { a href=(page.path("levels/settings")) { "Pick a channel" } " to post them when each week ends." } },
+                }
+            }
+        }
+    };
+    let earn_block = html! {
+        div.rail-block {
+            h2 { "How XP is earned" }
+            dl.lv-earn {
+                @for (way, how) in &earning { div { dt { (way) } dd { (how) } } }
+            }
         }
     };
     let rail = match board {
@@ -977,49 +1126,20 @@ async fn members_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                 }
             }
             (week_block)
-            div.rail-block {
-                h2 { "How XP is earned" }
-                dl.lv-earn {
-                    @for (way, how) in &earning { div { dt { (way) } dd { (how) } } }
-                }
-            }
+            (last_block)
+            (earn_block)
         },
-        Board::Week => {
-            let last = crate::last_week(&ctx, guild)?;
-            html! {
-                (week_block)
-                div.rail-block {
-                    h2 { "Last week" }
-                    @match &last {
-                        Some((_, winners)) => {
-                            div.lv-last {
-                                @for (i, (u, gain)) in winners.iter().enumerate() {
-                                    div.mini {
-                                        span.lv-n { (i + 1) }
-                                        img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="24" height="24" loading="lazy";
-                                        div.grow { span { (ctx.display_name(guild, *u)) } }
-                                        span.lv-gain { "+" (text::num(*gain)) small { " XP" } }
-                                    }
-                                }
-                            }
-                        },
-                        None => { p.muted.small { "The top three show here once this week ends." } },
-                    }
-                    p.muted.small {
-                        @match s.weekly_channel.filter(|_| s.weekly_post).and_then(|c| ctx.text_channels(guild).into_iter().find(|x| x.0 == c)) {
-                            Some((_, ch)) => { "Posted to #" (ch) " when each week ends." },
-                            None => { "Not posted anywhere. " @if page.can_edit() { a href=(page.path("levels/settings")) { "Pick a channel" } " to post them when each week ends." } },
-                        }
-                    }
-                }
-            }
-        }
+        Board::Week => html! {
+            (week_block)
+            (last_block)
+            (earn_block)
+        },
     };
     let body = html! {
         (tabs(&page, "Leaderboard"))
         div.with-rail {
             div.stack.lb { (main) }
-            aside.rail { (rail) }
+            aside.rail.lv-rail { (rail) }
         }
     };
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
@@ -1064,16 +1184,23 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
     let color = |role: u64| roles.iter().find(|r| r.0 == role).map(|r| role_color(r.2)).unwrap_or_else(|| "var(--ink-3)".into());
 
     let main = html! {
-        (readings(&[
-            ("reward roles", text::num(rewards.len() as i64)),
-            ("members holding one", text::num(holding)),
-            ("highest reward", rewards.last().map(|(l, _)| format!("Level {l}")).unwrap_or_else(|| "None".into())),
-        ]))
-        (section("The climb", Some(if s.stack_rewards {
-            "Given when a member reaches the level, and to members already past it. Members keep earlier rewards. Removing a reward leaves the role on whoever has it."
-        } else {
-            "Given when a member reaches the level, and to members already past it. Members keep only the reward for their highest level. Removing a reward leaves the role on whoever has it."
-        }), html! {
+        // One panel: what the rewards do and their figures on top, then the climb itself.
+        section.lv-panel.lv-climb {
+            div.lv-head {
+                div.block-head {
+                    h2 { "The climb" }
+                    p.muted { (if s.stack_rewards {
+                        "Given when a member reaches the level, and to members already past it. Members keep earlier rewards. Removing a reward leaves the role on whoever has it."
+                    } else {
+                        "Given when a member reaches the level, and to members already past it. Members keep only the reward for their highest level. Removing a reward leaves the role on whoever has it."
+                    }) }
+                }
+                (headstats(&[
+                    ("reward roles", text::num(rewards.len() as i64)),
+                    ("members holding one", text::num(holding)),
+                    ("highest reward", rewards.last().map(|(l, _)| format!("Level {l}")).unwrap_or_else(|| "None".into())),
+                ]))
+            }
             @if rewards.is_empty() && !page.can_edit() {
                 (ui::empty(Icon::Trophy, "No reward roles", "Roles staff add here are given to members when they reach the level."))
             } @else {
@@ -1134,7 +1261,7 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
                     p.muted.small { "Members reaching a level marked Can't give get nothing. Pick another role, or move the bot's role above it in Discord." }
                 }
             }
-        }))
+        }
     };
     let rail = html! {
         div.rail-block {
@@ -1167,7 +1294,7 @@ async fn rewards_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>
         (tabs(&page, "Rewards"))
         div.with-rail {
             div.stack.lv-main { (main) }
-            aside.rail { (rail) }
+            aside.rail.lv-rail { (rail) }
         }
     };
     Ok(ui::layout(&ctx, &page, "Levels", None, body).into_response())
@@ -1218,54 +1345,59 @@ async fn import_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>)
     let body = html! {
         style { (PreEscaped(CSS)) }
         (tabs(&page, "Import"))
-        (readings(&[
-            ("members with XP now", text::num(ranked)),
-            ("reward roles", text::num(rewards)),
-            ("highest level", text::num(top_level)),
-        ]))
-        @if let Some(path) = &local {
-            (section("The old bot's database is on this server", None, html! {
-                div.card.lv-local {
-                    div.grow {
-                        strong { "Ready to read" }
-                        p.muted { "Found at " code { (path) } ". Importing reads it and leaves it as it is." }
-                    }
-                    @if page.can_edit() {
-                        form.inline-form method="post" action=(page.path("levels/import-local")) {
-                            (modes("mode", "the old bot's"))
-                            button.btn.primary type="submit" { "Import from the old bot" }
+        // The upload on the left; what is here now and what an import does on the right.
+        div.lv-split {
+            div.lv-col2 {
+                @if let Some(path) = &local {
+                    section.lv-panel.lv-local {
+                        div.block-head {
+                            h2 { "The old bot's database is on this server" }
+                            p.muted { "Found at " code { (path) } ". Importing reads it and leaves it as it is." }
+                        }
+                        @if page.can_edit() {
+                            form.inline-form method="post" action=(page.path("levels/import-local")) {
+                                (modes("mode", "the old bot's"))
+                                button.btn.primary type="submit" { "Import from the old bot" }
+                            }
                         }
                     }
                 }
-            }))
-        }
-        div.lv-import {
-        (section(if local.is_some() { "Or upload a file" } else { "Bring XP over from antho-s-bot" }, Some("Use a backup of its database, or the JSON the Render Shell command prints. Only members of this server are imported. Reward roles and XP settings come too."), html! {
-            div.card style="padding:18px" {
-                label.lv-drop #import-drop {
-                    input #import-file type="file" accept=".db,.sqlite,.json,application/json" aria-label="The old bot's database or JSON";
-                    span.lv-drop-ic { (upload_icon()) }
-                    strong { "Drop the database or JSON here" }
-                    span.muted { "or click to pick it. A .db, .sqlite or .json file up to 64 MB." }
-                    span.lv-file { (ui::icon(Icon::Log)) span #import-name {} }
+                section.lv-panel.lv-upload {
+                    div.block-head {
+                        h2 { (if local.is_some() { "Or upload a file" } else { "Bring XP over from antho-s-bot" }) }
+                        p.muted { "Use a backup of its database, or the JSON the Render Shell command prints. Only members of this server are imported. Reward roles and XP settings come too." }
+                    }
+                    label.lv-drop #import-drop {
+                        input #import-file type="file" accept=".db,.sqlite,.json,application/json" aria-label="The old bot's database or JSON";
+                        span.lv-drop-ic { (upload_icon()) }
+                        strong { "Drop the database or JSON here" }
+                        span.muted { "or click to pick it. A .db, .sqlite or .json file up to 64 MB." }
+                        span.lv-file { (ui::icon(Icon::Log)) span #import-name {} }
+                    }
+                    div.lv-go {
+                        (modes("import-mode", "the file's"))
+                        button.btn.primary #import-go type="button" { (upload_icon()) "Import" }
+                    }
+                    div.lv-result #import-result hidden role="status" {
+                        span.lv-res-ic #import-icon {}
+                        div.grow { strong #import-title {} p.muted.small #import-text {} }
+                    }
                 }
-                div.lv-go {
-                    (modes("import-mode", "the file's"))
-                    button.btn.primary #import-go type="button" { (upload_icon()) "Import" }
+            }
+            section.lv-panel.lv-what {
+                h2 { "On this server now" }
+                (headstats(&[
+                    ("members with XP", text::num(ranked)),
+                    ("reward roles", text::num(rewards)),
+                    ("highest level", text::num(top_level)),
+                ]))
+                div.lv-steps {
+                    h2 { "What an import does" }
+                    div.mini { span.lv-n { "1" } div.grow { span { "Only this server's members are read" } span.muted { "Other servers in the file are left alone." } } }
+                    div.mini { span.lv-n { "2" } div.grow { span { "XP is replaced, or the higher of the two is kept" } span.muted { "Levels are worked out again from the XP, on the curve the file brings." } } }
+                    div.mini { span.lv-n { "3" } div.grow { span { "Reward roles and XP settings come along" } span.muted { "Roles with moderation or admin power come only when an admin imports." } } }
                 }
             }
-            div.lv-result #import-result hidden role="status" {
-                span.lv-res-ic #import-icon {}
-                div.grow { strong #import-title {} p.muted.small #import-text {} }
-            }
-        }))
-        (section("What happens", None, html! {
-            div.lv-steps {
-                div.mini { span.lv-n { "1" } div.grow { span { "Only this server's members are read" } span.muted { "Other servers in the file are left alone." } } }
-                div.mini { span.lv-n { "2" } div.grow { span { "XP is replaced, or the higher of the two is kept" } span.muted { "Levels are worked out again from the XP, on the curve the file brings." } } }
-                div.mini { span.lv-n { "3" } div.grow { span { "Reward roles and XP settings come along" } span.muted { "Roles with moderation or admin power come only when an admin imports." } } }
-            }
-        }))
         }
         script { (PreEscaped(format!(r#"
 (() => {{
@@ -1395,13 +1527,18 @@ pub(crate) fn overview(ctx: &Ctx, page: &Page) -> bot_core::Overview {
     let roles = ctx.roles(guild);
     let mut o = bot_core::Overview::default();
     if !week.is_empty() {
+        // A ranked list with thin bars, the leader's in the data colour.
+        let top = week.iter().map(|(_, g)| *g).max().unwrap_or(1).max(1);
         o.panel.push((20, html! {
-            h2 { "Most XP this week" }
-            @for (user, gain) in &week {
-                a.mini href=(page.path("levels")) {
-                    img.avatar src=(ctx.member_avatar(guild, *user)) alt="" width="24" height="24" loading="lazy";
-                    div.grow { span { (ctx.display_name(guild, *user)) } }
-                    span.mono { "+" (text::num(*gain)) }
+            h2 { "Most XP this week" a.more href=(page.path("levels")) { "Leaderboard" } }
+            ol.ov-rank {
+                @for (i, (user, gain)) in week.iter().enumerate() {
+                    li {
+                        img.avatar src=(ctx.member_avatar(guild, *user)) alt="" width="28" height="28" loading="lazy";
+                        span.clip { (ctx.display_name(guild, *user)) }
+                        span.mono { (text::num(*gain)) }
+                        span.ov-track { i.lead[i == 0] style={ "width:" (format!("{:.1}", *gain as f64 * 100.0 / top as f64)) "%" } {} }
+                    }
                 }
             }
         }));

@@ -1060,8 +1060,10 @@ pub struct Week {
     pub removed: i64,
     /// Catches in each of the last seven rolling days, oldest first.
     pub daily: [i64; 7],
-    /// The moderators who released or banned, most actions first.
-    pub handled_by: Vec<u64>,
+    /// The seven days before those, oldest first, for the chart's dashed line.
+    pub prev_daily: [i64; 7],
+    /// The moderators who released or banned, with how many, most actions first.
+    pub handled_by: Vec<(u64, i64)>,
 }
 
 pub fn week(ctx: &Ctx, guild: u64) -> Result<Week> {
@@ -1069,16 +1071,22 @@ pub fn week(ctx: &Ctx, guild: u64) -> Result<Week> {
     let rows: Vec<(i64, Outcome, i64, Option<u64>)> = ctx.db.with(|c| {
         let mut st = c.prepare_cached("SELECT at, outcome, deleted, acted_by FROM guard_catches WHERE guild_id = ?1 AND at > ?2")?;
         let rows = st
-            .query_map(params![guild as i64, now - 7 * DAY_MS], |r| {
+            .query_map(params![guild as i64, now - 14 * DAY_MS], |r| {
                 let outcome: String = r.get(1)?;
                 Ok((r.get(0)?, Outcome::parse(&outcome), r.get(2)?, r.get::<_, Option<i64>>(3)?.map(|u| u as u64)))
             })?
             .collect::<bot_core::rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     })?;
-    let mut w = Week { caught: 0, banned: 0, released: 0, removed: 0, daily: [0; 7], handled_by: Vec::new() };
+    let mut w = Week { caught: 0, banned: 0, released: 0, removed: 0, daily: [0; 7], prev_daily: [0; 7], handled_by: Vec::new() };
     let mut by: Vec<(u64, i64)> = Vec::new();
     for (at, outcome, deleted, who) in rows {
+        // The week before only feeds the chart's line for comparison.
+        let days_ago = ((now - at) / DAY_MS).clamp(0, 13) as usize;
+        if days_ago >= 7 {
+            w.prev_daily[13 - days_ago] += 1;
+            continue;
+        }
         w.caught += 1;
         w.removed += deleted;
         match outcome {
@@ -1086,7 +1094,6 @@ pub fn week(ctx: &Ctx, guild: u64) -> Result<Week> {
             Outcome::Released => w.released += 1,
             _ => {}
         }
-        let days_ago = ((now - at) / DAY_MS).clamp(0, 6) as usize;
         w.daily[6 - days_ago] += 1;
         if let Some(who) = who {
             match by.iter_mut().find(|(u, _)| *u == who) {
@@ -1096,7 +1103,7 @@ pub fn week(ctx: &Ctx, guild: u64) -> Result<Week> {
         }
     }
     by.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
-    w.handled_by = by.into_iter().map(|(u, _)| u).collect();
+    w.handled_by = by;
     Ok(w)
 }
 

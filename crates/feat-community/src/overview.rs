@@ -4,7 +4,6 @@
 use bot_core::maud::{Markup, html};
 use bot_core::rusqlite::{Connection, params};
 use bot_core::web::Page;
-use bot_core::web::ui;
 use bot_core::{Ctx, Happening, Icon, Need, Overview, now_ms, text};
 
 use crate::id_i64;
@@ -38,7 +37,6 @@ fn until(at: i64) -> String {
 /// A row of "Running now".
 struct Open {
     ends_at: i64,
-    icon: Icon,
     title: String,
     detail: String,
     href: String,
@@ -59,11 +57,12 @@ fn running(ctx: &Ctx, page: &Page) -> Option<Markup> {
         return None;
     }
     Some(html! {
-        h2 { "Running now" }
-        @for r in &rows {
-            a.mini href=(r.href) {
-                (ui::icon(r.icon))
-                div.grow { span { (r.title) } span.muted { (r.detail) } }
+        h2 { "Running" }
+        div.ov-rows {
+            @for r in &rows {
+                a.ov-run href=(r.href) {
+                    div.grow { strong.clip { (r.title) } span.clip { (r.detail) } }
+                }
             }
         }
     })
@@ -79,9 +78,8 @@ fn running_giveaways(c: &Connection, page: &Page, now: i64) -> bot_core::rusqlit
         let (prize, ends_at, entries): (String, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?);
         Ok(Open {
             ends_at,
-            icon: Icon::Gift,
             title: text::clip(&prize, 60),
-            detail: format!("Ends in {} · {} {}", until(ends_at), text::num(entries), if entries == 1 { "entry" } else { "entries" }),
+            detail: format!("Giveaway · ends in {} · {} {}", until(ends_at), text::num(entries), if entries == 1 { "entry" } else { "entries" }),
             href: href.clone(),
         })
     })?
@@ -99,9 +97,8 @@ fn running_polls(c: &Connection, page: &Page, now: i64) -> bot_core::rusqlite::R
         let (question, ends_at, votes): (String, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?);
         Ok(Open {
             ends_at,
-            icon: Icon::Poll,
             title: text::clip(&question, 80),
-            detail: format!("Closes in {} · {} {}", until(ends_at), text::num(votes), if votes == 1 { "vote" } else { "votes" }),
+            detail: format!("Poll · closes in {} · {} {}", until(ends_at), text::num(votes), if votes == 1 { "vote" } else { "votes" }),
             href: href.clone(),
         })
     })?

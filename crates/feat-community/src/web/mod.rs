@@ -149,6 +149,17 @@ fn rail_figures(items: &[(&str, i64)]) -> Markup {
     }
 }
 
+/// [`rail_figures`] that stand still: the number is written as it is, with no count-up.
+fn still_figures(items: &[(&str, i64)]) -> Markup {
+    html! {
+        div.rail-nums {
+            @for (label, value) in items {
+                div { b.mono { (text::num(*value)) } span { (label) } }
+            }
+        }
+    }
+}
+
 // ---- Discord, as members see it ----
 
 /// The bot's name and avatar. Before the bot has connected (and in the preview) the avatar is
@@ -234,19 +245,15 @@ const SCRIPT: &str = r#"
     if (h) return m ? h + " h " + m + " min" : h + " h";
     return m ? m + " min" : s + " s";
   };
-  // One digit: the old one rolls down and out as the new one rolls in from above.
-  const roll = (slot, ch, still) => {
+  // One digit, swapped for the new one.
+  const roll = (slot, ch) => {
     const old = slot.lastElementChild;
     if (old && old.textContent === ch) return;
     const next = document.createElement("span");
     next.textContent = ch;
     slot.append(next);
-    if (!old) return;
-    if (still) { old.remove(); return; }
-    const o = { duration: 520, easing: "cubic-bezier(0.22, 1, 0.36, 1)" };
-    next.animate([{ transform: "translateY(-100%)", opacity: 0 }, { transform: "none", opacity: 1 }], o);
-    const out = old.animate([{ transform: "none", opacity: 1 }, { transform: "translateY(100%)", opacity: 0 }], { ...o, fill: "forwards" });
-    out.finished.then(() => old.remove(), () => old.remove());
+    // The figure changes in place: a clock that moves every second is read, not watched.
+    if (old) old.remove();
   };
   const cell = (u, t, still) => {
     let slots = u.querySelectorAll(":scope > .gv-dg");
@@ -255,7 +262,7 @@ const SCRIPT: &str = r#"
       slots = u.querySelectorAll(":scope > .gv-dg");
       still = true;
     }
-    [...t].forEach((ch, i) => roll(slots[i], ch, still));
+    [...t].forEach((ch, i) => roll(slots[i], ch));
   };
   const tick = (still) => {
     const now = Date.now();
@@ -320,7 +327,7 @@ const STYLE: &str = r#"
 /* Settings beside the post they shape: the preview keeps about Discord's own width, the form
    takes the rest. */
 @container col (min-width: 1000px) {
-  .compose.cm-compose { grid-template-columns: minmax(0, 1fr) min(600px, 42%); }
+  .compose.cm-compose { grid-template-columns: minmax(0, 1fr) 500px; }
 }
 /* The post a hero is about, beside it on a wide page. */
 .cm-post { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -458,70 +465,82 @@ const STYLE: &str = r#"
 .cm-winner .avatar { box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px color-mix(in oklab, var(--hue) 80%, transparent); }
 .cm-winner strong { font-weight: 600; }
 
-/* ---- polls ---- */
-/* The newest open poll, across the page: the results, and beside them (under them when narrow)
-   the poll as members see it in Discord. */
-.pl-hero { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px 36px; align-items: start; padding: 22px 24px 20px; border-radius: 24px;
-  background: linear-gradient(180deg, rgba(243, 242, 248, 0.05), rgba(243, 242, 248, 0.02));
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 18%, var(--edge-1)); }
+/* ---- polls (house style, 2026-11-02) ----
+   Two columns like Giveaways: the newest open poll leads in a bordered panel (this is the
+   feature's main page) with "Also open" under it; its post, the recent results and the month sit
+   in the right column. Flat panels; lilac only for the results; nothing draws in by itself. */
+.pl-hero { display: flex; flex-direction: column; gap: 18px; padding: 20px 24px 18px; border-radius: 14px; background: var(--raised); border: 1px solid var(--edge-1); }
 .pl-main { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-@container col (min-width: 1000px) {
-  .pl-hero { grid-template-columns: minmax(0, 1fr) min(520px, 36%); padding: 24px 26px 22px; }
-}
 .pl-ask { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-3); }
-.pl-ask .avatar { width: 34px; height: 34px; }
-.pl-ask strong { color: var(--ink-2); font-weight: 600; }
-.pl-ask .status { margin-left: auto; background: var(--control); backdrop-filter: none; }
-.pl-q { font-size: 24px; line-height: 1.2; letter-spacing: -0.03em; overflow-wrap: anywhere; }
+.pl-ask .avatar { width: 28px; height: 28px; }
+.pl-ask strong { color: var(--ink-2); font-weight: 500; }
+.pl-ask .status { margin-left: auto; background: var(--control); box-shadow: none; backdrop-filter: none; }
+.pl-ask .dot.live::after { display: none; }
+.pl-q { font-size: 26px; font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; overflow-wrap: anywhere; }
 .pl-answers { display: flex; flex-direction: column; gap: 8px; }
-.pl-ans { display: grid; grid-template-columns: minmax(0, 1fr) 70px 64px; align-items: center; gap: 12px; }
+.pl-ans { display: grid; grid-template-columns: minmax(0, 1fr) 76px 64px; align-items: center; gap: 12px; }
 .pl-ans.bare { grid-template-columns: minmax(0, 1fr) 64px; }
-.pl-bar { position: relative; display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 6px 14px; border-radius: 12px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; isolation: isolate; }
-.pl-fill { position: absolute; inset: 0 auto 0 0; z-index: -1; background: color-mix(in oklab, var(--data) 20%, transparent); transform-origin: left; animation: fill 1.2s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 280ms); }
-.pl-ans.lead .pl-fill { background: linear-gradient(90deg, color-mix(in oklab, var(--data-2) 62%, transparent), color-mix(in oklab, var(--data) 50%, transparent)); box-shadow: none; }
-.pl-ans.lead .pl-bar { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 40%, transparent); }
+.pl-bar { position: relative; display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 6px 14px; border-radius: 10px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); overflow: hidden; isolation: isolate; }
+.pl-fill { position: absolute; inset: 0 auto 0 0; z-index: -1; background: color-mix(in oklab, var(--data) 18%, transparent); }
+.pl-ans.lead .pl-fill { background: color-mix(in oklab, var(--data) 42%, transparent); }
+.pl-ans.lead .pl-bar { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--data) 45%, transparent); }
 .pl-label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: var(--ink-2); overflow-wrap: anywhere; }
 .pl-label .icon { width: 15px; height: 15px; flex: none; }
-.pl-ans.lead .pl-label { color: var(--ink); font-weight: 600; }
-.pl-pct { font: 600 13.5px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; flex: none; }
+.pl-ans.lead .pl-label { color: var(--ink); }
+.pl-pct { font: 600 13px var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; flex: none; }
 .pl-ans.lead .pl-pct { color: var(--ink); }
 .pl-voters { display: flex; justify-content: flex-end; }
 .pl-voters .avatar { width: 24px; height: 24px; }
 .pl-n { font: 12px var(--mono); color: var(--ink-3); text-align: right; white-space: nowrap; }
-.pl-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
+.pl-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--ink-3); }
 .pl-foot b { color: var(--ink-2); font-weight: 600; }
 
-.pl-grid { --tile: 400px; }
-/* Ended polls differ in height (two answers or ten), so they pack into columns. */
-.pl-cols { columns: 420px; column-gap: 12px; }
-.pl-cols > .pl-card { break-inside: avoid; margin-bottom: 12px; }
-.pl-recents { --tile: 300px; }
-.pl-card { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; border-radius: 18px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 200ms); }
+/* Also open fills its row, like Also running. */
+.pl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+/* Ended polls: one panel each, down the column; their answers run in two columns when there's
+   room, so a ten-answer poll isn't a tower beside a two-answer one. */
+.pl-list { display: flex; flex-direction: column; gap: 16px; }
+@container col (min-width: 760px) {
+  .pl-card.ended .pl-answers { display: block; columns: 2; column-gap: 28px; }
+  .pl-card.ended .pl-ans { break-inside: avoid; margin-bottom: 6px; }
+}
+.pl-recents { --tile: 260px; gap: 16px; }
+.pl-card { display: flex; flex-direction: column; gap: 12px; padding: 18px 20px; border-radius: 14px; background: var(--raised); border: 1px solid var(--edge-1); }
 .pl-card-top { display: flex; align-items: flex-start; gap: 12px; }
-.pl-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pl-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pl-card-top .cm-actions { flex: none; flex-wrap: nowrap; }
-.pl-card-top strong { font-size: 15px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
-.pl-card-top .muted { font-size: 12.5px; }
-.pl-card-top .avatar { width: 30px; height: 30px; }
+.pl-card-top strong { font-size: 14px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+.pl-card-top .muted { font-size: 13px; }
+.pl-card-top .avatar { width: 28px; height: 28px; flex: none; }
+.pl-card .cm-out.icon-btn { margin: -4px -6px 0 0; }
 .pl-card.ended .pl-answers { gap: 6px; }
-.pl-card.ended .pl-bar { min-height: 38px; font-size: 13px; }
+.pl-card.ended .pl-bar { min-height: 36px; font-size: 13px; }
 .pl-card.ended .pl-label { font-size: 13px; }
-.pl-stack { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--edge-1); animation: cm-wipe 1.2s var(--ease) both 0.35s; }
+.pl-stack { display: flex; gap: 2px; height: 8px; border-radius: 4px; overflow: hidden; background: var(--edge-1); }
 .pl-stack > span { min-width: 3px; transition: filter 0.15s; }
 .pl-stack > span:hover { filter: brightness(1.3); }
-.pl-lead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
-.pl-lead strong { color: var(--ink); font-weight: 600; }
-.pl-recent { display: flex; flex-direction: column; gap: 6px; padding: 2px 0; min-width: 0; }
+.pl-lead { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink-3); }
+.pl-lead strong { color: var(--ink); font-weight: 500; }
+.pl-card .gv-people .avatars .avatar { width: 26px; height: 26px; }
+.pl-recent { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .pl-recent + .pl-recent { padding-top: 12px; border-top: 1px solid var(--edge-1); }
-.pl-recent > strong { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-recent > strong { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-recent .pl-stack { height: 6px; }
-.pl-recent .pl-lead { font-size: 12px; }
+.pl-recent .pl-lead { flex-wrap: nowrap; }
 .pl-recent .pl-lead > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pl-busy { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; min-width: 0; }
+.pl-recent .pl-lead > span:last-child { flex: none; }
+.cm-tiles > .pl-recent, .cm-tiles > .pl-recent + .pl-recent { padding: 18px 20px; border-radius: 14px; background: var(--raised); border: 1px solid var(--edge-1); box-shadow: none; }
+.pl-busy { display: flex; flex-direction: column; gap: 6px; font-size: 13px; min-width: 0; }
 .pl-busy + .pl-busy { margin-top: 6px; }
 .pl-busy > div { display: flex; justify-content: space-between; gap: 10px; }
 .pl-busy > div > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
 .pl-busy .meter { height: 4px; }
+/* The right column keeps one width (380 px) on a laptop too, so the post in it reads as Discord's. */
+@media (min-width: 1181px) {
+  .with-rail:has(> .pl-rail), .with-rail:has(> .sg-rail), .with-rail:has(> .cm-rail) { grid-template-columns: minmax(0, 1fr) 380px; }
+}
+.pl-rail .meter > span { animation: none; }
+.pl-rail .cm-dc { animation: none; }
 
 /* Discord's own poll. */
 .cm-dc-poll { align-self: stretch; max-width: 520px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 8px; background: #2b2d31; box-shadow: inset 0 0 0 1px #3f4147; }
@@ -533,66 +552,91 @@ const STYLE: &str = r#"
 .cm-dc-radio.box { border-radius: 4px; }
 .cm-dc-poll-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; color: #949ba4; margin-top: 2px; }
 .cm-dc-poll-foot .cm-dc-btn { height: 30px; padding: 0 12px; }
+.cm-dc-opt.done { position: relative; isolation: isolate; overflow: hidden; }
+.cm-dc-optfill { position: absolute; inset: 0 auto 0 0; z-index: -1; background: #4e5058; }
+.cm-dc-opt.won .cm-dc-optfill { background: #5865f2; opacity: 0.55; }
+.cm-dc-opt.won { color: #f2f3f5; font-weight: 500; }
+.cm-dc-won { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: #23a55a; color: #fff; flex: none; }
+.cm-dc-won .icon { width: 12px; height: 12px; }
+.cm-dc-pct { font-weight: 600; color: #f2f3f5; flex: none; }
+.cm-dc-opt.done > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* ---- suggestions ---- */
-/* The board: one list, a hairline between suggestions. */
-.sg-list { display: flex; flex-direction: column; border-radius: var(--r-card); background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
+/* ---- suggestions (house style, 2026-11-02) ----
+   The board is one bordered panel, a hairline between suggestions; the rail's blocks are the same
+   panels. Rows share one size: 14 px text, 13 px lines, 20 px faces, one width of row button. */
+.sg-board { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 18px 20px 0; border-radius: 14px; background: var(--raised); border: 1px solid var(--edge-1); }
+.sg-board:not(:has(.sg-list)) { padding-bottom: 18px; }
+.sg-board-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.sg-board-head h2 { display: flex; align-items: baseline; gap: 10px; font-size: 14px; font-weight: 500; }
+.sg-board-head h2 .muted { font-size: 13px; font-weight: 400; }
+.sg-waiting { font-size: 13px; color: var(--accent-hi, var(--accent)); text-decoration: none; }
+.sg-waiting b { font-weight: 600; }
+.sg-waiting:hover { text-decoration: underline; text-underline-offset: 3px; }
+.sg-list { display: flex; flex-direction: column; margin: 0 -20px; }
 /* One suggestion. Narrow: score and words, the votes and reply under them, status and actions in
    a foot. From 600 px the status sits at the right. From 1000 px the votes and the reply take a
    column of their own, so a row reads across: score, suggestion, how it went, status. */
-.sg-card { position: relative; display: grid; grid-template-columns: 46px minmax(0, 1fr); grid-template-areas: "score body" "score state" "side side"; gap: 10px 12px; align-items: start; padding: 16px 16px 14px; transition: background 0.2s; }
+.sg-card { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr); grid-template-areas: "score body" "score state" "side side"; gap: 10px 12px; align-items: start; padding: 16px 20px; transition: background 0.2s; }
 .sg-card + .sg-card { border-top: 1px solid var(--edge-1); }
-.sg-card:first-child { border-radius: var(--r-card) var(--r-card) 0 0; }
-.sg-card:last-child { border-radius: 0 0 var(--r-card) var(--r-card); }
-.sg-card:only-child { border-radius: var(--r-card); }
-.sg-card:hover { background: var(--well); }
+.sg-card:last-child { border-radius: 0 0 13px 13px; }
+.sg-card:hover { background: var(--hover); }
 /* The score: a small arrow and the net, on the first line of the suggestion. */
-.sg-score { grid-area: score; display: flex; align-items: center; gap: 3px; height: 22px; color: var(--ink-3); white-space: nowrap; cursor: default; }
+.sg-score { grid-area: score; display: flex; align-items: center; gap: 3px; height: 20px; color: var(--ink-3); white-space: nowrap; cursor: default; }
 .sg-score .icon { width: 13px; height: 13px; flex: none; }
-.sg-score b { font: 600 15px/1 var(--sans); color: var(--ink); font-variant-numeric: tabular-nums; }
+.sg-score b { font: 600 14px/1 var(--sans); color: var(--ink); font-variant-numeric: tabular-nums; }
 .sg-score.up .icon { color: var(--data); }
 .sg-score.down .icon { color: var(--held); }
 .sg-score.flat b { color: var(--ink-2); }
-.sg-body { grid-area: body; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
-.sg-state { grid-area: state; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-.sg-text { max-width: 70ch; font-size: 15px; font-weight: 560; line-height: 1.45; text-wrap: pretty; overflow-wrap: anywhere; }
-.sg-by { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 12.5px; color: var(--ink-3); }
+.sg-body { grid-area: body; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.sg-state { grid-area: state; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.sg-text { max-width: 70ch; font-size: 14px; font-weight: 500; line-height: 1.45; text-wrap: pretty; overflow-wrap: anywhere; }
+.sg-by { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; font-size: 13px; color: var(--ink-3); }
 .sg-by .avatar { width: 20px; height: 20px; }
 .sg-by strong { color: var(--ink-2); font-weight: 500; }
 .sg-anon { text-decoration: underline dotted; text-underline-offset: 3px; cursor: default; }
-.sg-tally { font-size: 12.5px; color: var(--ink-3); }
+.sg-tally { font-size: 13px; color: var(--ink-3); line-height: 20px; }
 .sg-tally b { color: var(--ink-2); font-weight: 600; font-variant-numeric: tabular-nums; }
 /* Staff's answer: who, what they did, and why, as plain lines beside their face. */
-.sg-reply { display: flex; align-items: flex-start; gap: 10px; max-width: 64ch; }
-.sg-reply .avatar { width: 22px; height: 22px; margin-top: 1px; }
+.sg-reply { display: flex; align-items: flex-start; gap: 8px; max-width: 64ch; }
+.sg-reply .avatar { width: 20px; height: 20px; margin-top: 1px; }
 .sg-reply > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; }
-.sg-reply-head { font-size: 12.5px; color: var(--ink-3); }
-.sg-reply-head strong { color: var(--ink-2); font-weight: 600; }
+.sg-reply-head { font-size: 13px; color: var(--ink-3); }
+.sg-reply-head strong { color: var(--ink-2); font-weight: 500; }
 .sg-side { grid-area: side; display: flex; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
 .sg-side .cm-actions { flex-wrap: nowrap; gap: 4px; }
-.sg-status { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+/* Review and Change are one width, so the column of buttons lines up. */
+.sg-side .cm-review > summary { min-width: 76px; justify-content: center; }
+.sg-status { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
 .sg-status.open .dot { background: var(--signal); }
 .sg-status.warn .dot { background: var(--waiting); }
 .sg-status.ok .dot { background: var(--live); }
 .sg-status.bad .dot { background: var(--held); }
 @container col (min-width: 600px) {
-  .sg-card { grid-template-columns: 46px minmax(0, 1fr) auto; grid-template-areas: "score body side" "score state side"; gap: 10px 14px; padding: 16px 18px; }
+  .sg-card { grid-template-columns: 40px minmax(0, 1fr) auto; grid-template-areas: "score body side" "score state side"; gap: 10px 14px; }
   .sg-side { flex-direction: column; align-items: flex-end; justify-content: flex-start; gap: 8px; }
-  .sg-status { height: 22px; }
+  .sg-status { height: 20px; }
 }
 @container col (min-width: 1000px) {
-  .sg-card { grid-template-columns: 46px minmax(0, 1.15fr) minmax(0, 1fr) auto; grid-template-areas: "score body state side"; column-gap: 28px; padding: 18px 20px; }
-  .sg-state { padding-top: 2px; }
+  .sg-card { grid-template-columns: 40px minmax(0, 1.15fr) minmax(0, 1fr) auto; grid-template-areas: "score body state side"; column-gap: 28px; }
 }
 .sg-top { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: end; }
-.sg-voter { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; text-align: center; font-size: 12.5px; animation: rise 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 90ms + 300ms); }
-.sg-voter .avatar { width: 44px; height: 44px; margin-bottom: 4px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--edge-3); }
-.sg-voter.first .avatar { width: 54px; height: 54px; box-shadow: 0 0 0 2px var(--page), 0 0 0 3.5px var(--data); }
-.sg-voter strong { max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sg-voter span { font-size: 11.5px; color: var(--ink-3); }
+.sg-voter { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; text-align: center; font-size: 13px; }
+.sg-voter .avatar { width: 44px; height: 44px; margin-bottom: 4px; box-shadow: 0 0 0 2px var(--raised), 0 0 0 3.5px var(--edge-3); }
+.sg-voter.first .avatar { width: 54px; height: 54px; box-shadow: 0 0 0 2px var(--raised), 0 0 0 3.5px var(--data); }
+.sg-voter strong { max-width: 100%; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sg-voter span { font-size: 12px; color: var(--ink-3); }
+.sg-rail .cm-dc { animation: none; }
+/* Settings: the form is the panel, Save inside it; the preview a 500 px column beside it. */
+.sg-compose > form.settings { display: flex; flex-direction: column; gap: 4px; padding: 18px 20px; border-radius: 14px; background: var(--raised); border: 1px solid var(--edge-1); }
+.sg-compose > form.settings .card { background: none; border: 0; padding: 0; border-radius: 0; }
+.sg-compose > form.settings .save-bar { padding-top: 8px; }
+.sg-h { font-size: 14px; font-weight: 500; }
+@container col (min-width: 1000px) {
+  .compose.cm-compose.sg-compose { grid-template-columns: minmax(0, 1fr) 500px; gap: 16px; }
+}
+.sg-compose .cm-dc { zoom: 0.75; }
 
 @keyframes cm-arrive { from { opacity: 0; transform: translateY(16px) scale(0.97); filter: blur(4px); } }
-@keyframes cm-wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
 @keyframes gv-pop { from { opacity: 0; transform: scale(0.7) rotate(-6deg); } }
 @keyframes gv-spin { to { transform: rotate(360deg); } }
 @keyframes gv-float { to { transform: translateY(-6px) rotate(-3deg); } }
@@ -620,4 +664,82 @@ const STYLE: &str = r#"
   .cm-edit[open] { flex-basis: 100%; order: 10; }
   .cm-edit .pop-body { position: static; width: 100%; margin-top: 8px; }
 }
+
+/* ---- giveaways in the house style (2026-11-02) ----
+   The running giveaway leads (this is the feature's main page), in the same bordered panel as the
+   rest. The prize sits on a flat tile, not a gradient; the clock is read, not animated; colour is
+   kept for data (the time bars) and the accent for actions. */
+.gv-art, .gv-art.big { background: var(--solid); box-shadow: none; color: var(--ink-2); animation: none; }
+.gv-art.big { width: 160px; height: 160px; border-radius: 24px; }
+.gv-art.big::before { display: none; }
+.gv-art.big .gv-emoji { font-size: 84px; animation: none; }
+.gv-emoji { filter: none; }
+.gv-hero { background: var(--raised); box-shadow: none; border: 1px solid var(--edge-1); border-radius: 14px; }
+.gv-prize { font-size: 28px; letter-spacing: -0.02em; font-weight: 600; }
+.gv-role { background: var(--control); color: var(--ink-2); }
+.gv-unit { background: var(--solid); }
+.gv-unit b { font-weight: 600; }
+.gv-left > span:first-child { color: var(--ink-2); }
+.gv-card { background: var(--raised); box-shadow: none; border: 1px solid var(--edge-1); border-radius: 14px; animation: none; }
+.gv-card:hover { box-shadow: none; border-color: var(--edge-2); }
+.gv-card-top strong { font-size: 14px; font-weight: 500; }
+/* Also running fills its row instead of leaving fixed-width cards and a gap. */
+.gv-grid, .gv-done-grid { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.cm-rail { background: none; box-shadow: none; padding: 0; gap: 16px; }
+.cm-rail > .rail-block { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; }
+.cm-rail > .rail-block + .rail-block { margin-top: 0; border-top: 1px solid var(--edge-1); }
+.cm-rail .rail-block > h2 { font-size: 14px; font-weight: 500; }
+.cm-block > h2 { font-size: 14px; font-weight: 500; }
+/* The hero is the picture and the giveaway; its post lives at the top of the right column. */
+.gv-hero, .gv-hero[class] { grid-template-columns: auto minmax(0, 1fr) !important; }
+.cm-rail .cm-post .cm-dc { max-width: none; }
+
+/* ---- suggestions as a box (2026-11-02): members send, staff decide; no votes ---- */
+.sgx-panel { display: flex; flex-direction: column; gap: 12px; background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; min-width: 0; }
+.sgx-panel > h2, .sgx-lead h3 { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 14px; font-weight: 500; }
+.sgx-panel > h2 .muted, .sgx-lead h3 .muted { font-size: 12px; font-weight: 400; }
+.sgx-lead-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px 40px; flex-wrap: wrap; }
+.sgx-big b { display: block; font-size: 40px; line-height: 1.05; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.sgx-big span, .sgx-small span { color: var(--ink-3); font-size: 13px; }
+.sgx-small { display: flex; gap: 32px; }
+.sgx-small > * { display: flex; flex-direction: column; }
+.sgx-small b { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sgx-small b.accent { color: var(--accent); }
+.sgx-small a:hover span { color: var(--ink-2); }
+.sgx-lead .area svg { height: 140px; }
+.sgx-rows { display: flex; flex-direction: column; gap: 2px; }
+.sgx-row { display: flex; align-items: center; gap: 12px; padding: 8px; margin: 0 -8px; border-radius: 10px; transition: background-color 0.12s; }
+.sgx-row:hover { background: var(--hover); }
+.sgx-row > .avatar { width: 28px; height: 28px; }
+.sgx-row .grow { display: flex; flex-direction: column; min-width: 0; }
+.sgx-row strong { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sgx-row .grow > span { color: var(--ink-3); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sgx-status { flex: none; display: inline-flex; align-items: center; gap: 6px; width: 150px; font-size: 13px; color: var(--ink-2); }
+.sgx-status .dot { width: 7px; height: 7px; }
+.sgx-status.open .dot { background: var(--accent); }
+.sgx-status.warn .dot { background: var(--waiting); }
+.sgx-status.ok .dot { background: var(--live); }
+.sgx-status.bad .dot { background: var(--held); }
+.sgx-row .cm-actions .btn { min-width: 76px; }
+/* The one waiting longest: the sender, the text large, and the decision on it. */
+.sgx-focus { gap: 16px; }
+.sgx-who { display: flex; align-items: center; gap: 12px; }
+.sgx-who .avatar { width: 48px; height: 48px; }
+.sgx-who .grow { display: flex; flex-direction: column; }
+.sgx-who strong { font-size: 16px; font-weight: 600; }
+.sgx-who .grow > span { color: var(--ink-3); font-size: 13px; }
+.sgx-text { font-size: 18px; line-height: 1.5; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; max-width: 75ch; }
+.sgx-decide { display: flex; flex-direction: column; gap: 10px; padding-top: 16px; border-top: 1px solid var(--edge-1); }
+.sgx-decide textarea { min-height: 60px; }
+.sgx-buttons { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sgx-buttons .btn { min-width: 112px; }
+.sgx-senders { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.sgx-senders li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; }
+.sgx-senders .avatar { width: 28px; height: 28px; grid-row: span 2; }
+.sgx-senders .clip { font-weight: 500; }
+.sgx-senders .mono { color: var(--ink-2); }
+.sgx-track { grid-column: 2 / 4; height: 4px; border-radius: 2px; background: var(--solid); overflow: hidden; }
+.sgx-track i { display: block; height: 100%; border-radius: 2px; background: color-mix(in oklab, var(--data) 32%, transparent); }
+.sgx-track i.lead { background: var(--data); }
+@media (max-width: 920px) { .sgx-status { width: auto; } .sgx-row { flex-wrap: wrap; } }
 "#;

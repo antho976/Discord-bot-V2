@@ -1,6 +1,6 @@
 //! Pieces shared by the dashboard and the public pages: pet art tinted in its rarity's colour,
-//! the collection grid (rarest first in each category, with each pet's bonus and its Pet+ copies), giveaway cards and rows with the giver and winner's faces, horizontal
-//! bars, and the styles the core stylesheet doesn't have.
+//! the collection grid (rarest first in each category, with each pet's bonus and its Pet+ copies), giveaway cards and rows with the giver and winner's faces,
+//! and the styles the core stylesheet doesn't have.
 
 use std::collections::HashMap;
 
@@ -45,6 +45,10 @@ pub const STYLE: &str = r#"
 .pets-bonus { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-width: 100%; margin-top: 6px; font-size: 11.5px; line-height: 1.35; color: var(--ink-2); }
 .pets-tile.missing .pets-bonus { color: var(--ink-3); }
 .pets-tile .pets-plus { position: absolute; top: 8px; left: 9px; }
+/* On the dashboard an editor's tile opens the pet's edit form; "Edit" shows on hover and focus. */
+a.pets-tile { color: inherit; }
+.pets-tile-edit { position: absolute; left: 50%; bottom: 10px; translate: -50% 0; height: 24px; padding: 0 12px; display: inline-flex; align-items: center; border-radius: 12px; background: var(--solid); box-shadow: inset 0 0 0 1px var(--edge-2); font-size: 12px; font-weight: 500; color: var(--ink); opacity: 0; transition: opacity 0.15s; }
+a.pets-tile:hover .pets-tile-edit, a.pets-tile:focus-visible .pets-tile-edit { opacity: 1; }
 /* A server with its Pet+ gets a ring in the Pet+ colour. */
 .pets-tile.has-plus { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--plus) 38%, var(--edge-1)); }
 
@@ -128,15 +132,6 @@ pub const STYLE: &str = r#"
 .pets-cmt .grow span { color: var(--ink-3); font-size: 12px; }
 .pets-cmt .ini { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; flex: none; background: var(--control); color: var(--ink-2); font-size: 11px; font-weight: 700; }
 
-/* Horizontal bars for the stats: one colour each. */
-.hbars { display: flex; flex-direction: column; gap: 12px; }
-.hbar { --rar: var(--data); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px 12px; align-items: center; font-size: 13.5px; }
-.hbar .v { font-size: 12.5px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.hbar .track { display: block; grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--edge-1); overflow: hidden; }
-.hbar .fill { display: block; height: 100%; min-width: 3px; border-radius: 3px; background: var(--rar); transform-origin: left; animation: fill 1s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 200ms); }
-.pc { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
-.pc .avatar { width: 26px; height: 26px; }
-
 /* Section heads: the title and its one line, with an action at the right when there is one. */
 .pets-sec-head { display: flex; align-items: flex-end; gap: 10px 16px; flex-wrap: wrap; }
 .pets-sec-head > .block-head { flex: 1 1 320px; min-width: 0; }
@@ -168,7 +163,6 @@ pub const STYLE: &str = r#"
 .links .icon { color: var(--ink-3); }
 
 /* The public pages' spotlight. */
-.podium .step.p1 { grid-column: 2; grid-row: 1; } .podium .step.p2 { grid-column: 1; grid-row: 1; } .podium .step.p3 { grid-column: 3; grid-row: 1; }
 .pets-spot { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(220px, calc((100% - 36px) / 4)), 1fr)); gap: 12px; }
 .pets-star { --rar: var(--ink-2); position: relative; display: flex; align-items: center; gap: 16px; padding: 16px 18px; overflow: hidden; border-radius: var(--r-card); background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rar) 26%, var(--edge-1)); animation: pets-in 0.7s var(--spring) both; animation-delay: calc(var(--i, 0) * 90ms + 200ms); transition: transform 0.35s var(--ease); }
 .pets-star:hover { transform: translateY(-3px); }
@@ -278,11 +272,12 @@ pub fn collection_hero(groups: &[(String, Vec<&Pet>)], counts: &HashMap<String, 
 
 /// A pet on the collection grid: faded when the server has none, with how many it has (and how
 /// many are Pet+), its rarity and its bonus. `i` is its place in the page's wave of arrivals.
-pub fn collection_tile(p: &Pet, count: i64, plus: i64, i: usize) -> Markup {
+/// With `edit` (the dashboard, for editors) the tile opens the pet's edit form and says so.
+pub fn collection_tile(p: &Pet, count: i64, plus: i64, i: usize, edit: Option<&str>) -> Markup {
     let rarity = store::clean_rarity(&p.rarity);
     let bonus = if p.bonus.is_empty() { p.description.as_str() } else { p.bonus.as_str() };
-    html! {
-        div class={ "pets-tile r-" (rarity) @if count == 0 { " missing" } @if plus > 0 { " has-plus" } } style={ "--i:" (i) } data-tip=(tile_tip(p, count, plus)) {
+    let class = format!("pets-tile r-{rarity}{}{}{}", if count == 0 { " missing" } else { "" }, if plus > 0 { " has-plus" } else { "" }, if edit.is_some() { " editable" } else { "" });
+    let inner = html! {
             @if count > 0 { span.pets-n aria-label={ (count) " in the collection" } { "×" (count) } }
             @if plus > 0 { span.pets-plus aria-label={ (plus) " of them Pet+" } { "Pet+" @if plus > 1 { " ×" (plus) } } }
             span.pets-art aria-hidden="true" {
@@ -294,6 +289,12 @@ pub fn collection_tile(p: &Pet, count: i64, plus: i64, i: usize) -> Markup {
             span.pets-name { (p.name) }
             span.pets-rname { (store::rarity_label(rarity)) @if count == 0 { span.sr { ", not collected yet" } } }
             @if !bonus.is_empty() { span.pets-bonus { (bonus) } }
+            @if edit.is_some() { span.pets-tile-edit aria-hidden="true" { "Edit" } }
+    };
+    html! {
+        @match edit {
+            Some(href) => a class=(class) href=(href) style={ "--i:" (i) } data-tip=(tile_tip(p, count, plus)) aria-label={ "Edit " (p.name) } { (inner) },
+            None => div class=(class) style={ "--i:" (i) } data-tip=(tile_tip(p, count, plus)) { (inner) },
         }
     }
 }
@@ -336,23 +337,6 @@ pub fn pet_art(p: &Pet, size: &str) -> Markup {
 pub fn rarity(r: &str) -> Markup {
     let r = store::clean_rarity(r);
     html! { span class={ "rar r-" (r) } { (store::rarity_label(r)) } }
-}
-
-/// Horizontal bars: `(label, value, rarity or "")`, scaled to the largest. A rarity colours
-/// its bar; "" keeps the data colour.
-pub fn hbars(items: &[(Markup, i64, &str)]) -> Markup {
-    let max = items.iter().map(|(_, v, _)| *v).max().unwrap_or(0).max(1);
-    html! {
-        div.hbars {
-            @for (i, (label, v, r)) in items.iter().enumerate() {
-                div class={ "hbar" @if !r.is_empty() { " r-" (store::clean_rarity(r)) } } style={ "--i:" (i) } {
-                    span.clip { (label) }
-                    span.v { (text::num(*v)) }
-                    span.track { span.fill style={ "width:" (format!("{:.1}", *v as f64 * 100.0 / max as f64)) "%" } {} }
-                }
-            }
-        }
-    }
 }
 
 /// How a finished giveaway ended, as a word after a dot in its colour.
@@ -457,16 +441,6 @@ pub fn giveaway_row(ctx: &Ctx, guild: u64, g: &Giveaway, image: Option<&str>, ex
     }
 }
 
-/// A member: face and name.
-pub fn person(ctx: &Ctx, guild: u64, user: u64) -> Markup {
-    html! {
-        span.pc {
-            img.avatar src=(ctx.member_avatar(guild, user)) alt="" loading="lazy";
-            span.clip { (ctx.display_name(guild, user)) }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,10 +471,12 @@ mod tests {
     #[test]
     fn tiles_show_the_bonus_and_pet_plus() {
         let p = pet("rift-slug", "epic");
-        let html = collection_tile(&p, 3, 1, 0).into_string();
+        let html = collection_tile(&p, 3, 1, 0, None).into_string();
         assert!(html.contains("has-plus") && html.contains("r-epic") && html.contains("+25 Lv for all Talents"));
         assert_eq!(tile_tip(&p, 3, 1), "Epic. +25 Lv for all Talents. Pet+: +35 Lv for all Talents. 1 of the 3 are Pet+");
-        assert!(!collection_tile(&p, 0, 0, 0).into_string().contains("pets-plus"));
+        assert!(!collection_tile(&p, 0, 0, 0, None).into_string().contains("pets-plus"));
+        let editable = collection_tile(&p, 0, 0, 0, Some("/g/1/pets/catalog?edit=rift-slug")).into_string();
+        assert!(editable.starts_with("<a ") && editable.contains("Edit rift-slug") && editable.contains("pets-tile-edit"));
     }
 
     #[test]

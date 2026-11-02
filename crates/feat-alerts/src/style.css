@@ -1,6 +1,29 @@
-/* Stream alerts. The streams hue (var(--hue)) lights the schedule and the channel; Discord's own
-   colours draw the previews of what the bot posts; Twitch's red marks a live stream and
-   YouTube's red its play button. */
+/* Stream alerts, in the house style: no boxes around what you only read, the subject's own
+   colours where they belong (Discord's in the previews, Twitch's red on a live stream, YouTube's
+   on its play button), neutral everywhere else. */
+/* The answer: the channel and its stream on the left, the week on the right. */
+.sa-top { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 40px 56px; align-items: start; }
+.sa-hours .rail-block { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto auto; gap: 4px 32px; align-items: end; }
+.sa-hours h2 { grid-column: 1; display: flex; gap: 8px; align-items: baseline; font-size: 14px; font-weight: 500; }
+.sa-hours .sa-big { grid-column: 1; }
+.sa-hours .mini-bars { grid-column: 2; grid-row: 1 / span 3; }
+.sa-hours .muted.small { grid-column: 1; }
+.sa-side { display: flex; flex-direction: column; gap: 32px; min-width: 0; }
+.sa-side h2, .rail h2 { font-size: 14px; font-weight: 500; letter-spacing: 0; }
+.sa-side .rail-block + .rail-block { margin-top: 0; padding-top: 0; border-top: 0; }
+/* Rails on these tabs sit on the page, like the overview's right column. */
+.rail { background: none; box-shadow: none; padding: 0; gap: 16px; }
+.rail .rail-block + .rail-block { margin-top: 0; border-top: 0; }
+@media (max-width: 1180px) { .sa-top { grid-template-columns: minmax(0, 1fr); } }
+/* One preview at a time, picked above it. */
+.compose-preview:has(input[value="ended"]:checked) .sa-pv-live, .compose-preview:has(input[value="live"]:checked) .sa-pv-ended { display: none; }
+.sa-pv { display: flex; flex-direction: column; gap: 10px; }
+/* Not connected: the pill opens how to connect. */
+.sa-setup > summary.status { cursor: pointer; gap: 7px; }
+.sa-setup > summary.status .icon { width: 12px; height: 12px; color: var(--ink-3); transition: transform 0.15s var(--ease); }
+.sa-setup[open] > summary.status .icon { transform: rotate(180deg); }
+.sa-setup .pop-body { width: 360px; gap: 8px; }
+.sa-setup code { color: var(--ink); background: var(--control); padding: 1px 5px; border-radius: 4px; font-size: 11.5px; overflow-wrap: anywhere; }
 .sa-main { min-width: 0; gap: 30px; }
 @media (max-width: 920px) { .sa-main { gap: 24px; } }
 .sa-sechead { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; }
@@ -12,13 +35,13 @@
 .sa-readings .reading { flex: 1 1 150px; }
 
 /* ---- setup notes: what's missing and how to fix it ---- */
-.sa-note { display: flex; gap: 14px; align-items: flex-start; padding: 14px 18px 14px 14px; border-radius: 16px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); font-size: 13px; color: var(--ink-2); }
-.sa-note .need-icon { width: 36px; height: 36px; border-radius: 12px; }
+.sa-note { display: flex; gap: 12px; align-items: flex-start; font-size: 13px; color: var(--ink-2); }
+.sa-note .need-icon { width: 28px; height: 28px; border-radius: 8px; }
 .sa-note strong { display: block; color: var(--ink); font-size: 13.5px; font-weight: 600; margin-bottom: 3px; }
 .sa-note p { max-width: 74ch; }
 .sa-note p + p { margin-top: 5px; }
 .sa-note code { color: var(--ink); background: var(--control); padding: 1px 5px; border-radius: 5px; font-size: 11.5px; overflow-wrap: anywhere; }
-.sa-note.warn { background: var(--well); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 30%, transparent); }
+.sa-note.warn { background: none; }
 .sa-note.warn .need-icon { background: color-mix(in oklab, var(--waiting) 18%, transparent); color: var(--waiting); }
 
 /* ---- small tags: where a post goes and who it pings ---- */
@@ -29,24 +52,24 @@
 .sa-tag.none { background: transparent; box-shadow: inset 0 0 0 1px var(--edge-2); color: var(--ink-3); }
 
 /* ---- the channel, at the top of the Twitch tab ---- */
-.sa-chan { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 24px; align-items: center; padding: 14px 22px 14px 14px; border-radius: 20px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1), inset 0 1px 0 rgba(255, 255, 255, 0.04); }
-.sa-chan .stream-card { border-radius: 13px; }
+.sa-chan { display: grid; grid-template-columns: minmax(0, 320px) minmax(0, 1fr); gap: 24px; align-items: center; }
+.sa-chan .stream-card { border-radius: 12px; box-shadow: none; }
 .sa-chan.live .stream-card { box-shadow: inset 0 0 0 1px rgba(235, 4, 0, 0.5); }
 .sa-chan-text { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .sa-who { display: flex; align-items: center; gap: 13px; min-width: 0; }
-.sa-who .avatar, .sa-who .sa-letter { width: 50px; height: 50px; box-shadow: 0 0 0 2px var(--page), 0 0 0 4px color-mix(in oklab, var(--hue) 75%, transparent); }
+.sa-who .avatar, .sa-who .sa-letter { width: 48px; height: 48px; }
 .sa-chan.live .sa-who .avatar, .sa-chan.live .sa-who .sa-letter { box-shadow: 0 0 0 2px var(--page), 0 0 0 4px #eb0400; }
 .sa-who > div { min-width: 0; }
-.sa-who strong { display: block; font-size: 19px; font-weight: 650; letter-spacing: -0.025em; line-height: 1.2; }
+.sa-who strong { display: block; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
 .sa-who a { color: var(--ink-3); font-size: 12.5px; }
 .sa-who a:hover { color: var(--ink); }
 .sa-state { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); flex-wrap: wrap; }
 .sa-others { font-size: 12.5px; color: var(--ink-3); }
-.sa-nums { display: grid; grid-template-columns: repeat(3, auto); justify-content: start; gap: 10px 32px; padding-top: 14px; border-top: 1px solid var(--edge-1); }
+.sa-nums { display: grid; grid-template-columns: repeat(3, auto); justify-content: start; gap: 10px 40px; padding-top: 4px; }
 .sa-nums div { display: flex; flex-direction: column; gap: 1px; }
-.sa-nums b { font-size: 24px; font-weight: 650; letter-spacing: -0.035em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.sa-nums b { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .sa-nums span { font-size: 12px; color: var(--ink-3); }
-.sa-letter { display: grid; place-items: center; border-radius: 50%; flex: none; background: linear-gradient(145deg, color-mix(in oklab, var(--hue), white 20%), color-mix(in oklab, var(--hue), black 30%)); color: #0b0b10; font-weight: 700; text-transform: uppercase; }
+.sa-letter { display: grid; place-items: center; border-radius: 50%; flex: none; background: var(--solid); color: var(--ink-2); font-weight: 700; text-transform: uppercase; }
 
 /* ---- Discord, drawn as Discord draws it ---- */
 .sa-play { position: absolute; inset: 0; margin: auto; display: grid; place-items: center; width: 56px; height: 40px; border-radius: 12px; background: #ff0033; color: #fff; box-shadow: none; transition: transform 0.3s var(--spring); }
@@ -55,43 +78,43 @@
 .dp-media:hover .sa-play { transform: scale(1.08); }
 
 /* ---- the week: a day per column, today ringed, the next stream lit ---- */
-.sa-next { display: flex; align-items: center; gap: 22px; padding: 18px 26px 18px 18px; border-radius: 20px; background: linear-gradient(180deg, rgba(243, 242, 248, 0.045), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 24%, transparent); }
-.sa-cal { flex: none; width: 78px; display: flex; flex-direction: column; align-items: center; border-radius: 17px; overflow: hidden; background: var(--solid); box-shadow: inset 0 0 0 1px var(--edge-2), 0 14px 28px -12px rgba(0, 0, 0, 0.85); animation: pop-in 0.6s var(--spring) both 0.15s; }
-.sa-cal .m { align-self: stretch; text-align: center; padding: 4px 0 3px; background: var(--hue); color: #0b0b10; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
-.sa-cal b { font-size: 31px; font-weight: 650; line-height: 1.15; padding-top: 3px; letter-spacing: -0.035em; font-variant-numeric: tabular-nums; }
+.sa-next { display: flex; align-items: center; gap: 22px; }
+.sa-cal { flex: none; width: 72px; display: flex; flex-direction: column; align-items: center; border-radius: 14px; overflow: hidden; background: var(--raised); }
+.sa-cal .m { align-self: stretch; text-align: center; padding: 4px 0 3px; background: var(--solid); color: var(--ink-2); font-size: 11px; font-weight: 600; }
+.sa-cal b { font-size: 28px; font-weight: 600; line-height: 1.15; padding-top: 3px; letter-spacing: -0.035em; font-variant-numeric: tabular-nums; }
 .sa-cal .d { font-size: 11.5px; color: var(--ink-3); padding-bottom: 8px; }
 .sa-next .grow { display: flex; flex-direction: column; gap: 4px; }
-.sa-next h2 { font-size: 21px; letter-spacing: -0.03em; line-height: 1.2; }
+.sa-next h2 { font-size: 20px; letter-spacing: -0.01em; line-height: 1.2; }
 .sa-next p { color: var(--ink-2); font-size: 13.5px; }
 .sa-next .sa-route { margin-top: 6px; }
 .sa-left { flex: none; display: flex; flex-direction: column; align-items: flex-end; text-align: right; }
-.sa-left b { font-size: 38px; font-weight: 650; letter-spacing: -0.04em; line-height: 1.05; font-variant-numeric: tabular-nums; }
-.sa-left span { color: var(--ink-3); font-size: 12.5px; }
+.sa-left b { font-size: 34px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.sa-left span { color: var(--ink-3); font-size: 13px; }
 .sa-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
-.sa-day { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 138px; padding: 10px; border-radius: 15px; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); animation: sa-day-in 0.6s var(--ease) both; animation-delay: calc(var(--i, 0) * 55ms + 160ms); }
+.sa-day { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 138px; padding: 10px; border-radius: 12px; }
 .sa-day-h { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; color: var(--ink-3); font-size: 12px; }
 .sa-day-h b { font-size: 15px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.sa-day.today { background: var(--veil); box-shadow: inset 0 0 0 1px var(--edge-3); }
+.sa-day.today { background: var(--raised); }
 .sa-day.today .sa-day-h, .sa-day.today .sa-day-h b { color: var(--ink); }
-.sa-day .today-tag { font-size: 10.5px; font-weight: 600; color: var(--hue); }
-.sa-slot { display: flex; flex-direction: column; gap: 2px; padding: 8px 9px 9px; border-radius: 10px; background: color-mix(in oklab, var(--hue) 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 22%, transparent); font-size: 12.5px; min-width: 0; transition: transform 0.3s var(--ease), box-shadow 0.25s; }
-.sa-slot:hover { transform: translateY(-2px); }
-.sa-slot .t { font: 600 11.5px var(--mono); color: var(--hue); }
+.sa-day .today-tag { font-size: 11px; font-weight: 500; color: var(--ink-2); }
+.sa-slot { display: flex; flex-direction: column; gap: 2px; padding: 8px 9px 9px; border-radius: 8px; background: var(--solid); font-size: 12.5px; min-width: 0; }
+.sa-slot .t { font: 500 11.5px var(--mono); color: var(--ink-2); }
 .sa-slot .w { color: var(--ink); line-height: 1.3; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .sa-slot .g { color: var(--ink-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sa-slot.next { background: linear-gradient(160deg, color-mix(in oklab, var(--hue) 42%, transparent), color-mix(in oklab, var(--hue) 14%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 60%, transparent); }
-.sa-slot.next .t { color: var(--ink); }
+/* The next stream is the one lit: data colour, not chrome. */
+.sa-slot.next { background: color-mix(in oklab, var(--data) 18%, transparent); }
+.sa-slot.next .t { color: var(--data); }
 .sa-slot.next .g { color: var(--ink-2); }
-.sa-slot.past { background: var(--control); box-shadow: none; }
+.sa-slot.past { background: var(--raised); }
 .sa-slot.past .t { color: var(--ink-3); }
 .sa-slot.past .w { color: var(--ink-2); }
-.sa-slot.off { background: transparent; box-shadow: inset 0 0 0 1px var(--edge-2); }
+.sa-slot.off { background: transparent; box-shadow: inset 0 0 0 1px var(--edge-1); }
 .sa-slot.off .t, .sa-slot.off .g { color: var(--ink-3); }
 .sa-slot.off .w { color: var(--ink-3); text-decoration: line-through; }
 .sa-none { margin-top: auto; color: var(--ink-3); font-size: 12px; }
 
 /* ---- rows: coming up, and streams on the Stats tab ---- */
-.sa-rows { display: flex; flex-direction: column; gap: 8px; }
+.sa-rows { display: flex; flex-direction: column; gap: 2px; }
 /* Wide columns: the stats charts pair up, the stream list goes two across, the channel card's
    picture grows. */
 .sa-pair { display: grid; gap: 30px; }
@@ -101,22 +124,22 @@
   .sa-rows.sa-streams { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; }
   .sa-chan { grid-template-columns: minmax(0, 400px) minmax(0, 1fr); }
 }
-.sa-row { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 9px 14px 9px 9px; border-radius: 14px; background: linear-gradient(90deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.012)); box-shadow: inset 0 0 0 1px var(--edge-1); transition: transform 0.35s var(--ease), box-shadow 0.25s, background 0.25s; }
-.sa-row:hover { transform: translateX(3px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); background: linear-gradient(90deg, rgba(243, 242, 248, 0.06), rgba(243, 242, 248, 0.02)); }
+.sa-row { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 8px; margin: 0 -8px; border-radius: 10px; transition: background-color 0.12s; }
+.sa-row:hover { background: var(--hover); }
 .sa-row .grow { display: flex; flex-direction: column; gap: 1px; }
-.sa-row .grow strong { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-row .grow strong { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sa-row .grow span { font-size: 12.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sa-row.off .grow strong { color: var(--ink-3); text-decoration: line-through; }
-.sa-date { flex: none; width: 48px; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 13px; background: color-mix(in oklab, var(--hue) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 22%, transparent); }
-.sa-date span { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--hue); line-height: 1.2; }
-.sa-date b { font-size: 18px; font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.sa-date { flex: none; width: 44px; height: 44px; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 10px; background: var(--raised); }
+.sa-date span { font-size: 10px; font-weight: 600; color: var(--ink-3); line-height: 1.2; }
+.sa-date b { font-size: 17px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .sa-at { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; font-size: 12.5px; }
 .sa-at b { font: 600 12.5px var(--mono); }
 .sa-at span { color: var(--ink-3); font-size: 12px; }
 .sa-vt { position: relative; flex: none; width: 112px; aspect-ratio: 16 / 9; border-radius: 9px; overflow: hidden; background: var(--control); display: grid; place-items: center; color: var(--ink-3); box-shadow: inset 0 0 0 1px var(--edge-1); }
 .sa-vt img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.8s var(--ease); }
 .sa-row:hover .sa-vt img { transform: scale(1.08); }
-.sa-vt .icon { width: 18px; height: 18px; color: var(--hue); }
+.sa-vt .icon { width: 18px; height: 18px; color: var(--ink-3); }
 .sa-vt .live-tag { top: 5px; left: 5px; height: 17px; padding: 0 6px; font-size: 9.5px; border-radius: 4px; gap: 4px; }
 .sa-vt .live-tag::before { width: 5px; height: 5px; }
 .sa-len { flex: none; width: 86px; text-align: right; font: 12.5px var(--mono); color: var(--ink-2); }
@@ -162,8 +185,8 @@
 .sa-seg .what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sa-seg .when { font: 12px var(--mono); white-space: nowrap; }
 .sa-seg.past { color: var(--ink-3); }
-.sa-seg.on { background: linear-gradient(90deg, color-mix(in oklab, var(--hue) 22%, transparent), color-mix(in oklab, var(--hue) 6%, transparent)); color: var(--ink); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 30%, transparent); }
-.sa-seg.on .day { color: var(--hue); font-weight: 600; }
+.sa-seg.on { background: var(--solid); color: var(--ink); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06); }
+.sa-seg.on .day { color: var(--ink); font-weight: 500; }
 .sa-seg.on .when { color: var(--ink); }
 .sa-seg.off .what { text-decoration: line-through; color: var(--ink-3); }
 .sa-seg.off .when { font-family: var(--sans); color: var(--ink-3); }
@@ -172,20 +195,19 @@
 .sa-chip-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; flex: none; }
 .sa-chip-icon .icon { width: 15px; height: 15px; }
 .sa-chip-icon.yt { background: #ff0033; color: #fff; box-shadow: none; }
-.sa-chip-icon.hue { background: color-mix(in oklab, var(--hue) 16%, transparent); color: var(--hue); }
+.sa-chip-icon.hue { background: var(--solid); color: var(--ink-2); }
 .sa-cat { display: flex; flex-direction: column; gap: 6px; }
 .sa-cat + .sa-cat { margin-top: 4px; }
 .sa-cat > div { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
 .sa-cat > div span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sa-cat .mono { color: var(--ink-3); }
 .sa-cat .meter > span { animation-delay: calc(var(--i, 0) * 80ms + 300ms); }
-.sa-more { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 120px; padding: 18px; border-radius: 14px; text-align: center; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); animation: sa-tile-in 0.65s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms + 140ms); transition: transform 0.35s var(--ease), box-shadow 0.25s; }
-.sa-more:hover { transform: translateY(-2px); box-shadow: inset 0 0 0 1px var(--edge-2), var(--shadow-lift); }
-.sa-more .need-icon { width: 38px; height: 38px; margin-bottom: 4px; transition: transform 0.35s var(--spring); }
-.sa-more:hover .need-icon { transform: scale(1.08) rotate(-6deg); }
-.sa-more strong { font-size: 13.5px; font-weight: 600; }
+.sa-more { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 120px; padding: 18px; border-radius: 12px; text-align: center; background: var(--raised); transition: background-color 0.12s; }
+.sa-more:hover { background: var(--solid); }
+.sa-more .need-icon { width: 32px; height: 32px; margin-bottom: 4px; }
+.sa-more strong { font-size: 14px; font-weight: 500; }
 .sa-more span:last-child { font-size: 12px; color: var(--ink-3); }
-.sa-big { font-size: 30px; font-weight: 650; letter-spacing: -0.035em; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.sa-big { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .sa-rail-line { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
 .sa-claimers { display: flex; flex-direction: column; gap: 2px; }
 
@@ -198,8 +220,7 @@
 }
 @media (max-width: 920px) {
   .wide-only { display: none !important; }
-  .sa-chan { grid-template-columns: 1fr; padding: 12px; gap: 16px; }
-  .sa-chan-text { padding: 0 4px 4px; }
+  .sa-chan { grid-template-columns: 1fr; gap: 16px; }
   .sa-next { flex-wrap: wrap; padding: 16px; gap: 14px 16px; }
   .sa-next .grow { flex: 1 1 180px; }
   .sa-left { flex-direction: row; align-items: baseline; gap: 8px; width: 100%; padding-top: 12px; border-top: 1px solid var(--edge-1); }
@@ -230,3 +251,189 @@
   .sa-row { gap: 12px; padding-right: 10px; }
 }
 .sa-after { margin-top: 12px; }
+
+/* ---- panels (2026-11-02, owner: unboxed felt "all over the place") ----
+   On these pages every section and side block sits in one kind of bordered panel, so each group
+   reads as one thing. One panel style, never a panel inside a panel. */
+.page-body > section.block, .page-body > section.sa-next, .sa-main > section.block, .sa-pair > section.block,
+.sa-top, .compose-preview, .compose > form.settings, .rail > .rail-block, .sa-readings, .page-body > .sa-note {
+  background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px;
+}
+/* The Twitch tab's answer is one panel in three columns: the picture, who and the numbers, the week. */
+.sa-top { grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 0; align-items: stretch; }
+.sa-top > .sa-main { padding-right: 24px; gap: 16px; }
+.sa-top > .sa-side { padding-left: 24px; border-left: 1px solid var(--edge-1); gap: 24px; }
+/* The numbers wrap as whole items; the bars take what's left, never less than 120 px. */
+.sa-nums { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 32px; }
+.sa-nums b { white-space: nowrap; }
+.sa-nums span { white-space: nowrap; }
+.sa-nums-bars { flex: 1 1 120px; max-width: 200px; min-width: 120px; padding-bottom: 4px; }
+@media (max-width: 1600px) { .sa-chan { grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 20px; } }
+.sa-nums-bars .mini-bars svg { height: 36px; }
+@media (max-width: 1180px) {
+  .sa-top { grid-template-columns: minmax(0, 1fr); }
+  .sa-top > .sa-main { padding-right: 0; }
+  .sa-top > .sa-side { padding: 20px 0 0; margin-top: 20px; border-left: 0; border-top: 1px solid var(--edge-1); }
+}
+/* Settings: the form is the panel, its Save inside it at the bottom right. */
+.compose > form.settings .block-head h2 { font-size: 14px; font-weight: 500; }
+.compose > form.settings .card { background: none; border: 0; padding: 0; border-radius: 0; }
+.compose > form.settings .save-bar { padding-top: 4px; }
+/* The preview takes a column sized to the preview, not half the page. */
+@container col (min-width: 1000px) {
+  .compose:has(> .compose-preview) { grid-template-columns: minmax(0, 1fr) 500px; }
+}
+.compose { gap: 16px; align-items: start; }
+.compose-preview { gap: 12px; }
+.sa-main { gap: 16px; }
+.with-rail { gap: 16px; }
+.page-body > .sa-top + .compose { margin-top: 0; }
+
+/* Discord previews draw at three quarters of their size: enough to read the post, not a second page. */
+.dp { zoom: 0.75; }
+.compose-preview .dp { max-width: none; }
+/* Inside a panel, today's column is outlined rather than filled (the fill is the panel's). */
+.sa-day.today { background: none; box-shadow: inset 0 0 0 1px var(--edge-2); }
+
+/* ---- the stream, as a picture and a number (2026-11-02, owner: "flat and plain") ----
+   These pages take Twitch's own purple for their data and live state; the server's accent stays
+   for Save and for what needs you. The stream's picture sits behind who is live, and one number
+   leads: how many are watching, or the last stream's average. */
+main.page[data-hue="streams"] { --data: #a970ff; --data-dim: rgba(169, 112, 255, 0.38); --data-wash: rgba(169, 112, 255, 0.16); }
+.sa-top { position: relative; overflow: hidden; isolation: isolate; }
+.sa-top > .sa-main { position: relative; isolation: isolate; }
+.sa-bg { position: absolute; z-index: -1; top: -18px; left: -20px; right: 0; width: calc(100% + 20px); height: 250px; object-fit: cover; object-position: center 35%; opacity: 0.6; -webkit-mask-image: linear-gradient(180deg, #000 20%, transparent); mask-image: linear-gradient(180deg, #000 20%, transparent); pointer-events: none; }
+.sa-hero { display: flex; align-items: flex-end; gap: 16px; padding-top: 96px; }
+.sa-face { flex: none; border-radius: 50%; }
+.sa-face .avatar, .sa-hero .sa-letter { width: 64px !important; height: 64px !important; box-shadow: 0 0 0 3px var(--raised); }
+.sa-top.live .sa-face .avatar { box-shadow: 0 0 0 3px var(--raised), 0 0 0 5px var(--data); }
+.sa-name { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.2; }
+.sa-hero .sa-state { margin-top: 4px; color: var(--ink); }
+.sa-lead { flex: none; display: flex; flex-direction: column; align-items: flex-end; text-align: right; }
+.sa-lead b { font-size: 40px; line-height: 1.05; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.sa-lead span { color: var(--ink-2); font-size: 13px; }
+.sa-route-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.sa-route-row .btn .icon { width: 13px; height: 13px; }
+.sa-chart { display: flex; flex-direction: column; gap: 8px; }
+.sa-chart h3 { margin: 0; display: flex; gap: 8px; align-items: baseline; font-size: 14px; font-weight: 500; }
+.sa-chart h3 .muted { font-size: 12px; font-weight: 400; }
+.sa-chart .area svg { height: 150px; }
+.sa-top .sa-nums { padding-top: 0; }
+.sa-top .sa-nums b { font-size: 18px; }
+/* The next stream in the week is lit in the page's purple. */
+.sa-seg.on { background: var(--data-wash); box-shadow: none; }
+.sa-seg.on .day, .sa-seg.on .when { color: var(--data); }
+@media (max-width: 920px) {
+  .sa-hero { flex-wrap: wrap; padding-top: 64px; }
+  .sa-lead { align-items: flex-start; text-align: left; width: 100%; }
+  .sa-bg { height: 200px; }
+}
+/* Under the week: the four numbers two by two, then the twelve weekly bars across. */
+.sa-side .sa-nums { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; padding-top: 20px; border-top: 1px solid var(--edge-1); }
+.sa-side .sa-nums b { font-size: 18px; }
+.sa-side .sa-nums-bars { grid-column: 1 / -1; max-width: none; }
+/* The lit day in the week: white text on the page's purple, and the same gap on both sides of
+   the column (the row reaches 8 px past the text, the column keeps 20 px from either edge). */
+.sa-top > .sa-side { padding-left: 20px; }
+.sa-seg.on { background: color-mix(in oklab, var(--data) 24%, transparent); }
+.sa-seg.on .day, .sa-seg.on .what, .sa-seg.on .when { color: var(--ink); }
+
+/* ---- sub-tabs (Schedule, Clips, YouTube, Stats): the same panels and purple, no lead number ---- */
+/* Schedule: the next stream's date wears the purple; the countdown is read, not shouted. */
+.sa-cal .m { background: var(--data); color: #1a0d2e; }
+.sa-next .sa-left b { font-size: 24px; }
+.sa-next h2 { font-size: 18px; }
+/* Scheduled slots are data: tinted purple, the next one stronger; past ones grey, cancelled ones
+   outlined and struck. */
+.sa-slot { background: color-mix(in oklab, var(--data) 12%, transparent); }
+.sa-slot .t { color: var(--data); }
+.sa-slot.next { background: color-mix(in oklab, var(--data) 28%, transparent); }
+.sa-slot.next .t { color: var(--ink); }
+.sa-slot.past { background: var(--solid); }
+.sa-slot.past .t { color: var(--ink-3); }
+.sa-date span { color: var(--data); }
+.sa-row.off .sa-date span { color: var(--ink-3); }
+/* Full-width settings: each group beside its preview, the preview in its own sized column. */
+.page-body > form.settings { gap: 16px; }
+.page-body > form.settings > fieldset { gap: 16px; }
+@container col (min-width: 1000px) {
+  .page-body > form.settings .compose:has(> .compose-preview) { grid-template-columns: minmax(0, 1fr) 500px; }
+}
+.page-body > form.settings .compose > section.block:not(.compose-preview) { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; }
+.page-body > form.settings .compose > section.block:not(.compose-preview) .card { background: none; border: 0; padding: 0; }
+/* Stats: the two charts side by side end at the same height. */
+.sa-pair { align-items: stretch !important; }
+/* Clips and YouTube: the settings with the side blocks under them (two across) on the left, the
+   preview in its own column on the right, so both columns end together. */
+.with-rail:has(.compose-preview) { grid-template-columns: minmax(0, 1fr) 500px; grid-template-areas: "form preview" "rail preview"; align-items: start; }
+.with-rail:has(.compose-preview) > .sa-main, .with-rail:has(.compose-preview) > .sa-main > .compose { display: contents; }
+.with-rail:has(.compose-preview) .compose-preview { grid-area: preview; }
+.with-rail:has(.compose-preview) form.settings { grid-area: form; }
+.with-rail:has(.compose-preview) > .rail { grid-area: rail; position: static; display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; align-items: start; }
+@media (max-width: 1180px) {
+  .with-rail:has(.compose-preview) { grid-template-columns: minmax(0, 1fr); grid-template-areas: "form" "preview" "rail"; }
+}
+/* Clippers without a face get a purple letter, so the list isn't grey on grey. */
+.rail .sa-letter { background: var(--data-wash); color: var(--data); }
+/* Galleries (Clips, YouTube) are a strip of equal tiles about 200 px wide, not a wall: on a
+   1080p screen they take one short row and leave the page for the rest. No double tile for the
+   newest; it is a sub-page. */
+.sa-gallery { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.sa-gallery > .sa-tile.big { grid-column: auto; grid-row: auto; aspect-ratio: 16 / 9; }
+.sa-gallery > .sa-more { grid-column: auto !important; min-height: 0; aspect-ratio: 16 / 9; padding: 12px; }
+.sa-tile.big .stream-cap { padding: 24px 10px 8px; gap: 1px; }
+.sa-tile .stream-cap { padding: 24px 10px 8px; }
+.sa-tile.big .stream-cap strong, .sa-tile .stream-cap strong { font-size: 12.5px; letter-spacing: 0; line-height: 1.3; }
+.sa-tile.big .stream-cap span, .sa-tile .stream-cap span { font-size: 11px; }
+.sa-tile.big .sa-play, .sa-tile .sa-play { opacity: 0; width: 44px; height: 32px; border-radius: 10px; }
+.sa-tile:hover .sa-play { opacity: 1; }
+.sa-tile.big .sa-play.glass, .sa-tile .sa-play.glass { width: 40px; height: 40px; }
+.sa-tile.big .sa-glass, .sa-tile .sa-glass { top: 6px; height: 20px; padding: 0 6px; font-size: 10.5px; }
+.sa-tile.big .sa-glass.l, .sa-tile .sa-glass.l { left: 6px; }
+.sa-tile.big .sa-glass.r, .sa-tile .sa-glass.r { right: 6px; }
+.sa-tile.big .sa-glass .avatar, .sa-tile .sa-glass .avatar { width: 16px; height: 16px; }
+/* Clips and YouTube: the numbers ride in the gallery panel's head; below, the people on the left,
+   the settings, and the preview in its own column. */
+.sa-headstats { display: flex; align-items: flex-end; gap: 12px 28px; flex-wrap: wrap; }
+.sa-headstats > div { display: flex; flex-direction: column; }
+.sa-headstats b { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.sa-headstats span { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.sa-headstats .status { align-self: center; }
+.sa-channels { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; }
+.sa-lower { display: grid; grid-template-columns: minmax(0, 1fr) 500px; grid-template-areas: "form preview"; gap: 16px; align-items: start; }
+.sa-lower:has(> .sa-leftcol) { grid-template-columns: 280px minmax(0, 1fr) 500px; grid-template-areas: "left form preview"; }
+.sa-lower > .sa-leftcol { grid-area: left; }
+.sa-lower > form.settings { grid-area: form; }
+.sa-lower > .compose-preview { grid-area: preview; }
+.sa-lower > section.block, .sa-lower > form.settings { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; }
+.sa-lower > form.settings .card { background: none; border: 0; padding: 0; }
+.sa-lower > form.settings .block-head h2, .sa-leftcol h2 { font-size: 14px; font-weight: 500; }
+.sa-leftcol { gap: 10px; }
+/* In the narrower settings column a row's label sits above its control. */
+.sa-lower > form.settings .row { grid-template-columns: minmax(0, 1fr) minmax(160px, 46%); gap: 8px 16px; }
+@media (max-width: 1500px) {
+  .sa-lower:has(> .sa-leftcol) { grid-template-columns: minmax(0, 1fr) 440px; grid-template-areas: "form preview" "left preview"; }
+  .sa-lower { grid-template-columns: minmax(0, 1fr) 440px; }
+}
+@media (max-width: 1100px) {
+  .sa-lower, .sa-lower:has(> .sa-leftcol) { grid-template-columns: minmax(0, 1fr); grid-template-areas: "form" "preview" "left"; }
+}
+.sa-leftcol h2 { display: flex; align-items: baseline; gap: 8px; }
+/* Clips and YouTube, final placement: the gallery and the settings on the left; on the right the
+   numbers and the people above the preview. Both columns end together. */
+.sa-split { display: grid; grid-template-columns: minmax(0, 1fr) 500px; gap: 16px; align-items: start; }
+.sa-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.sa-col > section.block, .sa-col > form.settings { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; }
+.sa-col > form.settings .card { background: none; border: 0; padding: 0; }
+.sa-col > form.settings .block-head h2 { font-size: 14px; font-weight: 500; }
+.sa-sidepanel { gap: 16px; }
+.sa-sidepanel .sa-headstats { justify-content: space-between; }
+.sa-people { display: flex; flex-direction: column; gap: 8px; padding-top: 16px; border-top: 1px solid var(--edge-1); }
+.sa-people h2 { display: flex; align-items: baseline; gap: 8px; font-size: 14px; font-weight: 500; }
+.sa-sidepanel .sa-channels { padding-top: 16px; border-top: 1px solid var(--edge-1); }
+.sa-split .sa-gallery { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+@media (max-width: 1300px) { .sa-split { grid-template-columns: minmax(0, 1fr) 420px; } }
+@media (max-width: 1000px) { .sa-split { grid-template-columns: minmax(0, 1fr); } }
+/* Small tiles: the caption is two single lines (who and when, then the title), each cut with an
+   ellipsis, so it never climbs into the badge on top. */
+.sa-split .sa-tile .stream-cap span, .sa-split .sa-tile .stream-cap strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-line-clamp: unset; }

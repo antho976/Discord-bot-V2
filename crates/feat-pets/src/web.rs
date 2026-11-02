@@ -96,12 +96,13 @@ const DASH_CSS: &str = r#"
 .pets-entry .pets-li-title a:hover strong { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--edge-3); }
 /* Rows carry two steppers, so they need room: one column until the page is wide. */
 .pets-list.cat { grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr)); column-gap: 28px; }
-.pets-steppers { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.pets-steppers { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
 .pets-stepper { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border-radius: var(--r-key); background: var(--control); }
 .pets-stepper .lbl { min-width: 4.2ch; padding: 0 4px 0 6px; font-size: 11.5px; font-weight: 600; color: var(--ink-3); }
 .pets-stepper.plus .lbl { color: var(--plus); }
 .pets-stepper .btn { width: 26px; height: 26px; padding: 0; border-radius: 7px; font-size: 15px; }
 .pets-stepper > span { min-width: 3ch; text-align: center; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pets-edit-btn { height: 32px; min-width: 64px; justify-content: center; }
 .pets-owned { font-size: 13px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .pets-li.editing { display: block; grid-column: 1 / -1; padding: 18px 0 20px; scroll-margin-top: 90px; }
 .pets-li.editing::before { opacity: 0.35; background: var(--hover); }
@@ -304,10 +305,15 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
                 (view::collection_hero(&groups, &counts, week))
                 @for (g, (name, list)) in groups.iter().enumerate() {
                     @let have = list.iter().filter(|p| counts.contains_key(&p.id)).count();
-                    (ui::section(name, Some(&format!("{have} of {} collected{}", list.len(), if g == 0 { ". Faded ones aren't in the collection yet." } else { "" })), html! {
+                    (ui::section(name, Some(&format!("{have} of {} collected{}", list.len(), match (g, page.can_edit()) {
+                        (0, true) => ". Faded ones aren't in the collection yet. Click a pet to edit its rarity, picture or bonuses.",
+                        (0, false) => ". Faded ones aren't in the collection yet.",
+                        _ => "",
+                    })), html! {
                         div.pets-grid {
                             @for (k, p) in list.iter().enumerate() {
-                                (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0), plus.get(&p.id).copied().unwrap_or(0), starts[g] + k))
+                                @let href = page.can_edit().then(|| format!("{}?edit={}#pet-{}", page.path("pets/catalog"), p.id, p.id));
+                                (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0), plus.get(&p.id).copied().unwrap_or(0), starts[g] + k, href.as_deref()))
                             }
                         }
                     }))
@@ -689,7 +695,7 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
                         ("collected", text::num(counts.len() as i64)),
                         ("copies", text::num(copies)),
                     ]))
-                    @if edit { p.muted.small { "Click a pet's name to change its name, rarity, bonuses or picture. The two counts on each pet are its plain copies and its Pet+ copies." } }
+                    @if edit { p.muted.small { "Edit on a pet changes its name, rarity, bonuses or picture. The two counts on each pet are its plain copies and its Pet+ copies." } }
                 }
                 @if edit { (idleon::rail_block(&page)) }
                 div.rail-block {
@@ -746,6 +752,7 @@ fn catalog_row(page: &Page, base: &str, p: &Pet, n: i64, plus: i64) -> Markup {
                 div.pets-steppers {
                     (stepper(page, p, n - plus, false))
                     (stepper(page, p, plus, true))
+                    a.btn.small.outline.pets-edit-btn href=(href) aria-label={ "Edit " (p.name) } { "Edit" }
                 }
             } @else {
                 span.pets-owned aria-label={ (n) " owned" } { "×" (n) @if plus > 0 { " " span.pets-plus { (plus) " Pet+" } } }

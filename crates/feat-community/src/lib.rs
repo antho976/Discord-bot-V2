@@ -103,7 +103,7 @@ impl Feature for Community {
             nav: vec![
                 NavItem { label: "Giveaways", path: "community/giveaways", icon: Icon::Gift, about: "Members press Enter in Discord, and winners are picked when time runs out." },
                 NavItem { label: "Polls", path: "community/polls", icon: Icon::Poll, about: "Real Discord polls: members vote on the message itself." },
-                NavItem { label: "Suggestions", path: "community/suggestions", icon: Icon::Bulb, about: "/suggest posts them, and members vote with buttons." },
+                NavItem { label: "Suggestions", path: "community/suggestions", icon: Icon::Bulb, about: "Members send them with /suggest, and staff decide." },
             ],
         }
     }

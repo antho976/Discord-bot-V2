@@ -128,7 +128,8 @@ pub fn seed(ctx: &Ctx) -> Result<()> {
     let today = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date();
     let mut conn = ctx.db.lock();
     let tx = conn.transaction()?;
-    for back in 0..30i64 {
+    // Sixty days, so the overview has a period before the last 30 to compare with.
+    for back in 0..60i64 {
         let day = today.checked_sub(jiff::Span::new().days(back))?.to_string();
         let wave = ((back as f64) * 0.7).sin().abs();
         for (key, base, spread) in [("messages", 380.0, 420.0), ("joins", 3.0, 9.0), ("leaves", 1.0, 4.0), ("active", 90.0, 70.0), ("voice_minutes", 240.0, 420.0)] {

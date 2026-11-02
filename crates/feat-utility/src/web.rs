@@ -317,7 +317,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
                     }
                 }
             }
-            aside.rail {
+            aside.rail.au-rail {
                 div.rail-block {
                     h2 {
                         "Away right now"
@@ -329,7 +329,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
                         div.au-aways {
                             @for a in &away {
                                 div.au-away {
-                                    img.avatar src=(ctx.member_avatar(guild, a.user_id)) alt="" width="36" height="36" loading="lazy";
+                                    img.avatar src=(ctx.member_avatar(guild, a.user_id)) alt="" width="28" height="28" loading="lazy";
                                     div.grow {
                                         strong.clip { (name_or_stored(&ctx, guild, a.user_id, &a.name)) }
                                         @if !a.reason.is_empty() { span.au-reason { (a.reason) } }
@@ -363,7 +363,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
                         }
                     }
                 }
-                div.rail-block {
+                div.rail-block.au-options {
                     h2 { "Options" }
                     (ui::settings_form(&page, &page.path(KEY), html! {
                         div.au-opts {
@@ -550,6 +550,55 @@ const CSS: &str = r#"
 .au-opts .help { font-size: 12.5px; }
 /* The save button sits under the switches here; floating, it would cover them in the rail. */
 .au .rail .save-bar { position: static; margin-top: 4px; }
+/* ---- house style (2026-11-02) ----
+   Two columns: the band and the clocks on the left, a 420 px column of who's away and the
+   options on the right, every block one bordered panel, both columns ending together. Neutral
+   clocks; the data colour marks the daytime on the band and the minute hands. Nothing moves on
+   its own except the clocks keeping time. */
+.au { grid-template-columns: minmax(0, 1fr) 460px; gap: 16px; align-items: stretch; }
+.au-main { gap: 16px; }
+.au-main > section.block, .au-rail > .rail-block { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px; }
+.au-main > section.block:last-of-type { flex: 1; }
+.au-main > section.block h2, .au-rail .rail-block > h2 { font-size: 14px; font-weight: 500; }
+.au-main .empty, .au-rail .empty { background: none; box-shadow: none; padding: 4px 0; border-radius: 0; }
+.au-main .empty-icon, .au-rail .empty-icon { width: 28px; height: 28px; border-radius: 8px; background: var(--control); color: var(--ink-2); box-shadow: none; animation: none; }
+.au-rail { position: static; background: none; box-shadow: none; padding: 0; gap: 16px; }
+.au-rail > .rail-block + .rail-block { margin-top: 0; padding-top: 18px; border-top: 1px solid var(--edge-1); }
+.au-rail > .rail-block:last-child { flex: 1; }
+.au-rail .card { background: none; border: 0; padding: 0; border-radius: 0; }
+.au-track { animation: none; }
+.au-pin-faces { box-shadow: inset 0 0 0 1px var(--edge-2); }
+.au-pin:hover .au-pin-faces { transform: none; box-shadow: inset 0 0 0 1px var(--edge-3); }
+.au-stem { background: var(--edge-3); }
+.au-pin::after { box-shadow: 0 0 0 2.5px var(--raised); }
+.au-band { --night: var(--solid); --day: color-mix(in oklab, var(--data) 45%, var(--raised)); background: linear-gradient(90deg, var(--night) 25%, var(--day) 25%, var(--day) 75%, var(--night) 75%); box-shadow: none; }
+.au-zones { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+/* Three across on a wide column, so the clocks run down beside who's away and the options. */
+@container col (min-width: 1000px) { .au-zones { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); } }
+.au-zone, .au-zone.is-day { --tint: var(--data); background: var(--well); box-shadow: none; border-radius: 10px; padding: 14px 14px 12px; gap: 10px; }
+.au-zone:hover { box-shadow: none; }
+.au-dial { width: 44px; height: 44px; }
+.au-dial .face { fill: var(--solid); stroke: var(--edge-2); }
+.au-dial .hh, .au-dial .mh { animation: none; }
+.au-zone-time .au-clock { font-size: 24px; letter-spacing: -0.02em; }
+.au-place strong { font-size: 14px; font-weight: 500; }
+.au-sun, .au-moon { color: var(--ink-3); }
+.au-people, .au-crowd { padding-top: 10px; }
+.au-who .avatar { width: 20px; height: 20px; }
+.au-n { margin-left: 0; }
+.au-rail .rail-block > h2:has(.au-n) { justify-content: flex-start; gap: 8px; }
+.au-aways { margin: 0 -8px; }
+.au-away { align-items: flex-start; padding: 8px; border-radius: 10px; }
+.au-away > .avatar { width: 28px !important; height: 28px !important; }
+.au-away strong { font-size: 14px; font-weight: 500; }
+.au-meta { font-size: 13px; }
+.au-away .btn { min-width: 64px; justify-content: center; }
+.au-test { padding-top: 14px; border-top: 1px solid var(--edge-1); }
+.au-test > p { font-size: 13px; }
+.au-opts .switch-row label { font-size: 14px; }
+.au-opts .help { font-size: 13px; }
+@media (max-width: 1500px) { .au { grid-template-columns: minmax(0, 1fr) 400px; } }
+@media (max-width: 1100px) { .au { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 920px) {
   .au-sky { -webkit-mask-image: linear-gradient(90deg, #000 82%, transparent); mask-image: linear-gradient(90deg, #000 82%, transparent); }
   .au-zones { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }

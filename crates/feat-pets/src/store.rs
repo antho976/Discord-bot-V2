@@ -610,6 +610,86 @@ pub fn review(ctx: &Ctx, guild: u64, ids: &[i64], approve: bool, reviewer: &str,
     Ok(changed)
 }
 
+// ---- a member's own pets (/pet mine) ----
+
+/// A member's copies of one pet in the collection, plain or Pet+.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MyCopies {
+    pub pet_id: String,
+    pub plus: bool,
+    pub count: i64,
+    /// When the newest of them joined.
+    pub latest: i64,
+}
+
+/// Copies a member added or gave, one entry per pet and version, newest first.
+pub fn my_copies(ctx: &Ctx, guild: u64, user: u64) -> Result<Vec<MyCopies>> {
+    ctx.db.with(|c| {
+        let mut s = c.prepare_cached(
+            "SELECT pet_id, plus, COUNT(*), MAX(added_at) FROM pets_owned
+             WHERE guild_id = ?1 AND (added_by = ?2 OR given_by = ?2) GROUP BY pet_id, plus ORDER BY MAX(added_at) DESC, pet_id, plus",
+        )?;
+        s.query_map(params![guild as i64, user as i64], |r| Ok(MyCopies { pet_id: r.get(0)?, plus: r.get(1)?, count: r.get(2)?, latest: r.get(3)? }))?
+            .collect()
+    })
+}
+
+/// A member's own submissions: the waiting ones first, then decided ones, newest first.
+pub fn submissions_of(ctx: &Ctx, guild: u64, user: u64, limit: i64) -> Result<Vec<Pending>> {
+    ctx.db.with(|c| {
+        let mut s = c.prepare_cached(&format!(
+            "SELECT {PENDING_COLS} FROM pets_pending WHERE guild_id = ?1 AND user_id = ?2
+             ORDER BY status = 'pending' DESC, COALESCE(reviewed_at, requested_at) DESC, id DESC LIMIT ?3"
+        ))?;
+        s.query_map(params![guild as i64, user as i64, limit], pending_row)?.collect()
+    })
+}
+
+/// Withdraw a member's own submission while it still waits for review. Returns it, or None when
+/// it isn't theirs, was already reviewed or is gone.
+pub fn withdraw(ctx: &Ctx, guild: u64, user: u64, id: i64) -> Result<Option<Pending>> {
+    let mut conn = ctx.db.lock();
+    let tx = conn.transaction()?;
+    let row = tx
+        .query_row(
+            &format!("SELECT {PENDING_COLS} FROM pets_pending WHERE guild_id = ?1 AND id = ?2 AND user_id = ?3 AND status = 'pending'"),
+            params![guild as i64, id, user as i64],
+            pending_row,
+        )
+        .optional()?;
+    if row.is_some() {
+        tx.execute("DELETE FROM pets_pending WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id])?;
+    }
+    tx.commit()?;
+    Ok(row)
+}
+
+/// Take up to `qty` of a member's own copies of a pet (plain or Pet+) out of the collection,
+/// newest first. Copies anyone else added or gave are never touched. Returns how many went.
+pub fn remove_mine(ctx: &Ctx, guild: u64, user: u64, pet_id: &str, plus: bool, qty: i64) -> Result<i64> {
+    ctx.db.with(|c| {
+        let n = c.execute(
+            "DELETE FROM pets_owned WHERE id IN (
+               SELECT id FROM pets_owned WHERE guild_id = ?1 AND pet_id = ?2 AND plus = ?3 AND (added_by = ?4 OR given_by = ?4)
+               ORDER BY added_at DESC, id DESC LIMIT ?5)",
+            params![guild as i64, pet_id, plus, user as i64, qty.max(0)],
+        )?;
+        Ok(n as i64)
+    })
+}
+
+/// True when a member is the giver in a giveaway of this pet that still waits for its
+/// hand-over: confirming it takes one of their copies, so they can't remove those meanwhile.
+pub fn giving_away(ctx: &Ctx, guild: u64, user: u64, pet_id: &str) -> Result<bool> {
+    ctx.db.with(|c| {
+        c.query_row(
+            "SELECT EXISTS (SELECT 1 FROM pets_giveaways WHERE guild_id = ?1 AND giver_id = ?2 AND pet_id = ?3 AND status = 'pending')",
+            params![guild as i64, user as i64, pet_id],
+            |r| r.get(0),
+        )
+    })
+}
+
 // ---- giveaways ----
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1076,5 +1156,54 @@ mod flow {
         slime.plus_bonus = "+50% Golden Balls".into();
         save_pet(&ctx, g, &slime).unwrap();
         assert_eq!(super::pet(&ctx, g, "slime").unwrap().unwrap().plus_bonus, "+50% Golden Balls");
+    }
+
+    /// `/pet mine`: a member sees and removes only their own pets and submissions.
+    #[test]
+    fn members_remove_only_their_own() {
+        let rt = bot_core::tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _in = rt.enter();
+        let ctx = ctx();
+        let g = 44;
+        let (mira, oskar) = (7, 8);
+        ensure_seeded(&ctx, g).unwrap();
+        add_owned(&ctx, g, "slime", mira, mira, 2, false, "Antho").unwrap();
+        add_owned(&ctx, g, "slime", mira, mira, 1, true, "Antho").unwrap();
+        add_owned(&ctx, g, "slime", oskar, oskar, 3, false, "Antho").unwrap();
+        let mine = my_copies(&ctx, g, mira).unwrap();
+        assert_eq!(mine.len(), 2);
+        assert_eq!(mine.iter().find(|m| !m.plus).unwrap().count, 2);
+
+        // Mira takes out more than she has: only her plain copies go, never Oskar's.
+        assert_eq!(remove_mine(&ctx, g, mira, "slime", false, 10).unwrap(), 2);
+        assert_eq!(owned_counts(&ctx, g).unwrap().get("slime"), Some(&4));
+        assert_eq!(plus_counts(&ctx, g).unwrap().get("slime"), Some(&1), "her Pet+ stays");
+        assert_eq!(remove_mine(&ctx, g, mira, "slime", false, 1).unwrap(), 0);
+        assert_eq!(my_copies(&ctx, g, oskar).unwrap()[0].count, 3);
+        assert_eq!(remove_mine(&ctx, g, mira, "slime", true, 1).unwrap(), 1);
+        assert!(my_copies(&ctx, g, mira).unwrap().is_empty());
+
+        // Submissions: withdrawn by their sender only, and only while waiting.
+        let a = submit(&ctx, g, "frog", mira, 2, false).unwrap();
+        let b = submit(&ctx, g, "molti", mira, 1, true).unwrap();
+        let o = submit(&ctx, g, "frog", oskar, 1, false).unwrap();
+        review(&ctx, g, &[b], false, "Antho", "dupe").unwrap();
+        let list = submissions_of(&ctx, g, mira, 10).unwrap();
+        assert_eq!(list.iter().map(|p| (p.id, p.status.as_str())).collect::<Vec<_>>(), [(a, "pending"), (b, "rejected")]);
+        assert!(withdraw(&ctx, g, mira, o).unwrap().is_none(), "not hers");
+        assert!(withdraw(&ctx, g, mira, b).unwrap().is_none(), "already decided");
+        assert!(withdraw(&ctx, 99, mira, a).unwrap().is_none(), "another server");
+        assert_eq!(withdraw(&ctx, g, mira, a).unwrap().map(|p| p.quantity), Some(2));
+        assert!(withdraw(&ctx, g, mira, a).unwrap().is_none(), "once");
+        assert_eq!(pending(&ctx, g).unwrap().iter().map(|p| p.id).collect::<Vec<_>>(), [o]);
+
+        // A copy promised in a waiting giveaway stays until the hand-over.
+        add_owned(&ctx, g, "frog", mira, mira, 1, false, "Antho").unwrap();
+        let frog = pet(&ctx, g, "frog").unwrap().unwrap();
+        let id = record_giveaway(&ctx, g, &NewGiveaway { pet: &frog, giver: mira, winner: oskar, notes: "", recorded_by: "Antho", expires_at: None }).unwrap();
+        assert!(giving_away(&ctx, g, mira, "frog").unwrap());
+        assert!(!giving_away(&ctx, g, oskar, "frog").unwrap());
+        close_giveaway(&ctx, g, id, Status::Cancelled, "Antho").unwrap();
+        assert!(!giving_away(&ctx, g, mira, "frog").unwrap());
     }
 }

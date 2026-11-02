@@ -5,8 +5,8 @@ use bot_core::web::ui;
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 
-use super::{TabQuery, discord_message, dm_refused, month_start, open_link, plural, rail_figures, style};
-use crate::suggestions::{self as sg, Status, Suggestion, Tally};
+use super::{TabQuery, discord_message, dm_refused, month_start, open_link, still_figures, style};
+use crate::suggestions::{self as sg, Status, Suggestion};
 use crate::{KEY, Settings};
 
 /// What the status says. A suggestion nobody has answered is waiting for review.
@@ -31,42 +31,55 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let tab = q.tab.as_deref().unwrap_or("all");
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let since = month_start(&page.user, now_ms());
-    let (mut rows, waiting, month, voters) = ctx.db.with(|c| {
-        Ok((sg::list(c, guild, 100)?, sg::open_count(c, guild)?, sg::month_stats(c, guild, since)?, sg::top_voters(c, guild, since, 3)?))
+    let now = now_ms();
+    let since = month_start(&page.user, now);
+    let weeks_back = now - 12 * WEEK;
+    let (rows, waiting_n, month, senders, arrived) = ctx.db.with(|c| {
+        Ok((sg::list(c, guild, 100)?, sg::open_count(c, guild)?, sg::month_stats(c, guild, since)?, sg::top_senders(c, guild, now - 30 * DAY, 5)?, sg::arrivals(c, guild, weeks_back)?))
     })?;
-    // The newest one, before the board is sorted: the settings tab shows it as it would post.
-    let newest = rows.first().cloned();
-    // The board reads top-first: net votes, then newest.
-    rows.sort_by_key(|(r, t)| (std::cmp::Reverse(t.up - t.down), std::cmp::Reverse(r.id)));
+    let rows: Vec<Suggestion> = rows.into_iter().map(|(r, _)| r).collect();
+    // The box reads newest first; the queue reads oldest first, so the longest wait leads.
+    let mut waiting: Vec<&Suggestion> = rows.iter().filter(|r| r.status == Status::Open).collect();
+    waiting.reverse();
     let edit = page.can_edit();
-    let shown: Vec<&(Suggestion, Tally)> = rows.iter().filter(|(r, _)| tab != "review" || r.status == Status::Open).collect();
     let active = match tab {
         "review" => "Waiting for review",
         "settings" => "Settings",
         _ => "All",
     };
+    // Suggestions per week over the last twelve, oldest first, the current week labelled "This week".
+    let weekly: Vec<(String, i64)> = (0..12)
+        .map(|i| {
+            let start = weeks_back + i * WEEK;
+            let n = arrived.iter().filter(|at| **at >= start && **at < start + WEEK).count() as i64;
+            let label = if i == 11 { "This week".to_owned() } else { page.user.local(start).strftime("%b %-d").to_string() };
+            (label, n)
+        })
+        .collect();
 
     let main = html! {
         (style())
         (ui::tabs_counted(
             &[
                 ("All", page.path("community/suggestions"), None),
-                ("Waiting for review", page.path("community/suggestions?tab=review"), Some(waiting)),
+                ("Waiting for review", page.path("community/suggestions?tab=review"), Some(waiting_n)),
                 ("Settings", page.path("community/suggestions?tab=settings"), None),
             ],
             active,
         ))
         @if tab == "settings" {
-            // The settings beside the post they shape.
-            div.compose.cm-compose {
-                (ui::settings_form(&page, &page.path("community/suggestions"), ui::card(settings_fields(&ctx, guild, &s))))
-                aside.rail.cm-rail.compose-preview {
+            // The settings beside the post they shape, Save inside the settings panel.
+            div.compose.cm-compose.sg-compose {
+                (ui::settings_form(&page, &page.path("community/suggestions"), html! {
+                    h2.sg-h { "The suggestion box" }
+                    (ui::card(settings_fields(&ctx, guild, &s)))
+                }))
+                aside.rail.cm-rail.sg-rail.compose-preview {
                     div.rail-block {
-                        h2 { "How one posts" }
-                        @match &newest {
-                            Some((r, t)) => {
-                                (discord_message(&ctx, &page, r.created_at, post_preview(&ctx, guild, r, t, s.anonymous, s.threads)))
+                        h2 { "What staff see" }
+                        @match rows.first() {
+                            Some(r) => {
+                                (discord_message(&ctx, &page, r.created_at, post_preview(&ctx, guild, r, s.anonymous, s.threads)))
                                 p.cm-dc-note { "The newest suggestion, drawn with the settings as saved." }
                             },
                             None => p.muted.small { "Once a member uses /suggest, the post shows here as Discord draws it." },
@@ -83,45 +96,76 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         } @else {
             div.with-rail {
                 div.cm-main {
-                    @if shown.is_empty() {
-                        @if tab == "review" {
-                            (ui::empty(Icon::Bulb, "Nothing waiting", "New suggestions wait here until staff review them."))
-                        } @else if s.suggestions_channel.is_some() {
-                            (ui::empty(Icon::Bulb, "No suggestions yet", "Members post them with /suggest. They show up here with their votes."))
-                        } @else {
-                            (ui::empty(Icon::Bulb, "Suggestions are off", "Pick a channel under Settings and members can use /suggest."))
+                    @if tab == "review" {
+                        // The one that has waited longest, large, with the decision right on it.
+                        @match waiting.first() {
+                            Some(r) => { (focus(&ctx, &page, guild, r, edit)) }
+                            None => section.sgx-panel { (ui::empty(Icon::Bulb, "Nothing waiting", "New suggestions wait here until you decide on them.")) },
+                        }
+                        @if waiting.len() > 1 {
+                            section.sgx-panel {
+                                h2 { "Also waiting" span.muted { (waiting.len() - 1) " · oldest first" } }
+                                div.sgx-rows { @for r in waiting.iter().skip(1) { (row_of(&ctx, &page, guild, r, edit)) } }
+                            }
                         }
                     } @else {
-                        div.sg-list {
-                            @for (r, t) in &shown { (card(&ctx, &page, guild, r, t, edit)) }
+                        // How much comes in: this month as a figure, the weeks as a line.
+                        section.sgx-panel.sgx-lead {
+                            div.sgx-lead-top {
+                                div.sgx-big { b { (text::num(month.0)) } span { "sent this month" } }
+                                div.sgx-small {
+                                    a href=(page.path("community/suggestions?tab=review")) { b.accent[waiting_n > 0] { (text::num(waiting_n)) } span { "waiting for you" } }
+                                    div { b { (text::num(month.1)) } span { "approved" } }
+                                    div { b { (text::num(month.2)) } span { "done" } }
+                                }
+                            }
+                            @if weekly.iter().any(|w| w.1 > 0) {
+                                h3 { "Suggestions per week" span.muted { "last 12 weeks" } }
+                                (ui::area_chart_series(&weekly, "suggestions"))
+                            }
+                        }
+                        section.sgx-panel {
+                            h2 { "All suggestions" @if !rows.is_empty() { span.muted { "newest first" } } }
+                            @if rows.is_empty() {
+                                @if s.suggestions_channel.is_some() {
+                                    (ui::empty(Icon::Bulb, "No suggestions yet", "Members send them with /suggest. They show up here for you to decide on."))
+                                } @else {
+                                    (ui::empty(Icon::Bulb, "The box is closed", "Pick a channel under Settings and members can use /suggest."))
+                                }
+                            } @else {
+                                div.sgx-rows { @for r in &rows { (row_of(&ctx, &page, guild, r, edit)) } }
+                            }
                         }
                     }
                 }
-                aside.rail.cm-rail {
+                aside.rail.cm-rail.sg-rail {
                     div.rail-block {
-                        h2 { "This month" }
-                        (rail_figures(&[("suggested", month.0), ("approved", month.1), ("done", month.2)]))
-                    }
-                    div.rail-block {
-                        h2 { "Most votes this month" }
-                        @if voters.is_empty() {
-                            (ui::empty(Icon::Bulb, "No votes this month", "Members vote with the buttons on each suggestion."))
+                        h2 { "Who sends the most" span.muted { "30 days" } }
+                        @if senders.is_empty() {
+                            p.muted.small { "Nobody has sent one in the last 30 days." }
                         } @else {
-                            div.sg-top {
-                                @for (i, (u, n)) in voters.iter().enumerate() {
-                                    div.sg-voter.first[i == 0] style={ "--i:" (i) } {
-                                        img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="54" height="54" loading="lazy";
-                                        strong { (ctx.display_name(guild, *u)) }
-                                        span { (text::num(*n)) " " (plural(*n, "vote", "votes")) }
+                            @let top = senders.first().map(|x| x.1).unwrap_or(1).max(1);
+                            ol.sgx-senders {
+                                @for (i, (u, n)) in senders.iter().enumerate() {
+                                    li {
+                                        img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="28" height="28" loading="lazy";
+                                        span.clip { (ctx.display_name(guild, *u)) }
+                                        span.mono { (text::num(*n)) }
+                                        span.sgx-track { i.lead[i == 0] style={ "width:" (format!("{:.0}", *n as f64 * 100.0 / top as f64)) "%" } {} }
                                     }
                                 }
                             }
                         }
                     }
-                    @if let Some((r, t)) = shown.first() {
+                    @if tab == "review" {
                         div.rail-block {
-                            h2 { "The top one in Discord" }
-                            (discord_message(&ctx, &page, r.created_at, post_preview(&ctx, guild, r, t, r.anonymous, false)))
+                            h2 { "This month" }
+                            (still_figures(&[("sent", month.0), ("approved", month.1), ("done", month.2)]))
+                        }
+                    } @else if let Some(r) = rows.first() {
+                        div.rail-block {
+                            h2 { "The newest, as staff see it" }
+                            (discord_message(&ctx, &page, r.created_at, post_preview(&ctx, guild, r, r.anonymous, false)))
                         }
                     }
                 }
@@ -132,71 +176,62 @@ pub async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     Ok(ui::layout(&ctx, &page, "Suggestions", None, main).into_response())
 }
 
-/// One suggestion on the board: its score, the text and who sent it, the votes each way, and
-/// the staff reply once there is one.
-fn card(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, t: &Tally, edit: bool) -> Markup {
-    let net = t.up - t.down;
-    let lean = match net {
-        n if n > 0 => "up",
-        0 => "flat",
-        _ => "down",
-    };
+const DAY: i64 = 86_400_000;
+const WEEK: i64 = 7 * DAY;
+
+/// The suggestion that has waited longest, large: who sent it, what it says, and the decision
+/// buttons with a reply box, so deciding takes one click.
+fn focus(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, edit: bool) -> Markup {
     html! {
-        article.sg-card {
-            // The score as a vote count reads it: a small arrow and the net, no box.
-            div class={ "sg-score " (lean) } data-tip={ "Votes: " (tally_text(t)) } aria-label={ "Score " (net) ", " (tally_text(t)) } {
-                (arrow(net >= 0))
-                b { (score_text(net)) }
-            }
-            div.sg-body {
-                p.sg-text title=(r.content) { (text::clip(&r.content, 220)) }
-                div.sg-by {
-                    img.avatar src=(ctx.member_avatar(guild, r.author_id)) alt="" width="20" height="20" loading="lazy";
+        section.sgx-panel.sgx-focus {
+            div.sgx-who {
+                img.avatar src=(ctx.member_avatar(guild, r.author_id)) alt="" width="48" height="48" loading="lazy";
+                div.grow {
                     strong { (ctx.display_name(guild, r.author_id)) }
-                    span title=(page.user.local(r.created_at).strftime("%b %-d, %-I:%M %p").to_string()) { (text::ago(r.created_at)) }
-                    @if r.anonymous { span.sg-anon data-tip="Posted anonymously: the post shows no name" { "anonymous" } }
+                    span { "Suggestion #" (r.id) " · sent " (text::ago(r.created_at)) @if r.anonymous { " · posted without their name" } }
                 }
+                (open_link(page, r.channel_id, r.message_id, true))
             }
-            // How it's going: the votes, and staff's answer once there is one.
-            div.sg-state {
-                p.sg-tally {
-                    @if t.up + t.down == 0 { "No votes yet" } @else { b { (text::num(t.up)) } " up, " b { (text::num(t.down)) } " down" }
-                }
-                @if r.status != Status::Open {
-                    div.sg-reply {
-                        @if let Some(staff) = r.staff_id {
-                            img.avatar src=(ctx.member_avatar(guild, staff)) alt="" width="22" height="22" loading="lazy";
-                        }
-                        div {
-                            p.sg-reply-head {
-                                @if let Some(staff) = r.staff_id { strong { (ctx.display_name(guild, staff)) } " " }
-                                (r.status.label().to_lowercase()) " it"
-                            }
-                            @if r.reason.is_empty() { p.muted { "No reason given." } } @else { p { (r.reason) } }
-                        }
+            p.sgx-text { (r.content) }
+            @if edit {
+                form.sgx-decide method="post" action=(page.path(&format!("community/suggestions/{}/status", r.id))) {
+                    textarea.input name="reason" rows="2" placeholder="Reply to them (optional)" maxlength="800" aria-label="Reply" {}
+                    div.sgx-buttons {
+                        button.btn.primary type="submit" name="status" value="approved" { "Approve" }
+                        button.btn type="submit" name="status" value="considering" { "Considering" }
+                        button.btn type="submit" name="status" value="denied" { "Deny" }
+                        span.muted.small { "They get a message with your reply." }
                     }
-                }
-            }
-            div.sg-side {
-                span class={ "sg-status " (status_class(r.status)) } { span.dot {} (state_label(r.status)) }
-                div.cm-actions {
-                    (open_link(page, r.channel_id, r.message_id, true))
-                    @if edit { (review_pop(page, r)) }
                 }
             }
         }
     }
 }
 
-/// "12", "0", "−3": the net votes, with a real minus sign.
-fn score_text(net: i64) -> String {
-    if net < 0 { format!("\u{2212}{}", text::num(-net)) } else { text::num(net) }
+/// One suggestion as a row: the sender's face, the text, who and when, the status and its action.
+fn row_of(ctx: &Ctx, page: &Page, guild: u64, r: &Suggestion, edit: bool) -> Markup {
+    html! {
+        div.sgx-row {
+            img.avatar src=(ctx.member_avatar(guild, r.author_id)) alt="" width="28" height="28" loading="lazy";
+            div.grow {
+                strong title=(r.content) { (text::clip(&r.content, 140)) }
+                span {
+                    (ctx.display_name(guild, r.author_id)) " · " (text::ago(r.created_at))
+                    @if r.status != Status::Open && !r.reason.is_empty() { " · “" (text::clip(&r.reason, 80)) "”" }
+                }
+            }
+            span class={ "sgx-status " (status_class(r.status)) } { span.dot {} (state_label(r.status)) }
+            div.cm-actions {
+                (open_link(page, r.channel_id, r.message_id, true))
+                @if edit { (review_pop(page, r)) }
+            }
+        }
+    }
 }
 
-/// The suggestion's post as members see it: the embed in its status colour, the author unless
-/// it's anonymous, staff's answer, and the vote buttons (closed once it's decided).
-fn post_preview(ctx: &Ctx, guild: u64, r: &Suggestion, t: &Tally, anonymous: bool, thread: bool) -> Markup {
-    let closed = r.status.is_decided();
+/// The suggestion's post as staff see it in the channel: the embed in its status colour, the
+/// author unless it's anonymous, the decision, and the Review button.
+fn post_preview(ctx: &Ctx, guild: u64, r: &Suggestion, anonymous: bool, thread: bool) -> Markup {
     html! {
         div.cm-dc-embed style={ "--embed:#" (format!("{:06x}", r.status.color())) } {
             @if !anonymous {
@@ -216,11 +251,7 @@ fn post_preview(ctx: &Ctx, guild: u64, r: &Suggestion, t: &Tally, anonymous: boo
             }
             div.cm-dc-foot { "Suggestion #" (r.id) }
         }
-        div.cm-dc-btns {
-            span.cm-dc-btn.off[closed] { "Upvote · " (t.up) }
-            span.cm-dc-btn.off[closed] { "Downvote · " (t.down) }
-            span.cm-dc-btn { "Review" }
-        }
+        div.cm-dc-btns { span.cm-dc-btn { "Review" } }
         @if thread { (thread_line(r.id)) }
     }
 }
@@ -244,7 +275,7 @@ fn review_pop(page: &Page, r: &Suggestion) -> Markup {
             div.pop-body {
                 form.stack method="post" action=(page.path(&format!("community/suggestions/{}/status", r.id))) {
                     (ui::select("status", &options, r.status.as_str()))
-                    textarea.input name="reason" rows="3" placeholder="Reply, shown on the post" maxlength="800" aria-label="Reply" { (r.reason) }
+                    textarea.input name="reason" rows="3" placeholder="Reply, shown on the post and sent to them" maxlength="800" aria-label="Reply" { (r.reason) }
                     @if r.status != Status::Open { p.muted.small { "Keeping the status edits the reply. The author hears only about a new status." } }
                     button.btn.small.primary type="submit" style="align-self:flex-start" { "Save" }
                 }
@@ -253,28 +284,12 @@ fn review_pop(page: &Page, r: &Suggestion) -> Markup {
     }
 }
 
-/// "10 up, none down"
-fn tally_text(t: &Tally) -> String {
-    let part = |n: i64, word: &str| if n == 0 { format!("none {word}") } else { format!("{} {word}", text::num(n)) };
-    format!("{}, {}", part(t.up, "up"), part(t.down, "down"))
-}
-
-/// A small chevron, up or down, beside the score.
-fn arrow(up: bool) -> Markup {
-    let d = if up { "M4 9.5 8 5.5l4 4" } else { "M4 6.5 8 10.5l4-4" };
-    html! {
-        svg.icon viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" {
-            path d=(d);
-        }
-    }
-}
-
 fn settings_fields(ctx: &Ctx, guild: u64, s: &Settings) -> Markup {
     html! {
-        (ui::field_channel(ctx, guild, "suggestions_channel", "Channel", Some("Where /suggest posts. None turns suggestions off."), s.suggestions_channel))
+        (ui::field_channel(ctx, guild, "suggestions_channel", "Send them to", Some("A channel only staff can see keeps it a private box. None closes the box."), s.suggestions_channel))
         (ui::field_role(ctx, guild, "staff_role", "Staff role", Some("Can review suggestions from Discord, besides anyone with Manage Messages."), s.staff_role))
-        (ui::field_toggle("threads", "Open a thread", Some("Gives every suggestion a thread to talk it over in."), s.threads))
-        (ui::field_toggle("anonymous", "Hide the author", Some("Suggestions show no name. The dashboard still shows who sent them."), s.anonymous))
+        (ui::field_toggle("threads", "Open a thread", Some("Gives every suggestion a thread for staff to talk it over in."), s.threads))
+        (ui::field_toggle("anonymous", "Hide the author", Some("Posts in the channel show no name. The dashboard still shows who sent them."), s.anonymous))
     }
 }
 
@@ -325,5 +340,5 @@ pub async fn set_status(State(ctx): State<Ctx>, user: User, Path((guild, id)): P
         format!("Marked suggestion #{id} {}", status.label().to_lowercase())
     };
     ctx.audit(&page.user, Some(guild), KEY, what);
-    Ok(saved(&page.path("community/suggestions")))
+    Ok(saved(&page.path(if before.status == Status::Open { "community/suggestions?tab=review" } else { "community/suggestions" })))
 }
