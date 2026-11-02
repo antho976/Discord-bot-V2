@@ -17,7 +17,7 @@ Each feature is switched on per server on the dashboard (Admin, Features). Every
 | Audit log | Edits, deletes, joins, leaves, role and nickname changes, bans and timeouts, posted to a channel. |
 | Community | Giveaways, native Discord polls, suggestions with votes and statuses. |
 | Tickets and starboard | Support tickets as private threads; a starboard for popular messages. |
-| Pets | Idleon companion collection with approvals, pet giveaways, public pet pages. |
+| Pets | Idleon companion collection (pets and their Pet+) with approvals, pet giveaways, public pet pages filterable by rarity; rarity and bonuses come from the game via idleontoolbox.com. |
 | App approvals | Relay, Tally, Avex and your PCs connect after an approver allows them by DM. |
 | AFK and timezones | `/afk`, and `/time now`, `/time set`, `/time clear`. |
 | Embed builder | Write embeds on the dashboard and send or edit them in a channel. |

@@ -94,8 +94,12 @@ const DASH_CSS: &str = r#"
 .pets-entry.missing .pa { filter: grayscale(0.7); opacity: 0.62; }
 .pets-entry .pets-li-title a { color: inherit; min-width: 0; overflow: hidden; }
 .pets-entry .pets-li-title a:hover strong { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--edge-3); }
-.pets-list.cat { grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); column-gap: 28px; }
+/* Rows carry two steppers, so they need room: one column until the page is wide. */
+.pets-list.cat { grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr)); column-gap: 28px; }
+.pets-steppers { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .pets-stepper { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border-radius: var(--r-key); background: var(--control); }
+.pets-stepper .lbl { min-width: 4.2ch; padding: 0 4px 0 6px; font-size: 11.5px; font-weight: 600; color: var(--ink-3); }
+.pets-stepper.plus .lbl { color: var(--plus); }
 .pets-stepper .btn { width: 26px; height: 26px; padding: 0; border-radius: 7px; font-size: 15px; }
 .pets-stepper > span { min-width: 3ch; text-align: center; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .pets-owned { font-size: 13px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
@@ -229,6 +233,7 @@ fn missing_pet(id: &str) -> Pet {
         rarity: "common".into(),
         description: String::new(),
         bonus: String::new(),
+        plus_bonus: String::new(),
         image: String::new(),
         guild: 0,
         picture: None,
@@ -276,6 +281,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
     let page = open(&ctx, &user, guild, Level::View)?;
     let catalog = store::catalog(&ctx, guild)?;
     let counts = store::owned_counts(&ctx, guild)?;
+    let plus = store::plus_counts(&ctx, guild)?;
     let pending = store::pending(&ctx, guild)?;
     let waiting = pending.len() as i64;
     let active = store::active_giveaways(&ctx, guild)?;
@@ -301,7 +307,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
                     (ui::section(name, Some(&format!("{have} of {} collected{}", list.len(), if g == 0 { ". Faded ones aren't in the collection yet." } else { "" })), html! {
                         div.pets-grid {
                             @for (k, p) in list.iter().enumerate() {
-                                (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0), starts[g] + k))
+                                (view::collection_tile(p, counts.get(&p.id).copied().unwrap_or(0), plus.get(&p.id).copied().unwrap_or(0), starts[g] + k))
                             }
                         }
                     }))
@@ -330,7 +336,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) ->
                         div.pets-req data-row=(p.id) {
                             (view::pet_art(&pet, "md"))
                             div {
-                                div { strong { (pet.name) } @if p.quantity > 1 { span.qty { " ×" (p.quantity) } } }
+                                div { strong { (pet.name) } @if p.plus { " " span.pets-plus { "Pet+" } } @if p.quantity > 1 { span.qty { " ×" (p.quantity) } } }
                                 div.pets-by {
                                     img.avatar src=(ctx.member_avatar(guild, p.user_id)) alt="" loading="lazy";
                                     b { (ctx.display_name(guild, p.user_id)) } span { (text::ago(p.requested_at)) }
@@ -444,6 +450,7 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
                                     div.pets-li-main {
                                         span.pets-li-title {
                                             strong { (pet.name) }
+                                            @if p.plus { span.pets-plus { "Pet+" } }
                                             @if p.quantity > 1 { span.qty { "×" (p.quantity) } }
                                             (view::rarity(&pet.rarity))
                                         }
@@ -486,7 +493,7 @@ async fn approvals(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Q
                         div.mini {
                             img.avatar src=(ctx.member_avatar(guild, p.user_id)) alt="" loading="lazy";
                             div.grow {
-                                span { strong { (pet.name) } @if p.quantity > 1 { " ×" (p.quantity) } span.muted { " from " (ctx.display_name(guild, p.user_id)) } }
+                                span { strong { (pet.name) (crate::version(p.plus)) } @if p.quantity > 1 { " ×" (p.quantity) } span.muted { " from " (ctx.display_name(guild, p.user_id)) } }
                                 span.muted data-tip=[by.map(|b| format!("Reviewed by: {b}"))] {
                                     span class=(if approved { "pets-ok" } else { "pets-bad" }) { (if approved { "Approved" } else { "Rejected" }) }
                                     @if let Some(at) = p.reviewed_at { " " (text::ago(at)) }
@@ -550,6 +557,7 @@ async fn review(ctx: Ctx, user: User, guild: u64, form: FormData, approve: bool)
     let server = ctx.guild_name(guild);
     for p in &changed {
         let pet = catalog.iter().find(|c| c.id == p.pet_id).map(|c| format!("{} {}", c.icon(), c.name)).unwrap_or_else(|| p.pet_id.clone());
+        let pet = format!("{pet}{}", crate::version(p.plus));
         if s.dm_reviews {
             crate::dm_later(&ctx, p.user_id, crate::review_dm(p.quantity, &pet, &server, approve, &reason));
         }
@@ -611,7 +619,7 @@ struct CatalogQuery {
 
 /// What the search box matches on for a pet.
 fn haystack(p: &Pet) -> String {
-    format!("{} {} {} {} {}", p.name, store::rarity_label(&p.rarity), p.category, p.bonus, p.description).to_lowercase()
+    format!("{} {} {} {} {} {}", p.name, store::rarity_label(&p.rarity), p.category, p.bonus, p.plus_bonus, p.description).to_lowercase()
 }
 
 async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<CatalogQuery>) -> WebResult {
@@ -619,6 +627,7 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
     let catalog = store::catalog(&ctx, guild)?;
     let cats = store::categories(&ctx, guild)?;
     let counts = store::owned_counts(&ctx, guild)?;
+    let plus = store::plus_counts(&ctx, guild)?;
     let waiting = store::pending_count(&ctx, guild)?;
     let edit = page.can_edit();
     let editing = q.edit.as_deref().filter(|_| edit);
@@ -647,7 +656,7 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
                     div { strong { "No pets match “" span data-q {} "”" } p.muted { "Try part of a name, a rarity like legendary, or a bonus like drop rate." } }
                 }
                 @for cat in &cats {
-                    @let pets: Vec<&Pet> = catalog.iter().filter(|p| &p.category == cat).collect();
+                    @let pets: Vec<&Pet> = store::sorted(catalog.iter().filter(|p| &p.category == cat).collect());
                     @let have = pets.iter().filter(|p| counts.contains_key(&p.id)).count();
                     div data-cat {
                         (ui::section(cat, Some(&format!("{} pets, {} collected", pets.len(), have)), html! {
@@ -663,7 +672,7 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
                                         @if editing == Some(p.id.as_str()) {
                                             (edit_row(&page, &cats, p))
                                         } @else {
-                                            (catalog_row(&page, &base, p, counts.get(&p.id).copied().unwrap_or(0)))
+                                            (catalog_row(&page, &base, p, counts.get(&p.id).copied().unwrap_or(0), plus.get(&p.id).copied().unwrap_or(0)))
                                         }
                                     }
                                 }
@@ -680,7 +689,7 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
                         ("collected", text::num(counts.len() as i64)),
                         ("copies", text::num(copies)),
                     ]))
-                    @if edit { p.muted.small { "Click a pet's name to change its name, rarity or picture." } }
+                    @if edit { p.muted.small { "Click a pet's name to change its name, rarity, bonuses or picture. The two counts on each pet are its plain copies and its Pet+ copies." } }
                 }
                 @if edit { (idleon::rail_block(&page)) }
                 div.rail-block {
@@ -714,8 +723,9 @@ async fn catalog(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Que
     shell(&ctx, &page, actions, body)
 }
 
-/// A pet in the catalog list: tick box, picture, name and rarity, its bonus, the stepper.
-fn catalog_row(page: &Page, base: &str, p: &Pet, n: i64) -> Markup {
+/// A pet in the catalog list: tick box, picture, name and rarity, its bonuses, and steppers for
+/// its plain and Pet+ copies. `n` counts both; `plus` the Pet+ ones.
+fn catalog_row(page: &Page, base: &str, p: &Pet, n: i64, plus: i64) -> Markup {
     let rarity = store::clean_rarity(&p.rarity);
     let edit = page.can_edit();
     let href = format!("{base}?edit={}#pet-{}", p.id, p.id);
@@ -730,17 +740,31 @@ fn catalog_row(page: &Page, base: &str, p: &Pet, n: i64) -> Markup {
                 }
                 @if !p.bonus.is_empty() { span.pets-li-sub title=(p.bonus) { (p.bonus) } }
                 @else if !p.description.is_empty() { span.pets-li-sub.faint title=(p.description) { (p.description) } }
+                @if !p.plus_bonus.is_empty() { span.pets-li-sub.faint title={ "Pet+: " (p.plus_bonus) } { span.pets-plus { "Pet+" } " " (p.plus_bonus) } }
             }
             @if edit {
-                form.inline method="post" action=(page.path(&format!("pets/catalog/{}/owned", p.id))) {
-                    span.pets-stepper {
-                        button.btn.ghost type="submit" name="delta" value="-1" disabled[n == 0] aria-label={ "Remove one " (p.name) } { "−" }
-                        span aria-label={ (n) " owned" } { (n) }
-                        button.btn.ghost type="submit" name="delta" value="1" aria-label={ "Add one " (p.name) } { "+" }
-                    }
+                div.pets-steppers {
+                    (stepper(page, p, n - plus, false))
+                    (stepper(page, p, plus, true))
                 }
             } @else {
-                span.pets-owned aria-label={ (n) " owned" } { "×" (n) }
+                span.pets-owned aria-label={ (n) " owned" } { "×" (n) @if plus > 0 { " " span.pets-plus { (plus) " Pet+" } } }
+            }
+        }
+    }
+}
+
+/// − n + for a pet's plain copies or its Pet+ ones.
+fn stepper(page: &Page, p: &Pet, n: i64, plus: bool) -> Markup {
+    let what = if plus { format!("{} Pet+", p.name) } else { p.name.clone() };
+    html! {
+        form.inline method="post" action=(page.path(&format!("pets/catalog/{}/owned", p.id))) {
+            @if plus { input type="hidden" name="plus" value="1"; }
+            span.pets-stepper.plus[plus] data-tip=(if plus { "Pet+ copies" } else { "Plain copies" }) {
+                span.lbl aria-hidden="true" { (if plus { "Pet+" } else { "Plain" }) }
+                button.btn.ghost type="submit" name="delta" value="-1" disabled[n == 0] aria-label={ "Remove one " (what) } { "−" }
+                span aria-label={ (n) " " (what) " owned" } { (n) }
+                button.btn.ghost type="submit" name="delta" value="1" aria-label={ "Add one " (what) } { "+" }
             }
         }
     }
@@ -817,6 +841,11 @@ fn pet_form(page: &Page, cats: &[String], p: Option<&Pet>) -> Markup {
                     label.pf {
                         span { "Bonus" }
                         input.input type="text" name="bonus" value=(v(|p| &p.bonus)) maxlength="200" placeholder="2x Construction Build Speed" autocomplete="off";
+                    }
+                    label.pf {
+                        span { "Pet+ bonus" }
+                        input.input type="text" name="plus_bonus" value=(v(|p| &p.plus_bonus)) maxlength="200" placeholder="3x Construction Build Speed" autocomplete="off";
+                        small { "What its upgraded version gives instead." }
                     }
                     label.pf {
                         span { "Emoji" }
@@ -985,7 +1014,7 @@ fn changes(old: &Pet, new: &Pet, picture: Option<bool>) -> Vec<String> {
         Some(false) => out.push("removed its picture".into()),
         None => {}
     }
-    if old.emoji != new.emoji || old.bonus != new.bonus || old.description != new.description {
+    if old.emoji != new.emoji || old.bonus != new.bonus || old.plus_bonus != new.plus_bonus || old.description != new.description {
         out.push("changed its details".into());
     }
     out
@@ -1026,6 +1055,7 @@ async fn save_pet(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, fo
         rarity: store::clean_rarity(&form.string("rarity")).to_owned(),
         description: text::clip(&form.text("description"), 300),
         bonus: text::clip(&form.string("bonus"), 200),
+        plus_bonus: text::clip(&form.string("plus_bonus"), 200),
         // A link from before pictures were uploaded stays until the picture is replaced or removed.
         image: match &old {
             Some(p) if upload.is_none() && !remove => p.image.clone(),
@@ -1096,11 +1126,13 @@ async fn remove_pets(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
 async fn change_owned(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, String)>, form: FormData) -> WebResult {
     let page = open(&ctx, &user, guild, Level::Edit)?;
     let Some(pet) = store::pet(&ctx, guild, &id)? else { return Err(WebError::NotFound) };
+    let plus = form.bool("plus");
+    let name = format!("{}{}", pet.name, crate::version(plus));
     if form.i64("delta").unwrap_or(0) > 0 {
-        store::add_owned(&ctx, guild, &pet.id, page.user.id, page.user.id, 1, &page.user.name)?;
-        ctx.audit(&page.user, Some(guild), KEY, format!("Added one {} to the collection", pet.name));
-    } else if store::remove_owned(&ctx, guild, &pet.id, 1, None)? > 0 {
-        ctx.audit(&page.user, Some(guild), KEY, format!("Removed one {} from the collection", pet.name));
+        store::add_owned(&ctx, guild, &pet.id, page.user.id, page.user.id, 1, plus, &page.user.name)?;
+        ctx.audit(&page.user, Some(guild), KEY, format!("Added one {name} to the collection"));
+    } else if store::remove_owned(&ctx, guild, &pet.id, 1, None, Some(plus))? > 0 {
+        ctx.audit(&page.user, Some(guild), KEY, format!("Removed one {name} from the collection"));
     }
     // Back to the same row, so a run of +/- clicks doesn't lose the scroll position.
     Ok(Redirect::to(&format!("{}?saved=1#pet-{}", page.path("pets/catalog"), pet.id)).into_response())
@@ -1401,7 +1433,7 @@ async fn confirm_giveaway(State(ctx): State<Ctx>, user: User, Path((guild, id)):
     let g = store::giveaway(&ctx, guild, id)?.ok_or(WebError::NotFound)?;
     if store::close_giveaway(&ctx, guild, id, Status::Confirmed, &page.user.name)? {
         // As before: the pet left the collection, preferably a copy the giver had given.
-        store::remove_owned(&ctx, guild, &g.pet_id, 1, Some(g.giver_id))?;
+        store::remove_owned(&ctx, guild, &g.pet_id, 1, Some(g.giver_id), None)?;
         let c2 = ctx.clone();
         bot_core::tokio::spawn(async move { crate::announce_confirmed(&c2, guild, &g).await });
         ctx.audit(&page.user, Some(guild), KEY, format!("Confirmed giveaway #{id}"));

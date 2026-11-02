@@ -57,16 +57,27 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
             guild_id INTEGER NOT NULL, pet_id TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL,
             updated_at INTEGER NOT NULL, PRIMARY KEY (guild_id, pet_id));
     ",
+}, Migration {
+    // Pet+: the upgraded version of a pet, with its own bonus. A copy in the collection and a
+    // submission are either the pet or its Pet+.
+    name: "003_pets_plus",
+    sql: "
+        ALTER TABLE pets_catalog ADD COLUMN plus_bonus TEXT NOT NULL DEFAULT '';
+        ALTER TABLE pets_owned ADD COLUMN plus INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE pets_pending ADD COLUMN plus INTEGER NOT NULL DEFAULT 0;
+    ",
 }];
 
 // ---- rarity ----
 
-pub const RARITIES: [&str; 4] = ["common", "uncommon", "rare", "legendary"];
+/// Rarest last. Pets from idleontoolbox.com get theirs from the game's data (see `idleon`).
+pub const RARITIES: [&str; 5] = ["common", "uncommon", "rare", "epic", "legendary"];
 
 pub fn rarity_label(r: &str) -> &'static str {
     match r {
         "uncommon" => "Uncommon",
         "rare" => "Rare",
+        "epic" => "Epic",
         "legendary" => "Legendary",
         _ => "Common",
     }
@@ -78,6 +89,12 @@ pub fn rarity_rank(r: &str) -> usize {
 
 pub fn clean_rarity(r: &str) -> &'static str {
     RARITIES.iter().copied().find(|x| *x == r).unwrap_or("common")
+}
+
+/// Rarest first; within a rarity, in the order they came.
+pub fn sorted<T: std::borrow::Borrow<Pet>>(mut pets: Vec<T>) -> Vec<T> {
+    pets.sort_by_key(|p| std::cmp::Reverse(rarity_rank(&p.borrow().rarity)));
+    pets
 }
 
 // ---- catalog ----
@@ -95,6 +112,9 @@ pub struct Pet {
     pub description: String,
     #[serde(default)]
     pub bonus: String,
+    /// The bonus its Pet+ gives instead. Empty when nobody filled it in.
+    #[serde(default)]
+    pub plus_bonus: String,
     /// An https link to a picture, from before pictures were uploaded. An uploaded picture wins.
     #[serde(default)]
     pub image: String,
@@ -159,9 +179,9 @@ pub fn ensure_seeded(ctx: &Ctx, guild: u64) -> Result<()> {
             }
             for (i, p) in seed.catalog.iter().enumerate() {
                 tx.execute(
-                    "INSERT OR IGNORE INTO pets_catalog (guild_id, id, name, emoji, category, rarity, description, bonus, image, position)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    params![guild as i64, p.id, p.name, p.emoji, p.category, clean_rarity(&p.rarity), p.description, p.bonus, p.image, i as i64],
+                    "INSERT OR IGNORE INTO pets_catalog (guild_id, id, name, emoji, category, rarity, description, bonus, image, position, plus_bonus)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![guild as i64, p.id, p.name, p.emoji, p.category, clean_rarity(&p.rarity), p.description, p.bonus, p.image, i as i64, p.plus_bonus],
                 )?;
             }
         }
@@ -171,7 +191,7 @@ pub fn ensure_seeded(ctx: &Ctx, guild: u64) -> Result<()> {
     Ok(())
 }
 
-const PET_SELECT: &str = "SELECT c.id, c.name, c.emoji, c.category, c.rarity, c.description, c.bonus, c.image, c.guild_id, p.updated_at
+const PET_SELECT: &str = "SELECT c.id, c.name, c.emoji, c.category, c.rarity, c.description, c.bonus, c.image, c.guild_id, p.updated_at, c.plus_bonus
      FROM pets_catalog c LEFT JOIN pets_pictures p ON p.guild_id = c.guild_id AND p.pet_id = c.id";
 
 fn pet_row(r: &Row) -> rusqlite::Result<Pet> {
@@ -186,6 +206,7 @@ fn pet_row(r: &Row) -> rusqlite::Result<Pet> {
         image: r.get(7)?,
         guild: r.get::<_, i64>(8)? as u64,
         picture: r.get(9)?,
+        plus_bonus: r.get(10)?,
     })
 }
 
@@ -297,11 +318,12 @@ pub fn save_pet(ctx: &Ctx, guild: u64, p: &Pet) -> Result<()> {
     add_category(ctx, guild, &p.category)?;
     ctx.db.with(|c| {
         c.execute(
-            "INSERT INTO pets_catalog (guild_id, id, name, emoji, category, rarity, description, bonus, image, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, (SELECT COALESCE(MAX(position), -1) + 1 FROM pets_catalog WHERE guild_id = ?1))
+            "INSERT INTO pets_catalog (guild_id, id, name, emoji, category, rarity, description, bonus, image, plus_bonus, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, (SELECT COALESCE(MAX(position), -1) + 1 FROM pets_catalog WHERE guild_id = ?1))
              ON CONFLICT (guild_id, id) DO UPDATE SET name = excluded.name, emoji = excluded.emoji, category = excluded.category,
-               rarity = excluded.rarity, description = excluded.description, bonus = excluded.bonus, image = excluded.image",
-            params![guild as i64, p.id, p.name, p.emoji, p.category, clean_rarity(&p.rarity), p.description, p.bonus, p.image],
+               rarity = excluded.rarity, description = excluded.description, bonus = excluded.bonus, image = excluded.image,
+               plus_bonus = excluded.plus_bonus",
+            params![guild as i64, p.id, p.name, p.emoji, p.category, clean_rarity(&p.rarity), p.description, p.bonus, p.image, p.plus_bonus],
         )
     })?;
     Ok(())
@@ -380,15 +402,25 @@ pub fn delete_pets(ctx: &Ctx, guild: u64, ids: &[&str]) -> Result<(Vec<String>, 
 #[derive(Debug, Clone)]
 pub struct Owned {
     pub pet_id: String,
+    /// A Pet+ copy.
+    pub plus: bool,
     pub added_by: u64,
     pub given_by: u64,
     pub added_at: i64,
 }
 
-/// How many of each pet the server owns.
+/// How many of each pet the server owns, Pet+ copies included.
 pub fn owned_counts(ctx: &Ctx, guild: u64) -> Result<HashMap<String, i64>> {
     ctx.db.with(|c| {
         let mut s = c.prepare_cached("SELECT pet_id, COUNT(*) FROM pets_owned WHERE guild_id = ?1 GROUP BY pet_id")?;
+        s.query_map([guild as i64], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
+    })
+}
+
+/// How many Pet+ copies of each pet the server owns. Pets with none aren't listed.
+pub fn plus_counts(ctx: &Ctx, guild: u64) -> Result<HashMap<String, i64>> {
+    ctx.db.with(|c| {
+        let mut s = c.prepare_cached("SELECT pet_id, COUNT(*) FROM pets_owned WHERE guild_id = ?1 AND plus = 1 GROUP BY pet_id")?;
         s.query_map([guild as i64], |r| Ok((r.get(0)?, r.get(1)?)))?.collect()
     })
 }
@@ -412,12 +444,12 @@ pub fn owned_total(ctx: &Ctx, guild: u64) -> Result<i64> {
 pub fn contributions(ctx: &Ctx, guild: u64, user: u64) -> Result<Vec<Owned>> {
     ctx.db.with(|c| {
         let mut s = c.prepare_cached(
-            "SELECT pet_id, added_by, given_by, added_at FROM pets_owned
+            "SELECT pet_id, added_by, given_by, added_at, plus FROM pets_owned
              WHERE guild_id = ?1 AND (added_by = ?2 OR given_by = ?2) ORDER BY added_at DESC",
         )?;
         s
             .query_map(params![guild as i64, user as i64], |r| {
-                Ok(Owned { pet_id: r.get(0)?, added_by: r.get::<_, i64>(1)? as u64, given_by: r.get::<_, i64>(2)? as u64, added_at: r.get(3)? })
+                Ok(Owned { pet_id: r.get(0)?, added_by: r.get::<_, i64>(1)? as u64, given_by: r.get::<_, i64>(2)? as u64, added_at: r.get(3)?, plus: r.get(4)? })
             })?
             .collect()
     })
@@ -438,34 +470,37 @@ pub fn recent_additions(ctx: &Ctx, guild: u64, since: i64, limit: i64) -> Result
     })
 }
 
-pub fn add_owned(ctx: &Ctx, guild: u64, pet_id: &str, added_by: u64, given_by: u64, qty: i64, approved_by: &str) -> Result<()> {
+/// Copies to add: `plus` for Pet+ copies.
+#[allow(clippy::too_many_arguments)]
+pub fn add_owned(ctx: &Ctx, guild: u64, pet_id: &str, added_by: u64, given_by: u64, qty: i64, plus: bool, approved_by: &str) -> Result<()> {
     let mut conn = ctx.db.lock();
     let tx = conn.transaction()?;
-    insert_owned(&tx, guild, pet_id, added_by, given_by, qty, approved_by)?;
+    insert_owned(&tx, guild, pet_id, added_by, given_by, qty, plus, approved_by)?;
     tx.commit()?;
     Ok(())
 }
 
-fn insert_owned(c: &rusqlite::Connection, guild: u64, pet_id: &str, added_by: u64, given_by: u64, qty: i64, approved_by: &str) -> rusqlite::Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn insert_owned(c: &rusqlite::Connection, guild: u64, pet_id: &str, added_by: u64, given_by: u64, qty: i64, plus: bool, approved_by: &str) -> rusqlite::Result<()> {
     let now = now_ms();
     for _ in 0..qty.max(0) {
         c.execute(
-            "INSERT INTO pets_owned (guild_id, pet_id, added_by, given_by, added_at, approved_by) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![guild as i64, pet_id, added_by as i64, given_by as i64, now, approved_by],
+            "INSERT INTO pets_owned (guild_id, pet_id, added_by, given_by, added_at, approved_by, plus) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![guild as i64, pet_id, added_by as i64, given_by as i64, now, approved_by, plus],
         )?;
     }
     Ok(())
 }
 
-/// Remove up to `qty` copies, oldest first, preferring copies `prefer` gave. Returns how many
-/// went.
-pub fn remove_owned(ctx: &Ctx, guild: u64, pet_id: &str, qty: i64, prefer: Option<u64>) -> Result<i64> {
+/// Remove up to `qty` copies, oldest first, preferring copies `prefer` gave. `plus` picks Pet+
+/// copies or plain ones; `None` takes either, plain ones first. Returns how many went.
+pub fn remove_owned(ctx: &Ctx, guild: u64, pet_id: &str, qty: i64, prefer: Option<u64>, plus: Option<bool>) -> Result<i64> {
     ctx.db.with(|c| {
         let n = c.execute(
             "DELETE FROM pets_owned WHERE id IN (
-               SELECT id FROM pets_owned WHERE guild_id = ?1 AND pet_id = ?2
-               ORDER BY (given_by = ?3) DESC, added_at, id LIMIT ?4)",
-            params![guild as i64, pet_id, prefer.map(|p| p as i64).unwrap_or(-1), qty.max(0)],
+               SELECT id FROM pets_owned WHERE guild_id = ?1 AND pet_id = ?2 AND (?5 IS NULL OR plus = ?5)
+               ORDER BY plus, (given_by = ?3) DESC, added_at, id LIMIT ?4)",
+            params![guild as i64, pet_id, prefer.map(|p| p as i64).unwrap_or(-1), qty.max(0), plus],
         )?;
         Ok(n as i64)
     })
@@ -479,6 +514,8 @@ pub struct Pending {
     pub pet_id: String,
     pub user_id: u64,
     pub quantity: i64,
+    /// Pet+ copies.
+    pub plus: bool,
     pub requested_at: i64,
     pub status: String,
     pub reviewed_by: Option<String>,
@@ -486,7 +523,7 @@ pub struct Pending {
     pub reason: String,
 }
 
-const PENDING_COLS: &str = "id, pet_id, user_id, quantity, requested_at, status, reviewed_by, reviewed_at, reason";
+const PENDING_COLS: &str = "id, pet_id, user_id, quantity, requested_at, status, reviewed_by, reviewed_at, reason, plus";
 
 fn pending_row(r: &Row) -> rusqlite::Result<Pending> {
     Ok(Pending {
@@ -499,14 +536,15 @@ fn pending_row(r: &Row) -> rusqlite::Result<Pending> {
         reviewed_by: r.get(6)?,
         reviewed_at: r.get(7)?,
         reason: r.get(8)?,
+        plus: r.get(9)?,
     })
 }
 
-pub fn submit(ctx: &Ctx, guild: u64, pet_id: &str, user: u64, qty: i64) -> Result<i64> {
+pub fn submit(ctx: &Ctx, guild: u64, pet_id: &str, user: u64, qty: i64, plus: bool) -> Result<i64> {
     ctx.db.with(|c| {
         c.execute(
-            "INSERT INTO pets_pending (guild_id, pet_id, user_id, quantity, requested_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![guild as i64, pet_id, user as i64, qty, now_ms()],
+            "INSERT INTO pets_pending (guild_id, pet_id, user_id, quantity, requested_at, plus) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![guild as i64, pet_id, user as i64, qty, now_ms(), plus],
         )?;
         Ok(c.last_insert_rowid())
     })
@@ -560,7 +598,7 @@ pub fn review(ctx: &Ctx, guild: u64, ids: &[i64], approve: bool, reviewer: &str,
             params![guild as i64, id, status, reviewer, now, reason],
         )?;
         if approve {
-            insert_owned(&tx, guild, &p.pet_id, p.user_id, p.user_id, p.quantity, reviewer)?;
+            insert_owned(&tx, guild, &p.pet_id, p.user_id, p.user_id, p.quantity, p.plus, reviewer)?;
         }
         p.status = status.into();
         p.reviewed_by = Some(reviewer.into());
@@ -905,7 +943,11 @@ mod tests {
             assert!(seed.categories.contains(&p.category), "{} has an unknown category", p.id);
             assert_eq!(clean_rarity(&p.rarity), p.rarity, "{} has an odd rarity", p.id);
             assert!(!p.id.contains(':'), "ids go in custom ids");
+            assert!(!p.bonus.is_empty() && !p.plus_bonus.is_empty(), "{} has its bonuses from the game", p.id);
         }
+        // The game's shape: legendaries are few.
+        let n = |r: &str| seed.catalog.iter().filter(|p| p.rarity == r).count();
+        assert!(n("legendary") < n("epic") && n("epic") < n("rare") && n("rare") < n("common"));
     }
 
     #[test]
@@ -950,8 +992,8 @@ mod flow {
         assert_eq!(catalog(&ctx, g).unwrap().len(), 61);
         assert_eq!(categories(&ctx, g).unwrap().len(), 4);
 
-        let a = submit(&ctx, g, "king-doot", 7, 3).unwrap();
-        let b = submit(&ctx, g, "slime", 8, 1).unwrap();
+        let a = submit(&ctx, g, "king-doot", 7, 3, false).unwrap();
+        let b = submit(&ctx, g, "slime", 8, 1, false).unwrap();
         assert_eq!(pending_count(&ctx, g).unwrap(), 2);
         let done = review(&ctx, g, &[a, a], true, "Antho", "").unwrap();
         assert_eq!(done.len(), 1, "a submission is reviewed once");
@@ -966,7 +1008,7 @@ mod flow {
         assert_eq!(expiring(&ctx, g, 0).unwrap().len(), 1);
         assert!(close_giveaway(&ctx, g, id, Status::Confirmed, "Antho").unwrap());
         assert!(!close_giveaway(&ctx, g, id, Status::Expired, "Expired").unwrap(), "closed giveaways stay closed");
-        assert_eq!(remove_owned(&ctx, g, "king-doot", 1, Some(7)).unwrap(), 1);
+        assert_eq!(remove_owned(&ctx, g, "king-doot", 1, Some(7), None).unwrap(), 1);
         let s = stats(&all_giveaways(&ctx, g).unwrap());
         assert_eq!((s.confirmed, s.top_givers[0]), (1, (7, 1)));
 
@@ -981,7 +1023,7 @@ mod flow {
         assert!(picture(&ctx, g, "king-doot").unwrap().is_none(), "a removed pet's picture goes too");
 
         // A rename keeps the id, so the collection and giveaways stay with the pet.
-        add_owned(&ctx, g, "slime", 7, 7, 2, "Antho").unwrap();
+        add_owned(&ctx, g, "slime", 7, 7, 2, false, "Antho").unwrap();
         let mut slime = super::pet(&ctx, g, "slime").unwrap().unwrap();
         let gid = record_giveaway(&ctx, g, &NewGiveaway { pet: &slime, giver: 7, winner: 9, notes: "", recorded_by: "Antho", expires_at: None }).unwrap();
         slime.name = "Green Slime".into();
@@ -995,12 +1037,44 @@ mod flow {
         assert!(name_taken(&ctx, g, "green slime", Some("slime")).unwrap().is_none());
 
         // Several at once, in one go.
-        add_owned(&ctx, g, "frog", 7, 7, 3, "Antho").unwrap();
+        add_owned(&ctx, g, "frog", 7, 7, 3, false, "Antho").unwrap();
         let (names, copies) = delete_pets(&ctx, g, &["molti", "frog", "nope"]).unwrap();
         assert_eq!((names, copies), (vec!["Molti".to_owned(), "Frog".to_owned()], 3));
         assert!(super::pet(&ctx, g, "frog").unwrap().is_none());
         let id = new_pet_id(&ctx, g, "Slime").unwrap();
         assert_eq!(id, "slime-2");
         let _ = crate::Pets.meta();
+    }
+
+    /// Pet+ copies: submitted, approved, counted apart, removed on their own or after the plain ones.
+    #[test]
+    fn pet_plus_copies() {
+        let rt = bot_core::tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _in = rt.enter();
+        let ctx = ctx();
+        let g = 43;
+        ensure_seeded(&ctx, g).unwrap();
+        let doot = pet(&ctx, g, "king-doot").unwrap().unwrap();
+        assert_eq!((doot.rarity.as_str(), doot.plus_bonus.as_str()), ("legendary", "All Divinities count as Active, and 1.25x Divinity PTS gain"));
+
+        let a = submit(&ctx, g, "slime", 7, 2, true).unwrap();
+        assert!(pending(&ctx, g).unwrap()[0].plus);
+        review(&ctx, g, &[a], true, "Antho", "").unwrap();
+        add_owned(&ctx, g, "slime", 7, 7, 1, false, "Antho").unwrap();
+        assert_eq!(owned_counts(&ctx, g).unwrap().get("slime"), Some(&3), "Pet+ copies are copies");
+        assert_eq!(plus_counts(&ctx, g).unwrap().get("slime"), Some(&2));
+        assert_eq!(contributions(&ctx, g, 7).unwrap().iter().filter(|o| o.plus).count(), 2);
+
+        // Either kind: the plain one goes first.
+        assert_eq!(remove_owned(&ctx, g, "slime", 1, None, None).unwrap(), 1);
+        assert_eq!(plus_counts(&ctx, g).unwrap().get("slime"), Some(&2));
+        assert_eq!(remove_owned(&ctx, g, "slime", 1, None, Some(false)).unwrap(), 0, "no plain copies left");
+        assert_eq!(remove_owned(&ctx, g, "slime", 5, None, Some(true)).unwrap(), 2);
+        assert!(plus_counts(&ctx, g).unwrap().is_empty());
+
+        let mut slime = super::pet(&ctx, g, "slime").unwrap().unwrap();
+        slime.plus_bonus = "+50% Golden Balls".into();
+        save_pet(&ctx, g, &slime).unwrap();
+        assert_eq!(super::pet(&ctx, g, "slime").unwrap().unwrap().plus_bonus, "+50% Golden Balls");
     }
 }

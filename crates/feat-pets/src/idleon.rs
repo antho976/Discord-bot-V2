@@ -5,11 +5,13 @@
 //! is drawn in the browser. So the bot reads, from idleontoolbox.com only:
 //! - the pets page, for the list of scripts it loads;
 //! - the script with the pet list, `JSON.parse('[{"name":"King_Doot","rawName":"babaMummy",...`
-//!   (name, sprite name, in-game bonus);
+//!   (name, sprite name, in-game bonus, its Pet+ bonus, how rare a drop it is, its power);
 //! - the script with `"companionGroups"`, the in-game sets (Legacy Pets, Fallen Spirits, ...).
 //!   Pets in no set are ones that aren't in the game, so they're left out;
 //! - each picture at `/monsters/<rawName>/static.png`, where the site draws it from, or
 //!   `/afk_targets/<Name>.png` when that's missing.
+//!
+//! The site has no rarity, so the bot works it out from the game's data (see [`rarities`]).
 //!
 //! The list is kept for an hour and pictures until the bot restarts, so a check followed by an
 //! add downloads each picture once. A picture that couldn't be read (a timeout, the site's own
@@ -33,7 +35,7 @@ use bot_core::{Ctx, serde_json, text};
 use serde::Deserialize;
 
 use crate::store::{self, Pet};
-use crate::{KEY, picture};
+use crate::{KEY, picture, view};
 
 const SITE: &str = "https://idleontoolbox.com";
 const HOST: &str = "idleontoolbox.com";
@@ -57,6 +59,10 @@ pub struct SitePet {
     pub group: String,
     /// "+5% All Skill Efficiency"
     pub bonus: String,
+    /// What its Pet+ gives instead, "+8% All Skill Efficiency". Empty when it has no Pet+.
+    pub plus_bonus: String,
+    /// One of [`store::RARITIES`].
+    pub rarity: &'static str,
 }
 
 #[derive(Clone)]
@@ -214,7 +220,7 @@ fn js_string(s: &str) -> Option<String> {
     None
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct RawPet {
     #[serde(default)]
     name: Option<String>,
@@ -222,6 +228,30 @@ struct RawPet {
     raw: Option<String>,
     #[serde(default)]
     effect: String,
+    /// The Pet+ bonus.
+    #[serde(default, rename = "upgradedEffect")]
+    upgraded: String,
+    /// What a Pet+ costs; none for pets that can't be upgraded (tournament prizes).
+    #[serde(default, rename = "upgradeCost")]
+    upgrade_cost: serde_json::Value,
+    /// For pets from eggs, how rare the drop is: 5 for the commonest, 2000 for King Doot. The
+    /// site ships it as text.
+    #[serde(default)]
+    filler: serde_json::Value,
+    /// The pet's power in the game's tournaments.
+    #[serde(default, rename = "tourPower")]
+    power: serde_json::Value,
+}
+
+/// A number the site sends as a number or as text.
+fn num(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64().or_else(|| v.as_str()?.trim().parse().ok()).filter(|n: &f64| n.is_finite())
+}
+
+impl RawPet {
+    fn has_plus(&self) -> bool {
+        num(&self.upgrade_cost).is_some_and(|c| c > 0.0) && !self.upgraded.trim().is_empty()
+    }
 }
 
 /// The pet list, in the site's order (the sets point into it by position).
@@ -273,24 +303,103 @@ fn readable(s: &str) -> String {
     s.replace('{', "+").replace('_', " ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Sets bought or won rather than dropped from eggs: their `filler` isn't a drop's rarity.
+fn shop_set(group: &str) -> bool {
+    let g = group.to_lowercase();
+    g.contains("exclusive") || g.contains("special")
+}
+
+/// A drop's rarity, as a place in [`store::RARITIES`]. The egg sets have three pets each at 5
+/// and 10, three at 100 to 150, two or three at 250 to 450 and one at 1000 or more.
+fn drop_rarity(weight: f64) -> usize {
+    match weight {
+        w if w >= 1000.0 => 4,
+        w if w >= 250.0 => 3,
+        w if w >= 100.0 => 2,
+        w if w >= 10.0 => 1,
+        _ => 0,
+    }
+}
+
+/// How the egg sets split, commonest first, when the site has no egg pets to count.
+const EGG_SHAPE: [f64; 5] = [10.0, 9.0, 8.0, 5.0, 3.0];
+
+/// Each pet's rarity, read from the game:
+/// - a pet from an egg (Legacy Pets, Fallen Spirits, Shallow Waters) has the rarity of its drop,
+///   which gives each set one legendary, one or two epic and three of each of the rest;
+/// - pets bought or won (Exclusive and Special Pets) have no drop, so they're ranked by power
+///   into the same shape: the strongest twelfth or so is legendary, and so on down;
+/// - a prize with no Pet+ and less power than any egg pet (Glunko Supreme, the tournament
+///   champions) is legendary: only a few people can ever have one.
+fn rarities(pets: &[(&RawPet, &str)]) -> Vec<&'static str> {
+    let power = |p: &RawPet| num(&p.power).unwrap_or(0.0);
+    let mut shape = [0.0; 5];
+    let mut weakest_egg = f64::INFINITY;
+    for (p, group) in pets {
+        if let (false, Some(w)) = (shop_set(group), num(&p.filler)) {
+            shape[drop_rarity(w)] += 1.0;
+            weakest_egg = weakest_egg.min(power(p));
+        }
+    }
+    if shape.iter().sum::<f64>() == 0.0 {
+        shape = EGG_SHAPE;
+    }
+    let total: f64 = shape.iter().sum();
+    let weakest_egg = if weakest_egg.is_finite() { weakest_egg } else { 30.0 };
+    let prize = |p: &RawPet| !p.has_plus() && power(p) < weakest_egg;
+    let ranked: Vec<f64> = pets.iter().filter(|(p, g)| shop_set(g) && !prize(p)).map(|(p, _)| power(p)).collect();
+    // Pets as strong as each other get the same rarity.
+    let by_power = |pw: f64| {
+        let above = ranked.iter().filter(|x| **x > pw).count() as f64 / ranked.len().max(1) as f64;
+        let mut upto = 0.0;
+        for r in (0..5).rev() {
+            upto += shape[r] / total;
+            if above < upto - 1e-9 {
+                return r;
+            }
+        }
+        0
+    };
+    pets.iter()
+        .map(|(p, group)| {
+            let rank = match (shop_set(group), num(&p.filler)) {
+                (false, Some(w)) => drop_rarity(w),
+                (false, None) => 0,
+                (true, _) if prize(p) => 4,
+                (true, _) => by_power(power(p)),
+            };
+            store::RARITIES[rank]
+        })
+        .collect()
+}
+
 /// Pets in a set, each once, in the sets' order.
 fn join(pets: &[RawPet], groups: &[Group]) -> Vec<SitePet> {
-    let mut out: Vec<SitePet> = Vec::new();
+    let mut picked: Vec<(&RawPet, &str)> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
     for g in groups {
         for &i in &g.indices {
             let Some(p) = pets.get(i) else { continue };
             let (Some(name), Some(raw)) = (&p.name, &p.raw) else { continue };
-            if !safe(raw) || out.iter().any(|o| o.raw == *raw) {
+            if !safe(raw) || readable(name).is_empty() || !seen.insert(raw.as_str()) {
                 continue;
             }
-            let name = text::clip(&readable(name), 60);
-            if name.is_empty() {
-                continue;
-            }
-            out.push(SitePet { name, raw: raw.clone(), group: text::clip(&readable(&g.name), 60), bonus: text::clip(&readable(&p.effect), 200) });
+            picked.push((p, g.name.as_str()));
         }
     }
-    out
+    let rarity = rarities(&picked);
+    picked
+        .iter()
+        .zip(rarity)
+        .map(|((p, group), rarity)| SitePet {
+            name: text::clip(&readable(p.name.as_deref().unwrap_or_default()), 60),
+            raw: p.raw.clone().unwrap_or_default(),
+            group: text::clip(&readable(group), 60),
+            bonus: text::clip(&readable(&p.effect), 200),
+            plus_bonus: if p.has_plus() { text::clip(&readable(&p.upgraded), 200) } else { String::new() },
+            rarity,
+        })
+        .collect()
 }
 
 /// Letters, digits and underscores only: these go into a path on the site.
@@ -465,27 +574,69 @@ fn keys(name: &str) -> [String; 2] {
     [words.concat(), sorted.join(" ")]
 }
 
-/// What the site has that the catalog doesn't: pets it lacks, and pictures for its pets that
-/// have none, as `(catalog pet, site pet)`.
-pub fn compare<'a, 'b>(site: &'a [SitePet], catalog: &'b [Pet]) -> (Vec<&'a SitePet>, Vec<(&'b Pet, &'a SitePet)>) {
+/// What the site has that the catalog doesn't.
+pub struct Diff<'a, 'b> {
+    /// Pets the catalog lacks.
+    pub missing: Vec<&'a SitePet>,
+    /// Pictures for its pets that have none.
+    pub pictures: Vec<(&'b Pet, &'a SitePet)>,
+    /// Its pets whose rarity, bonus or Pet+ bonus isn't the game's.
+    pub updates: Vec<(&'b Pet, &'a SitePet)>,
+}
+
+/// The site's pets against the catalog, matched by name.
+pub fn compare<'a, 'b>(site: &'a [SitePet], catalog: &'b [Pet]) -> Diff<'a, 'b> {
     let mut have: HashMap<String, &Pet> = HashMap::new();
     for p in catalog {
         for k in keys(&p.name) {
             have.entry(k).or_insert(p);
         }
     }
-    let mut missing = Vec::new();
-    let mut pictures = Vec::new();
-    let mut seen: HashSet<&str> = HashSet::new();
+    let mut d = Diff { missing: Vec::new(), pictures: Vec::new(), updates: Vec::new() };
+    let (mut pictured, mut updated): (HashSet<&str>, HashSet<&str>) = (HashSet::new(), HashSet::new());
     for s in site {
         let [a, b] = keys(&s.name);
-        match have.get(&a).or_else(|| have.get(&b)) {
-            None => missing.push(s),
-            Some(p) if !p.has_picture() && seen.insert(p.id.as_str()) => pictures.push((*p, s)),
-            Some(_) => {}
+        let Some(p) = have.get(&a).or_else(|| have.get(&b)) else {
+            d.missing.push(s);
+            continue;
+        };
+        if !p.has_picture() && pictured.insert(p.id.as_str()) {
+            d.pictures.push((*p, s));
+        }
+        if !news(p, s).is_empty() && updated.insert(p.id.as_str()) {
+            d.updates.push((*p, s));
         }
     }
-    (missing, pictures)
+    d
+}
+
+/// What taking the site's details would change on a catalog pet: "Common → Epic", "bonus",
+/// "Pet+ bonus". A bonus the site doesn't have is left alone.
+fn news(p: &Pet, s: &SitePet) -> Vec<String> {
+    let mut out = Vec::new();
+    if store::clean_rarity(&p.rarity) != s.rarity {
+        out.push(format!("{} → {}", store::rarity_label(&p.rarity), store::rarity_label(s.rarity)));
+    }
+    if !s.bonus.is_empty() && p.bonus.trim() != s.bonus {
+        out.push("bonus".into());
+    }
+    if !s.plus_bonus.is_empty() && p.plus_bonus.trim() != s.plus_bonus {
+        out.push("Pet+ bonus".into());
+    }
+    out
+}
+
+/// A catalog pet with the site's rarity and bonuses.
+fn updated(p: &Pet, s: &SitePet) -> Pet {
+    let mut new = p.clone();
+    new.rarity = s.rarity.into();
+    if !s.bonus.is_empty() {
+        new.bonus = s.bonus.clone();
+    }
+    if !s.plus_bonus.is_empty() {
+        new.plus_bonus = s.plus_bonus.clone();
+    }
+    new
 }
 
 /// The catalog category for a set on the site: the server's own when the name, or its first
@@ -517,9 +668,10 @@ fn new_pets<'a>(ticked: impl IntoIterator<Item = &'a SitePet>, catalog: &[Pet], 
             name: s.name.clone(),
             emoji: String::new(),
             category: category_for(&s.group, cats),
-            rarity: "common".into(),
+            rarity: s.rarity.into(),
             description: String::new(),
             bonus: s.bonus.clone(),
+            plus_bonus: s.plus_bonus.clone(),
             image: String::new(),
             guild,
             picture: None,
@@ -536,8 +688,8 @@ async fn check(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> We
     let catalog = store::catalog(&ctx, guild)?;
     let run = async {
         let site = list().await?;
-        let (missing, pictures) = compare(&site, &catalog);
-        let want: Vec<SitePet> = missing.into_iter().chain(pictures.into_iter().map(|(_, s)| s)).cloned().collect();
+        let d = compare(&site, &catalog);
+        let want: Vec<SitePet> = d.missing.into_iter().chain(d.pictures.into_iter().map(|(_, s)| s)).cloned().collect();
         read_pictures(want).await
     };
     let outcome = match bot_core::tokio::time::timeout(DEADLINE, run).await {
@@ -563,15 +715,16 @@ async fn add(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: F
     };
     let new: HashSet<&str> = form.all("new").into_iter().collect();
     let pics: HashSet<&str> = form.all("pic").into_iter().collect();
-    if new.is_empty() && pics.is_empty() {
+    let upd: HashSet<&str> = form.all("upd").into_iter().collect();
+    if new.is_empty() && pics.is_empty() && upd.is_empty() {
         return Err(WebError::Bad("Tick at least one pet first.".into()));
     }
     let catalog = store::catalog(&ctx, guild)?;
     let cats = store::categories(&ctx, guild)?;
     // Compared with the catalog as it is now, whatever the list said a moment ago.
-    let (missing, pictured) = compare(&site, &catalog);
+    let d = compare(&site, &catalog);
     let mut added: Vec<String> = Vec::new();
-    for (pet, s) in new_pets(missing.into_iter().filter(|s| new.contains(s.raw.as_str())), &catalog, &cats, guild) {
+    for (pet, s) in new_pets(d.missing.into_iter().filter(|s| new.contains(s.raw.as_str())), &catalog, &cats, guild) {
         store::save_pet(&ctx, guild, &pet)?;
         if let Some(p) = held_picture(&s.raw) {
             store::set_picture(&ctx, guild, &pet.id, p.mime, &p.data)?;
@@ -579,11 +732,19 @@ async fn add(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: F
         added.push(pet.name);
     }
     let mut given = 0;
-    for (pet, s) in pictured.into_iter().filter(|(p, _)| pics.contains(p.id.as_str())) {
+    for (pet, s) in d.pictures.into_iter().filter(|(p, _)| pics.contains(p.id.as_str())) {
         if let Some(p) = held_picture(&s.raw) {
             store::set_picture(&ctx, guild, &pet.id, p.mime, &p.data)?;
             given += 1;
         }
+    }
+    let mut changed: Vec<String> = Vec::new();
+    for (pet, s) in d.updates.into_iter().filter(|(p, _)| upd.contains(p.id.as_str())) {
+        let new = updated(pet, s);
+        store::save_pet(&ctx, guild, &new)?;
+        // Giveaways keep a copy of the rarity.
+        store::sync_giveaways(&ctx, guild, &new)?;
+        changed.push(format!("{} ({})", pet.name, news(pet, s).join(", ")));
     }
     match added.as_slice() {
         [] => {}
@@ -592,6 +753,14 @@ async fn add(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: F
     }
     if given > 0 {
         ctx.audit(&page.user, Some(guild), KEY, format!("Added pictures from idleontoolbox.com to {given} {}", if given == 1 { "pet" } else { "pets" }));
+    }
+    if !changed.is_empty() {
+        ctx.audit(
+            &page.user,
+            Some(guild),
+            KEY,
+            format!("Took the game's rarity and bonuses from idleontoolbox.com for {}: {}", plural(changed.len(), "pet", "pets"), text::clip(&changed.join(", "), 400)),
+        );
     }
     Ok(bot_core::web::saved(&page.path("pets/catalog")))
 }
@@ -646,13 +815,14 @@ pub fn panel(page: &Page, catalog: &[Pet]) -> Markup {
             }
         };
     };
-    let (missing, pictures) = compare(&site, catalog);
+    let Diff { missing, pictures, updates } = compare(&site, catalog);
     let src = |raw: &str| held_picture(raw).map(|_| page.path(&format!("pets/catalog/idleon/pic/{raw}")));
-    let title = match (missing.len(), pictures.len()) {
-        (0, 0) => "Your catalog has every pet idleontoolbox.com lists".to_owned(),
-        (0, _) => "Every pet on idleontoolbox.com is in your catalog".to_owned(),
-        (1, _) => "1 pet isn't in your catalog".to_owned(),
-        (n, _) => format!("{n} pets aren't in your catalog"),
+    let title = match (missing.len(), updates.len(), pictures.len()) {
+        (0, 0, 0) => "Your catalog matches idleontoolbox.com".to_owned(),
+        (0, 0, _) => "Every pet on idleontoolbox.com is in your catalog".to_owned(),
+        (0, n, _) => format!("{} match the game's data", plural(n, "pet doesn't", "pets don't")),
+        (1, _, _) => "1 pet isn't in your catalog".to_owned(),
+        (n, _, _) => format!("{n} pets aren't in your catalog"),
     };
     let checked = format!("Checked {} on idleontoolbox.com.", text::ago(at));
     let unread = missing.iter().copied().chain(pictures.iter().map(|(_, s)| *s)).filter(|s| picture_unread(&s.raw)).count();
@@ -665,25 +835,49 @@ pub fn panel(page: &Page, catalog: &[Pet]) -> Markup {
                     h2 { (title) }
                     p {
                         (checked)
-                        @if !missing.is_empty() { " The site doesn't list rarity, so new pets start as Common. Change it from each pet." }
+                        @if !missing.is_empty() || !updates.is_empty() { " " (RARITY_LINE) }
                         @if unread > 0 { " " (unread_line(unread)) }
                     }
                 }
                 @if unread > 0 { form method="post" action=(again) { button.btn.small type="submit" { "Check again" } } }
                 a.btn.small.ghost href=(close) { "Close" }
             }
-            @if !missing.is_empty() || !pictures.is_empty() {
+            @if !missing.is_empty() || !pictures.is_empty() || !updates.is_empty() {
                 form.pets-io-form method="post" action=(page.path("pets/catalog/idleon/add")) {
                     @if !missing.is_empty() {
                         div.pets-io-sub {
+                            h3 { "New pets" }
                             label.pets-check { input type="checkbox" data-all="new" checked; "Select all" }
                         }
                         div.pets-picks {
                             @for s in &missing {
-                                label.pets-pick data-tip={ (s.group) @if !s.bonus.is_empty() { ": " (s.bonus) } } {
+                                label class={ "pets-pick r-" (s.rarity) } data-tip=(site_tip(s)) {
                                     input type="checkbox" name="new" value=(s.raw) checked;
                                     (pick_art(src(&s.raw).as_deref(), picture_unread(&s.raw)))
                                     span.pets-pick-name { (s.name) }
+                                    (view::rarity(s.rarity))
+                                }
+                            }
+                        }
+                    }
+                    @if !updates.is_empty() {
+                        div.pets-io-sub {
+                            h3 { "Rarity and bonuses from the game" }
+                            label.pets-check { input type="checkbox" data-all="upd" checked; "Select all" }
+                        }
+                        div.pets-picks {
+                            @for (p, s) in &updates {
+                                @let what = news(p, s);
+                                label class={ "pets-pick r-" (s.rarity) } data-tip=(site_tip(s)) {
+                                    input type="checkbox" name="upd" value=(p.id) checked;
+                                    span.pets-pick-art aria-hidden="true" {
+                                        @match p.image_url() {
+                                            Some(u) => img src=(u) alt="" loading="lazy";,
+                                            None => span.pets-pick-emoji { (p.icon()) },
+                                        }
+                                    }
+                                    span.pets-pick-name { (p.name) }
+                                    span.pets-pick-what { (what.join(", ")) }
                                 }
                             }
                         }
@@ -713,13 +907,32 @@ pub fn panel(page: &Page, catalog: &[Pet]) -> Markup {
                         }
                     }
                     div.pets-io-foot {
-                        button.btn.primary type="submit" data-label { (add_label(missing.len(), takeable)) }
+                        button.btn.primary type="submit" data-label { (add_label(missing.len(), takeable, updates.len())) }
                     }
                 }
                 script { (PreEscaped(PANEL_JS)) }
             }
         }
     }
+}
+
+/// How the bot works out a rarity, said where it offers one.
+const RARITY_LINE: &str = "The site has no rarity, so the bot takes it from the game: egg pets have the rarity of their drop, and shop and event pets are ranked by power into the same shape, one legendary for every eleven or so.";
+
+/// A site pet's hover text: its set, rarity, bonus and Pet+ bonus.
+fn site_tip(s: &SitePet) -> String {
+    let mut t = format!("{}, {}", s.group, store::rarity_label(s.rarity));
+    if !s.bonus.is_empty() {
+        t.push_str(&format!(". {}", s.bonus));
+    }
+    if !s.plus_bonus.is_empty() {
+        t.push_str(&format!(". Pet+: {}", s.plus_bonus));
+    }
+    t
+}
+
+fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 /// A pick's picture, or why there's none: the site has none, or it couldn't be read just now.
@@ -744,13 +957,21 @@ fn unread_line(n: usize) -> String {
     }
 }
 
-fn add_label(pets: usize, pics: usize) -> String {
-    let p = |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
-    match (pets, pics) {
-        (0, 0) => "Add".into(),
-        (n, 0) => format!("Add {}", p(n, "pet", "pets")),
-        (0, m) => format!("Add {}", p(m, "picture", "pictures")),
-        (n, m) => format!("Add {} and {}", p(n, "pet", "pets"), p(m, "picture", "pictures")),
+/// The button: "Add 2 pets and 1 picture, update 3 pets".
+fn add_label(pets: usize, pics: usize, upd: usize) -> String {
+    let mut adds = Vec::new();
+    if pets > 0 {
+        adds.push(plural(pets, "pet", "pets"));
+    }
+    if pics > 0 {
+        adds.push(plural(pics, "picture", "pictures"));
+    }
+    let add = (!adds.is_empty()).then(|| format!("Add {}", adds.join(" and ")));
+    match (add, upd) {
+        (None, 0) => "Nothing ticked".into(),
+        (None, n) => format!("Update {}", plural(n, "pet", "pets")),
+        (Some(a), 0) => a,
+        (Some(a), n) => format!("{a}, update {}", plural(n, "pet", "pets")),
     }
 }
 
@@ -762,9 +983,11 @@ const PANEL_JS: &str = r#"(() => {
   const n = (name) => form.querySelectorAll(`input[name="${name}"]:checked`).length;
   const say = (k, one, many) => `${k} ${k === 1 ? one : many}`;
   const sync = () => {
-    const a = n("new"), b = n("pic");
-    btn.textContent = a && b ? `Add ${say(a, "pet", "pets")} and ${say(b, "picture", "pictures")}` : a ? `Add ${say(a, "pet", "pets")}` : b ? `Add ${say(b, "picture", "pictures")}` : "Nothing ticked";
-    btn.disabled = !a && !b;
+    const a = n("new"), b = n("pic"), u = n("upd");
+    const adds = [a && say(a, "pet", "pets"), b && say(b, "picture", "pictures")].filter(Boolean);
+    const add = adds.length ? `Add ${adds.join(" and ")}` : "";
+    btn.textContent = add && u ? `${add}, update ${say(u, "pet", "pets")}` : add || (u ? `Update ${say(u, "pet", "pets")}` : "Nothing ticked");
+    btn.disabled = !a && !b && !u;
     form.querySelectorAll("[data-all]").forEach((all) => {
       const boxes = form.querySelectorAll(`input[name="${all.dataset.all}"]`);
       const on = [...boxes].filter((x) => x.checked).length;
@@ -783,7 +1006,7 @@ const PANEL_JS: &str = r#"(() => {
 mod tests {
     use super::*;
 
-    const JS: &str = r#"(globalThis.TURBOPACK||[]).push([553898,(e,a,r)=>{a.exports=JSON.parse('[{"name":"King_Doot","rawName":"babaMummy","effect":"All_Divinities_from_World_5_count_as_Active","bonus":1},{"name":"Santas_Little_Helper","rawName":"w6c2b","effect":"{5%_Santa\'s_bonus"},{"name":"Pirate_Deckhand","rawName":"w7b11","effect":"x"},{"name":"Slime","rawName":"slimeG","effect":"y"},{"name":"Nutto","rawName":"acorn","effect":"Not_officially_in_the_game_and_may_never_be"},{"name":"A","rawName":"a","effect":""},{"name":"B","rawName":"b","effect":""},{"name":"C","rawName":"c","effect":""},{"name":"D","rawName":"d","effect":""},{"name":"E","rawName":"e","effect":""},{"name":"F","rawName":"f","effect":""},{"name":"G","rawName":"g","effect":""},{"name":"H","rawName":"h","effect":""},{"name":"I","rawName":"i","effect":""},{"name":"J","rawName":"j","effect":""},{"name":"K","rawName":"k","effect":""},{"name":"L","rawName":"l","effect":""},{"name":"M","rawName":"m","effect":""},{"name":"N","rawName":"n","effect":""},{"name":"O","rawName":"o","effect":""},{}]')}]);"#;
+    const JS: &str = r#"(globalThis.TURBOPACK||[]).push([553898,(e,a,r)=>{a.exports=JSON.parse('[{"name":"King_Doot","rawName":"babaMummy","effect":"All_Divinities_from_World_5_count_as_Active","bonus":1,"filler":"2000","tourPower":165,"upgradeCost":3000,"upgradedEffect":"All_Divinities_count_as_Active"},{"name":"Santas_Little_Helper","rawName":"w6c2b","effect":"{5%_Santa\'s_bonus","upgradeCost":null,"upgradedEffect":"{5%_Santa\'s_bonus"},{"name":"Pirate_Deckhand","rawName":"w7b11","effect":"x"},{"name":"Slime","rawName":"slimeG","effect":"y"},{"name":"Nutto","rawName":"acorn","effect":"Not_officially_in_the_game_and_may_never_be"},{"name":"A","rawName":"a","effect":""},{"name":"B","rawName":"b","effect":""},{"name":"C","rawName":"c","effect":""},{"name":"D","rawName":"d","effect":""},{"name":"E","rawName":"e","effect":""},{"name":"F","rawName":"f","effect":""},{"name":"G","rawName":"g","effect":""},{"name":"H","rawName":"h","effect":""},{"name":"I","rawName":"i","effect":""},{"name":"J","rawName":"j","effect":""},{"name":"K","rawName":"k","effect":""},{"name":"L","rawName":"l","effect":""},{"name":"M","rawName":"m","effect":""},{"name":"N","rawName":"n","effect":""},{"name":"O","rawName":"o","effect":""},{}]')}]);"#;
     const DATA: &str = r#"x=JSON.parse('{"bundles":[],"companionGroups":[{"name":"Legacy Pets","indices":[0,3]},{"name":"Exclusive Pets","indices":[1,2,99]},{"name":"Special Pets","indices":[1]}],"constellations":[]}')"#;
 
     #[test]
@@ -801,6 +1024,58 @@ mod tests {
         assert_eq!(names, ["King Doot", "Slime", "Santas Little Helper", "Pirate Deckhand"]);
         assert_eq!(list[2].bonus, "+5% Santa's bonus");
         assert_eq!(list[2].group, "Exclusive Pets");
+        // Pet+: its bonus, and none for a pet that can't be upgraded.
+        assert_eq!((list[0].plus_bonus.as_str(), list[0].rarity), ("All Divinities count as Active", "legendary"));
+        assert_eq!(list[2].plus_bonus, "");
+    }
+
+    fn raw(name: &str, filler: f64, power: f64, plus: bool) -> RawPet {
+        RawPet {
+            name: Some(name.into()),
+            raw: Some(name.into()),
+            effect: "x".into(),
+            upgraded: if plus { "y".into() } else { String::new() },
+            upgrade_cost: if plus { serde_json::json!(100) } else { serde_json::Value::Null },
+            filler: serde_json::json!(filler.to_string()),
+            power: serde_json::json!(power),
+        }
+    }
+
+    /// Egg pets by their drop; shop pets by power into the eggs' shape; prizes are legendary.
+    #[test]
+    fn rarity_comes_from_the_game() {
+        let eggs = [(2000.0, 165.0), (450.0, 125.0), (150.0, 120.0), (150.0, 110.0), (10.0, 80.0), (10.0, 70.0), (10.0, 65.0), (5.0, 50.0), (5.0, 50.0), (5.0, 50.0), (5.0, 40.0)];
+        let mut pets: Vec<RawPet> = eggs.iter().enumerate().map(|(i, (f, p))| raw(&format!("egg{i}"), *f, *p, true)).collect();
+        // Twenty-two shop pets, powers 100 to 310.
+        for i in 0..22 {
+            pets.push(raw(&format!("shop{i}"), 1.0, 100.0 + 10.0 * i as f64, true));
+        }
+        pets.push(raw("champion", 1.0, 10.0, false));
+        pets.push(raw("weak-but-upgradable", 1.0, 10.0, true));
+        let sets: Vec<(&RawPet, &str)> = pets.iter().map(|p| (p, if p.name.as_deref().unwrap().starts_with("egg") { "Legacy Pets" } else { "Exclusive Pets" })).collect();
+        let got = rarities(&sets);
+        assert_eq!(&got[..11], ["legendary", "epic", "rare", "rare", "uncommon", "uncommon", "uncommon", "common", "common", "common", "common"]);
+        let shop = &got[11..33];
+        let count = |r: &str| shop.iter().filter(|x| **x == r).count();
+        assert_eq!(shop[21], "legendary", "the strongest");
+        assert_eq!(shop[0], "common", "the weakest");
+        // 23 ranked (the weak one with a Pet+ too) in the eggs' 1:1:2:3:4.
+        assert_eq!([count("legendary"), count("epic"), count("rare"), count("uncommon"), count("common")], [3, 2, 4, 6, 7], "the eggs' shape");
+        assert!(shop.windows(2).all(|w| store::rarity_rank(w[0]) <= store::rarity_rank(w[1])), "stronger is never less rare");
+        assert_eq!(got[33], "legendary", "a prize with no Pet+");
+        assert_eq!(got[34], "common", "weak, but it has a Pet+");
+    }
+
+    /// Equal power, equal rarity; no egg pets at all still gives a rarity.
+    #[test]
+    fn rarity_ties_and_no_eggs() {
+        let pets: Vec<RawPet> = (0..10).map(|i| raw(&format!("s{i}"), 1.0, if i < 5 { 100.0 } else { 200.0 }, true)).collect();
+        let sets: Vec<(&RawPet, &str)> = pets.iter().map(|p| (p, "Special Pets")).collect();
+        let got = rarities(&sets);
+        assert!(got[..5].iter().all(|r| *r == got[0]) && got[5..].iter().all(|r| *r == got[5]));
+        assert_eq!(got[5], "legendary");
+        assert_eq!(num(&serde_json::json!(" 250 ")), Some(250.0));
+        assert_eq!(num(&serde_json::json!("lots")), None);
     }
 
     /// A character of two or three bytes across the 400-byte look-ahead used to panic and take
@@ -849,7 +1124,14 @@ mod tests {
 
     #[test]
     fn new_pets_read_the_catalog_once() {
-        let site = |name: &str, raw: &str| SitePet { name: name.into(), raw: raw.into(), group: "Legacy Pets".into(), bonus: "+1% x".into() };
+        let site = |name: &str, raw: &str| SitePet {
+            name: name.into(),
+            raw: raw.into(),
+            group: "Legacy Pets".into(),
+            bonus: "+1% x".into(),
+            plus_bonus: "+2% x".into(),
+            rarity: "epic",
+        };
         let ticked = [site("Glimbo", "a"), site("glimbo", "b"), site("Slime", "c"), site("Glimbo!", "d")];
         let catalog = [pet("glimbo", "Glimbo Classic", ""), pet("slime", "Slime", "")];
         let cats = ["Legacy Companions".to_owned()];
@@ -858,6 +1140,23 @@ mod tests {
         // Slime is in the catalog; the second Glimbo is the same name; ids never collide.
         assert_eq!(got, [("glimbo-2", "Glimbo", "a"), ("glimbo-3", "Glimbo!", "d")]);
         assert_eq!((out[0].0.category.as_str(), out[0].0.bonus.as_str()), ("Legacy Companions", "+1% x"));
+        assert_eq!((out[0].0.rarity.as_str(), out[0].0.plus_bonus.as_str()), ("epic", "+2% x"));
+    }
+
+    /// Reads the live site: `cargo test -p feat-pets live_site -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "reads idleontoolbox.com"]
+    fn live_site() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let rt = bot_core::tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let list = rt.block_on(read_list()).expect("the site's list");
+        let n = |r: &str| list.iter().filter(|p| p.rarity == r).count();
+        println!("{} pets: {:?}", list.len(), store::RARITIES.map(|r| (r, n(r))));
+        println!("with a Pet+ bonus: {}", list.iter().filter(|p| !p.plus_bonus.is_empty()).count());
+        for p in list.iter().filter(|p| p.rarity == "legendary") {
+            println!("  legendary: {} ({}) {} | Pet+: {}", p.name, p.group, p.bonus, p.plus_bonus);
+        }
+        assert!(n("legendary") < n("common"));
     }
 
     #[test]
@@ -882,6 +1181,7 @@ mod tests {
             rarity: "common".into(),
             description: String::new(),
             bonus: String::new(),
+            plus_bonus: String::new(),
             image: image.into(),
             guild: 1,
             picture: None,
@@ -892,14 +1192,40 @@ mod tests {
     fn compares_by_name() {
         let site: Vec<SitePet> = [("King Doot", "babaMummy"), ("Santas Little Helper", "w6c2b"), ("Pirate Deckhand", "w7b11"), ("Glimbo", "w7b3b"), ("Slime", "slimeG")]
             .iter()
-            .map(|(n, r)| SitePet { name: (*n).into(), raw: (*r).into(), group: "Legacy Pets".into(), bonus: String::new() })
+            .map(|(n, r)| SitePet { name: (*n).into(), raw: (*r).into(), group: "Legacy Pets".into(), bonus: String::new(), plus_bonus: String::new(), rarity: "common" })
             .collect();
         let mut doot = pet("king-doot", "King Doot", "");
         doot.picture = Some(5);
         let catalog = [doot, pet("helper", "Santa's Little Helper", ""), pet("deck", "Deckhand Pirate", ""), pet("slime", "slime", "https://x/s.png")];
-        let (missing, pictures) = compare(&site, &catalog);
-        assert_eq!(missing.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Glimbo"]);
-        assert_eq!(pictures.iter().map(|(p, _)| p.id.as_str()).collect::<Vec<_>>(), ["helper", "deck"], "pets with a picture keep it");
+        let d = compare(&site, &catalog);
+        assert_eq!(d.missing.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["Glimbo"]);
+        assert_eq!(d.pictures.iter().map(|(p, _)| p.id.as_str()).collect::<Vec<_>>(), ["helper", "deck"], "pets with a picture keep it");
+        assert!(d.updates.is_empty(), "same rarity, and the site has no bonus to give");
+    }
+
+    /// A pet whose rarity or bonuses aren't the game's is offered the game's; taking them keeps
+    /// everything else, and a bonus the site lacks stays.
+    #[test]
+    fn offers_the_games_rarity_and_bonuses() {
+        let s = |rarity: &'static str, bonus: &str, plus: &str| SitePet {
+            name: "King Doot".into(),
+            raw: "babaMummy".into(),
+            group: "Legacy Pets".into(),
+            bonus: bonus.into(),
+            plus_bonus: plus.into(),
+            rarity,
+        };
+        let mut doot = pet("king-doot", "King Doot", "");
+        doot.bonus = "+1 thing".into();
+        doot.description = "The royal ruler of all doots.".into();
+        let site = [s("legendary", "+1 thing", "+2 things")];
+        let d = compare(&site, std::slice::from_ref(&doot));
+        assert_eq!(news(d.updates[0].0, d.updates[0].1), ["Common → Legendary", "Pet+ bonus"]);
+        let new = updated(&doot, &site[0]);
+        assert_eq!((new.rarity.as_str(), new.bonus.as_str(), new.plus_bonus.as_str()), ("legendary", "+1 thing", "+2 things"));
+        assert_eq!(new.description, doot.description);
+        let site = [s("common", "", "")];
+        assert!(compare(&site, std::slice::from_ref(&doot)).updates.is_empty(), "nothing to take");
     }
 
     #[test]
@@ -908,6 +1234,8 @@ mod tests {
         assert_eq!(category_for("Legacy Pets", &cats), "Legacy Companions");
         assert_eq!(category_for("fallen spirits", &cats), "Fallen Spirits");
         assert_eq!(category_for("Special Pets", &cats), "Special Pets");
-        assert_eq!(add_label(2, 1), "Add 2 pets and 1 picture");
+        assert_eq!(add_label(2, 1, 0), "Add 2 pets and 1 picture");
+        assert_eq!(add_label(0, 1, 3), "Add 1 picture, update 3 pets");
+        assert_eq!(add_label(0, 0, 1), "Update 1 pet");
     }
 }
