@@ -64,6 +64,8 @@ pub enum Icon {
     Member,
     /// Levels: a rank badge, a hexagon with two chevrons.
     Level,
+    /// Up and down chevrons: a switcher that opens a list.
+    Updown,
 }
 
 impl Icon {
@@ -113,6 +115,7 @@ impl Icon {
             Icon::Gear => (24, r#"<path d="M9.6 4.2 10.2 2h3.6l.6 2.2 1.9 1.1 2.2-.6 1.8 3.1-1.6 1.6v2.2l1.6 1.6-1.8 3.1-2.2-.6-1.9 1.1-.6 2.2h-3.6l-.6-2.2-1.9-1.1-2.2.6-1.8-3.1 1.6-1.6v-2.2L3.7 8.4l1.8-3.1 2.2.6zM9.25 12a2.75 2.75 0 1 0 5.5 0 2.75 2.75 0 1 0-5.5 0"/>"#),
             Icon::Enter => (16, r#"<path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/>"#),
             Icon::Member => (16, r#"<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.5-2.5 2.5-4 5-4s4.5 1.5 5 4"/>"#),
+            Icon::Updown => (16, r#"<path d="m5 6 3-3 3 3M5 10l3 3 3-3"/>"#),
             Icon::Level => (24, r#"<path d="M12 2.75 19.75 7.25v9.5L12 21.25 4.25 16.75v-9.5zM8.5 12.25 12 9.5l3.5 2.75M8.5 16 12 13.25 15.5 16"/>"#),
         }
     }
@@ -137,7 +140,7 @@ pub fn head(title: &str) -> Markup {
         meta name="viewport" content="width=device-width, initial-scale=1";
         meta name="robots" content="noindex";
         meta name="color-scheme" content="dark";
-        meta name="theme-color" content="#07070b";
+        meta name="theme-color" content="#0f0f10";
         title { (title) " · Bot" }
         link rel="icon" href="/static/icon.svg";
         link rel="preconnect" href="https://fonts.googleapis.com";
@@ -276,49 +279,39 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                 }
                 div.scrim {}
                 div.shell {
-                    nav.guilds aria-label="Servers" {
-                        div.guilds-list {
-                            @for g in &guilds {
-                                a.guild.on[*g == guild] href={ "/g/" (g) } data-tip=(ctx.guild_name(*g)) aria-label=(ctx.guild_name(*g)) aria-current=[(*g == guild).then_some("true")] {
-                                    @match ctx.guild_icon_url(*g) {
-                                        Some(u) => img src=(u) alt="" width="46" height="46";,
-                                        None => (initial(&ctx.guild_name(*g))),
-                                    }
-                                }
-                            }
-                        }
-                        div.guilds-foot {
-                            details.pop.account {
-                                summary aria-label="Your account" { img src=(me) alt="" width="38" height="38"; }
-                                div.pop-body.account-menu {
-                                    div.account-who {
-                                        img src=(me) alt="";
-                                        div { strong { (page.user.name) } span.muted.small { @if page.user.id == ctx.cfg.owner_id { "Owner" } @else if page.user.admin_plus { "Admin+" } @else if page.user.admin { "Admin" } @else { "Member of the team" } } }
-                                    }
-                                    @if page.user.admin {
-                                        a.menu-item.on[key == "features"] href={ "/g/" (guild) "/features" } { (icon(Icon::Toggle)) span { "Features" } }
-                                        a.menu-item.on[key == "users"] href="/users" { (icon(Icon::Users)) span { "People" } }
-                                        a.menu-item.on[key == "activity"] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
-                                    }
-                                    form method="post" action="/logout" {
-                                        button.menu-item type="submit" data-signout { (icon(Icon::Logout)) span { "Sign out" } }
-                                    }
-                                }
-                            }
-                        }
-                    }
                     nav.side aria-label="Dashboard" {
-                        a.side-head href={ "/g/" (guild) } aria-label={ (name) ", overview" } {
-                            @match (&banner, &icon_url) {
-                                (Some(b), _) => img.cover src=(b) alt="";,
-                                (None, i) => (art(i.as_deref(), true)),
+                        // The server's card: its banner, icon and name. It opens the server switcher.
+                        details.pop.srv-pick {
+                            summary.side-head aria-label={ (name) ", switch server" } {
+                                @match (&banner, &icon_url) {
+                                    (Some(b), _) => img.cover src=(b) alt="";,
+                                    (None, i) => (art(i.as_deref(), true)),
+                                }
+                                div.side-head-name {
+                                    (guild_avatar(ctx, guild))
+                                    div.grow {
+                                        strong.clip { (name) }
+                                        div.side-head-meta {
+                                            @if ctx.cfg.preview { span.dot.waiting {} "Preview" }
+                                            @else if ctx.bot_id().is_some() { span.dot.live {} "Online" }
+                                            @else { span.dot.waiting {} "Connecting" }
+                                            @if let Some(m) = members { " · " (crate::text::num(m as i64)) " members" }
+                                        }
+                                    }
+                                    (icon(Icon::Updown))
+                                }
                             }
-                            div.side-head-name { (guild_avatar(ctx, guild)) strong.clip { (name) } }
-                            div.side-head-meta {
-                                @if ctx.cfg.preview { span.dot.waiting {} "Preview" }
-                                @else if ctx.bot_id().is_some() { span.dot.live {} "Bot online" }
-                                @else { span.dot.waiting {} "Connecting" }
-                                @if let Some(m) = members { " · " (crate::text::num(m as i64)) " members" }
+                            div.pop-body.srv-menu {
+                                @for g in &guilds {
+                                    a.menu-item.guild.on[*g == guild] href={ "/g/" (g) } data-name=(ctx.guild_name(*g)) aria-current=[(*g == guild).then_some("true")] {
+                                        @match ctx.guild_icon_url(*g) {
+                                            Some(u) => img.gicon src=(u) alt="" width="22" height="22";,
+                                            None => span.gicon.letter { (initial(&ctx.guild_name(*g))) },
+                                        }
+                                        span.grow.clip { (ctx.guild_name(*g)) }
+                                        @if *g == guild { (icon(Icon::Check)) }
+                                    }
+                                }
                             }
                         }
                         button.side-search type="button" data-palette {
@@ -328,7 +321,6 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                         }
                         div.side-links {
                             a.nav.on[key == "overview"] data-hue="core" href={ "/g/" (guild) } data-about="home summary overview" aria-current=[(key == "overview").then_some("page")] {
-                                @if key == "overview" { span.nav-pill {} }
                                 span.nav-ic { (icon(Icon::Home)) }
                                 span.grow { "Overview" }
                             }
@@ -336,7 +328,6 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                                 @let count: i64 = items.iter().map(|l| l.4).sum();
                                 details.nav-fold open data-group=(group.label()) data-hue=(group.hue()) {
                                     summary {
-                                        span.swatch {}
                                         span.grow { (group.label()) }
                                         @if count > 0 { span.nav-count.folded { (count) span.sr { " unread" } } }
                                         (icon(Icon::Chevron))
@@ -344,7 +335,6 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                                     @for (label, path, ic, about, waiting) in items {
                                         @let here = current == Some(*path);
                                         a.nav.on[here] href={ "/g/" (guild) "/" (path) } data-path={ "/g/" (guild) "/" (path) } data-about=(about) data-group=(group.label()) aria-current=[here.then_some("page")] {
-                                            @if here { span.nav-pill {} }
                                             span.nav-ic { (icon(*ic)) }
                                             span.grow { (label) }
                                             @if *waiting > 0 { span.nav-count { (waiting) span.sr { " unread" } } }
@@ -353,18 +343,39 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                                 }
                             }
                         }
-                    }
-                    main.page #main tabindex="-1" data-hue=(hue) {
-                        // The bell, top right of every page: a dropdown of the newest notices.
-                        div.page-corner {
+                        // You, then the bell and the server's settings beside you.
+                        div.side-foot {
+                            details.pop.account {
+                                summary aria-label="Your account" {
+                                    img src=(me) alt="" width="28" height="28";
+                                    div.grow {
+                                        strong.clip { (page.user.name) }
+                                        span.muted.small { (role_name(ctx, page)) }
+                                    }
+                                }
+                                div.pop-body.account-menu {
+                                    @if page.user.admin {
+                                        a.menu-item.on[key == "users"] href="/users" { (icon(Icon::Users)) span { "People" } }
+                                        a.menu-item.on[key == "activity"] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
+                                    }
+                                    form method="post" action="/logout" {
+                                        button.menu-item type="submit" data-signout { (icon(Icon::Logout)) span { "Sign out" } }
+                                    }
+                                }
+                            }
                             details.pop.bell-pop data-peek={ "/g/" (guild) "/notifications/peek" } {
-                                summary.bell aria-label={ "Notifications, " (total_unread) " new" } {
+                                summary.bell.icon-btn aria-label={ "Notifications, " (total_unread) " new" } {
                                     (icon(Icon::Bell))
                                     @if total_unread > 0 { span.count { (if total_unread > 99 { "99+".to_owned() } else { total_unread.to_string() }) } }
                                 }
                                 div.pop-body.peek-pop { div.peek { p.peek-none { "Loading" } } }
                             }
+                            @if page.user.admin {
+                                a.icon-btn.gear.on[key == "features"] href={ "/g/" (guild) "/features" } data-tip="Server settings" aria-label="Server settings" { (icon(Icon::Gear)) }
+                            }
                         }
+                    }
+                    main.page #main tabindex="-1" data-hue=(hue) {
                         (top)
                         (body)
                     }
@@ -372,6 +383,19 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                 (palette())
             }
         }
+    }
+}
+
+/// What this person is here: the owner, Admin+, an admin or someone given pages.
+fn role_name(ctx: &Ctx, page: &Page) -> &'static str {
+    if page.user.id == ctx.cfg.owner_id {
+        "Owner"
+    } else if page.user.admin_plus {
+        "Admin+"
+    } else if page.user.admin {
+        "Admin"
+    } else {
+        "Member of the team"
     }
 }
 
@@ -903,39 +927,54 @@ pub fn bar_chart(series: &[(String, i64)], color: &str, unit: &str) -> Markup {
 /// and middle day under it, and the last one "Today", so the series must end today (the
 /// overview's do).
 pub fn area_chart(series: &[(String, i64)], unit: &str) -> Markup {
+    area_chart_vs(series, None, unit)
+}
+
+/// [`area_chart`] over the same number of days before it, drawn as a dashed grey line on the
+/// same scale. Hovering a day says how it compares with the matching day of that period.
+pub fn area_chart_vs(series: &[(String, i64)], prev: Option<&[(String, i64)]>, unit: &str) -> Markup {
+    area(series, prev, unit, true)
+}
+
+/// [`area_chart`] for a series that isn't days ending today (one point per stream): the last
+/// point keeps its own label.
+pub fn area_chart_series(series: &[(String, i64)], unit: &str) -> Markup {
+    area(series, None, unit, false)
+}
+
+fn area(series: &[(String, i64)], prev: Option<&[(String, i64)]>, unit: &str, ends_today: bool) -> Markup {
     let n = series.len();
-    let max = series.iter().map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
+    // Nothing counted in the period before (a new server): no line to compare with.
+    let prev = prev.filter(|p| p.len() == n && p.iter().any(|d| d.1 > 0));
+    let max = series.iter().chain(prev.unwrap_or(&[])).map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
     let (w, h) = (1000.0, 190.0);
     let step = if n > 1 { w / (n - 1) as f64 } else { w };
-    let pts: Vec<(f64, f64)> = series.iter().enumerate().map(|(i, (_, v))| (i as f64 * step, h - 3.0 - (*v as f64 / max) * (h - 22.0))).collect();
-    // Catmull-Rom through the points, as cubic Béziers.
-    let mut line = String::new();
-    for (i, p) in pts.iter().enumerate() {
-        if i == 0 {
-            line.push_str(&format!("M{:.1} {:.1}", p.0, p.1));
-            continue;
-        }
-        let p0 = if i >= 2 { pts[i - 2] } else { pts[i - 1] };
-        let p1 = pts[i - 1];
-        let p3 = pts.get(i + 1).copied().unwrap_or(*p);
-        let c1 = (p1.0 + (p.0 - p0.0) / 6.0, p1.1 + (p.1 - p0.1) / 6.0);
-        let c2 = (p.0 - (p3.0 - p1.0) / 6.0, p.1 - (p3.1 - p1.1) / 6.0);
-        line.push_str(&format!(" C{:.1} {:.1} {:.1} {:.1} {:.1} {:.1}", c1.0, c1.1.min(h), c2.0, c2.1.min(h), p.0, p.1));
-    }
+    let place = |s: &[(String, i64)]| -> Vec<(f64, f64)> { s.iter().enumerate().map(|(i, (_, v))| (i as f64 * step, h - 3.0 - (*v as f64 / max) * (h - 22.0))).collect() };
+    let pts = place(series);
+    let line = smooth(&pts, h);
+    let prev_line = prev.map(|p| smooth(&place(p), h));
     let area = format!("{line} L{w} {h} L0 {h} Z");
     let total: i64 = series.iter().map(|(_, v)| v).sum();
-    // Each day as [x %, y %, label, value] for the hover cursor.
+    let span = if n == 7 { "a week before".to_owned() } else { format!("{n} days before") };
+    // Each day as [x %, y %, label, value, change] for the hover cursor.
     let points = serde_json::to_string(
         &series
             .iter()
             .zip(&pts)
-            .map(|((label, v), (x, y))| serde_json::json!([(x / w * 1000.0).round() / 10.0, (y / h * 1000.0).round() / 10.0, label, crate::text::num(*v)]))
+            .enumerate()
+            .map(|(i, ((label, v), (x, y)))| {
+                let change = prev.map(|p| {
+                    let d = v - p[i].1;
+                    format!("{}{} vs {span}", if d >= 0 { "+" } else { "−" }, crate::text::num(d.abs()))
+                });
+                serde_json::json!([(x / w * 1000.0).round() / 10.0, (y / h * 1000.0).round() / 10.0, label, crate::text::num(*v), change])
+            })
             .collect::<Vec<_>>(),
     )
     .unwrap_or_default();
     let last = pts.last().copied().unwrap_or((w, h));
     html! {
-        figure.area data-points=(points) data-unit=(unit) {
+        figure.area data-points=(points) data-unit=(unit) data-today=(if ends_today { "1" } else { "0" }) {
             div.area-plot {
                 svg viewBox={ "0 0 " (w) " " (h) } preserveAspectRatio="none" role="img" aria-label={ (crate::text::num(total)) " " (unit) " in " (n) " days" } {
                     defs {
@@ -948,18 +987,47 @@ pub fn area_chart(series: &[(String, i64)], unit: &str) -> Markup {
                     @for f in [0.25, 0.5, 0.75] {
                         line.grid x1="0" x2=(w) y1=(h * f) y2=(h * f) vector-effect="non-scaling-stroke" {}
                     }
+                    line.base x1="0" x2=(w) y1=(h - 0.5) y2=(h - 0.5) vector-effect="non-scaling-stroke" {}
+                    @if let Some(pl) = &prev_line {
+                        path.prev d=(pl) fill="none" vector-effect="non-scaling-stroke" {}
+                    }
                     path.fill d=(area) fill="url(#area-fill)" {}
-                    path.line d=(line) fill="none" stroke="var(--data)" stroke-width="2.5" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" {}
+                    path.line d=(line) fill="none" stroke="var(--data)" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round" {}
                 }
                 span.area-cursor {}
                 span.area-dot {}
                 span.area-end style={ "left:" (format!("{:.2}", last.0 / w * 100.0)) "%;top:" (format!("{:.2}", last.1 / h * 100.0)) "%" } {}
             }
             @if n > 1 {
-                div.axis { span { (series[0].0) } span { (series[n / 2].0) } span { "Today" } }
+                div.axis { span { (series[0].0) } span { (series[n / 2].0) } span { @if ends_today { "Today" } @else { (series[n - 1].0) } } }
             }
         }
     }
+}
+
+/// A smooth line through the points that never overshoots them (monotone cubic, as Béziers), so
+/// a flat stretch stays flat and no peak or dip is invented between two days.
+fn smooth(pts: &[(f64, f64)], h: f64) -> String {
+    let n = pts.len();
+    let Some(first) = pts.first() else { return String::new() };
+    let mut line = format!("M{:.1} {:.1}", first.0, first.1);
+    if n < 2 {
+        return line;
+    }
+    let dx: Vec<f64> = pts.windows(2).map(|w| w[1].0 - w[0].0).collect();
+    let s: Vec<f64> = pts.windows(2).zip(&dx).map(|(w, d)| if *d == 0.0 { 0.0 } else { (w[1].1 - w[0].1) / d }).collect();
+    let mut m = vec![0.0; n];
+    m[0] = s[0];
+    m[n - 1] = s[n - 2];
+    for i in 1..n - 1 {
+        m[i] = if s[i - 1] * s[i] <= 0.0 { 0.0 } else { 3.0 * (dx[i - 1] + dx[i]) / ((2.0 * dx[i] + dx[i - 1]) / s[i - 1] + (dx[i] + 2.0 * dx[i - 1]) / s[i]) };
+    }
+    for i in 0..n - 1 {
+        let k = dx[i] / 3.0;
+        let (p0, p1) = (pts[i], pts[i + 1]);
+        line.push_str(&format!(" C{:.1} {:.1} {:.1} {:.1} {:.1} {:.1}", p0.0 + k, (p0.1 + m[i] * k).min(h), p1.0 - k, (p1.1 - m[i + 1] * k).min(h), p1.0, p1.1));
+    }
+    line
 }
 
 /// Up to `max` overlapping avatars.

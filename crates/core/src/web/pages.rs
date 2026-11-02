@@ -102,73 +102,55 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     }
     let page = super::Page { user: user.clone(), guild_id: guild, key: "overview", level: Level::View };
     let days: i64 = if q.get("days").map(String::as_str) == Some("7") { 7 } else { 30 };
-    let show = q.get("show").map(String::as_str).unwrap_or("messages");
-    // Every series in one read of the last 30 days, then cut to length.
-    let [messages, joins, leaves, active, voice]: [Vec<(String, i64)>; 5] =
-        daily_keys(&ctx, guild, &["messages", "joins", "leaves", "active", "voice_minutes"], 30).try_into().unwrap_or_default();
-    let tail = |s: &[(String, i64)], n: i64| s[s.len().saturating_sub(n as usize)..].to_vec();
-    let joins_long = joins.clone();
-    let (messages, joins, leaves, active, voice) = (tail(&messages, days), tail(&joins, 14), tail(&leaves, 7), tail(&active, days), tail(&voice, days.max(14)));
-    let last = |s: &[(String, i64)]| s.last().map(|d| d.1).unwrap_or(0);
-    let sum_last = |s: &[(String, i64)], n: usize| s.iter().rev().take(n).map(|d| d.1).sum::<i64>();
+    // "members" was the old name of the joins reading; old links still land on it.
+    let show = match q.get("show").map(String::as_str) {
+        Some("active") => "active",
+        Some("voice") => "voice",
+        Some("joins" | "members") => "joins",
+        _ => "messages",
+    };
+    // Every series over twice the longest range in one read: the range, and the one before it.
+    let [messages, joins, active, voice]: [Vec<(String, i64)>; 4] =
+        daily_keys(&ctx, guild, &["messages", "joins", "active", "voice_minutes"], 60).try_into().unwrap_or_default();
+    let voice: Vec<(String, i64)> = voice.into_iter().map(|(l, m)| (l, (m as f64 / 60.0).round() as i64)).collect();
+    type Days = Vec<(String, i64)>;
+    let window = |s: &[(String, i64)]| -> (Days, Days) {
+        let n = s.len();
+        let d = days as usize;
+        (s[n.saturating_sub(d)..].to_vec(), s[n.saturating_sub(2 * d)..n.saturating_sub(d)].to_vec())
+    };
     let members = ctx.member_count(guild).map(|n| n as i64);
-    let net = sum_last(&joins, 7) - sum_last(&leaves, 7);
-    let today_msgs = last(&messages);
-    let now = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC);
-    let day_share = (now.hour() as f64 * 60.0 + now.minute() as f64) / 1440.0;
-    let pace = if day_share > 0.08 { Some((today_msgs as f64 / day_share) as i64) } else { None };
+    let active_today = active.last().map(|d| d.1).unwrap_or(0);
     // Daily numbers are counted per UTC day. Anyone in another timezone is told where it starts.
+    let now = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC);
     let day_starts = now
         .start_of_day()
         .ok()
         .map(|m| user.local(m.timestamp().as_millisecond()))
         .filter(|l| l.offset() != jiff::tz::Offset::UTC)
         .map(|l| l.strftime("%H:%M").to_string());
-    let active_today = last(&active);
-    let voice_week = sum_last(&voice, 7);
-    let voice_prev = voice.iter().rev().skip(7).take(7).map(|d| d.1).sum::<i64>();
-    let hours = |m: i64| format!("{} h", text::num((m as f64 / 60.0).round() as i64));
-    let signed = |n: i64, unit: &str| if n >= 0 { format!("+{} {unit}", text::num(n)) } else { format!("{} {unit}", text::num(n)) };
 
-    struct Stat { key: &'static str, label: &'static str, value: String, note: String, up: bool, down: bool }
-    let stats = [
-        Stat { key: "members", label: "Members", value: members.map(text::num).unwrap_or_else(|| "…".into()), note: signed(net, "this week"), up: net > 0, down: net < 0 },
-        Stat {
-            key: "messages",
-            label: "Messages today",
-            value: text::num(today_msgs),
-            note: match pace {
-                Some(p) if today_msgs > 0 => format!("On pace for {}", text::num(p)),
-                _ => "Since midnight UTC".into(),
-            },
-            up: false,
-            down: false,
-        },
-        Stat {
-            key: "active",
-            label: "Active today",
-            value: text::num(active_today),
-            note: members.filter(|m| *m > 0).map(|m| format!("{}% of members", (active_today * 100 / m).min(100))).unwrap_or_default(),
-            up: false,
-            down: false,
-        },
-        Stat {
-            key: "voice",
-            label: "Voice this week",
-            value: hours(voice_week),
-            note: format!("{} on last week", if voice_week >= voice_prev { format!("+{}", hours(voice_week - voice_prev)) } else { format!("-{}", hours(voice_prev - voice_week)) }),
-            up: voice_week > voice_prev,
-            down: voice_week < voice_prev,
-        },
-    ];
-    let (series, unit, caption): (Vec<(String, i64)>, &str, &str) = match show {
-        "members" => (tail(&joins_long, days), "joins", "Joins per day"),
-        "active" => (active.clone(), "members", "Active members per day"),
-        "voice" => (voice.iter().rev().take(days as usize).rev().map(|(l, m)| (l.clone(), m / 60)).collect(), "hours", "Voice hours per day"),
-        _ => (messages.clone(), "messages", "Messages per day"),
+    // The four readings. Each is the range's total (active members: its daily average), set
+    // against the same number of days before it.
+    struct Metric { key: &'static str, label: &'static str, unit: &'static str, tip_unit: &'static str, cur: Vec<(String, i64)>, prev: Vec<(String, i64)>, value: i64, before: i64 }
+    let metric = |key, label, unit, tip_unit, s: &[(String, i64)], avg: bool| {
+        let (cur, prev) = window(s);
+        let total = |v: &[(String, i64)]| {
+            let sum: i64 = v.iter().map(|d| d.1).sum();
+            if avg { sum / v.len().max(1) as i64 } else { sum }
+        };
+        let (value, before) = (total(&cur), total(&prev));
+        Metric { key, label, unit, tip_unit, cur, prev, value, before }
     };
-    let show = if ["members", "active", "voice"].contains(&show) { show } else { "messages" };
-    let avg = series.iter().map(|d| d.1).sum::<i64>() / series.len().max(1) as i64;
+    let metrics = [
+        metric("messages", "Messages", "messages", "messages", &messages, false),
+        metric("active", "Active members", "active a day", "active", &active, true),
+        metric("voice", "Voice hours", "hours in voice", "hours", &voice, false),
+        metric("joins", "Joins", "joined", "joined", &joins, false),
+    ];
+    let m = metrics.iter().find(|m| m.key == show).unwrap_or(&metrics[0]);
+    let period = if days == 7 { "the week before".to_owned() } else { format!("the {days} days before") };
+    let change = (m.before > 0).then(|| ((m.value - m.before) as f64 * 100.0 / m.before as f64).round() as i64);
 
     // What the features add, for the features this person can see.
     let mut needs = Vec::new();
@@ -183,176 +165,176 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         }
         let fp = super::Page { user: user.clone(), guild_id: guild, key, level };
         let o = f.overview(&ctx, &fp);
-        let hue = ui::feature_hue(&ctx, key);
-        needs.extend(o.needs.into_iter().map(|n| (hue, n)));
+        needs.extend(o.needs);
         feeds.push(o.feed);
         panel.extend(o.panel);
     }
     // Alerts first, then whatever has waited longest.
-    needs.sort_by_key(|(_, n)| (!n.alert, n.since));
+    needs.sort_by_key(|n| (!n.alert, n.since));
     let feed = mix_feed(feeds, 6);
     panel.sort_by_key(|p| p.0);
     let on = ctx.features().iter().filter(|f| ctx.enabled(guild, f.meta().key)).count();
 
-    let hour = user.local(crate::now_ms()).hour();
-    let greeting = match hour {
-        5..=11 => "Good morning",
-        12..=17 => "Good afternoon",
-        _ => "Good evening",
-    };
     let name = ctx.guild_name(guild);
     let banner = ctx.guild_banner_url(guild);
     let icon_large = ctx.guild_icon_large(guild);
+    let today = user.local(crate::now_ms()).strftime("%A %-d %B").to_string();
     let link = |show: &str, days: i64| format!("/g/{guild}?show={show}&days={days}");
+    let swap = "#ov-metrics, #ov-fig, #ov-plot, #ov-legend";
 
-    let main = html! {
-        nav.ov-stats aria-label="Readings" {
-            @for st in &stats {
-                a.ov-stat.on[st.key == show] href=(link(st.key, days)) aria-current=[(st.key == show).then_some("true")] data-swap="#ov-caption, #ov-plot" {
-                    span.muted.small { (st.label) }
-                    b data-count { (st.value) }
-                    span.small.up[st.up].down[st.down] { (st.note) }
-                    @if st.key == show { span.stat-line {} }
+    let answer = html! {
+        section.ov-answer aria-label="Activity" {
+            nav.ov-metrics #ov-metrics aria-label="Readings" {
+                @for x in &metrics {
+                    a.ov-metric.on[x.key == m.key] href=(link(x.key, days)) aria-current=[(x.key == m.key).then_some("true")] data-swap=(swap) {
+                        (x.label)
+                        span.mono { (text::num(x.value)) }
+                    }
                 }
             }
-        }
-        div.ov-chart {
-            div.ov-chart-head {
-                div #ov-caption {
-                    h2 { (caption) }
-                    p {
-                        (text::num(avg)) " on average over " (days) " days"
-                        @if let Some(t) = &day_starts { " · days start at " (t) " your time" }
+            div.ov-top-row {
+                div.ov-fig #ov-fig {
+                    b { (text::num(m.value)) }
+                    span.ov-unit { (m.unit) }
+                    @if let Some(c) = change {
+                        span.ov-change { span.up[c > 0].down[c < 0] { (if c >= 0 { "+" } else { "−" }) (c.abs()) "%" } " vs " (period) }
                     }
                 }
                 div.seg {
-                    a.on[days == 7] href=(link(show, 7)) data-swap="#ov-caption, #ov-plot" { "7 days" }
-                    a.on[days == 30] href=(link(show, 30)) data-swap="#ov-caption, #ov-plot" { "30 days" }
+                    a.on[days == 7] href=(link(m.key, 7)) data-swap=(swap) { "7 days" }
+                    a.on[days == 30] href=(link(m.key, 30)) data-swap=(swap) { "30 days" }
                 }
             }
             div #ov-plot {
-                @if series.iter().all(|d| d.1 == 0) {
+                @if m.cur.iter().all(|d| d.1 == 0) {
                     (ui::empty(Icon::Chart, "Nothing counted in these days", "The bot counts as things happen, and the chart fills in day by day."))
                 } @else {
-                    (ui::area_chart(&series, unit))
+                    (ui::area_chart_vs(&m.cur, Some(&m.prev), m.tip_unit))
                 }
+            }
+            div.ov-legend #ov-legend {
+                span { i {} (if days == 7 { "This week" } else { "Last 30 days" }) }
+                @if m.prev.iter().any(|d| d.1 > 0) { span { i.prev {} (if days == 7 { "Week before" } else { "30 days before" }) } }
+                @if let Some(t) = &day_starts { span { "Days start at " (t) " your time" } }
             }
         }
-        // Side by side once the column is wide enough (app.css, .ov-pair).
-        div.ov-pair {
-            section.ov-block {
-                h2 { "Needs you" @if !needs.is_empty() { span.count-pill { (needs.len()) } } }
-                @if needs.is_empty() {
-                    (ui::empty(Icon::Check, "Nothing is waiting on you", "Scam catches, pet requests, tickets and app approvals land here when they need someone."))
-                } @else {
-                    div.ov-rows {
-                        @for (hue, n) in &needs {
-                            div.need.alert[n.alert] data-hue=(hue) {
-                                @if n.people.is_empty() {
-                                    span.need-icon.alert[n.alert] { (ui::icon(n.icon)) }
-                                } @else {
-                                    (ui::avatars(&n.people, 2))
-                                }
-                                div.grow { strong { (n.title) } p.muted.small { (n.detail) } }
-                                a class=(if n.alert { "btn small primary" } else { "btn small outline" }) href=(n.href) { (n.action) }
-                            }
-                        }
-                    }
-                }
-            }
-            section.ov-block {
-                h2 { "Around the server" }
-                @if feed.is_empty() {
-                    (ui::empty(Icon::Activity, "Quiet so far", "Level-ups, new members, pet additions and suggestion results show up here."))
-                } @else {
-                    div.ov-feed {
-                        @for h in &feed {
-                            div.happen {
-                                img.avatar src=(h.avatar) alt="" width="32" height="32" loading="lazy";
-                                span.grow { strong { (h.who) } " " (h.text) }
-                                span.muted.small { (short_ago(h.at)) }
-                            }
+    };
+    let needs_block = html! {
+        section.ov-block {
+            h2 { "Needs you" @if !needs.is_empty() { span.ov-count { (needs.len()) } } }
+            @if needs.is_empty() {
+                (ui::empty(Icon::Check, "Nothing is waiting on you", "Scam catches, pet requests, tickets and app approvals land here when they need someone."))
+            } @else {
+                // The first few, then the rest folded under one line.
+                div.ov-rows {
+                    @for n in needs.iter().take(NEEDS_SHOWN) { (need_row(n)) }
+                    @if needs.len() > NEEDS_SHOWN {
+                        details.ov-more {
+                            summary { "Show " (needs.len() - NEEDS_SHOWN) " more" }
+                            @for n in needs.iter().skip(NEEDS_SHOWN) { (need_row(n)) }
                         }
                     }
                 }
             }
         }
-        @if user.admin && on == 0 {
-            section.ov-block {
-                h2 { "Get started" }
-                p.muted { "Every feature starts off in a new server. Switch on what this server should have." }
-                div { a.btn.primary href={ "/g/" (guild) "/features" } { "Choose features" } }
+    };
+    let feed_block = html! {
+        section.ov-block {
+            h2 { "Around the server" }
+            @if feed.is_empty() {
+                (ui::empty(Icon::Activity, "Quiet so far", "Level-ups, new members, pet additions and suggestion results show up here."))
+            } @else {
+                div.ov-feed {
+                    @for h in &feed {
+                        div.happen {
+                            img.avatar src=(h.avatar) alt="" width="28" height="28" loading="lazy";
+                            span.grow { strong { (h.who) } " " (h.text) }
+                            span.mono.muted { (short_ago(h.at)) }
+                        }
+                    }
+                }
             }
         }
     };
 
     let uploaded = super::banner::uploaded_at(&ctx, guild).is_some();
     let body = html! {
-        header.ov-hero data-local {
-            div.ov-bg {
+        header.ov-head data-local {
+            // For admins the banner itself is the control: clicking it picks a new picture.
+            @let bg = html! {
                 @match (&banner, &icon_large) {
                     (Some(b), _) => img src=(b) alt="" fetchpriority="high";,
-                    (None, i) => (ui::art(i.as_deref(), false)),
+                    (None, i) => (ui::art(i.as_deref(), true)),
                 }
-            }
-            div.ov-top {
-                @if ctx.cfg.preview {
-                    (ui::status(ui::Dot::Waiting, "Preview"))
-                } @else if ctx.bot_id().is_some() {
-                    (ui::status(ui::Dot::Live, "Online"))
-                } @else {
-                    (ui::status(ui::Dot::Waiting, "Connecting"))
-                }
-                @if user.admin {
-                    details.pop.banner-pop {
-                        summary.btn.small aria-label="Change the banner" { (ui::icon(Icon::Image)) span.pop-label { "Banner" } }
-                        div.pop-body {
-                            strong { "The picture behind this header" }
-                            p.muted.small {
-                                @if uploaded { "You uploaded this one. It also heads the sidebar." }
-                                @else if banner.is_some() { "This is the banner from Discord's server settings. An upload replaces it here." }
-                                @else { "No banner yet, so this is drawn from the server icon. Upload a wide picture, at least 1600 px across." }
-                            }
-                            div.inline-form {
-                                button.btn.small.primary type="button" data-banner-pick { (ui::icon(Icon::Image)) "Upload a picture" }
-                                @if uploaded {
-                                    form.inline method="post" action={ "/g/" (guild) "/banner/remove" } data-full {
-                                        button.btn.small.ghost type="submit" { "Remove upload" }
-                                    }
-                                }
-                            }
-                            input #banner-file type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-action={ "/g/" (guild) "/banner" };
+            };
+            @if user.admin {
+                button.ov-bg.editable type="button" data-banner-pick aria-label="Change the banner" { (bg) }
+                div.ov-tools {
+                    span.ov-hint { (ui::icon(Icon::Image)) "Change banner" }
+                    @if uploaded {
+                        form.inline method="post" action={ "/g/" (guild) "/banner/remove" } data-full {
+                            button.ov-hint.btnlike type="submit" { "Remove upload" }
                         }
                     }
                 }
+                input #banner-file type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-action={ "/g/" (guild) "/banner" };
+            } @else {
+                div.ov-bg { (bg) }
             }
             div.ov-hello {
                 @match &icon_large {
-                    Some(i) => img.ov-icon src=(i) alt="" width="84" height="84";,
+                    Some(i) => img.ov-icon src=(i) alt="" width="80" height="80";,
                     None => span.ov-icon.letter { (name.chars().next().map(|c| c.to_uppercase().collect::<String>()).unwrap_or_default()) },
                 }
-                div {
-                    h1 { (greeting) ", " (user.name) }
+                div.grow {
+                    h1 { (name) }
                     p {
-                        span { strong { (name) } }
-                        @if let Some(m) = members { span { (ui::icon(Icon::Member)) (text::num(m)) " members" } }
+                        span { (today) }
+                        @if let Some(n) = members { span { (text::num(n)) " members" } }
                         @if active_today > 0 { span { span.dot.live {} (text::num(active_today)) " here today" } }
                     }
                 }
             }
         }
         div.page-body.ov-body {
-            @if panel.is_empty() {
-                div.ov-main { (main) }
-            } @else {
-                div.with-rail {
-                    div.ov-main { (main) }
-                    aside.rail.ov-rail { @for (_, block) in &panel { div.rail-block { (block.clone()) } } }
+            div.ov-grid {
+                div.ov-left {
+                    (answer)
+                    div.ov-sub { (feed_block) (needs_block) }
+                }
+                @if !panel.is_empty() {
+                    aside.ov-right { @for (_, block) in &panel { section.ov-block { (block.clone()) } } }
+                }
+            }
+            @if user.admin && on == 0 {
+                section.ov-block {
+                    h2 { "Get started" }
+                    p.muted { "Every feature starts off in a new server. Switch on what this server should have." }
+                    div { a.btn.primary href={ "/g/" (guild) "/features" } { "Choose features" } }
                 }
             }
         }
     };
     Ok(ui::layout_custom(&ctx, &page, &name, body).into_response())
+}
+
+/// How many "Needs you" rows show before the rest fold away.
+const NEEDS_SHOWN: usize = 5;
+
+/// One row of "Needs you": a face (or the feature's icon), what waits, and its drawn button. The
+/// whole row is the link.
+fn need_row(n: &crate::Need) -> Markup {
+    html! {
+        a.need href=(n.href) {
+            @match n.people.as_slice() {
+                [] => span.need-icon.alert[n.alert] { (ui::icon(n.icon)) },
+                [one] => img.avatar src=(one) alt="" width="28" height="28" loading="lazy";,
+                more => span.need-two { @for u in more.iter().take(2) { img.avatar src=(u) alt="" loading="lazy"; } },
+            }
+            div.grow { strong.clip { (n.title) } span.clip { (n.detail) } }
+            span.need-btn.primary[n.alert] { (n.action) }
+        }
+    }
 }
 
 /// Up to `n` happenings, newest first, taken from each source in turn so one busy feature (a run
@@ -401,6 +383,12 @@ struct Note {
 /// server-less notices (app connections) only for the owner and Admin+ people.
 fn recent_notifications(ctx: &Ctx, user: &User, guild: u64, limit: i64) -> Vec<Note> {
     let mut notes = all_notifications(ctx, guild, limit * 4);
+    keep_visible(ctx, user, guild, &mut notes);
+    notes.truncate(limit as usize);
+    notes
+}
+
+fn keep_visible(ctx: &Ctx, user: &User, guild: u64, notes: &mut Vec<Note>) {
     let levels = ctx.levels(user, guild);
     notes.retain(|n| match n.global {
         // A notice with no server (app connections, Twitch losing its subscription) follows the
@@ -411,8 +399,22 @@ fn recent_notifications(ctx: &Ctx, user: &User, guild: u64, limit: i64) -> Vec<N
         },
         false => levels.get(&n.feature) >= Level::View,
     });
-    notes.truncate(limit as usize);
-    notes
+}
+
+/// When each notice this person may see arrived since `since`, for the chart.
+fn notification_times(ctx: &Ctx, user: &User, guild: u64, since: i64) -> Vec<i64> {
+    let mut notes: Vec<Note> = ctx
+        .db
+        .with(|c| {
+            let mut s = c.prepare("SELECT at, feature, guild_id IS NULL FROM notifications WHERE (guild_id IS NULL OR guild_id = ?1) AND at >= ?2")?;
+            let rows = s
+                .query_map(params![guild as i64, since], |r| Ok(Note { at: r.get(0)?, feature: r.get(1)?, text: String::new(), link: None, global: r.get(2)? }))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .unwrap_or_default();
+    keep_visible(ctx, user, guild, &mut notes);
+    notes.into_iter().map(|n| n.at).collect()
 }
 
 fn all_notifications(ctx: &Ctx, guild: u64, limit: i64) -> Vec<Note> {
@@ -454,6 +456,29 @@ fn notification_row(ctx: &Ctx, user: &User, n: &Note, new: bool) -> Markup {
     }
 }
 
+/// One notice in the bell's dropdown: compact, two lines of text at most, the feature and when
+/// underneath, a dot when it's new. The whole row is the link when there is one.
+fn peek_row(ctx: &Ctx, n: &Note, new: bool) -> Markup {
+    let feature = ctx.feature(&n.feature);
+    let ic = feature.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Bell);
+    let name = feature.map(|f| f.meta().name).unwrap_or("Dashboard");
+    let inner = html! {
+        span.pk-ic { (ui::icon(ic)) }
+        span {
+            span.pk-text title=(n.text) { (n.text) }
+            span.pk-meta { (name) " · " @let ago = short_ago(n.at); (ago) @if ago != "just now" { " ago" } }
+        }
+        span.pk-dot {}
+        @if new { span.sr { "New" } }
+    };
+    html! {
+        @match &n.link {
+            Some(l) => a.pk-row.new[new] href=(l) { (inner) },
+            None => div.pk-row.new[new] { (inner) },
+        }
+    }
+}
+
 async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     if !ctx.guilds_for(&user).contains(&guild) {
         return Err(WebError::Forbidden);
@@ -476,32 +501,46 @@ async fn notifications(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         }
     }
     from.sort_by_key(|f| std::cmp::Reverse(f.1));
+    let per_day = per_day(&user, &notification_times(&ctx, &user, guild, crate::now_ms() - 15 * 86_400_000), 14);
+    let fortnight: i64 = per_day.iter().filter_map(|d| d.1).sum();
+    let top = from.first().map(|f| f.1).unwrap_or(1).max(1);
     let body = html! {
         @if notes.is_empty() {
             (ui::empty(Icon::Bell, "No notifications", "Features post here when something needs you: a caught scam, a new ticket, a pet request."))
         } @else {
-            div.with-rail {
-                // No data-local: its one-time reload for the timezone would count as a second
-                // visit and clear the new marks. The overview, where everyone lands, sets it.
-                div.timeline.notes {
-                    @for (i, n) in notes.iter().enumerate() {
-                        @let label = day_label(&user, n.at);
-                        @if i == 0 || day_label(&user, notes[i - 1].at) != label { h2.day { (label) } }
-                        (notification_row(&ctx, &user, n, is_new(n)))
+            div.cp-cols {
+                div.cp-main {
+                    // No data-local: its one-time reload for the timezone would count as a second
+                    // visit and clear the new marks. The overview, where everyone lands, sets it.
+                    section.cp-panel {
+                        h2 { "Notices" span.muted { (notes.len()) @if notes.len() == 100 { " newest" } } }
+                        div.cp-days.cp-notes {
+                            @for (i, n) in notes.iter().enumerate() {
+                                @let label = day_label(&user, n.at);
+                                @if i == 0 || day_label(&user, notes[i - 1].at) != label { h3.cp-glabel { (label) } }
+                                (notification_row(&ctx, &user, n, is_new(n)))
+                            }
+                        }
                     }
                 }
-                aside.rail {
-                    div.rail-block {
-                        h2 { "Where they came from" span.muted.small { (notes.len()) } }
-                        @for (key, total, new) in &from {
-                            @let f = ctx.feature(key);
-                            div.mini data-hue=(ui::feature_hue(&ctx, key)) {
-                                span.nav-ic { (ui::icon(f.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Bell))) }
-                                span.grow {
-                                    span { (f.map(|f| f.meta().name).unwrap_or("Dashboard")) }
-                                    span.muted { @if *new > 0 { (new) " new" } @else { "Nothing new" } }
+                aside.cp-side.cp-stick {
+                    section.cp-panel {
+                        h2 { "Last 14 days" span.muted { (fortnight) @if fortnight == 1 { " notice" } @else { " notices" } } }
+                        (ui::column_bars(&per_day, "notices", "Notices on each of the last 14 days"))
+                    }
+                    section.cp-panel {
+                        h2 { "Where they came from" }
+                        div.cp-list {
+                            @for (key, total, new) in &from {
+                                @let f = ctx.feature(key);
+                                div.cp-row.cp-bar-row {
+                                    span.cp-ic { (ui::icon(f.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Bell))) }
+                                    span.cp-txt {
+                                        strong { (f.map(|f| f.meta().name).unwrap_or("Dashboard")) @if *new > 0 { span.cp-new { (new) " new" } } }
+                                        span.meter { span style={ "width:" (total * 100 / top) "%" } {} }
+                                    }
+                                    span.cp-n { (total) }
                                 }
-                                span.mono { (total) }
                             }
                         }
                     }
@@ -538,15 +577,16 @@ async fn notifications_peek(State(ctx): State<Ctx>, user: User, Path(guild): Pat
     let notes = recent_notifications(&ctx, &user, guild, 8);
     let is_new = |n: &Note| n.at > if n.global { global_seen } else { seen };
     let body = html! {
+        @let fresh = notes.iter().filter(|n| is_new(n)).count();
         div.peek-head {
-            strong { "Notifications" }
+            strong { "Notifications" @if fresh > 0 { span.muted { (fresh) " new" } } }
             a href={ "/g/" (guild) "/notifications" } { "See all" }
         }
         @if notes.is_empty() {
             p.peek-none { "Nothing yet. Features post here when something needs you." }
         } @else {
             div.peek-list {
-                @for n in &notes { (notification_row(&ctx, &user, n, is_new(n))) }
+                @for n in &notes { (peek_row(&ctx, n, is_new(n))) }
             }
         }
     };
@@ -581,39 +621,125 @@ async fn features_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
             None => groups.push((m.group, vec![m])),
         }
     }
+    let shown = groups.iter().map(|(_, l)| l.len()).sum::<usize>();
+    let on_here = groups.iter().flat_map(|(_, l)| l).filter(|m| ctx.enabled(guild, m.key)).count();
     let guilds = ctx.guilds_for(&user);
     let count_on = |g: u64| ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key)).count();
+    let switched = audit_lines(&ctx, "features", Some(guild), 6);
+    // What members can type here: every switched-on feature's commands, named once.
+    let mut commands: Vec<String> = ctx
+        .features()
+        .iter()
+        .filter(|f| ctx.enabled(guild, f.meta().key))
+        .flat_map(|f| f.commands().into_iter().chain(f.guild_commands(&ctx, guild)))
+        .filter(|c| c.kind == twilight_model::application::command::CommandType::ChatInput)
+        .map(|c| c.name)
+        .collect();
+    commands.sort();
+    commands.dedup();
     let body = html! {
-        @if guilds.len() > 1 {
-            nav.server-pick aria-label="Server" {
-                @for g in &guilds {
-                    a.on[*g == guild] href={ "/g/" (g) "/features" } {
-                        (ui::guild_avatar(&ctx, *g)) span { (ctx.guild_name(*g)) } span.mono.muted { (count_on(*g)) " on" }
-                    }
-                }
-            }
-        }
-        div.fgroups {
-            @for (group, list) in &groups {
-                section.card.fgroup data-hue=(group.hue()) {
-                    h2.fgroup-label { (group.label()) }
-                    @for m in list {
-                        @let on = ctx.enabled(guild, m.key);
-                        // A full load: switching a feature changes the sidebar itself.
-                        form.frow.off[!on] method="post" action={ "/g/" (guild) "/features/" (m.key) } data-full {
-                            @if let Some(n) = m.nav.first() { (ui::icon(n.icon)) }
-                            label.grow for={ "on-" (m.key) } { strong { (m.name) } span.help { (m.description) } }
-                            label.switch {
-                                input type="checkbox" id={ "on-" (m.key) } name={ "on-" (m.key) } checked[on] data-autosubmit;
-                                span.track { span.thumb {} }
+        div.cp-cols {
+            div.cp-main {
+                section.cp-panel {
+                    h2 { "On " (ctx.guild_name(guild)) span.muted { (on_here) " of " (shown) " on" } }
+                    // One list in two balanced columns when there's room; a group's label stays
+                    // with its first feature.
+                    div.cp-feats {
+                        @for (group, list) in &groups {
+                            div.cp-fgroup {
+                            h3.cp-glabel { (group.label()) }
+                            @for m in list {
+                                @let on = ctx.enabled(guild, m.key);
+                                // A full load: switching a feature changes the sidebar itself.
+                                form.cp-frow.off[!on] method="post" action={ "/g/" (guild) "/features/" (m.key) } data-full {
+                                    span.cp-ic { @if let Some(n) = m.nav.first() { (ui::icon(n.icon)) } }
+                                    label.cp-txt for={ "on-" (m.key) } { strong { (m.name) } span { (m.description) } }
+                                    label.switch {
+                                        input type="checkbox" id={ "on-" (m.key) } name={ "on-" (m.key) } checked[on] data-autosubmit;
+                                        span.track { span.thumb {} }
+                                    }
+                                }
+                            }
                             }
                         }
                     }
                 }
             }
+            aside.cp-side {
+                @if guilds.len() > 1 {
+                    section.cp-panel {
+                        h2 { "Servers" }
+                        nav.cp-list aria-label="Server" {
+                            @for g in &guilds {
+                                a.cp-row.cp-pick.on[*g == guild] href={ "/g/" (g) "/features" } aria-current=[(*g == guild).then_some("page")] {
+                                    (ui::guild_avatar(&ctx, *g))
+                                    span.cp-txt { strong { (ctx.guild_name(*g)) } span { (count_on(*g)) " features on" } }
+                                }
+                            }
+                        }
+                    }
+                }
+                section.cp-panel {
+                    h2 { "Slash commands here" span.muted { (commands.len()) } }
+                    @if commands.is_empty() {
+                        p.cp-none { "None. Turn on a feature with commands and they show up in Discord." }
+                    } @else {
+                        div.cp-cmds { @for c in &commands { code { "/" (c) } } }
+                    }
+                }
+                section.cp-panel {
+                    h2 { "Recently switched" }
+                    (audit_list(&switched, "Nobody has switched a feature here yet."))
+                }
+            }
         }
     };
     Ok(ui::layout(&ctx, &page, "Features", None, body).into_response())
+}
+
+/// A dashboard change for a side list: when, who (id, name, avatar) and what they did.
+struct AuditLine {
+    at: i64,
+    who: u64,
+    name: String,
+    avatar: Option<String>,
+    action: String,
+}
+
+/// The newest changes made on one dashboard page (`features`, `users`), on one server or all.
+fn audit_lines(ctx: &Ctx, page_key: &str, guild: Option<u64>, limit: i64) -> Vec<AuditLine> {
+    ctx.db
+        .with(|c| {
+            let mut s = c.prepare(
+                "SELECT a.at, a.user_id, a.user_name, u.avatar, a.action FROM dash_audit a LEFT JOIN dash_users u ON u.id = a.user_id
+                 WHERE a.feature = ?1 AND (?2 IS NULL OR a.guild_id = ?2) ORDER BY a.at DESC LIMIT ?3",
+            )?;
+            let rows = s
+                .query_map(params![page_key, guild.map(|g| g as i64), limit], |r| {
+                    Ok(AuditLine { at: r.get(0)?, who: r.get::<_, i64>(1)? as u64, name: r.get(2)?, avatar: r.get(3)?, action: r.get(4)? })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .unwrap_or_default()
+}
+
+/// Changes as rows: the face, "Antho turned Starboard off", how long ago.
+fn audit_list(lines: &[AuditLine], none: &str) -> Markup {
+    html! {
+        @if lines.is_empty() {
+            p.cp-none { (none) }
+        } @else {
+            div.cp-list {
+                @for l in lines {
+                    div.cp-row {
+                        img.avatar src=(crate::discord::avatar_url(l.who, l.avatar.as_deref())) alt="" width="28" height="28" loading="lazy";
+                        span.cp-txt { span.cp-line { strong { (l.name) } " " (lower_first(&l.action)) } span { (text::ago(l.at)) } }
+                    }
+                }
+            }
+        }
+    }
 }
 
 async fn toggle_feature(State(ctx): State<Ctx>, user: User, Path((guild, key)): Path<(u64, String)>, form: FormData) -> WebResult {
@@ -706,46 +832,68 @@ async fn users_page(State(ctx): State<Ctx>, user: User) -> WebResult {
     }
     let admins = list.iter().filter(|p| p.admin || p.id == owner).count();
     let today = list.iter().filter(|p| p.signed_in.is_some_and(|at| crate::now_ms() - at < 86_400_000)).count();
+    let changes = audit_lines(&ctx, "users", None, 6);
     let body = html! {
-        div.readings {
-            div.reading { b data-count { (list.len()) } span { "people can sign in" } }
-            div.reading { b data-count { (admins) } span { "see everything" } }
-            div.reading { b data-count { (today) } span { "signed in today" } }
-        }
-        div.people {
-            @for p in &list {
-                @let seen = match p.signed_in {
-                    Some(at) if p.id == user.id && crate::now_ms() - at < 3_600_000 => "Signed in now".to_owned(),
-                    Some(at) => format!("Signed in {}", text::ago(at)),
-                    None => format!("Added {} · hasn't signed in yet", text::ago(p.created_at)),
-                };
-                @let online = p.signed_in.is_some_and(|at| crate::now_ms() - at < 3_600_000);
-                @let pages = access.get(&p.id).map(Vec::as_slice).unwrap_or_default();
-                div.prow {
-                    span.prow-face {
-                        img.avatar src=(crate::discord::avatar_url(p.id, p.avatar.as_deref())) alt="" width="40" height="40" loading="lazy";
-                        @if online { span.dot.live title="Signed in within the hour" {} }
-                    }
-                    div.grow {
-                        strong { (name_or_id(p)) }
-                        p.muted.small { (seen) @if let Some(by) = p.added_by.as_ref().filter(|_| p.id != owner) { " · added by " (by) } }
-                    }
-                    @if p.id == owner { (ui::badge("Owner", Tone::Accent)) }
-                    @else if p.admin && p.admin_plus { (ui::badge("Admin+, every page", Tone::Muted)) }
-                    @else if p.admin { (ui::badge("Admin", Tone::Muted)) }
-                    @else if pages.is_empty() { (ui::badge("No pages yet", Tone::Warn)) }
-                    @else {
-                        span.access-tiles {
-                            @for (key, edit) in pages.iter().take(7) {
-                                @let f = ctx.feature(key);
-                                @let label = f.and_then(|f| f.meta().nav.first().map(|n| n.label)).unwrap_or(key.as_str());
-                                @let ic = f.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Toggle);
-                                span.nav-ic.edit[*edit] data-hue=(ui::feature_hue(&ctx, key)) data-tip={ (label) ": " (if *edit { "can edit" } else { "can view" }) } { (ui::icon(ic)) }
+        div.cp-cols {
+            div.cp-main {
+                section.cp-panel {
+                    h2 { "Who can sign in" span.muted { (list.len()) } }
+                    div.cp-list.cp-people {
+                        @for p in &list {
+                            @let seen = match p.signed_in {
+                                Some(at) if p.id == user.id && crate::now_ms() - at < 3_600_000 => "Signed in now".to_owned(),
+                                Some(at) => format!("Signed in {}", text::ago(at)),
+                                None => format!("Added {} · hasn't signed in yet", text::ago(p.created_at)),
+                            };
+                            @let online = p.signed_in.is_some_and(|at| crate::now_ms() - at < 3_600_000);
+                            @let pages = access.get(&p.id).map(Vec::as_slice).unwrap_or_default();
+                            @let inner = html! {
+                                span.cp-face {
+                                    img.avatar src=(crate::discord::avatar_url(p.id, p.avatar.as_deref())) alt="" width="28" height="28" loading="lazy";
+                                    @if online { span.dot.live title="Signed in within the hour" {} }
+                                }
+                                span.cp-txt {
+                                    strong { (name_or_id(p)) }
+                                    span { (seen) @if let Some(by) = p.added_by.as_ref().filter(|_| p.id != owner) { " · added by " (by) } }
+                                }
+                                span.cp-access {
+                                    @if p.id == owner { (ui::badge("Owner", Tone::Muted)) }
+                                    @else if p.admin && p.admin_plus { (ui::badge("Admin+, every page", Tone::Muted)) }
+                                    @else if p.admin { (ui::badge("Admin, every page", Tone::Muted)) }
+                                    @else if pages.is_empty() { (ui::badge("No pages yet", Tone::Muted)) }
+                                    @else {
+                                        @for (key, edit) in pages.iter().take(7) {
+                                            @let f = ctx.feature(key);
+                                            @let label = f.and_then(|f| f.meta().nav.first().map(|n| n.label)).unwrap_or(key.as_str());
+                                            @let ic = f.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(Icon::Toggle);
+                                            span.cp-page.edit[*edit] data-tip={ (label) ": " (if *edit { "can edit" } else { "can view" }) } { (ui::icon(ic)) }
+                                        }
+                                        @if pages.len() > 7 { span.cp-more { "+" (pages.len() - 7) } }
+                                    }
+                                }
+                                @if p.id != owner { span.btn.small.outline.cp-btn { "Edit access" } } @else { span.cp-btn {} }
+                            };
+                            @if p.id == owner {
+                                div.cp-row.cp-person { (inner) }
+                            } @else {
+                                a.cp-row.cp-person.cp-link href={ "/users/" (p.id) } { (inner) }
                             }
-                            @if pages.len() > 7 { span.more { "+" (pages.len() - 7) } }
                         }
                     }
-                    @if p.id != owner { a.btn.small.outline href={ "/users/" (p.id) } { "Edit access" } }
+                }
+            }
+            aside.cp-side {
+                section.cp-panel {
+                    h2 { "Access" }
+                    div.rail-nums {
+                        div { b { (list.len()) } span { "can sign in" } }
+                        div { b { (admins) } span { "see everything" } }
+                        div { b { (today) } span { "signed in today" } }
+                    }
+                }
+                section.cp-panel {
+                    h2 { "Recent changes" }
+                    (audit_list(&changes, "Nobody's access has changed yet."))
                 }
             }
         }
@@ -801,64 +949,152 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
         .filter(|p| p.id != id && !p.admin && p.id != ctx.cfg.owner_id && p.grants > 0)
         .map(|p| (p.id.to_string(), format!("{} · {} {}", name_or_id(&p), p.grants, if p.grants == 1 { "page" } else { "pages" })))
         .collect();
+    let seen = match person.signed_in {
+        Some(at) => format!("Signed in {}", text::ago(at)),
+        None => format!("Added {} · hasn't signed in yet", text::ago(person.created_at)),
+    };
+    let given = grants.iter().filter(|g| g.2 > 0).count();
+    let editable = grants.iter().filter(|g| g.2 >= 2).count();
+    let every = person.admin || is_owner;
+    // Their own latest changes (App approvals' only for those who may see that page).
+    let theirs: Vec<(i64, Option<i64>, String, String)> = if every {
+        ctx.db
+            .with(|c| {
+                let mut s = c.prepare("SELECT at, guild_id, feature, action FROM dash_audit WHERE user_id = ?1 ORDER BY at DESC LIMIT 20")?;
+                let rows = s.query_map([id as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                Ok(rows)
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, _, f, _): &(i64, Option<i64>, String, String)| user.admin_plus || !ctx.feature(f).is_some_and(|f| f.admin_plus_only()))
+            .take(8)
+            .collect()
+    } else {
+        Vec::new()
+    };
 
+    // One form across both columns: the pages on the left, their role and Save on the right.
+    // Remove is a formaction button in the same form, so no form sits inside another.
     let body = html! {
-        form.settings method="post" action={ "/users/" (id) } {
-            (ui::card(html! {
-                @if is_owner {
-                    (ui::field_custom("Admin", Some("The owner is always an admin, with App approvals."), ui::badge("Owner", Tone::Accent)))
-                } @else if person.admin_plus && !viewer_is_owner {
-                    (ui::field_custom("Admin+", Some("Only the owner changes an Admin+ person's access."), ui::badge("Admin+", Tone::Accent)))
-                } @else {
-                    (ui::field_toggle("admin", "Admin", Some("Everything on every server, including features, people and the activity log, except App approvals."), person.admin))
-                    @if viewer_is_owner {
-                        (ui::field_toggle("admin_plus", "Admin+", Some("Admin, plus App approvals, which is otherwise yours alone. On, it keeps them an admin whatever the switch above says. Only you can give it."), person.admin_plus))
-                    }
-                }
-            }))
-            @if !person.admin && !is_owner {
-                p.muted.small { "Per server: None hides a page, View shows it read-only, Edit lets them change it." }
-                div.access-grid {
-                @for g in ctx.guild_ids() {
-                    @let feats = grantable(g);
-                    @let given = feats.iter().filter(|f| level_of(g, f.meta().key) > 0).count();
-                    section.block {
-                        div.access-head {
-                            (ui::guild_avatar(&ctx, g))
-                            h2.grow { (ctx.guild_name(g)) }
-                            @if !feats.is_empty() { span.muted.small { (given) " of " (feats.len()) " pages" } }
+        form.settings.cp-cols method="post" action={ "/users/" (id) } {
+            div.cp-main {
+                @if every {
+                    section.cp-panel {
+                        h2 { "Pages" }
+                        div.cp-list {
+                            @for g in ctx.guild_ids() {
+                                div.cp-row {
+                                    (ui::guild_avatar(&ctx, g))
+                                    span.cp-txt {
+                                        strong { (ctx.guild_name(g)) }
+                                        span { "Every page, and can change them" @if person.admin_plus || is_owner { ", App approvals too" } }
+                                    }
+                                }
+                            }
                         }
-                        (ui::card(html! {
-                        @for f in &feats {
-                            @let m = f.meta();
-                            @let name = format!("p:{}:{}", g, m.key);
-                            @let cur = level_of(g, m.key);
-                            (ui::field_custom(m.name, None, html! {
-                                div.seg role="radiogroup" aria-label=(m.name) {
-                                    @for (v, label) in [(0, "None"), (1, "View"), (2, "Edit")] {
-                                        label {
-                                            input type="radio" name=(name) value=(v) checked[cur == v];
-                                            (label)
+                    }
+                    // An admin's grants say little; what they've been changing says more.
+                    section.cp-panel {
+                        h2 { "What they changed lately" }
+                        @if theirs.is_empty() {
+                            p.cp-none { "Nothing yet. Their changes on the dashboard show up here." }
+                        } @else {
+                            div.cp-list {
+                                @for (at, g, key, action) in &theirs {
+                                    @let f = ctx.feature(key);
+                                    @let ic = f.and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(match key.as_str() { "users" => Icon::Users, _ => Icon::Toggle });
+                                    @let page_name = match key.as_str() { "features" => "Features", "users" => "People", _ => f.map(|f| f.meta().name).unwrap_or("Dashboard") };
+                                    div.cp-row {
+                                        span.cp-ic { (ui::icon(ic)) }
+                                        span.cp-txt {
+                                            span.cp-line { (action) }
+                                            span {
+                                                @if let Some(g) = g.filter(|_| ctx.guild_ids().len() > 1) { (ctx.guild_name(g as u64)) " · " }
+                                                (page_name) " · " (text::ago(*at))
+                                            }
                                         }
                                     }
                                 }
-                            }))
+                            }
                         }
-                        @if feats.is_empty() {
-                            (ui::empty(Icon::Toggle, "No features on here", "Turn features on for this server first."))
+                    }
+                } @else {
+                    @for (i, g) in ctx.guild_ids().into_iter().enumerate() {
+                        @let feats = grantable(g);
+                        @let on = feats.iter().filter(|f| level_of(g, f.meta().key) > 0).count();
+                        section.cp-panel {
+                            div.cp-server {
+                                (ui::guild_avatar(&ctx, g))
+                                h2.grow { (ctx.guild_name(g)) }
+                                @if !feats.is_empty() { span.muted { (on) " of " (feats.len()) " pages" } }
+                            }
+                            @if i == 0 { p.cp-note { "None hides a page, View shows it read-only, Edit lets them change it." } }
+                            @if feats.is_empty() {
+                                p.cp-none { "No features are on here. Turn some on in Features first." }
+                            } @else {
+                                div.cp-grants {
+                                    @for f in &feats {
+                                        @let m = f.meta();
+                                        @let name = format!("p:{}:{}", g, m.key);
+                                        @let cur = level_of(g, m.key);
+                                        div.cp-grant {
+                                            span.cp-ic { @if let Some(n) = m.nav.first() { (ui::icon(n.icon)) } }
+                                            span.grow.clip { (m.name) }
+                                            div.seg role="radiogroup" aria-label=(m.name) {
+                                                @for (v, label) in [(0, "None"), (1, "View"), (2, "Edit")] {
+                                                    label {
+                                                        input type="radio" name=(name) value=(v) checked[cur == v];
+                                                        (label)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        }))
                     }
                 }
+            }
+            aside.cp-side {
+                section.cp-panel.cp-who {
+                    img.avatar src=(crate::discord::avatar_url(person.id, person.avatar.as_deref())) alt="" width="44" height="44" loading="lazy";
+                    span.cp-txt {
+                        strong { (display) }
+                        span { (seen) @if let Some(by) = person.added_by.as_ref().filter(|_| !is_owner) { " · added by " (by) } }
+                        span {
+                            @if is_owner { "The owner" }
+                            @else if person.admin_plus { "Admin+, every page" }
+                            @else if person.admin { "Admin, every page" }
+                            @else if given == 0 { "No pages yet" }
+                            @else { (given) @if given == 1 { " page" } @else { " pages" } ", " (editable) " to edit" }
+                        }
+                    }
+                }
+                section.cp-panel {
+                    h2 { "Role" }
+                    div.cp-fields {
+                        @if is_owner {
+                            (ui::field_custom("Admin", Some("The owner is always an admin, with App approvals."), ui::badge("Owner", Tone::Muted)))
+                        } @else if person.admin_plus && !viewer_is_owner {
+                            (ui::field_custom("Admin+", Some("Only the owner changes an Admin+ person's access."), ui::badge("Admin+", Tone::Muted)))
+                        } @else {
+                            (ui::field_toggle("admin", "Admin", Some("Everything on every server, including features, people and the activity log, except App approvals."), person.admin))
+                            @if viewer_is_owner {
+                                (ui::field_toggle("admin_plus", "Admin+", Some("Admin, plus App approvals, which is otherwise yours alone. On, it keeps them an admin whatever the switch above says. Only you can give it."), person.admin_plus))
+                            }
+                        }
+                    }
+                    div.save-bar { button.btn.primary type="submit" { "Save" } }
+                }
+                @if !is_owner {
+                    section.cp-panel {
+                        h2 { "Remove" }
+                        p.cp-note { "Signs them out and removes all their access." }
+                        div { button.btn.small.danger type="submit" formaction={ "/users/" (id) "/delete" } data-confirm="Click again to confirm" { "Remove from dashboard" } }
+                    }
                 }
             }
-            div.save-bar { button.btn.primary type="submit" { "Save" } }
-        }
-        @if !is_owner {
-            (ui::section("Remove", None, html! {
-                p.muted { "Signs them out and removes all their access." }
-                div { (ui::action_button(&format!("/users/{id}/delete"), "Remove from dashboard", Tone::Bad, true)) }
-            }))
         }
     };
     let title = if person.name.is_empty() { "Access".to_owned() } else { format!("{display}'s access") };
@@ -1005,17 +1241,42 @@ async fn activity(State(ctx): State<Ctx>, user: User) -> WebResult<Response> {
         Ok(rows)
     })?;
     // App approvals' own actions are for the owner and Admin+ only, like the page.
-    let rows: Vec<Change> = rows.into_iter().filter(|r| user.admin_plus || !ctx.feature(&r.feature).is_some_and(|f| f.admin_plus_only())).collect();
+    let hidden = |feature: &str| !user.admin_plus && ctx.feature(feature).is_some_and(|f| f.admin_plus_only());
+    let rows: Vec<Change> = rows.into_iter().filter(|r| !hidden(&r.feature)).collect();
+    // Every change in the last 14 days for the chart, not just the 200 listed.
+    let since = crate::now_ms() - 15 * 86_400_000;
+    let recent: Vec<i64> = ctx
+        .db
+        .with(|c| {
+            let mut s = c.prepare("SELECT at, feature FROM dash_audit WHERE at >= ?1")?;
+            let rows = s.query_map([since], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok(rows)
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, f)| !hidden(f))
+        .map(|(at, _)| at)
+        .collect();
+    let per_day = per_day(&user, &recent, 14);
+    let fortnight: i64 = per_day.iter().filter_map(|d| d.1).sum();
     let week_ago = crate::now_ms() - 7 * 86_400_000;
     let mut week: Vec<(u64, String, Option<String>, i64)> = Vec::new();
+    let mut pages: Vec<(String, i64)> = Vec::new();
     for r in rows.iter().filter(|r| r.at >= week_ago) {
         match week.iter_mut().find(|w| w.0 == r.who) {
             Some(w) => w.3 += 1,
             None => week.push((r.who, r.name.clone(), r.avatar.clone(), 1)),
         }
+        match pages.iter_mut().find(|p| p.0 == r.feature) {
+            Some(p) => p.1 += 1,
+            None => pages.push((r.feature.clone(), 1)),
+        }
     }
     week.sort_by_key(|w| -w.3);
+    pages.sort_by_key(|p| -p.1);
+    pages.truncate(6);
     let top = week.first().map(|w| w.3).unwrap_or(1).max(1);
+    let top_page = pages.first().map(|p| p.1).unwrap_or(1).max(1);
     let day_label = |at: i64| day_label(&user, at);
     let page_name = |key: &str| match key {
         "features" => "Features",
@@ -1026,33 +1287,58 @@ async fn activity(State(ctx): State<Ctx>, user: User) -> WebResult<Response> {
         @if rows.is_empty() {
             (ui::empty(Icon::Activity, "No changes yet", "Every change made on the dashboard is listed here, with who made it."))
         } @else {
-            div.with-rail {
-                div.timeline data-local {
-                    @for (i, r) in rows.iter().enumerate() {
-                        @let label = day_label(r.at);
-                        @if i == 0 || day_label(rows[i - 1].at) != label { h2.day { (label) } }
-                        div.change {
-                            span.mono.muted { (user.local(r.at).strftime("%H:%M")) }
-                            img.avatar src=(crate::discord::avatar_url(r.who, r.avatar.as_deref())) alt="" width="26" height="26" loading="lazy";
-                            span.grow { strong { (r.name) } " " (lower_first(&r.action)) }
-                            span.muted.small.clip {
-                                @if let Some(g) = r.guild.filter(|_| ctx.guild_ids().len() > 1) { (ctx.guild_name(g as u64)) " · " }
-                                (page_name(&r.feature))
+            div.cp-cols {
+                div.cp-main {
+                    section.cp-panel {
+                        h2 { "Changes" span.muted { (rows.len()) @if rows.len() == 200 { " newest" } } }
+                        div.cp-days data-local {
+                            @for (i, r) in rows.iter().enumerate() {
+                                @let label = day_label(r.at);
+                                @if i == 0 || day_label(rows[i - 1].at) != label { h3.cp-glabel { (label) } }
+                                div.cp-row.cp-change {
+                                    span.cp-time { (user.local(r.at).strftime("%H:%M")) }
+                                    img.avatar src=(crate::discord::avatar_url(r.who, r.avatar.as_deref())) alt="" width="28" height="28" loading="lazy";
+                                    span.cp-line.grow { strong { (r.name) } " " (lower_first(&r.action)) }
+                                    span.cp-where {
+                                        @if let Some(g) = r.guild.filter(|_| ctx.guild_ids().len() > 1) { (ctx.guild_name(g as u64)) " · " }
+                                        (page_name(&r.feature))
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                aside.rail {
-                    h2 { "Changes this week" }
-                    @if week.is_empty() { p.muted.small { "Nobody changed anything in the last 7 days." } }
-                    @for (who, name, avatar, n) in &week {
-                        div.rail-person {
-                            img.avatar src=(crate::discord::avatar_url(*who, avatar.as_deref())) alt="" width="26" height="26" loading="lazy";
-                            div.grow {
-                                span { (name) }
-                                span.meter { span style={ "width:" (n * 100 / top) "%" } {} }
+                aside.cp-side.cp-stick {
+                    section.cp-panel {
+                        h2 { "Last 14 days" span.muted { (fortnight) @if fortnight == 1 { " change" } @else { " changes" } } }
+                        (ui::column_bars(&per_day, "changes", "Dashboard changes on each of the last 14 days"))
+                    }
+                    section.cp-panel {
+                        h2 { "Who changed things this week" }
+                        @if week.is_empty() { p.cp-none { "Nobody changed anything in the last 7 days." } }
+                        div.cp-list {
+                            @for (who, name, avatar, n) in &week {
+                                div.cp-row.cp-bar-row {
+                                    img.avatar src=(crate::discord::avatar_url(*who, avatar.as_deref())) alt="" width="28" height="28" loading="lazy";
+                                    span.cp-txt { strong { (name) } span.meter { span style={ "width:" (n * 100 / top) "%" } {} } }
+                                    span.cp-n { (n) }
+                                }
                             }
-                            span.mono.muted { (n) }
+                        }
+                    }
+                    @if !pages.is_empty() {
+                        section.cp-panel {
+                            h2 { "Pages changed this week" }
+                            div.cp-list {
+                                @for (key, n) in &pages {
+                                    @let ic = ctx.feature(key).and_then(|f| f.meta().nav.first().map(|n| n.icon)).unwrap_or(match key.as_str() { "users" => Icon::Users, _ => Icon::Toggle });
+                                    div.cp-row.cp-bar-row {
+                                        span.cp-ic { (ui::icon(ic)) }
+                                        span.cp-txt { strong { (page_name(key)) } span.meter { span style={ "width:" (n * 100 / top_page) "%" } {} } }
+                                        span.cp-n { (n) }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1060,6 +1346,25 @@ async fn activity(State(ctx): State<Ctx>, user: User) -> WebResult<Response> {
         }
     };
     Ok(ui::layout(&ctx, &page, "Activity", None, body).into_response())
+}
+
+/// How many of `ats` fell on each of the last `days` days in the viewer's timezone, oldest
+/// first, labelled "Oct 3", for [`ui::column_bars`].
+fn per_day(user: &User, ats: &[i64], days: i64) -> Vec<(String, Option<i64>)> {
+    let today = user.local(crate::now_ms()).date();
+    let mut counts = vec![0i64; days as usize];
+    for at in ats {
+        let back = (today - user.local(*at).date()).get_days() as i64;
+        if (0..days).contains(&back) {
+            counts[(days - 1 - back) as usize] += 1;
+        }
+    }
+    (0..days)
+        .map(|i| {
+            let d = today.checked_sub(jiff::Span::new().days(days - 1 - i)).unwrap_or(today);
+            (d.strftime("%b %-d").to_string(), Some(counts[i as usize]))
+        })
+        .collect()
 }
 
 /// "Turned Starboard on" reads as "turned Starboard on" after a name.
