@@ -118,50 +118,49 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
     let body = html! {
         (style())
         (tabs(&page, waiting, "Catches"))
-        div.with-rail {
-            div.gd-main {
-                @let log_gone = deleted(&ctx, guild, s.log_channel);
-                @let honeypot_gone = deleted(&ctx, guild, s.honeypot_channel);
-                @if log_gone || honeypot_gone || s.log_channel.is_none() {
-                    div.gd-needs {
-                        @if log_gone {
-                            (need(true, Icon::Bell, "The alert channel was deleted", "Catches only show up here and behind the bell until you pick another.", &settings_href, "Pick another"))
-                        } @else if s.log_channel.is_none() {
-                            (need(false, Icon::Bell, "No alert channel yet", "Catches only show up here and behind the bell. Staff get buttons to release or ban in the alert.", &settings_href, "Pick one"))
-                        }
-                        @if honeypot_gone {
-                            (need(true, Icon::Hash, "The honeypot channel was deleted", "Nothing is caught there until you pick another.", &settings_href, "Pick another"))
-                        }
-                    }
+        @let log_gone = deleted(&ctx, guild, s.log_channel);
+        @let honeypot_gone = deleted(&ctx, guild, s.honeypot_channel);
+        @if log_gone || honeypot_gone || s.log_channel.is_none() {
+            div.gd-needs {
+                @if log_gone {
+                    (need(true, Icon::Bell, "The alert channel was deleted", "Catches only show up here and behind the bell until you pick another.", &settings_href, "Pick another"))
+                } @else if s.log_channel.is_none() {
+                    (need(false, Icon::Bell, "No alert channel yet", "Catches only show up here and behind the bell. Staff get buttons to release or ban in the alert.", &settings_href, "Pick one"))
                 }
-                (readings(&week, waiting))
-                section.gd-catches {
-                    div.gd-list-head {
-                        div {
-                            h2 { "Recent catches" }
-                            p.muted.small { "Release lifts the timeout and marks the catch as a mistake. Ban also deletes their messages from the last day." }
-                        }
-                        nav.seg.gd-show aria-label="Show" {
-                            @for sh in Show::ALL {
-                                a.on[sh == show] href={ (page.path(KEY)) @if !sh.key().is_empty() { "?show=" (sh.key()) } } aria-current=[(sh == show).then_some("true")] {
-                                    (sh.label())
-                                    @if sh == Show::Waiting && waiting > 0 { " " span.gd-count { (waiting) } }
-                                }
+                @if honeypot_gone {
+                    (need(true, Icon::Hash, "The honeypot channel was deleted", "Nothing is caught there until you pick another.", &settings_href, "Pick another"))
+                }
+            }
+        }
+        // The lead: the week as one number and its line, the counts behind it, and who decided.
+        (week_top(&page, &week, waiting))
+        div.with-rail.gd-split {
+            section.gd-catches {
+                div.gd-list-head {
+                    div {
+                        h2 { "Recent catches" }
+                        p.muted.small { "Release lifts the timeout and marks the catch as a mistake. Ban also deletes their messages from the last day." }
+                    }
+                    nav.seg.gd-show aria-label="Show" {
+                        @for sh in Show::ALL {
+                            a.on[sh == show] href={ (page.path(KEY)) @if !sh.key().is_empty() { "?show=" (sh.key()) } } aria-current=[(sh == show).then_some("true")] {
+                                (sh.label())
+                                @if sh == Show::Waiting && waiting > 0 { " " span.gd-count { (waiting) } }
                             }
                         }
                     }
-                    @if catches.is_empty() {
-                        @let (title, line) = show.empty();
-                        (ui::empty(Icon::Shield, title, line))
-                    } @else {
-                        div.gd-list {
-                            @for (i, c) in catches.iter().enumerate() { (catch_card(&ctx, &page, guild, c, threshold, s.new_account_days, i)) }
-                        }
+                }
+                @if catches.is_empty() {
+                    @let (title, line) = show.empty();
+                    (ui::empty(Icon::Shield, title, line))
+                } @else {
+                    div.gd-list {
+                        @for (i, c) in catches.iter().enumerate() { (catch_card(&ctx, &page, guild, c, threshold, s.new_account_days, i)) }
                     }
                 }
             }
-            aside.rail {
-                (week_rail(&ctx, guild, &week))
+            aside.rail.gd-rail {
+                (who_rail(&ctx, guild, &week))
                 (test_rail(&page, &s, Some(show.key()).filter(|k| !k.is_empty()), test.as_deref(), q.new.is_some(), q.repeat.is_some(), if test.is_some() { q.ads.is_some() } else { s.catch_ads }))
             }
         }
@@ -180,57 +179,72 @@ fn need(alert: bool, ic: Icon, title: &str, line: &str, href: &str, action: &str
     }
 }
 
-/// The week's numbers, counting up as they arrive.
-fn readings(week: &Week, waiting: i64) -> Markup {
+/// The day a bar of the week stands for, in the viewer's timezone: the rolling 24 hours ending
+/// `6 - i` days ago, named by the date they end on.
+fn day_label(page: &Page, i: usize) -> String {
+    let at = now_ms() - (6 - i as i64) * 86_400_000;
+    page.user.local(at).strftime("%b %-d").to_string()
+}
+
+/// The page's lead, in one panel: catches this week as a big number with the change on the week
+/// before, the four counts behind it, and the line of catches per day over the week before's
+/// dashed line.
+fn week_top(page: &Page, week: &Week, waiting: i64) -> Markup {
+    let series: Vec<(String, i64)> = week.daily.iter().enumerate().map(|(i, n)| (day_label(page, i), *n)).collect();
+    let prev: Vec<(String, i64)> = week.prev_daily.iter().enumerate().map(|(i, n)| (day_label(page, i), *n)).collect();
+    let before: i64 = week.prev_daily.iter().sum();
+    let change = week.caught - before;
     html! {
-        div.readings.gd-readings {
-            div.reading {
-                b data-count { (text::num(week.caught)) }
-                span { "Caught this week" }
+        section.gd-top {
+            div.gd-lead {
+                h2 { "This week" }
+                div.gd-big {
+                    b { (text::num(week.caught)) }
+                    span { @if week.caught == 1 { "catch" } @else { "catches" } " in the last 7 days" }
+                    span.gd-change {
+                        @if before == 0 && week.caught == 0 { "None the week before either" }
+                        @else if change == 0 { "Same as the week before" }
+                        @else if change > 0 { (text::num(change)) " more than the week before" }
+                        @else { (text::num(-change)) " fewer than the week before" }
+                    }
+                }
+                div.gd-nums {
+                    div.gd-wait[waiting > 0] { b { (text::num(waiting)) } span { "waiting on you" } }
+                    div { b { (text::num(week.banned)) } span { "banned" } }
+                    div { b { (text::num(week.released)) } span { "released as mistakes" } }
+                    div { b { (text::num(week.removed)) } span { "messages removed" } }
+                }
             }
-            div.reading.gd-wait[waiting > 0] {
-                b data-count { (text::num(waiting)) }
-                span { "Waiting on a decision" }
+            div.gd-chart {
+                h3 { "Catches per day" @if before > 0 { span.muted { "dashed: the week before" } } }
+                (ui::area_chart_vs(&series, Some(&prev), "catches"))
             }
-            div.reading { b data-count { (text::num(week.banned)) } span { "Banned" } }
-            div.reading { b data-count { (text::num(week.released)) } span { "Released as mistakes" } }
         }
     }
 }
 
-/// The label for one of the seven bars, counted back from the last 24 hours.
-fn day_label(i: usize) -> String {
-    if i == 6 { "Last 24 hours".to_owned() } else { format!("{} to {} days ago", 6 - i, 7 - i) }
-}
-
-/// The rail's week: catches per day, messages removed, and the moderators who decided.
-fn week_rail(ctx: &Ctx, guild: u64, week: &Week) -> Markup {
-    let series: Vec<(String, Option<i64>)> = week.daily.iter().enumerate().map(|(i, n)| (day_label(i), Some(*n))).collect();
-    let names: Vec<String> = week.handled_by.iter().take(3).map(|u| ctx.display_name(guild, *u)).collect();
+/// The moderators who released or banned this week, with how many each.
+fn who_rail(ctx: &Ctx, guild: u64, week: &Week) -> Markup {
     html! {
         div.rail-block {
-            h2 { "This week" span.muted.small { (plural(week.removed, "message")) " removed" } }
-            (ui::mini_bars(&series, "caught", "Catches in each of the last seven days"))
-            div.gd-axis { span { "7 days ago" } span { "Today" } }
+            h2 { "Who decided this week" }
             @if week.handled_by.is_empty() {
                 p.muted.small { "Nobody has released or banned anyone this week." }
             } @else {
-                div.gd-handlers {
-                    (ui::avatars(&week.handled_by.iter().map(|u| ctx.member_avatar(guild, *u)).collect::<Vec<_>>(), 4))
-                    p.small { (and_list(&names, week.handled_by.len())) " decided this week's catches." }
+                ul.gd-mods {
+                    @for (u, n) in week.handled_by.iter().take(5) {
+                        li {
+                            img.avatar src=(ctx.member_avatar(guild, *u)) alt="" width="28" height="28" loading="lazy";
+                            span.gd-mod-name { (ctx.display_name(guild, *u)) }
+                            span.gd-mod-n { (plural(*n, "decision")) }
+                        }
+                    }
+                }
+                @if week.handled_by.len() > 5 {
+                    p.muted.small { "and " (week.handled_by.len() - 5) " more" }
                 }
             }
         }
-    }
-}
-
-/// "Mira", "Mira and Oskar", "Mira, Oskar and 2 more".
-fn and_list(names: &[String], total: usize) -> String {
-    match (names, total) {
-        ([a], 1) => a.clone(),
-        ([a, b], 2) => format!("{a} and {b}"),
-        ([a, b, c], 3) => format!("{a}, {b} and {c}"),
-        _ => format!("{} and {} more", names.iter().take(2).cloned().collect::<Vec<_>>().join(", "), total.saturating_sub(2)),
     }
 }
 
@@ -463,7 +477,7 @@ fn gauge(score: i64, threshold: i64, big: bool) -> Markup {
                 line.gd-tick x1=(format!("{:.1}", t1.0)) y1=(format!("{:.1}", t1.1)) x2=(format!("{:.1}", t2.0)) y2=(format!("{:.1}", t2.1)) {}
             }
             div.gd-num {
-                b data-count { (score) }
+                b { (score) }
                 span { "catches at " (threshold) }
             }
         }
@@ -576,7 +590,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         }
         @if q.posted.is_some() { (ui::sent_toast(true, &format!("Notice posted in {}", s.honeypot_channel.map(|c| channel_name(&ctx, c)).unwrap_or_default()))) }
         (tabs(&page, waiting, "Settings"))
-        div.with-rail {
+        div.with-rail.gd-split.gd-setpage {
             (ui::settings_form(&page, &page.path("guard/settings"), html! {
                 // Two columns of sections once the column is wide enough. Stacked, they keep this order.
                 div.gd-sets {
@@ -584,7 +598,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     div.gd-set-col { (caught) (never) }
                 }
             }))
-            aside.rail { (flow(&ctx, &page, guild, &s)) }
+            aside.rail.gd-rail { (flow(&ctx, &page, guild, &s)) }
         }
     };
     Ok(ui::layout(&ctx, &page, "Scam protection", Some(status(&ctx, guild, &s)), body).into_response())
@@ -840,35 +854,81 @@ fn style() -> Markup {
 }
 
 const STYLE: &str = r#"
-.gd-main { display: flex; flex-direction: column; gap: 26px; min-width: 0; }
-.gd-needs { display: flex; flex-direction: column; gap: 8px; }
+/* ---- the house style (2026-11-02) ----
+   Every section and side block is one kind of bordered panel; never a panel inside a panel. The
+   chrome is neutral; red and amber are kept for the state of a catch (caught, waiting on you). */
+.gd-top, .gd-catch, .gd-catches > .empty, .gd-rail > .rail-block, .gd-setpage > form.settings {
+  background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px;
+}
+.gd-needs { display: flex; flex-direction: column; gap: 8px; margin-bottom: -14px; }
+.gd-split { gap: 16px; }
+.gd-rail { display: flex; flex-direction: column; gap: 16px; background: none; box-shadow: none; padding: 0; }
+.gd-rail > .rail-block + .rail-block { margin-top: 0; padding-top: 18px; border-top: 1px solid var(--edge-1); }
+.gd-rail > .rail-block > h2, .gd-top h2, .gd-top h3, .gd-list-head h2 { font-size: 14px; font-weight: 500; }
 
-/* Readings: the week, with what waits on you in amber. */
-.gd-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.gd-readings .reading { min-width: 0; }
-.gd-readings .gd-wait b { color: var(--waiting); }
-.gd-readings .gd-wait::before { background: linear-gradient(90deg, var(--waiting), transparent); }
+/* The lead: the week's number and counts beside its line, split by a hairline. */
+.gd-top { display: grid; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); gap: 0; align-items: stretch; }
+.gd-top > * { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.gd-lead { padding-right: 24px; }
+.gd-chart { padding-left: 24px; border-left: 1px solid var(--edge-1); }
+.gd-top h3 { margin: 0; display: flex; align-items: baseline; gap: 8px; }
+.gd-top h3 .muted { font-size: 12px; font-weight: 400; }
+.gd-big { display: flex; flex-direction: column; gap: 2px; }
+.gd-big b { font: 600 44px/1.05 var(--sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.gd-big span { font-size: 13px; color: var(--ink-2); }
+.gd-big .gd-change { font-size: 12px; color: var(--ink-3); }
+.gd-nums { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; padding-top: 14px; border-top: 1px solid var(--edge-1); }
+.gd-nums > div { display: flex; flex-direction: column; min-width: 0; }
+.gd-nums b { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.gd-nums span { font-size: 12px; color: var(--ink-3); }
+.gd-nums .gd-wait b { color: var(--waiting); }
+.gd-chart .area { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+.gd-chart .area svg { height: 150px; }
+@container col (max-width: 640px) {
+  .gd-top { grid-template-columns: minmax(0, 1fr); }
+  .gd-lead { padding-right: 0; }
+  .gd-chart { padding: 18px 0 0; margin-top: 18px; border-left: 0; border-top: 1px solid var(--edge-1); }
+}
+/* Who decided: one row each, a 28 px face, the name, how many. */
+.gd-mods { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.gd-mods li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.gd-mods .avatar { width: 28px; height: 28px; }
+.gd-mod-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gd-mod-n { font-size: 13px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* The list's head sits over the list only, so the right column starts level with the first catch. */
+.gd-split:not(.gd-setpage) { grid-template-areas: "head ." "list rail"; row-gap: 14px; }
+.gd-split:not(.gd-setpage) > .gd-catches { display: contents; }
+.gd-catches > .gd-list-head { grid-area: head; }
+.gd-catches > .gd-list, .gd-catches > .empty { grid-area: list; }
+.gd-split:not(.gd-setpage) > .gd-rail { grid-area: rail; }
+/* The section is laid out as contents, so the list is the container its cards read. */
+.gd-catches > .gd-list { container: col / inline-size; }
+@media (max-width: 920px) {
+  .gd-split:not(.gd-setpage) { grid-template-areas: "head" "list" "rail"; }
+}
 
 /* The list and its filter. */
-.gd-catches { display: flex; flex-direction: column; gap: 14px; }
+.gd-catches { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .gd-list-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
-.gd-list-head h2 { font-size: 15px; }
 .gd-list-head p { margin-top: 3px; max-width: 60ch; color: var(--ink-2); }
 .gd-show a { text-decoration: none; }
 .gd-count { color: var(--waiting); font-weight: 600; font-variant-numeric: tabular-nums; }
-/* Catches sit two across once each still has room for the message beside its dial, so a wide
-   screen shows more of them instead of one long card. One catch fills the row. */
-.gd-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); gap: 14px; }
+.gd-catches > .empty { border-radius: 14px; }
+.gd-catches > .empty .empty-icon { animation: none; background: var(--solid); color: var(--ink-2); box-shadow: none; }
+/* Catches sit two across once each still has room for the message beside its dial. */
+.gd-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 600px), 1fr)); gap: 16px; }
 
-/* One catch: the evidence on the left, the verdict in a column of its own. */
-.gd-catch { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 168px; gap: 0 24px; padding: 18px 20px 18px 18px; border-radius: var(--r-card); background: linear-gradient(180deg, rgba(243, 242, 248, 0.04), rgba(243, 242, 248, 0.015)); box-shadow: inset 0 0 0 1px var(--edge-1); animation: rise 0.4s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms + 100ms); }
+/* One catch: the evidence on the left, the verdict in a column of its own. A catch waiting on a
+   decision keeps an amber edge: that is its state. */
+.gd-catch { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 168px; gap: 0 24px; }
 /* An open Release or Ban popover stays above the card under it. */
 .gd-catch:has(.gd-pop[open]) { z-index: 4; }
-.gd-catch.open { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 24%, transparent); }
+.gd-catch.open { border-color: color-mix(in oklab, var(--waiting) 40%, transparent); }
 .gd-what { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 
 /* The message as Discord drew it. Discord's own colours: its chat grey, its name white. */
-.gd-discord { border-radius: 12px; background: #313338; overflow: hidden; }
+.gd-discord { border-radius: 10px; background: #313338; overflow: hidden; }
 .gd-chan { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 14px 0 12px; background: #2b2d31; color: #b5bac1; font-size: 12.5px; font-weight: 600; }
 .gd-chan .icon { width: 15px; height: 15px; color: #80848e; }
 .gd-chan-tag { margin-left: 4px; color: #949ba4; font-weight: 500; }
@@ -877,29 +937,27 @@ const STYLE: &str = r#"
 .gd-discord .dp-post { gap: 14px; font-size: 14px; }
 .gd-discord .dp-line { line-height: 1.55; }
 .gd-none { color: #949ba4; }
-/* The bait: a red wash that sweeps across the words the score counted. */
-.gd-discord mark { color: #ffe1e4; padding: 1px 3px; margin: 0 -1px; border-radius: 4px; background: linear-gradient(var(--gd-bait), var(--gd-bait)) no-repeat 0 0 / 0% 100%; --gd-bait: color-mix(in oklab, var(--held) 30%, transparent);-webkit-box-decoration-break: clone; box-decoration-break: clone; animation: gd-bait 0.5s var(--ease) forwards; animation-delay: calc(var(--i, 0) * 45ms + 380ms); }
-@keyframes gd-bait { to { background-size: 100% 100%; } }
+/* The bait: the words the score counted, on red. */
+.gd-discord mark { color: #ffe1e4; padding: 1px 3px; margin: 0 -1px; border-radius: 4px; background: color-mix(in oklab, var(--held) 30%, transparent); -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 
-/* Why it was caught: the points in a column of their own, then the reason. Two columns once the
-   card is wide enough for both to stay on one line. */
+/* Why it was caught: the points in a column of their own. Two columns once the card is wide
+   enough for both to stay on one line. */
 .gd-sigs { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: 5px 24px; font-size: 13px; line-height: 1.4; }
 .gd-sigs li { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: baseline; color: var(--ink-2); }
 .gd-sigs li.plain { grid-template-columns: minmax(0, 1fr); }
 .gd-sigs b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 
 /* What happened, on one line under a hairline. */
-.gd-steps { list-style: none; margin: 0; padding: 12px 0 0; border-top: 1px solid var(--edge-1); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; font-size: 12.5px; color: var(--ink-2); }
+.gd-steps { list-style: none; margin: 0; padding: 12px 0 0; border-top: 1px solid var(--edge-1); display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; font-size: 13px; color: var(--ink-2); }
 .gd-step { display: inline-flex; align-items: center; gap: 6px; min-height: 22px; }
 .gd-step > .icon { width: 14px; height: 14px; color: var(--ink-3); flex: none; }
 .gd-step.bad, .gd-step.bad > .icon { color: var(--held); }
 .gd-step > .avatar { width: 20px; height: 20px; }
 .gd-step strong { color: var(--ink); font-weight: 600; }
 .gd-waiting { color: var(--waiting); font-weight: 500; gap: 8px; }
-.gd-waiting .dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--waiting); animation: ping 2s ease-out infinite 1s; }
 .gd-by { color: var(--ink-2); }
 .gd-when { margin-left: 2px; color: var(--ink-3); }
-.gd-why { font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; margin-top: -4px; }
+.gd-why { font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; margin-top: -4px; }
 .gd-why > span { color: var(--ink-3); margin-right: 6px; }
 
 /* The verdict: the dial, the outcome, the decision. */
@@ -911,37 +969,33 @@ const STYLE: &str = r#"
 .gd-state.released { color: var(--ink-2); }
 .gd-age { font-size: 12px; color: var(--ink-3); }
 .gd-age.new { color: var(--waiting); }
+/* Release and Ban share one width. */
 .gd-acts { position: relative; display: flex; flex-direction: column; gap: 6px; align-self: stretch; }
 .gd-acts .gd-pop > summary { width: 100%; }
 .gd-pop .pop-body { right: 0; left: auto; width: 320px; }
 .gd-pop-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
 .gd-pop-foot .btn.danger { background: var(--held); color: #1a0507; font-weight: 600; }
 .gd-hp { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 0 0; }
-.gd-hp-ic { display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 6px; border-radius: 50%; color: var(--hue); box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--hue) 55%, transparent); }
+.gd-hp-ic { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 6px; border-radius: 50%; color: var(--ink-2); background: var(--solid); }
 .gd-hp-ic .icon { width: 20px; height: 20px; }
 .gd-hp strong { font-size: 14px; font-weight: 600; }
 .gd-hp span:last-child { font-size: 12px; color: var(--ink-3); max-width: 18ch; }
 
-/* The dial. */
+/* The dial: amber below the catch line, red from it. */
 .gd-gauge { position: relative; width: 140px; }
 .gd-gauge.big { width: 184px; margin: 4px auto 0; }
 .gd-gauge svg { display: block; width: 100%; height: auto; overflow: visible; }
 .gd-track, .gd-arc { fill: none; stroke-width: 7; stroke-linecap: round; }
-.gd-track { stroke: var(--edge-1); }
-.gd-arc { stroke: var(--waiting); stroke-dasharray: 100 200; animation: gd-arc 0.9s var(--ease) both; animation-delay: calc(var(--i, 0) * 45ms + 200ms); }
+.gd-track { stroke: var(--edge-2); }
+.gd-arc { stroke: var(--waiting); stroke-dasharray: 100 200; }
 .gd-gauge.caught .gd-arc { stroke: var(--held); }
 .gd-tick { stroke: var(--ink-2); stroke-width: 2; stroke-linecap: round; }
-@keyframes gd-arc { from { stroke-dashoffset: 100; } }
 .gd-num { position: absolute; left: 0; right: 0; bottom: -2px; display: flex; flex-direction: column; align-items: center; }
 .gd-num b { font: 600 28px/1 var(--sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; color: var(--ink); }
 .gd-num span { margin-top: 4px; font-size: 11.5px; color: var(--ink-3); }
 .gd-gauge.big .gd-num b { font-size: 36px; }
 
-/* The rail. */
-.gd-axis { display: flex; justify-content: space-between; margin-top: -4px; color: var(--ink-3); font-size: 11.5px; }
-.gd-handlers { display: flex; align-items: center; gap: 10px; }
-.gd-handlers .avatar { width: 30px; height: 30px; }
-.gd-handlers p { color: var(--ink-2); }
+/* The rail: test a message. */
 .gd-test textarea { min-height: 84px; }
 .gd-result { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
 .gd-result-say { display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
@@ -950,17 +1004,17 @@ const STYLE: &str = r#"
 .gd-tsig b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 .gd-tsig > span:not(.meter) { color: var(--ink-2); }
 .gd-tsig .meter { grid-column: 2; height: 4px; }
-.gd-tsig .meter > span { background: var(--data); animation-delay: calc(var(--s, 0) * 60ms + 150ms); }
+.gd-tsig .meter > span { background: var(--data); animation: none; }
 
 /* Settings: what a catch does, in order, on a thin line. */
 .gd-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; position: relative; }
 .gd-flow::before { content: ""; position: absolute; left: 14px; top: 22px; bottom: 22px; width: 1px; background: var(--edge-2); }
 .gd-flow li { position: relative; display: flex; gap: 12px; align-items: flex-start; padding: 7px 0; }
-.gd-flow-ic { display: grid; place-items: center; width: 29px; height: 29px; flex: none; border-radius: 50%; color: var(--hue); background: var(--raised); box-shadow: inset 0 0 0 1px var(--edge-2); }
+.gd-flow-ic { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 50%; color: var(--ink-2); background: var(--raised); box-shadow: inset 0 0 0 1px var(--edge-2); }
 .gd-flow-ic .icon { width: 14px; height: 14px; }
 .gd-flow li div { display: flex; flex-direction: column; gap: 1px; padding-top: 4px; min-width: 0; }
-.gd-flow strong { font-size: 13.5px; font-weight: 600; }
-.gd-flow li > div > span { font-size: 12.5px; color: var(--ink-2); }
+.gd-flow strong { font-size: 14px; font-weight: 500; }
+.gd-flow li > div > span { font-size: 13px; color: var(--ink-2); }
 .gd-flow li.muted .gd-flow-ic { color: var(--ink-3); }
 .gd-flow li.muted strong { color: var(--ink-2); }
 .gd-flow li.muted > div > span { color: var(--ink-3); }
@@ -968,23 +1022,30 @@ const STYLE: &str = r#"
 .gd-send { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 4px; }
 .gd-send-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .gd-exempt { display: flex; flex-wrap: wrap; gap: 6px; }
-.gd-exempt span { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 13px; background: var(--control); color: var(--ink-2); font-size: 12.5px; }
+.gd-exempt span { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 8px; background: var(--control); color: var(--ink-2); font-size: 12.5px; }
 
-/* Settings: the sections in two columns once each column can hold a label beside its control. */
-.gd-sets { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px 24px; align-items: start; }
-.gd-set-col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-@container col (min-width: 1060px) {
+/* Settings: the form is one panel, its sections in two columns once each column can hold a label
+   beside its control, and Save inside it at the bottom right. */
+.gd-setpage > form.settings .card { background: none; border: 0; padding: 0; border-radius: 0; }
+.gd-setpage > form.settings .block-head h2 { font-size: 14px; font-weight: 500; }
+.gd-setpage > form.settings .save-bar { padding-top: 4px; }
+.gd-sets { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px 40px; align-items: start; }
+.gd-set-col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.gd-set-col > .block + .block { padding-top: 18px; border-top: 1px solid var(--edge-1); }
+@container col (min-width: 760px) {
   .gd-sets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gd-sets .row:not(.wide) { grid-template-columns: minmax(0, 1fr) minmax(150px, 44%); gap: 8px 16px; }
+  .gd-sets .row:has(> .row-control > .switch) { grid-template-columns: minmax(0, 1fr) auto; }
+}
+/* Two narrow columns: a row's label sits above its control, except a switch, which stays beside. */
+@container col (min-width: 760px) and (max-width: 1059px) {
+  .gd-sets .row:not(.wide):not(:has(> .row-control > .switch)) { grid-template-columns: minmax(0, 1fr); }
+  .gd-sets .row:not(:has(> .row-control > .switch)) .row-control { justify-content: flex-start; }
+}
+@container col (max-width: 759px) {
+  .gd-set-col + .gd-set-col { padding-top: 18px; border-top: 1px solid var(--edge-1); }
 }
 
-/* Coming back to the page after a release, a ban or another filter: no entrance again. */
-html.same .gd-catch, html.same .gd-arc, html.same .gd-discord mark { animation: none; }
-html.same .gd-discord mark { background-size: 100% 100%; }
-
-/* Laid out for the column's own width, so the sidebar and rail are already counted. */
-@container col (max-width: 700px) {
-  .gd-readings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 @media (max-width: 920px) {
   .row.gd-strict-row:has(> .row-control > .seg) { grid-template-columns: minmax(0, 1fr); }
   .gd-strict-row .row-control { justify-content: flex-start; }

@@ -59,8 +59,8 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     let body = html! {
         (style())
         (tabs(&page, "Recent"))
-        div.with-rail {
-            div.au-main {
+        @if !gone.is_empty() {
+            div.au-needs {
                 @for name in &gone {
                     div.need.alert {
                         span.need-icon.alert { (ui::icon(Icon::Hash)) }
@@ -71,57 +71,85 @@ async fn recent_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
                         a.btn.small.primary href=(page.path("audit/settings")) { "Pick another" }
                     }
                 }
-                (today_readings(&today))
-                div.au-filters {
-                    form.seg.au-groups method="get" action=(page.path(KEY)) aria-label="Show" {
-                        input type="hidden" name="q" value=(search_value);
-                        @for g in Group::ALL {
-                            button.on[g == group] type="submit" name="group" value=(g.key()) aria-pressed=(if g == group { "true" } else { "false" }) {
-                                @if let Some(c) = group_color(g) { span.au-swatch style={ "--c:" (c) } {} }
-                                (g.label())
+            }
+        }
+        // The lead: two weeks of entries as one number and its line, with today's counts.
+        (top(&page, &today, &daily))
+        div.with-rail.au-split {
+            div.au-main {
+                section.au-log {
+                    div.au-filters {
+                        form.seg.au-groups method="get" action=(page.path(KEY)) aria-label="Show" {
+                            input type="hidden" name="q" value=(search_value);
+                            @for g in Group::ALL {
+                                button.on[g == group] type="submit" name="group" value=(g.key()) aria-pressed=(if g == group { "true" } else { "false" }) {
+                                    (g.label())
+                                }
                             }
                         }
+                        form.au-search method="get" action=(page.path(KEY)) role="search" {
+                            input type="hidden" name="group" value=(group.key());
+                            (ui::icon(Icon::Search))
+                            input.input type="search" name="q" value=(search_value) placeholder="Name, channel or text" aria-label="Search the log";
+                        }
                     }
-                    form.au-search method="get" action=(page.path(KEY)) role="search" {
-                        input type="hidden" name="group" value=(group.key());
-                        (ui::icon(Icon::Search))
-                        input.input type="search" name="q" value=(search_value) placeholder="Name, channel or text" aria-label="Search the log";
-                    }
-                }
-                @if rows.is_empty() {
-                    @if filtered {
-                        (ui::empty(Icon::Search, "No match", "Nothing in the last 14 days fits that filter."))
-                    } @else if has_channel {
-                        (ui::empty(Icon::Log, "Nothing logged yet", "Edits, deletes, joins and the rest show up here for 14 days as they happen."))
+                    @if rows.is_empty() {
+                        @if filtered {
+                            (ui::empty(Icon::Search, "No match", "Nothing in the last 14 days fits that filter."))
+                        } @else if has_channel {
+                            (ui::empty(Icon::Log, "Nothing logged yet", "Edits, deletes, joins and the rest show up here for 14 days as they happen."))
+                        } @else {
+                            (ui::empty(Icon::Log, "No log channel yet", "Pick one in Settings and events start appearing here and in Discord."))
+                        }
                     } @else {
-                        (ui::empty(Icon::Log, "No log channel yet", "Pick one in Settings and events start appearing here and in Discord."))
-                    }
-                } @else {
-                    (timeline(&ctx, &page, guild, &rows))
-                    @if total > rows.len() as i64 {
-                        p.muted.small { "Showing the latest " (rows.len()) " of " (text::num(total)) ". Filter to narrow it down." }
+                        (timeline(&ctx, &page, guild, &rows))
+                        @if total > rows.len() as i64 {
+                            p.muted.small { "Showing the latest " (rows.len()) " of " (text::num(total)) ". Filter to narrow it down." }
+                        }
                     }
                 }
             }
-            aside.rail {
+            aside.rail.au-rail {
                 (mods_block(&ctx, guild, &week))
-                (days_block(&daily))
             }
         }
     };
     Ok(ui::layout(&ctx, &page, "Audit log", None, body).into_response())
 }
 
-/// The day's counts, each in its kind's colour, counting up.
-fn today_readings(t: &Today) -> Markup {
-    let items = [("Joined today", t.joined, "var(--live)"), ("Left today", t.left, LEAVE), ("Edits today", t.edits, "var(--data)"), ("Deletions today", t.deleted, "var(--signal)")];
+/// The page's lead, in one panel: entries over the last 14 days as one number, today's counts
+/// under it, and the line of entries per day beside them.
+fn top(page: &Page, t: &Today, daily: &[i64]) -> Markup {
+    let n = daily.len();
+    let now = now_ms();
+    let series: Vec<(String, i64)> = daily
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let at = now - (n - 1 - i) as i64 * 86_400_000;
+            (page.user.local(at).strftime("%b %-d").to_string(), *v)
+        })
+        .collect();
+    let total: i64 = daily.iter().sum();
     html! {
-        div.readings.au-readings {
-            @for (label, n, color) in items {
-                div.reading style={ "--hue:" (color) } {
-                    b data-count { (text::num(n)) }
-                    span { span.au-swatch style={ "--c:" (color) } {} (label) }
+        section.au-top {
+            div.au-lead {
+                h2 { "Two weeks" }
+                div.au-big {
+                    b { (text::num(total)) }
+                    span { @if total == 1 { "entry" } @else { "entries" } " in the last 14 days" }
+                    span.au-kept { "Entries are kept for 14 days." }
                 }
+                div.au-nums {
+                    div { b { (text::num(t.joined)) } span { "joined today" } }
+                    div { b { (text::num(t.left)) } span { "left today" } }
+                    div { b { (text::num(t.edits)) } span { "edits today" } }
+                    div { b { (text::num(t.deleted)) } span { "deletions today" } }
+                }
+            }
+            div.au-chart {
+                h3 { "Entries per day" }
+                (ui::area_chart(&series, "entries"))
             }
         }
     }
@@ -137,14 +165,14 @@ fn mods_block(ctx: &Ctx, guild: u64, week: &[(u64, i64)]) -> Markup {
                 p.muted.small { "Bans, kicks, timeouts, deletions and role changes by moderators show up here. The bot needs the View Audit Log permission to see who did them." }
             } @else {
                 div.au-mods {
-                    @for (i, (m, n)) in week.iter().take(6).enumerate() {
-                        div.mini.au-mod style={ "--s:" (i) } {
-                            img.avatar src=(ctx.member_avatar(guild, *m)) alt="" width="30" height="30" loading="lazy";
+                    @for (m, n) in week.iter().take(6) {
+                        div.au-mod {
+                            img.avatar src=(ctx.member_avatar(guild, *m)) alt="" width="28" height="28" loading="lazy";
                             div.grow {
                                 span { (ctx.display_name(guild, *m)) }
                                 span.meter { span style={ "width:" ((n * 100 / max).max(6)) "%" } {} }
                             }
-                            b data-count { (n) }
+                            b { (n) }
                         }
                     }
                 }
@@ -153,80 +181,7 @@ fn mods_block(ctx: &Ctx, guild: u64, week: &[(u64, i64)]) -> Markup {
     }
 }
 
-/// Entries per day for two weeks, the latest brightest.
-fn days_block(daily: &[i64]) -> Markup {
-    let n = daily.len();
-    let series: Vec<(String, Option<i64>)> = daily
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            let ago = n - 1 - i;
-            let label = match ago {
-                0 => "Last 24 hours".to_owned(),
-                1 => "1 to 2 days ago".to_owned(),
-                _ => format!("{ago} to {} days ago", ago + 1),
-            };
-            (label, Some(*v))
-        })
-        .collect();
-    let total: i64 = daily.iter().sum();
-    html! {
-        div.rail-block {
-            h2 { "Two weeks" span.muted.small { (text::num(total)) " entries" } }
-            (ui::mini_bars(&series, "entries", "Entries logged in each of the last 14 days"))
-            div.au-axis { span { "14 days ago" } span { "Today" } }
-            p.muted.small { "Entries are kept for 14 days." }
-        }
-    }
-}
-
-/// The colour that marks a kind of entry on the timeline: green for arrivals, red for bans,
-/// amber for timeouts, lilac for edits, coral for deletions, sky for roles and names.
-fn kind_color(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Join | Kind::Unban | Kind::TimeoutEnd => "var(--live)",
-        Kind::Leave => LEAVE,
-        Kind::Ban => "var(--held)",
-        Kind::Timeout => "var(--waiting)",
-        Kind::MessageEdit => "var(--data)",
-        Kind::MessageDelete | Kind::BulkDelete => "var(--signal)",
-        Kind::Nickname | Kind::Roles => "var(--h-pets)",
-        // Discord's own boost pink.
-        Kind::Boost => "#ff73fa",
-        Kind::VoiceJoin | Kind::VoiceLeave | Kind::VoiceMove => "var(--h-members)",
-    }
-}
-
-/// Leaving: a quiet periwinkle, so it reads apart from bans.
-const LEAVE: &str = "var(--h-tools)";
-
-fn group_color(g: Group) -> Option<&'static str> {
-    match g {
-        Group::All => None,
-        Group::Messages => Some("var(--data)"),
-        Group::Members => Some("var(--live)"),
-        Group::Roles => Some("var(--h-pets)"),
-        Group::Bans => Some("var(--held)"),
-    }
-}
-
-fn kind_icon(kind: Kind) -> Icon {
-    match kind {
-        Kind::MessageDelete | Kind::BulkDelete => Icon::Trash,
-        Kind::MessageEdit => Icon::Brush,
-        Kind::Join => Icon::Enter,
-        Kind::Leave => Icon::Door,
-        Kind::Nickname => Icon::Member,
-        Kind::Roles => Icon::Users,
-        Kind::Ban => Icon::Shield,
-        Kind::Unban => Icon::Check,
-        Kind::Timeout | Kind::TimeoutEnd => Icon::Clock,
-        Kind::Boost => Icon::Star,
-        Kind::VoiceJoin | Kind::VoiceLeave | Kind::VoiceMove => Icon::Wave,
-    }
-}
-
-/// Entries grouped by day, in the viewer's own timezone, on a spine of faces.
+/// Entries grouped by day, in the viewer's own timezone.
 fn timeline(ctx: &Ctx, page: &Page, guild: u64, rows: &[Row]) -> Markup {
     let today = page.user.local(now_ms()).date();
     let day_label = |at: i64| {
@@ -246,17 +201,13 @@ fn timeline(ctx: &Ctx, page: &Page, guild: u64, rows: &[Row]) -> Markup {
             _ => days.push((label, vec![r])),
         }
     }
-    let mut n = 0usize;
     html! {
         div.au-timeline data-local {
             @for (label, list) in &days {
                 section.au-day {
                     h2.au-day-head { (label) span { (list.len()) } }
                     div.au-list {
-                        @for r in list {
-                            @let i = { n += 1; n };
-                            (entry(ctx, page, guild, r, i))
-                        }
+                        @for r in list { (entry(ctx, page, guild, r)) }
                     }
                 }
             }
@@ -264,22 +215,21 @@ fn timeline(ctx: &Ctx, page: &Page, guild: u64, rows: &[Row]) -> Markup {
     }
 }
 
-fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row, i: usize) -> Markup {
+fn entry(ctx: &Ctx, page: &Page, guild: u64, r: &Row) -> Markup {
     let time = page.user.local(r.at).strftime("%H:%M").to_string();
     let name = r.user_id.map(|u| member_name(ctx, guild, u, &r.user_name));
     let chan = r.channel_id.map(|c| channel_label(ctx, c)).unwrap_or_default();
     // The moderator the post named, decided when it was logged.
     let by = r.moderator.filter(|m| Some(*m) != r.user_id);
     html! {
-        div.au-entry style={ "--c:" (kind_color(r.kind)) ";--i:" (i.min(10)) } {
+        div.au-entry {
             time.au-time datetime=(r.at) title=(page.user.local(r.at).strftime("%b %-d, %H:%M").to_string()) { (time) }
-            div.au-face {
+            div.au-face title=(r.kind.label()) {
                 @if let Some(u) = r.user_id {
-                    img.avatar src=(ctx.member_avatar(guild, u)) alt="" width="36" height="36" loading="lazy";
+                    img.avatar src=(ctx.member_avatar(guild, u)) alt="" width="28" height="28" loading="lazy";
                 } @else {
                     span.au-noface { (ui::icon(Icon::Hash)) }
                 }
-                span.au-kind title=(r.kind.label()) { (ui::icon(kind_icon(r.kind))) }
             }
             // What happened, then what it was: under each other in a narrow column, side by side in a
             // wide one so the details line up in a column of their own.
@@ -433,62 +383,88 @@ fn member_name(ctx: &Ctx, guild: u64, user: u64, saved_name: &str) -> String {
     }
 }
 
-/// The timeline, the filters and the rail. Classes are prefixed `au-`.
+/// The lead, the timeline, the filters and the rail. Classes are prefixed `au-`.
 fn style() -> Markup {
     html! { style { (PreEscaped(STYLE)) } }
 }
 
 const STYLE: &str = r#"
-.au-main { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
-.au-swatch { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: none; flex: none; }
-.au-readings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.au-readings .reading { min-width: 0; }
-.au-readings .reading span { display: inline-flex; align-items: center; gap: 7px; }
+/* ---- the house style (2026-11-02) ----
+   Every section and side block is one kind of bordered panel; never a panel inside a panel.
+   Neutral chrome; the lilac data colour for the chart and the bars; green and red only where an
+   entry adds or removes something. */
+.au-top, .au-log, .au-rail > .rail-block, .au-setpage > form.settings {
+  background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 18px 20px;
+}
+.au-needs { display: flex; flex-direction: column; gap: 8px; margin-bottom: -14px; }
+.au-split { gap: 16px; }
+.au-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.au-rail { display: flex; flex-direction: column; gap: 16px; background: none; box-shadow: none; padding: 0; }
+.au-rail > .rail-block + .rail-block { margin-top: 0; padding-top: 18px; border-top: 1px solid var(--edge-1); }
+.au-rail > .rail-block > h2, .au-top h2, .au-top h3 { font-size: 14px; font-weight: 500; }
 
-/* Filters: a segmented choice of groups, each with its colour, and a search with its glass. */
+/* The lead: two weeks as one number with today's counts, beside its line. */
+.au-top { display: grid; grid-template-columns: minmax(250px, 300px) minmax(0, 1fr); gap: 0; align-items: stretch; }
+.au-top > * { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.au-lead { padding-right: 24px; }
+.au-chart { padding-left: 24px; border-left: 1px solid var(--edge-1); }
+.au-top h3 { margin: 0; }
+.au-big { display: flex; flex-direction: column; gap: 2px; }
+.au-big b { font: 600 44px/1.05 var(--sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.au-big span { font-size: 13px; color: var(--ink-2); }
+.au-big .au-kept { font-size: 12px; color: var(--ink-3); }
+.au-nums { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; padding-top: 14px; border-top: 1px solid var(--edge-1); }
+.au-nums > div { display: flex; flex-direction: column; min-width: 0; }
+.au-nums b { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.25; }
+.au-nums span { font-size: 12px; color: var(--ink-3); }
+.au-chart .area { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; }
+.au-chart .area svg { height: 150px; }
+@container col (max-width: 640px) {
+  .au-top { grid-template-columns: minmax(0, 1fr); }
+  .au-lead { padding-right: 0; }
+  .au-chart { padding: 18px 0 0; margin-top: 18px; border-left: 0; border-top: 1px solid var(--edge-1); }
+}
+
+/* The log's panel: the filters on top, then the days. */
+.au-log { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.au-log > .empty { background: none; box-shadow: none; padding: 8px 0; }
+.au-log > .empty .empty-icon { animation: none; background: var(--solid); color: var(--ink-2); box-shadow: none; }
 .au-filters { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
 .au-groups { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-.au-groups button { display: inline-flex; align-items: center; gap: 7px; border: 0; background: none; font: inherit; font-size: 12.5px; }
+.au-groups button { display: inline-flex; align-items: center; border: 0; background: none; font: inherit; font-size: 12.5px; }
 .au-search { position: relative; width: 240px; max-width: 100%; }
 .au-search .icon { position: absolute; left: 11px; top: 10px; width: 15px; height: 15px; color: var(--ink-3); pointer-events: none; }
 .au-search .input { padding-left: 34px; }
 
-/* The timeline: days, then entries on a spine that runs through the faces. */
-.au-timeline { display: flex; flex-direction: column; gap: 22px; }
-.au-day { display: flex; flex-direction: column; gap: 4px; }
-.au-day-head { position: sticky; top: 8px; z-index: 2; align-self: flex-start; display: inline-flex; align-items: baseline; gap: 8px; height: 28px; line-height: 28px; padding: 0 12px; margin-left: -12px; border-radius: 14px; font-size: 13.5px; font-weight: 600; background: color-mix(in oklab, var(--page) 85%, transparent); backdrop-filter: blur(10px); margin-bottom: 4px; }
-.au-day-head span { color: var(--ink-3); font-weight: 400; font-size: 12.5px; font-variant-numeric: tabular-nums; }
-.au-list { position: relative; display: flex; flex-direction: column; }
-.au-list::before { content: ""; position: absolute; left: 78px; top: 18px; bottom: 18px; width: 1px; background: var(--edge-2); }
-.au-entry { position: relative; display: grid; grid-template-columns: 42px 36px minmax(0, 1fr); column-gap: 18px; align-items: start; padding: 9px 10px 9px 0; border-radius: 14px; transition: background 0.18s; animation: au-in 0.24s var(--ease) both; animation-delay: calc(var(--i, 0) * 12ms); }
+/* The days, then their entries: one size of row, a 28 px face, a 14 px line, 13 px details. */
+.au-timeline { display: flex; flex-direction: column; gap: 18px; }
+.au-day { display: flex; flex-direction: column; }
+.au-day-head { display: flex; align-items: baseline; gap: 8px; padding-bottom: 8px; font-size: 14px; font-weight: 500; }
+.au-day-head span { color: var(--ink-3); font-weight: 400; font-size: 13px; font-variant-numeric: tabular-nums; }
+.au-list { display: flex; flex-direction: column; }
+.au-entry { position: relative; display: grid; grid-template-columns: 42px 28px minmax(0, 1fr); column-gap: 14px; align-items: start; padding: 10px 0; border-top: 1px solid var(--edge-1); }
 .au-entry > .au-time, .au-entry > .au-face { grid-row: 1 / span 2; }
-.au-entry:hover { background: linear-gradient(90deg, transparent 50px, var(--well) 90px); }
-@keyframes au-in { from { opacity: 0; transform: translateY(4px); } }
-/* Another filter or search is the same page: the rows are simply there. */
-html.same .au-entry, html.same .au-mod, html.same .au-mod .meter > span { animation: none; }
-.au-time { padding-top: 9px; font-size: 12.5px; color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; }
-.au-face { position: relative; width: 36px; height: 36px; }
-.au-face .avatar { width: 36px; height: 36px; box-shadow: 0 0 0 3px var(--page); }
-.au-noface { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--raised); color: var(--ink-2); box-shadow: 0 0 0 3px var(--page), inset 0 0 0 1px var(--edge-2); }
-.au-noface .icon { width: 16px; height: 16px; }
-/* The kind, in its colour, pinned to the face. */
-.au-kind { position: absolute; right: -6px; bottom: -4px; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--c); color: #0b0b10; box-shadow: 0 0 0 2.5px var(--page); }
-.au-kind .icon { width: 11px; height: 11px; stroke-width: 2.4; }
-.au-head { grid-column: 3; min-width: 0; padding-top: 8px; }
+.au-time { padding-top: 5px; font-size: 13px; color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; }
+.au-face { width: 28px; height: 28px; }
+.au-face .avatar { width: 28px; height: 28px; }
+.au-noface { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--solid); color: var(--ink-2); }
+.au-noface .icon { width: 14px; height: 14px; }
+.au-head { grid-column: 3; min-width: 0; padding-top: 4px; }
 .au-more { grid-column: 3; display: flex; flex-direction: column; gap: 6px; min-width: 0; margin-top: 6px; }
 .au-more:empty { display: none; }
 .au-plain, .au-reason { max-width: 70ch; }
-.au-line { font-size: 13.5px; color: var(--ink-2); line-height: 1.45; }
+.au-line { font-size: 14px; color: var(--ink-2); line-height: 1.45; }
 .au-line strong { font-weight: 600; color: var(--ink); }
 .au-by { display: inline-flex; align-items: center; gap: 6px; vertical-align: -4px; }
 .au-by .avatar { width: 18px; height: 18px; }
-.au-plain { font-size: 12.5px; color: var(--ink-2); }
+.au-plain { font-size: 13px; color: var(--ink-2); }
+.au-more > p.muted.small { font-size: 13px; }
 .au-new { color: var(--waiting); font-weight: 500; }
-.au-reason { font-size: 12.5px; color: var(--ink-2); }
+.au-reason { font-size: 13px; color: var(--ink-2); }
 /* A deleted message, on Discord's grey. */
-.au-quote { align-self: flex-start; max-width: 100%; padding: 7px 12px; border-radius: 4px 12px 12px 12px; background: #2b2d31; color: #dbdee1; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.au-quote { align-self: flex-start; max-width: 100%; padding: 6px 12px; border-radius: 4px 10px 10px 10px; background: #2b2d31; color: #dbdee1; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .au-diff { display: flex; flex-direction: column; gap: 3px; align-self: flex-start; max-width: 100%; font-size: 13px; }
-.au-diff del, .au-diff ins { display: flex; gap: 8px; padding: 4px 10px 4px 8px; border-radius: 8px; text-decoration: none; overflow-wrap: anywhere; white-space: pre-wrap; }
+.au-diff del, .au-diff ins { display: flex; gap: 8px; padding: 3px 10px 3px 8px; border-radius: 8px; text-decoration: none; overflow-wrap: anywhere; white-space: pre-wrap; }
 .au-diff del { background: color-mix(in oklab, var(--held) 11%, transparent); color: color-mix(in oklab, var(--ink) 70%, var(--held)); }
 .au-diff del { text-decoration: line-through; text-decoration-color: color-mix(in oklab, var(--held) 60%, transparent); }
 .au-diff ins { background: color-mix(in oklab, var(--live) 11%, transparent); color: var(--ink); }
@@ -497,66 +473,76 @@ html.same .au-entry, html.same .au-mod, html.same .au-mod .meter > span { animat
 .au-diff ins .au-sign { color: var(--live); }
 .au-names { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
 .au-names .icon { width: 13px; height: 13px; color: var(--ink-3); transform: rotate(-90deg); }
-.au-name { padding: 2px 10px; border-radius: 11px; background: var(--control); }
+.au-name { padding: 2px 10px; border-radius: 8px; background: var(--control); }
 .au-name.was { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--edge-3); }
-.au-name.now { color: var(--ink); background: color-mix(in oklab, var(--c) 16%, transparent); }
+.au-name.now { color: var(--ink); }
 .au-name.none { font-style: italic; text-decoration: none; }
+/* Roles keep their own colour: it is the server's, not ours. */
 .au-roles { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.au-role { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 7px; border-radius: 12px; background: color-mix(in oklab, var(--role) 14%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--role) 30%, transparent); font-size: 12px; color: var(--ink); }
+.au-role { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 7px; border-radius: 8px; background: var(--control); font-size: 12.5px; color: var(--ink); }
 .au-role .dot { width: 8px; height: 8px; background: var(--role); }
 .au-role .au-sign { color: var(--live); }
-.au-role.removed { background: var(--control); box-shadow: none; color: var(--ink-3); text-decoration: line-through; }
+.au-role.removed { color: var(--ink-3); text-decoration: line-through; }
 .au-role.removed .au-sign { color: var(--held); }
 
-/* The rail. */
-.au-mods { display: flex; flex-direction: column; gap: 6px; }
-.au-mod { animation: rise 0.3s var(--ease) both; animation-delay: calc(var(--s, 0) * 30ms + 100ms); }
-.au-mod .grow { gap: 5px; }
+/* The rail: who moderated, with bars against the busiest. */
+.au-mods { display: flex; flex-direction: column; gap: 10px; }
+.au-mod { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.au-mod .avatar { width: 28px; height: 28px; }
+.au-mod .grow { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: 14px; }
+.au-mod .grow > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .au-mod .meter { height: 4px; }
-.au-mod .meter > span { background: var(--data); animation-duration: 0.6s; animation-delay: calc(var(--s, 0) * 30ms + 150ms); }
-.au-mod > b { font-size: 15px; font-weight: 600; color: var(--ink); min-width: 22px; text-align: right; font-variant-numeric: tabular-nums; }
-.au-axis { display: flex; justify-content: space-between; margin-top: -4px; color: var(--ink-3); font-size: 11.5px; }
+.au-mod .meter > span { background: var(--data); animation: none; }
+.au-mod > b { font-size: 14px; font-weight: 600; color: var(--ink); min-width: 22px; text-align: right; font-variant-numeric: tabular-nums; }
 
-.au-lane-ic { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--edge-2); color: var(--c); }
-.au-lane-ic .icon { width: 15px; height: 15px; }
+/* Settings' rail: where entries go, and what is logged. */
+.au-lane { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 10px; }
+.au-lane .grow { display: flex; flex-direction: column; min-width: 0; }
+.au-lane .grow > span:first-child { font-size: 14px; }
+.au-lane .grow > .muted { font-size: 13px; }
+.au-lane-ic { display: grid; place-items: center; width: 28px; height: 28px; flex: none; border-radius: 50%; background: var(--solid); color: var(--ink-2); }
+.au-lane-ic .icon { width: 14px; height: 14px; }
 .au-send { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 4px; }
 .au-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
-.au-kindchip { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px; border-radius: 13px; font-size: 12.5px; color: var(--ink-2); background: var(--control); }
+.au-kindchip { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 8px; font-size: 12.5px; color: var(--ink-2); background: var(--control); }
 
 /* A wide column: what happened on the left, what it was in a column of its own beside it, so a
    line of the log reads across once instead of leaving most of the width empty. */
-@container col (min-width: 1000px) {
-  .au-entry { grid-template-columns: 42px 36px minmax(0, 420px) minmax(0, 1fr); }
-  /* A hairline under the text of each line, so the eye carries across to its details. */
-  .au-entry + .au-entry::before { content: ""; position: absolute; top: 0; left: 114px; right: 10px; height: 1px; background: var(--edge-1); }
-  .au-more { grid-column: 4; grid-row: 1 / span 2; margin-top: 0; padding-top: 5px; }
+@container col (min-width: 900px) {
+  .au-entry { grid-template-columns: 42px 28px minmax(0, 400px) minmax(0, 1fr); }
+  .au-more { grid-column: 4; grid-row: 1 / span 2; margin-top: 0; padding-top: 2px; }
   .au-more > .au-plain:first-child, .au-more > p.muted:first-child { padding-top: 3px; }
-  .au-search { width: 300px; }
-}
-/* Laid out for the column's own width, so the sidebar and rail are already counted. */
-@container col (max-width: 700px) {
-  .au-readings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .au-search { width: 280px; }
 }
 @container col (max-width: 600px) {
   .au-filters { flex-direction: column; align-items: stretch; }
   .au-search { width: 100%; }
-  .au-entry { grid-template-columns: 36px minmax(0, 1fr); column-gap: 14px; }
+  .au-entry { grid-template-columns: 28px minmax(0, 1fr); column-gap: 12px; }
   .au-time { display: none; }
   .au-entry > .au-face { grid-column: 1; }
   .au-head, .au-more { grid-column: 2; }
-  .au-list::before { left: 18px; }
-  .au-entry:hover { background: none; }
 }
 
-/* Settings: the sections in two columns once each can hold a label beside its switch. Members,
-   the longest, has the right column to itself; the rest stack on the left without gaps. */
-.au-sets { display: flex; flex-direction: column; gap: 18px; }
-@container col (min-width: 1060px) {
-  .au-sets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto auto 1fr; gap: 18px 24px; align-items: start; }
-  .au-sets > :nth-child(1) { grid-area: 1 / 1; }
-  .au-sets > :nth-child(2) { grid-area: 2 / 1; }
-  .au-sets > :nth-child(3) { grid-area: 1 / 2 / 4 / 3; }
-  .au-sets > :nth-child(4) { grid-area: 3 / 1; }
+/* Settings: the form is one panel, its sections in two columns once each can hold a label beside
+   its switch, and Save inside it. Where it goes and Messages on the left, Members beside them,
+   Skip across the foot. */
+.au-setpage > form.settings .card { background: none; border: 0; padding: 0; border-radius: 0; }
+.au-setpage > form.settings .block-head h2 { font-size: 14px; font-weight: 500; }
+.au-setpage > form.settings .save-bar { padding-top: 4px; }
+.au-sets { display: flex; flex-direction: column; gap: 22px; }
+.au-sets > .block + .block { padding-top: 18px; border-top: 1px solid var(--edge-1); }
+@container col (min-width: 760px) {
+  .au-sets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto 1fr auto; gap: 22px 40px; align-items: start; }
+  .au-sets > .block:nth-child(1) { grid-area: 1 / 1; }
+  .au-sets > .block:nth-child(2) { grid-area: 2 / 1; }
+  .au-sets > .block:nth-child(3) { grid-area: 1 / 2 / 3 / 3; padding-top: 0; border-top: 0; }
+  .au-sets > .block:nth-child(4) { grid-area: 3 / 1 / 4 / 3; }
+  .au-sets .row:not(.wide) { grid-template-columns: minmax(0, 1fr) minmax(150px, 44%); gap: 8px 16px; }
+  .au-sets .row:has(> .row-control > .switch) { grid-template-columns: minmax(0, 1fr) auto; }
+}
+/* Two narrow columns: a row's label sits above its control, except a switch, which stays beside. */
+@container col (min-width: 760px) and (max-width: 1059px) {
+  .au-sets .row:not(.wide):not(:has(> .row-control > .switch)) { grid-template-columns: minmax(0, 1fr); }
 }
 "#;
 
@@ -575,9 +561,9 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
             (ui::sent_toast(true, &format!("Test entry sent to {}", to.join(" and "))))
         }
         (tabs(&page, "Settings"))
-        div.with-rail {
+        div.with-rail.au-split.au-setpage {
             (ui::settings_form(&page, &page.path("audit/settings"), html! {
-                // Members, the longest section, gets the right column to itself on a wide screen.
+                // Two columns on a wide screen: where it goes and messages beside members, skip under both.
                 div.au-sets {
                     (ui::section("Where it goes", Some("Nothing is logged until you pick a channel."), ui::card(html! {
                         (ui::field_channel(&ctx, guild, "channel", "Log channel", Some("Every event goes here unless one of the two below is set."), s.channel))
@@ -606,14 +592,13 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                     })))
                 }
             }))
-            aside.rail { (routing(&ctx, &page, &s)) }
+            aside.rail.au-rail { (routing(&ctx, &page, &s)) }
         }
     };
     Ok(ui::layout(&ctx, &page, "Audit log", None, body).into_response())
 }
 
-/// Where each kind of entry is posted, as the saved settings have it, in the timeline's colours,
-/// and a test entry to see a post land there.
+/// Where each kind of entry is posted, as the saved settings have it, and a test entry to see a post land there.
 fn routing(ctx: &Ctx, page: &Page, s: &Settings) -> Markup {
     let on: Vec<Kind> = Kind::ALL.into_iter().filter(|k| s.on(*k)).collect();
     // The switches: timeouts and voice each turn on several kinds at once.
@@ -625,7 +610,7 @@ fn routing(ctx: &Ctx, page: &Page, s: &Settings) -> Markup {
             @for (label, kind, ic) in lanes {
                 @let to = if kind == Kind::MessageEdit { s.message_channel.or(s.channel) } else { s.member_channel.or(s.channel) };
                 div.mini.au-lane {
-                    span.au-lane-ic style={ "--c:" (kind_color(kind)) } { (ui::icon(ic)) }
+                    span.au-lane-ic { (ui::icon(ic)) }
                     div.grow {
                         span { (label) }
                         span.muted { @match to { Some(c) => { "Posted in " (channel_label(ctx, c)) }, None => { "Only here: no channel picked" } } }
@@ -651,7 +636,7 @@ fn routing(ctx: &Ctx, page: &Page, s: &Settings) -> Markup {
             } @else {
                 div.au-kinds {
                     @for k in &on {
-                        span.au-kindchip style={ "--c:" (kind_color(*k)) } { span.au-swatch style={ "--c:" (kind_color(*k)) } {} (k.label()) }
+                        span.au-kindchip { (k.label()) }
                     }
                 }
             }
