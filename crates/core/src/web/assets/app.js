@@ -1,6 +1,6 @@
 // The dashboard's one script. Everything works without it; it adds the search palette, the
 // server's colour, chart cursors and tooltips, numbers that count up, the phone drawer, the
-// banner upload, button states, toasts, two-click deletes and the timezone cookie.
+// the banner editor, button states, toasts, two-click deletes and the timezone cookie.
 //
 // Links and forms inside the dashboard change only the page (`visit`): the sidebar, the server
 // rail and their scroll stay as they are, and the current page's pill glides to its new place.
@@ -439,37 +439,156 @@
   }
 
 
-  // ---------------------------------------------------------------- banner upload
-  document.addEventListener("change", async (e) => {
-    const pick = e.target.closest?.("#banner-file");
-    if (!pick) return;
-    const file = pick.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) return toast("Pick a PNG, JPEG or WebP image", true);
-    const btn = $("[data-banner-pick]");
-    btn?.classList.add("busy");
+  // ---------------------------------------------------------------- banner editor
+  // "Edit banner" opens the editor in place: drag the picture (or use the arrow keys) to move
+  // it, the slider or the wheel zooms, "Replace picture" swaps a new one in here. Save sends the
+  // new picture, resized first, then the frame; Cancel or Escape puts everything back. The
+  // frame is the point of the picture that stays put (--bx, --by, in percent) and the zoom
+  // around it (--bz); app.css turns those into object-position and scale.
+  const FRAME = { x: 50, y: 40, zoom: 1 };
+  let ed = null;
+  const editing = () => (ed && document.contains(ed.head) ? ed : (ed = null));
+  const edImg = () => $(".ov-bg img", ed.head);
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const edDraw = () => {
+    const img = edImg();
+    if (img) {
+      img.style.setProperty("--bx", ed.x.toFixed(2) + "%");
+      img.style.setProperty("--by", ed.y.toFixed(2) + "%");
+      img.style.setProperty("--bz", ed.zoom.toFixed(3));
+    }
+    ed.zoomInput.value = ed.zoom;
+    ed.head.classList.toggle("no-pic", !img);
+  };
+  const edZoom = (z) => { ed.zoom = clamp(z, 1, ed.max); edDraw(); };
+  // How far the picture can travel, in pixels, before its edge would show: the cover-fitted,
+  // zoomed size less the frame's.
+  const edTravel = () => {
+    const img = edImg(), W = ed.bg.clientWidth, H = ed.bg.clientHeight;
+    const nw = img.naturalWidth || W, nh = img.naturalHeight || H;
+    const k = Math.max(W / nw, H / nh) * ed.zoom;
+    return [nw * k - W, nh * k - H];
+  };
+  const edMove = (dx, dy, from = ed) => {
+    const [tx, ty] = edTravel();
+    if (tx > 0.5) ed.x = clamp(from.x - (dx / tx) * 100, 0, 100);
+    if (ty > 0.5) ed.y = clamp(from.y - (dy / ty) * 100, 0, 100);
+    edDraw();
+  };
+  const edOpen = (head) => {
+    const bg = $(".ov-bg", head), img = $("img", bg);
+    const read = (k, d) => { const n = parseFloat(img?.style.getPropertyValue(k)); return Number.isFinite(n) ? n : d; };
+    const bar = $(".ov-edit", head);
+    ed = { head, bg, bar, zoomInput: $("[data-banner-zoom]", bar), max: parseFloat(bar.dataset.maxZoom) || 3,
+      before: bg.innerHTML, file: null, url: null,
+      x: read("--bx", FRAME.x), y: read("--by", FRAME.y), zoom: read("--bz", FRAME.zoom) };
+    head.classList.add("editing");
+    bar.hidden = false;
+    bg.tabIndex = 0;
+    bg.setAttribute("role", "img");
+    bg.setAttribute("aria-label", "Banner. Drag or use the arrow keys to move it, plus and minus to zoom.");
+    edDraw();
+    (img ? bg : $("[data-banner-replace]", bar)).focus({ preventScroll: true });
+  };
+  const edClose = (restore) => {
+    if (!editing()) return;
+    const { head, bg, bar } = ed;
+    if (restore) bg.innerHTML = ed.before;
+    if (ed.url) URL.revokeObjectURL(ed.url);
+    head.classList.remove("editing", "no-pic", "busy");
+    bar.hidden = true;
+    ["tabindex", "role", "aria-label"].forEach((a) => bg.removeAttribute(a));
+    ed = null;
+    $("[data-banner-edit]", head)?.focus({ preventScroll: true });
+  };
+  // Resized here: wide enough for a large screen, small enough to store. GIFs go as they are.
+  const shrink = async (file) => {
+    if (file.type === "image/gif") return [file, file.type];
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, 2000 / bmp.width, 1100 / bmp.height);
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * k);
+    c.height = Math.round(bmp.height * k);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    const webp = await new Promise((res) => c.toBlob(res, "image/webp", 0.86));
+    if (webp) return [webp, "image/webp"];
+    return [await new Promise((res) => c.toBlob(res, "image/jpeg", 0.88)), "image/jpeg"];
+  };
+  const edSave = async () => {
+    const { head, bar } = ed;
+    head.classList.add("busy");
     try {
-      // Resize in the browser: wide enough for a large screen, small enough to store.
-      let body = file, type = file.type;
-      if (file.type !== "image/gif") {
-        const bmp = await createImageBitmap(file);
-        const k = Math.min(1, 2000 / bmp.width, 1100 / bmp.height);
-        const c = document.createElement("canvas");
-        c.width = Math.round(bmp.width * k);
-        c.height = Math.round(bmp.height * k);
-        c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
-        body = await new Promise((res) => c.toBlob(res, "image/webp", 0.86));
-        type = "image/webp";
-        if (!body) { body = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.88)); type = "image/jpeg"; }
+      if (ed.file) {
+        const [body, type] = await shrink(ed.file);
+        const r = await fetch($("#banner-file").dataset.action, { method: "POST", headers: { "content-type": type }, body, credentials: "same-origin" });
+        if (!r.ok) throw new Error(r.status === 403 ? "Only admins can change the banner" : r.status === 413 ? "That image is too large" : "The upload didn't go through");
       }
-      const r = await fetch(pick.dataset.action, { method: "POST", headers: { "content-type": type }, body, credentials: "same-origin" });
-      if (!r.ok) throw new Error(r.status === 403 ? "Only admins can change the banner" : r.status === 413 ? "That image is too large" : "The upload didn't go through");
+      const body = new URLSearchParams({ x: ed.x.toFixed(2), y: ed.y.toFixed(2), zoom: ed.zoom.toFixed(3) });
+      const r = await fetch(bar.dataset.frameAction, { method: "POST", body, credentials: "same-origin" });
+      if (!r.ok) throw new Error(r.status === 403 ? "Only admins can change the banner" : "The banner didn't save");
       // The banner also heads the sidebar, so this one is a full load.
       location.href = location.pathname + "?saved=1";
     } catch (err) {
-      btn?.classList.remove("busy");
-      toast(err.message || "The upload didn't go through", true);
+      head.classList.remove("busy");
+      toast(err.message || "The banner didn't save", true);
     }
+  };
+  document.addEventListener("click", (e) => {
+    const edit = e.target.closest?.("[data-banner-edit]");
+    if (edit) { e.preventDefault(); edOpen(edit.closest(".ov-head")); return; }
+    if (!editing()) return;
+    if (e.target.closest("[data-banner-replace]")) { e.preventDefault(); $("#banner-file")?.click(); }
+    else if (e.target.closest("[data-banner-cancel]")) { e.preventDefault(); edClose(true); }
+    else if (e.target.closest("[data-banner-save]")) { e.preventDefault(); edSave(); }
+  });
+  document.addEventListener("input", (e) => {
+    if (e.target.matches?.("[data-banner-zoom]") && editing()) edZoom(parseFloat(e.target.value));
+  });
+  document.addEventListener("change", (e) => {
+    const pick = e.target.closest?.("#banner-file");
+    const file = pick?.files?.[0];
+    if (!file || !editing()) return;
+    pick.value = "";
+    if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) return toast("Pick a PNG, JPEG, WebP or GIF image", true);
+    if (ed.url) URL.revokeObjectURL(ed.url);
+    ed.file = file;
+    ed.url = URL.createObjectURL(file);
+    let img = edImg();
+    if (!img) { ed.bg.replaceChildren((img = document.createElement("img"))); img.alt = ""; }
+    img.src = ed.url;
+    Object.assign(ed, FRAME);
+    edDraw();
+    ed.bg.focus({ preventScroll: true });
+  });
+  document.addEventListener("pointerdown", (e) => {
+    const bg = e.target.closest?.(".ov-head.editing .ov-bg");
+    if (!bg || !editing() || !edImg() || e.button) return;
+    e.preventDefault();
+    bg.focus({ preventScroll: true });
+    bg.setPointerCapture(e.pointerId);
+    bg.classList.add("dragging");
+    const from = { x: ed.x, y: ed.y }, sx = e.clientX, sy = e.clientY;
+    const move = (m) => edMove(m.clientX - sx, m.clientY - sy, from);
+    const end = () => { bg.classList.remove("dragging"); bg.removeEventListener("pointermove", move); bg.removeEventListener("pointerup", end); bg.removeEventListener("pointercancel", end); };
+    bg.addEventListener("pointermove", move);
+    bg.addEventListener("pointerup", end);
+    bg.addEventListener("pointercancel", end);
+  });
+  document.addEventListener("wheel", (e) => {
+    if (!e.target.closest?.(".ov-head.editing .ov-bg") || !editing() || !edImg()) return;
+    e.preventDefault();
+    edZoom(ed.zoom * Math.exp(-e.deltaY * 0.0015));
+  }, { passive: false });
+  document.addEventListener("keydown", (e) => {
+    if (!editing()) return;
+    if (e.key === "Escape") { e.preventDefault(); edClose(true); return; }
+    if (e.target !== ed.bg || !edImg()) return;
+    const step = e.shiftKey ? 40 : 8;
+    const keys = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
+    if (keys[e.key]) { e.preventDefault(); edMove(...keys[e.key]); }
+    else if (e.key === "+" || e.key === "=") { e.preventDefault(); edZoom(ed.zoom + 0.1); }
+    else if (e.key === "-") { e.preventDefault(); edZoom(ed.zoom - 0.1); }
+    else if (e.key === "Enter") { e.preventDefault(); edSave(); }
   });
 
   // ---------------------------------------------------------------- unsaved changes
@@ -807,7 +926,6 @@
       return;
     }
     if (e.target.closest("[data-palette]")) { e.preventDefault(); openPal(); return; }
-    if (e.target.closest("[data-banner-pick]")) { e.preventDefault(); $("#banner-file")?.click(); return; }
     const menu = e.target.closest(".menu-btn");
     if (menu) drawer(!document.body.classList.contains("drawer"));
     closeOpen(e.target);
