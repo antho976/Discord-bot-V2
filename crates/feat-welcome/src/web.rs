@@ -10,6 +10,7 @@ use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
 use bot_core::{Ctx, Icon, now_ms, text};
 
+use crate::banners::{self, Kind};
 use crate::{DEFAULT_GOODBYE, DEFAULT_WELCOME, KEY, Settings, card, invites, roles};
 
 const DAY_MS: i64 = 86_400_000;
@@ -18,6 +19,9 @@ pub fn routes() -> Router<Ctx> {
     Router::new()
         .route("/g/{guild}/welcome", get(messages_page).post(save_messages))
         .route("/g/{guild}/welcome/card.png", get(card_png))
+        .route("/g/{guild}/welcome/pictures/{kind}", post(add_picture))
+        .route("/g/{guild}/welcome/picture/{id}", get(picture))
+        .route("/g/{guild}/welcome/picture/{id}/remove", post(remove_picture))
         .route("/g/{guild}/welcome/test", post(send_test))
         .route("/g/{guild}/welcome/test-goodbye", post(send_goodbye_test))
         .route("/g/{guild}/welcome/roles", get(roles_page).post(save_roles))
@@ -194,6 +198,14 @@ const CSS: &str = r#"
 /* The card arrives: it rises out of a blur, then a light passes over it once. */
 .wl-card { position: relative; display: block; width: 100%; max-width: 440px; margin-top: 8px; border-radius: 8px; overflow: hidden; aspect-ratio: 3 / 1; background: #2b2d31; animation: wl-arrive 0.9s var(--ease) both 0.5s; }
 .wl-card[hidden] { display: none; }
+.wl-pics-wrap { display: flex; flex-direction: column; gap: 18px; }
+.wl-pics-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.wl-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.wl-pic { position: relative; margin: 0; aspect-ratio: 3 / 1; border-radius: 8px; overflow: hidden; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.wl-pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.wl-pic form { position: absolute; top: 4px; right: 4px; }
+.wl-pic .icon-btn { background: rgba(8, 8, 14, 0.72); }
+.wl-pic.add { display: grid; place-items: center; }
 .wl-card img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .wl-card::after { content: ""; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.22) 50%, transparent 65%); transform: translateX(-110%); animation: wl-sheen 1.3s var(--ease) both 1.25s; pointer-events: none; }
 html.same .wl-card, html.same .wl-card::after, html.same .wl-pop, html.same .wl-pop-role { animation: none; }
@@ -305,6 +317,41 @@ html.same .wl-card, html.same .wl-card::after, html.same .wl-pop, html.same .wl-
 
 const SCRIPT: &str = r##"
 (() => {
+  // A card picture: shrunk in the browser to twice the card's size at most, then sent as is.
+  document.querySelectorAll("[data-wl-pick]").forEach((btn) => {
+    const file = btn.parentElement.querySelector('input[type="file"]');
+    btn.addEventListener("click", () => file.click());
+    file.addEventListener("change", async () => {
+      const f = file.files?.[0];
+      if (!f) return;
+      if (!f.type.startsWith("image/")) return window.botToast?.("Pick a PNG, JPEG or WebP image", true);
+      btn.classList.add("busy");
+      try {
+        let body = f, type = f.type;
+        if (f.type !== "image/gif") {
+          const bmp = await createImageBitmap(f);
+          const k = Math.min(1, 1920 / bmp.width, 1280 / bmp.height);
+          const c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(bmp.width * k));
+          c.height = Math.max(1, Math.round(bmp.height * k));
+          const g = c.getContext("2d");
+          g.imageSmoothingQuality = "high";
+          g.drawImage(bmp, 0, 0, c.width, c.height);
+          body = await new Promise((res) => c.toBlob(res, "image/webp", 0.86));
+          type = "image/webp";
+          if (!body) { body = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.88)); type = "image/jpeg"; }
+        }
+        const r = await fetch(file.dataset.action, { method: "POST", headers: { "content-type": type }, body, credentials: "same-origin" });
+        if (!r.ok) throw new Error((await r.text()).slice(0, 200) || "The upload didn't go through");
+        location.href = location.pathname + "?saved=1#wl-pictures";
+      } catch (err) {
+        btn.classList.remove("busy");
+        window.botToast?.(err.message || "The upload didn't go through", true);
+      } finally {
+        file.value = "";
+      }
+    });
+  });
   const box = document.getElementById("wl-preview");
   if (!box) return;
   const v = { name: box.dataset.name, server: box.dataset.server, count: box.dataset.members };
@@ -325,12 +372,13 @@ const SCRIPT: &str = r##"
     draw($("wl-welcome-text"), $("welcome_text").value.trim() || box.dataset.defaultWelcome, true);
     draw($("wl-goodbye-text"), $("goodbye_text").value.trim() || box.dataset.defaultGoodbye, false);
     $("wl-card").hidden = !$("welcome_card").checked;
+    $("wl-gcard").hidden = !$("goodbye_card").checked;
     $("wl-goodbye").classList.toggle("off", !$("goodbye_on").checked);
     $("wl-welcome").classList.toggle("off", !$("welcome_on").checked);
     chan("welcome_channel", "wl-welcome");
     chan("goodbye_channel", "wl-goodbye");
   };
-  ["welcome_text", "goodbye_text", "welcome_card", "goodbye_on", "welcome_on", "welcome_channel", "goodbye_channel"].forEach((id) => {
+  ["welcome_text", "goodbye_text", "welcome_card", "goodbye_card", "goodbye_on", "welcome_on", "welcome_channel", "goodbye_channel"].forEach((id) => {
     $(id).addEventListener("input", sync);
     $(id).addEventListener("change", sync);
   });
@@ -378,6 +426,8 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let channel = |id: Option<u64>| id.and_then(|c| ctx.text_channels(guild).into_iter().find(|x| x.0 == c)).map(|(_, n)| n).unwrap_or_else(|| "pick a channel".into());
     let welcome_tpl = if s.welcome_text.trim().is_empty() { DEFAULT_WELCOME } else { s.welcome_text.as_str() };
     let goodbye_tpl = if s.goodbye_text.trim().is_empty() { DEFAULT_GOODBYE } else { s.goodbye_text.as_str() };
+    let welcome_pictures = banners::list(&ctx, guild, Kind::Welcome)?;
+    let goodbye_pictures = banners::list(&ctx, guild, Kind::Goodbye)?;
 
     let body = html! {
         style { (PreEscaped(CSS)) }
@@ -425,14 +475,18 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                 (ui::field_toggle("welcome_on", "Welcome new members", None, s.welcome_on))
                                 (ui::field_channel(&ctx, guild, "welcome_channel", "Post in", None, s.welcome_channel))
                                 (ui::field_textarea("welcome_text", "Message", Some("{user} mentions them, {name} is their name, {server} the server and {count} their member number. Only they are mentioned."), &s.welcome_text, DEFAULT_WELCOME))
-                                (ui::field_toggle("welcome_card", "Attach the welcome card", Some("An image with their avatar, name and member number."), s.welcome_card))
+                                (ui::field_toggle("welcome_card", "Attach the welcome card", Some("An image with their avatar, name and member number, drawn over one of the pictures below when there are any."), s.welcome_card))
+                                (ui::field_select("welcome_pictures_in_order", "Which picture", None, &order_choices(), if s.welcome_pictures_in_order { "order" } else { "random" }))
                             })))
                             (section("Goodbye", None, ui::card(html! {
                                 (ui::field_toggle("goodbye_on", "Say goodbye", Some("Posts when someone leaves."), s.goodbye_on))
                                 (ui::field_channel(&ctx, guild, "goodbye_channel", "Goodbye in", None, s.goodbye_channel))
                                 (ui::field_textarea("goodbye_text", "Goodbye message", Some("{name}, {server} and {count} work here. Nobody is mentioned."), &s.goodbye_text, DEFAULT_GOODBYE))
+                                (ui::field_toggle("goodbye_card", "Attach a goodbye card", Some("Their avatar and name, drawn over one of the goodbye pictures below when there are any."), s.goodbye_card))
+                                (ui::field_select("goodbye_pictures_in_order", "Which picture", None, &order_choices(), if s.goodbye_pictures_in_order { "order" } else { "random" }))
                             })))
                         }))
+                        (pictures(&page, &welcome_pictures, &goodbye_pictures))
                     }
                     div.wl-block.compose-preview {
                         div.block-head {
@@ -446,7 +500,7 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                                 (dc::message(&ctx, &page).id("wl-welcome").off(!s.welcome_on).render(html! {
                                     div.dp-line #wl-welcome-text { (preview_text(welcome_tpl, &user.name, &server, &count, true)) }
                                     span.wl-card #wl-card hidden[!s.welcome_card] {
-                                        img src=(page.path("welcome/card.png")) alt="The welcome card, drawn for you" width="960" height="320";
+                                        img src=(card_src(&page, Kind::Welcome, welcome_pictures.first().copied())) alt="The welcome card, drawn for you" width="960" height="320";
                                     }
                                 }))
                             }))
@@ -458,6 +512,9 @@ async fn messages_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
                             }
                             (dc::channel(Some(&channel(s.goodbye_channel)), "", dc::message(&ctx, &page).id("wl-goodbye").off(!s.goodbye_on).render(html! {
                                 div.dp-line #wl-goodbye-text { (preview_text(goodbye_tpl, &user.name, &server, &count, false)) }
+                                span.wl-card #wl-gcard hidden[!s.goodbye_card] {
+                                    img src=(card_src(&page, Kind::Goodbye, goodbye_pictures.first().copied())) alt="The goodbye card, drawn for you" width="960" height="320" loading="lazy";
+                                }
                             })))
                             @if page.can_edit() {
                                 form.wl-send method="post" action=(page.path("welcome/test-goodbye")) {
@@ -525,9 +582,12 @@ async fn save_messages(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         welcome_channel: form.channel(&ctx, guild, "welcome_channel"),
         welcome_text: template("welcome_text", DEFAULT_WELCOME),
         welcome_card: form.bool("welcome_card"),
+        welcome_pictures_in_order: form.string("welcome_pictures_in_order") == "order",
         goodbye_on: form.bool("goodbye_on"),
         goodbye_channel: form.channel(&ctx, guild, "goodbye_channel"),
         goodbye_text: template("goodbye_text", DEFAULT_GOODBYE),
+        goodbye_card: form.bool("goodbye_card"),
+        goodbye_pictures_in_order: form.string("goodbye_pictures_in_order") == "order",
         ..(*old).clone()
     };
     ctx.save_settings(guild, KEY, &s)?;
@@ -540,11 +600,26 @@ fn username(ctx: &Ctx, user: u64) -> String {
     Id::new_checked(user).and_then(|id| ctx.cache.user(id)).map(|u| u.name.clone()).unwrap_or_default()
 }
 
-/// The welcome card for whoever is signed in, as the page's preview.
-async fn card_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+#[derive(serde::Deserialize)]
+struct CardQuery {
+    /// "goodbye" for the goodbye card; the welcome card otherwise.
+    kind: Option<String>,
+    /// The picture to draw it over.
+    picture: Option<i64>,
+}
+
+/// The welcome or goodbye card for whoever is signed in, as the page's preview, over the
+/// picture asked for.
+async fn card_png(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<CardQuery>) -> WebResult {
     ctx.page(&user, guild, KEY, Level::View)?;
-    let number = ctx.member_count(guild).map(|n| n as i64);
-    let png = card::render(&ctx, &[&user.name, &username(&ctx, user.id)], &ctx.guild_name(guild), number, &user.avatar_url()).await?;
+    let kind = q.kind.as_deref().and_then(Kind::parse).unwrap_or(Kind::Welcome);
+    let number = (kind == Kind::Welcome).then(|| ctx.member_count(guild).map(|n| n as i64)).flatten();
+    let picture = match q.picture {
+        Some(id) => banners::get(&ctx, guild, id)?.map(|(_, data)| data),
+        None => None,
+    };
+    let names = [user.name.as_str(), &username(&ctx, user.id)];
+    let png = card::render(&ctx, kind, &names, &ctx.guild_name(guild), number, &user.avatar_url(), picture.as_deref()).await?;
     Ok(([(CONTENT_TYPE, "image/png"), (CACHE_CONTROL, "no-store")], png).into_response())
 }
 
@@ -566,12 +641,99 @@ async fn send_goodbye_test(State(ctx): State<Ctx>, user: User, Path(guild): Path
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
     let channel = s.goodbye_channel.ok_or_else(|| WebError::Bad("Pick a goodbye channel and save first.".into()))?;
-    crate::post_goodbye(&ctx, &s, guild, channel, &user.name).await.map_err(|e| {
+    crate::post_goodbye(&ctx, &s, guild, channel, &user.name, &username(&ctx, user.id), &user.avatar_url()).await.map_err(|e| {
         bot_core::tracing::warn!(guild, error = %e, "test goodbye failed");
         WebError::Bad(bot_core::discord::why_refused_any(&e))
     })?;
     ctx.audit(&page.user, Some(guild), KEY, "Sent a test goodbye");
     Ok(Redirect::to(&format!("{}?sent=goodbye", page.path("welcome"))).into_response())
+}
+
+/// The card preview's address: `kind`'s card over `picture`.
+fn card_src(page: &Page, kind: Kind, picture: Option<i64>) -> String {
+    let mut src = format!("{}?kind={}", page.path("welcome/card.png"), kind.key());
+    if let Some(id) = picture {
+        src.push_str(&format!("&picture={id}"));
+    }
+    src
+}
+
+/// "At random" or "In turn", for each card's picture.
+fn order_choices() -> Vec<(String, String)> {
+    vec![("random".into(), "At random, never the same twice running".into()), ("order".into(), "In turn, one after another".into())]
+}
+
+/// The pictures for each card, with a way to add and remove them. Outside the settings form:
+/// each change is saved at once.
+fn pictures(page: &Page, welcome: &[i64], goodbye: &[i64]) -> Markup {
+    let group = |kind: Kind, title: &str, ids: &[i64]| {
+        html! {
+            div.wl-pics-group {
+                div.wl-pics-head {
+                    strong { (title) }
+                    span.muted.small { (ids.len()) " of " (banners::MAX) }
+                }
+                div.wl-pics {
+                    @for id in ids {
+                        figure.wl-pic {
+                            a href=(card_src(page, kind, Some(*id))) target="_blank" rel="noopener" data-tip="See the card over this picture" {
+                                img src=(page.path(&format!("welcome/picture/{id}"))) alt="" loading="lazy";
+                            }
+                            @if page.can_edit() {
+                                form.inline method="post" action=(page.path(&format!("welcome/picture/{id}/remove"))) {
+                                    button.icon-btn.small type="submit" aria-label="Remove this picture" data-confirm="Click again to remove" { (ui::icon(Icon::Trash)) }
+                                }
+                            }
+                        }
+                    }
+                    @if page.can_edit() && ids.len() < banners::MAX {
+                        div.wl-pic.add {
+                            button.btn.small.outline type="button" data-wl-pick { (ui::icon(Icon::Plus)) "Add a picture" }
+                            input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-action=(page.path(&format!("welcome/pictures/{}", kind.key())));
+                        }
+                    }
+                }
+            }
+        }
+    };
+    section("Card pictures", Some("Drawn behind the card, darkened on the left so the name reads. Wide pictures fit best: the card is 3 to 1."), ui::card(html! {
+        div #wl-pictures.wl-pics-wrap {
+            (group(Kind::Welcome, "Welcome card", welcome))
+            (group(Kind::Goodbye, "Goodbye card", goodbye))
+        }
+    }))
+}
+
+/// Larger than the browser ever sends after shrinking; a guard, not a target.
+const MAX_PICTURE_BYTES: usize = 6 * 1024 * 1024;
+
+/// The body is the picture itself, shrunk by the page's script. It's read only after the access
+/// check, so someone without access can't make the bot buffer uploads.
+async fn add_picture(State(ctx): State<Ctx>, user: User, Path((guild, kind)): Path<(u64, String)>, body: bot_core::axum::body::Body) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let kind = Kind::parse(&kind).ok_or(WebError::NotFound)?;
+    let Ok(body) = bot_core::axum::body::to_bytes(body, MAX_PICTURE_BYTES).await else {
+        return Err(WebError::Bad("That picture is too large. Pick one under 6 MB.".into()));
+    };
+    let mime = bot_core::web::banner::sniff(&body).ok_or_else(|| WebError::Bad("That file isn't a PNG, JPEG, WebP or GIF picture.".into()))?;
+    banners::add(&ctx, guild, kind, mime, &body).map_err(|e| WebError::Bad(e.to_string()))?;
+    ctx.audit(&page.user, Some(guild), KEY, format!("Added a {} card picture", kind.key()));
+    Ok(bot_core::axum::http::StatusCode::NO_CONTENT.into_response())
+}
+
+/// A card picture, for the dashboard. Its id never names another picture, so it's kept for good.
+async fn picture(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
+    ctx.page(&user, guild, KEY, Level::View)?;
+    let (mime, data) = banners::get(&ctx, guild, id)?.ok_or(WebError::NotFound)?;
+    Ok(([(CONTENT_TYPE, mime), (CACHE_CONTROL, "private, max-age=31536000, immutable".to_owned())], data).into_response())
+}
+
+async fn remove_picture(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    if banners::remove(&ctx, guild, id)? {
+        ctx.audit(&page.user, Some(guild), KEY, "Removed a card picture");
+    }
+    Ok(saved(&format!("{}#wl-pictures", page.path("welcome"))))
 }
 
 // ---- roles ----

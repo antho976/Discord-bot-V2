@@ -50,6 +50,9 @@ pub struct Settings {
     pub dm_member: bool,
     /// Also score commission, art and service ads.
     pub catch_ads: bool,
+    /// The bot's notice in the honeypot channel, `(channel, message)`, telling members not to
+    /// write there. Kept in step by [`sync_notice`].
+    pub honeypot_notice: Option<(u64, u64)>,
 }
 
 impl Default for Settings {
@@ -65,6 +68,7 @@ impl Default for Settings {
             exempt_channels: Vec::new(),
             dm_member: false,
             catch_ads: false,
+            honeypot_notice: None,
         }
     }
 }
@@ -809,33 +813,88 @@ async fn close_open(ctx: &Ctx, guild: u64, user: u64, outcome: Outcome, by: Opti
 }
 
 /// The bait in a test alert: a gift link that imitates Discord, as scam bots post it.
+/// What the test honeypot alert shows as the message: what a hijacked account posts everywhere.
+const TEST_HONEYPOT_MESSAGE: &str = "hey, I'm giving away my old steam account, dm me before it's gone";
 const TEST_MESSAGE: &str = "free nitro for everyone, claim it before it runs out https://discord-gift.ru/claim";
 
 /// A sample alert in `channel`, marked as a test: the person who sent it stands in for the member,
 /// nothing is stored, nobody is timed out, banned or messaged, and it has no buttons.
-pub async fn send_test_alert(ctx: &Ctx, s: &Settings, channel: u64, by: u64, by_name: &str) -> Result<()> {
-    let e = test_alert_embed(s, channel, by, by_name);
+pub async fn send_test_alert(ctx: &Ctx, s: &Settings, channel: u64, honeypot: bool, by: u64, by_name: &str) -> Result<()> {
+    let e = test_alert_embed(s, channel, honeypot, by, by_name);
     let none = bot_core::twilight_model::channel::message::AllowedMentions::default();
     ctx.http.create_message(Id::new(channel)).embeds(&[e]).allowed_mentions(Some(&none)).await?;
     Ok(())
 }
 
+/// What the bot posts in the honeypot channel: what the channel is for and what happens to
+/// anyone who writes there, as the settings have it now.
+pub fn notice_embed(s: &Settings) -> Embed {
+    let staff = if s.log_channel.is_some() { " Staff are told." } else { "" };
+    EmbedBuilder::new()
+        .title("Don't post in this channel")
+        .color(COLOR)
+        .description(format!(
+            "This channel is a trap for scam bots, which post in every channel they can see. Anything written here is treated as a scam: \
+             the message is deleted and the account is timed out for {}.{staff}\n\nIf that happens to you by mistake, ask a moderator to lift it.",
+            timeout_label(s.timeout_minutes)
+        ))
+        .build()
+}
+
+/// Keep the honeypot notice in step with `s`: edit it when it's still there, post it when the
+/// channel is new or the old notice was deleted, and remove it from a channel that is no longer
+/// the honeypot. `again` deletes it and posts a fresh one, so it's the newest message there.
+/// `s.honeypot_notice` is updated to match; the caller saves it.
+pub async fn sync_notice(ctx: &Ctx, s: &mut Settings, again: bool) -> Result<()> {
+    let want = s.honeypot_channel.and_then(Id::<ChannelMarker>::new_checked);
+    let embed = notice_embed(s);
+    if let Some((ch, msg)) = s.honeypot_notice {
+        if let (Some(c), Some(m)) = (Id::<ChannelMarker>::new_checked(ch), Id::<MessageMarker>::new_checked(msg)) {
+            if again || Some(c) != want {
+                // It may be gone already, with its channel.
+                let _ = ctx.http.delete_message(c, m).await;
+                s.honeypot_notice = None;
+            } else {
+                match ctx.http.update_message(c, m).embeds(Some(std::slice::from_ref(&embed))).await {
+                    Ok(_) => return Ok(()),
+                    Err(e) if bot_core::discord::is_not_found(&e) => s.honeypot_notice = None,
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        } else {
+            s.honeypot_notice = None;
+        }
+    }
+    let Some(channel) = want else { return Ok(()) };
+    let none = bot_core::twilight_model::channel::message::AllowedMentions::default();
+    let posted = ctx.http.create_message(channel).embeds(&[embed]).allowed_mentions(Some(&none)).await?.model().await?;
+    s.honeypot_notice = Some((channel.get(), posted.id.get()));
+    Ok(())
+}
+
 /// The test alert: a real alert's layout for [`TEST_MESSAGE`], titled and footed as a test, and
 /// saying nothing was done.
-fn test_alert_embed(s: &Settings, channel: u64, by: u64, by_name: &str) -> Embed {
+/// With `honeypot`, it's a honeypot catch in the honeypot channel instead.
+fn test_alert_embed(s: &Settings, channel: u64, honeypot: bool, by: u64, by_name: &str) -> Embed {
     let facts = Facts { account_age_days: Some(365.0), new_account_days: s.new_account_days, repeat_channels: 1, has_attachments: false, catch_ads: s.catch_ads };
-    let v = score::score(TEST_MESSAGE, &facts);
+    let (score, reason, signals, content, channel_id) = if honeypot {
+        let sig = Signal { weight: 0, text: "Posted in the honeypot channel".into() };
+        (0, sig.text.clone(), vec![sig], TEST_HONEYPOT_MESSAGE, s.honeypot_channel.unwrap_or(channel))
+    } else {
+        let v = score::score(TEST_MESSAGE, &facts);
+        (i64::from(v.score), v.reason(), v.signals, TEST_MESSAGE, channel)
+    };
     let c = Catch {
         id: 0,
         at: now_ms(),
         user_id: by,
         user_name: by_name.to_owned(),
-        honeypot: false,
-        score: i64::from(v.score),
-        reason: v.reason(),
-        signals: v.signals,
-        content: TEST_MESSAGE.to_owned(),
-        channel_id: channel,
+        honeypot,
+        score,
+        reason,
+        signals,
+        content: content.to_owned(),
+        channel_id,
         deleted: 0,
         timeout_until: None,
         outcome: Outcome::NotTimedOut,
@@ -847,7 +906,7 @@ fn test_alert_embed(s: &Settings, channel: u64, by: u64, by_name: &str) -> Embed
         alert: None,
     };
     let mut e = alert_embed(&c);
-    e.title = Some("Test: scam caught".to_owned());
+    e.title = Some(if honeypot { "Test: honeypot catch" } else { "Test: scam caught" }.to_owned());
     for f in &mut e.fields {
         if f.name == "Done" {
             f.value = format!(
@@ -1301,7 +1360,7 @@ mod tests {
 
     #[test]
     fn a_test_alert_says_it_is_one_and_that_nothing_was_done() {
-        let e = test_alert_embed(&Settings::default(), 7, U, "Antho");
+        let e = test_alert_embed(&Settings::default(), 7, false, U, "Antho");
         assert_eq!(e.title.as_deref(), Some("Test: scam caught"));
         let done = e.fields.iter().find(|f| f.name == "Done").map(|f| f.value.as_str()).unwrap_or_default();
         assert!(done.starts_with("Nothing, this is a test."), "{done}");
@@ -1309,5 +1368,25 @@ mod tests {
         // The sample is a real catch at the default strictness, so the reasons aren't empty.
         let why = e.fields.iter().find(|f| f.name == "Why").map(|f| f.value.as_str()).unwrap_or_default();
         assert!(why.starts_with("- "), "{why}");
+    }
+
+    #[test]
+    fn a_test_honeypot_alert_points_at_the_honeypot() {
+        let s = Settings { honeypot_channel: Some(9), ..Settings::default() };
+        let e = test_alert_embed(&s, 7, true, U, "Antho");
+        assert_eq!(e.title.as_deref(), Some("Test: honeypot catch"));
+        let fields: String = e.fields.iter().map(|f| format!("{} {}\n", f.name, f.value)).collect();
+        let all = format!("{}\n{fields}", e.description.clone().unwrap_or_default());
+        assert!(all.contains("<#9>"), "{all}");
+    }
+
+    #[test]
+    fn the_honeypot_notice_names_the_timeout() {
+        let s = Settings { timeout_minutes: 60, ..Settings::default() };
+        let d = notice_embed(&s).description.unwrap_or_default();
+        assert!(d.contains("timed out for 1 hour."), "{d}");
+        assert!(!d.contains("Staff are told"), "{d}");
+        let d = notice_embed(&Settings { log_channel: Some(3), ..s }).description.unwrap_or_default();
+        assert!(d.contains("Staff are told."), "{d}");
     }
 }

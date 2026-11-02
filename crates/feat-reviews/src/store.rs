@@ -52,12 +52,32 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
         ALTER TABLE reviews ADD COLUMN eligible_at INTEGER;
         CREATE INDEX reviews_waiting ON reviews(eligible_at) WHERE status = 'waiting';
     ",
+}, Migration {
+    name: "004_reviews_thread_replies",
+    // toolbox: the member's newest IdleonToolbox profile link in their post. nudged_at: when the
+    // bot asked for one, so it asks once. pinged_by: the staff member who pressed Ping, told when
+    // the member answers ready (ready_at). tags: the dashboard's tags, comma separated.
+    // locked_at: when the bot locked a finished request's post (or claimed doing so);
+    // lock_failed_at: when the timer last failed to, so it waits an hour before trying again.
+    // reviews_marks 'v4': when this ran. The timer and the reminder only act on posts finished or
+    // made after it, so an update doesn't lock or remind every post a server already has.
+    sql: "
+        ALTER TABLE reviews ADD COLUMN toolbox TEXT;
+        ALTER TABLE reviews ADD COLUMN nudged_at INTEGER;
+        ALTER TABLE reviews ADD COLUMN pinged_by INTEGER;
+        ALTER TABLE reviews ADD COLUMN ready_at INTEGER;
+        ALTER TABLE reviews ADD COLUMN tags TEXT NOT NULL DEFAULT '';
+        ALTER TABLE reviews ADD COLUMN locked_at INTEGER;
+        ALTER TABLE reviews ADD COLUMN lock_failed_at INTEGER;
+        CREATE TABLE reviews_marks (name TEXT PRIMARY KEY, at INTEGER NOT NULL);
+        INSERT INTO reviews_marks (name, at) VALUES ('v4', CAST(strftime('%s', 'now') AS INTEGER) * 1000);
+    ",
 }];
 
 /// Names at least this alike are the same request, like the old bot.
 pub const SAME_NAME: f64 = 0.85;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Review {
     pub id: i64,
     pub name: String,
@@ -77,9 +97,28 @@ pub struct Review {
     pub closed_by: Option<String>,
     /// On the waitlist: when it joins the queue.
     pub eligible_at: Option<i64>,
+    /// The member's newest IdleonToolbox profile link in their post.
+    pub toolbox: Option<String>,
+    /// When the bot asked for a toolbox link.
+    pub nudged_at: Option<i64>,
+    /// Who pressed Ping last (a Discord user id).
+    pub pinged_by: Option<u64>,
+    /// When the member answered the ping with "ready".
+    pub ready_at: Option<i64>,
+    /// Tags from the post's words, in [`crate::words::tag_rank`] order.
+    pub tags: Vec<String>,
+    /// When the bot locked the post after the review.
+    pub locked_at: Option<i64>,
 }
 
-const COLS: &str = "id, name, user_id, thread_id, twitch_user, reward_id, redemption_id, redeemed_at, requested_at, status, notes, source, pinged_at, closed_at, closed_by, eligible_at";
+impl Review {
+    /// The toolbox link from the post, or else one staff put in the notes.
+    pub fn toolbox_link(&self) -> Option<String> {
+        self.toolbox.clone().or_else(|| crate::words::toolbox_link(&self.notes))
+    }
+}
+
+const COLS: &str = "id, name, user_id, thread_id, twitch_user, reward_id, redemption_id, redeemed_at, requested_at, status, notes, source, pinged_at, closed_at, closed_by, eligible_at, toolbox, nudged_at, pinged_by, ready_at, tags, locked_at";
 
 fn row(r: &Row) -> bot_core::rusqlite::Result<Review> {
     Ok(Review {
@@ -99,7 +138,17 @@ fn row(r: &Row) -> bot_core::rusqlite::Result<Review> {
         closed_at: r.get(13)?,
         closed_by: r.get(14)?,
         eligible_at: r.get(15)?,
+        toolbox: r.get(16)?,
+        nudged_at: r.get(17)?,
+        pinged_by: r.get::<_, Option<i64>>(18)?.map(|u| u as u64),
+        ready_at: r.get(19)?,
+        tags: split_tags(&r.get::<_, String>(20)?),
+        locked_at: r.get(21)?,
     })
+}
+
+fn split_tags(s: &str) -> Vec<String> {
+    s.split(',').map(str::trim).filter(|t| !t.is_empty()).map(str::to_owned).collect()
 }
 
 /// Open requests: channel points first, then the longest waiting.
@@ -425,9 +474,156 @@ pub fn set_notes(ctx: &Ctx, guild: u64, id: i64, notes: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn mark_pinged(ctx: &Ctx, guild: u64, id: i64) -> Result<()> {
-    ctx.db.with(|c| c.execute("UPDATE reviews SET pinged_at = ?3 WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id, now_ms()]))?;
+/// Ping pressed by `by`: a new ping starts over, so an earlier "ready" no longer counts.
+pub fn mark_pinged(ctx: &Ctx, guild: u64, id: i64, by: u64) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute("UPDATE reviews SET pinged_at = ?3, pinged_by = ?4, ready_at = NULL WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id, now_ms(), by as i64])
+    })?;
     Ok(())
+}
+
+/// The open or waitlisted request a post belongs to, its first post or one merged into it.
+pub fn by_thread(ctx: &Ctx, guild: u64, thread: u64) -> Result<Option<Review>> {
+    ctx.db.with(|c| {
+        c.query_row(
+            &format!(
+                "SELECT {COLS} FROM reviews WHERE guild_id = ?1 AND status IN ('open', 'waiting') AND id = (
+                   SELECT review_id FROM reviews_sources WHERE guild_id = ?1 AND kind = 'thread' AND ext_id = ?2)"
+            ),
+            params![guild as i64, thread.to_string()],
+            row,
+        )
+        .optional()
+    })
+}
+
+/// The member's newest toolbox link; it replaces an older one.
+pub fn set_toolbox(ctx: &Ctx, guild: u64, id: i64, url: &str) -> Result<()> {
+    ctx.db.with(|c| c.execute("UPDATE reviews SET toolbox = ?3 WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id, url]))?;
+    Ok(())
+}
+
+/// Add tags a request doesn't have yet, keeping them in their order. Says whether any were new.
+pub fn add_tags(ctx: &Ctx, guild: u64, id: i64, tags: &[String]) -> Result<bool> {
+    if tags.is_empty() {
+        return Ok(false);
+    }
+    let mut conn = ctx.db.lock();
+    let tx = conn.transaction()?;
+    let Some(have) = tx.query_row("SELECT tags FROM reviews WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id], |r| r.get::<_, String>(0)).optional()? else {
+        return Ok(false);
+    };
+    let mut all = split_tags(&have);
+    let before = all.len();
+    for t in tags {
+        if !all.contains(t) {
+            all.push(t.clone());
+        }
+    }
+    if all.len() == before {
+        return Ok(false);
+    }
+    all.sort_by_key(|t| crate::words::tag_rank(t));
+    tx.execute("UPDATE reviews SET tags = ?3 WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id, all.join(",")])?;
+    tx.commit()?;
+    Ok(true)
+}
+
+/// Mark a pinged request ready, once per ping: only for an answer `said_at` after the ping, and
+/// only if it isn't ready already. Says whether this answer was the one.
+pub fn claim_ready(ctx: &Ctx, guild: u64, id: i64, said_at: i64) -> Result<bool> {
+    let n = ctx.db.with(|c| {
+        c.execute(
+            // 10 s of slack: the ping is stamped after it posted, by this machine's clock, and a
+            // quick answer is stamped by Discord's.
+            "UPDATE reviews SET ready_at = ?3 WHERE guild_id = ?1 AND id = ?2 AND status = 'open' AND pinged_at IS NOT NULL AND pinged_at <= ?4 + 10000 AND ready_at IS NULL",
+            params![guild as i64, id, now_ms(), said_at],
+        )
+    })?;
+    Ok(n > 0)
+}
+
+/// How long after a post the bot waits before asking for a toolbox link, so the member can add
+/// it in their first messages.
+pub const NUDGE_AFTER_MS: i64 = 3 * 60_000;
+/// Posts older than this aren't asked: a scan finding last week's posts shouldn't ping them all.
+pub const NUDGE_WITHIN_MS: i64 = 86_400_000;
+
+/// Requests still waiting their turn from a post made since [`since_v4`], between
+/// [`NUDGE_WITHIN_MS`] and [`NUDGE_AFTER_MS`] ago, with a member, no toolbox link, no ping and no
+/// ask yet.
+pub fn nudge_due(ctx: &Ctx, guild: u64, now: i64) -> Result<Vec<Review>> {
+    let since = since_v4(ctx).max(now - NUDGE_WITHIN_MS);
+    let list: Vec<Review> = ctx.db.with(|c| {
+        let mut st = c.prepare(&format!(
+            "SELECT {COLS} FROM reviews WHERE guild_id = ?1 AND status IN ('open', 'waiting') AND thread_id IS NOT NULL AND user_id IS NOT NULL
+             AND toolbox IS NULL AND nudged_at IS NULL AND pinged_at IS NULL AND requested_at BETWEEN ?2 AND ?3 ORDER BY requested_at LIMIT 20"
+        ))?;
+        st.query_map(params![guild as i64, since, now - NUDGE_AFTER_MS], row)?.collect()
+    })?;
+    // A link staff put in the notes counts. Those are taken off the list for good, so they
+    // don't fill every run's 20.
+    let (noted, due): (Vec<Review>, Vec<Review>) = list.into_iter().partition(|r| r.toolbox_link().is_some());
+    ctx.db.with(|c| {
+        for r in &noted {
+            c.execute("UPDATE reviews SET toolbox = ?3 WHERE guild_id = ?1 AND id = ?2", params![guild as i64, r.id, r.toolbox_link()])?;
+        }
+        Ok(())
+    })?;
+    Ok(due)
+}
+
+/// Take the lock of a finished request's post, so the button, the dashboard and the timer
+/// don't all lock it. Says whether this caller should lock it.
+pub fn claim_lock(ctx: &Ctx, guild: u64, id: i64) -> Result<bool> {
+    let n = ctx.db.with(|c| {
+        c.execute(
+            "UPDATE reviews SET locked_at = ?3 WHERE guild_id = ?1 AND id = ?2 AND status = 'done' AND thread_id IS NOT NULL AND locked_at IS NULL",
+            params![guild as i64, id, now_ms()],
+        )
+    })?;
+    Ok(n > 0)
+}
+
+/// The post isn't locked (any more): locking failed, or the request went back to the queue.
+pub fn release_lock(ctx: &Ctx, guild: u64, id: i64) -> Result<()> {
+    ctx.db.with(|c| c.execute("UPDATE reviews SET locked_at = NULL WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id]))?;
+    Ok(())
+}
+
+/// When this version's columns were added: the timer and the reminder leave alone what came
+/// before.
+pub fn since_v4(ctx: &Ctx) -> i64 {
+    ctx.db.with(|c| c.query_row("SELECT at FROM reviews_marks WHERE name = 'v4'", [], |r| r.get(0))).unwrap_or(i64::MAX)
+}
+
+/// How long the timer waits after failing to lock a post before trying it again.
+pub const LOCK_RETRY_MS: i64 = 3_600_000;
+
+/// Finished requests whose post is still open `after_ms` after the review: finished since
+/// [`since_v4`] and in the last week, and not failed in the last [`LOCK_RETRY_MS`], so one post
+/// the bot can't lock doesn't hold up the others.
+pub fn lock_due(ctx: &Ctx, guild: u64, now: i64, after_ms: i64) -> Result<Vec<Review>> {
+    let since = since_v4(ctx).max(now - after_ms - 7 * 86_400_000);
+    ctx.db.with(|c| {
+        let mut st = c.prepare(&format!(
+            "SELECT {COLS} FROM reviews WHERE guild_id = ?1 AND status = 'done' AND thread_id IS NOT NULL AND locked_at IS NULL
+             AND closed_at BETWEEN ?2 AND ?3 AND (lock_failed_at IS NULL OR lock_failed_at <= ?4) ORDER BY closed_at LIMIT 20"
+        ))?;
+        st.query_map(params![guild as i64, since, now - after_ms, now - LOCK_RETRY_MS], row)?.collect()
+    })
+}
+
+/// The timer couldn't lock this post: let the lock go and wait [`LOCK_RETRY_MS`].
+pub fn lock_failed(ctx: &Ctx, guild: u64, id: i64) -> Result<()> {
+    ctx.db.with(|c| c.execute("UPDATE reviews SET locked_at = NULL, lock_failed_at = ?3 WHERE guild_id = ?1 AND id = ?2", params![guild as i64, id, now_ms()]))?;
+    Ok(())
+}
+
+/// Take the one ask for a toolbox link, before asking, so two runs can't both ask.
+pub fn claim_nudge(ctx: &Ctx, guild: u64, id: i64) -> Result<bool> {
+    let n = ctx.db.with(|c| c.execute("UPDATE reviews SET nudged_at = ?3 WHERE guild_id = ?1 AND id = ?2 AND nudged_at IS NULL", params![guild as i64, id, now_ms()]))?;
+    Ok(n > 0)
 }
 
 /// What staff do to a request.
@@ -513,24 +709,7 @@ mod tests {
     use super::*;
 
     fn review(id: i64, name: &str, user: Option<u64>, twitch: Option<&str>) -> Review {
-        Review {
-            id,
-            name: name.into(),
-            user_id: user,
-            thread_id: None,
-            twitch_user: twitch.map(Into::into),
-            reward_id: None,
-            redemption_id: None,
-            redeemed_at: None,
-            requested_at: 0,
-            status: "open".into(),
-            notes: String::new(),
-            source: "thread".into(),
-            pinged_at: None,
-            closed_at: None,
-            closed_by: None,
-            eligible_at: None,
-        }
+        Review { id, name: name.into(), user_id: user, twitch_user: twitch.map(Into::into), status: "open".into(), source: "thread".into(), ..Review::default() }
     }
 
     #[test]
@@ -741,5 +920,193 @@ mod tests {
         }
         let names: Vec<String> = open(&ctx, 1).unwrap().into_iter().map(|r| r.name).collect();
         assert_eq!(names, ["Paid", "Old", "Newer"]);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_ping_is_answered_ready_once() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        let post = Request { name: "Mira".into(), user_id: Some(10), thread_id: Some(500), requested_at: 1, source: "thread", ..Request::default() };
+        let Added::New(id) = add(&ctx, 1, &post, 0).unwrap() else { panic!("new") };
+        // Not pinged yet: "ready" means nothing.
+        assert!(!claim_ready(&ctx, 1, id, now_ms()).unwrap());
+        mark_pinged(&ctx, 1, id, 77).unwrap();
+        let r = get(&ctx, 1, id).unwrap().unwrap();
+        assert_eq!((r.pinged_by, r.ready_at), (Some(77), None));
+        let pinged = r.pinged_at.unwrap();
+        // An answer from well before the ping doesn't count; one after it does, once.
+        assert!(!claim_ready(&ctx, 1, id, pinged - 60_000).unwrap());
+        assert!(claim_ready(&ctx, 1, id, pinged + 1).unwrap());
+        assert!(!claim_ready(&ctx, 1, id, pinged + 2).unwrap());
+        assert!(get(&ctx, 1, id).unwrap().unwrap().ready_at.is_some());
+        // Pinging again starts over.
+        mark_pinged(&ctx, 1, id, 78).unwrap();
+        let r = get(&ctx, 1, id).unwrap().unwrap();
+        assert_eq!((r.pinged_by, r.ready_at), (Some(78), None));
+        assert!(claim_ready(&ctx, 1, id, now_ms()).unwrap());
+        // Done requests don't turn ready.
+        mark_pinged(&ctx, 1, id, 78).unwrap();
+        assert!(claim(&ctx, 1, id, Move::Complete, "Antho").unwrap());
+        assert!(!claim_ready(&ctx, 1, id, now_ms()).unwrap());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn posts_find_their_request_with_links_and_tags() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        let post = |thread: u64| Request { name: "Mira".into(), user_id: Some(10), thread_id: Some(thread), requested_at: 1, source: "thread", ..Request::default() };
+        let Added::New(id) = add(&ctx, 1, &post(500), 0).unwrap() else { panic!("new") };
+        assert_eq!(add(&ctx, 1, &post(501), 0).unwrap(), Added::Merged(id));
+        // Both posts lead to the request; another server's post of the same id doesn't.
+        assert_eq!(by_thread(&ctx, 1, 500).unwrap().map(|r| r.id), Some(id));
+        assert_eq!(by_thread(&ctx, 1, 501).unwrap().map(|r| r.id), Some(id));
+        assert_eq!(by_thread(&ctx, 2, 500).unwrap(), None);
+        assert_eq!(by_thread(&ctx, 1, 999).unwrap(), None);
+        // The newest link wins.
+        set_toolbox(&ctx, 1, id, "https://idleontoolbox.com/?profile=Old").unwrap();
+        set_toolbox(&ctx, 1, id, "https://idleontoolbox.com/?profile=Mira").unwrap();
+        assert_eq!(get(&ctx, 1, id).unwrap().unwrap().toolbox.as_deref(), Some("https://idleontoolbox.com/?profile=Mira"));
+        // Tags gather without repeats, stages first.
+        let t = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(add_tags(&ctx, 1, id, &t(&["W5"])).unwrap());
+        assert!(add_tags(&ctx, 1, id, &t(&["Late game", "W5"])).unwrap());
+        assert!(!add_tags(&ctx, 1, id, &t(&["W5"])).unwrap());
+        assert!(!add_tags(&ctx, 1, id, &[]).unwrap());
+        assert_eq!(get(&ctx, 1, id).unwrap().unwrap().tags, ["Late game", "W5"]);
+        // A finished request is no longer found by its post.
+        assert!(claim(&ctx, 1, id, Move::Complete, "Antho").unwrap());
+        assert_eq!(by_thread(&ctx, 1, 500).unwrap(), None);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn posts_without_a_link_are_asked_once() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        // As if this version had been running for a while.
+        ctx.db.with(|c| c.execute("UPDATE reviews_marks SET at = 0", [])).unwrap();
+        let now = now_ms();
+        let min = 60_000;
+        let post = |name: &str, user: Option<u64>, thread: Option<u64>, ago: i64, notes: &str| Request {
+            name: name.into(),
+            user_id: user,
+            thread_id: thread,
+            requested_at: now - ago,
+            notes: notes.into(),
+            source: "thread",
+            ..Request::default()
+        };
+        let Added::New(due) = add(&ctx, 1, &post("Due", Some(10), Some(500), 10 * min, ""), 0).unwrap() else { panic!("new") };
+        // Too new, too old, no member, no post, or a link in the notes or from the post.
+        add(&ctx, 1, &post("Fresh", Some(11), Some(501), min, ""), 0).unwrap();
+        add(&ctx, 1, &post("Old", Some(12), Some(502), 2 * NUDGE_WITHIN_MS, ""), 0).unwrap();
+        add(&ctx, 1, &post("Twitch", None, Some(503), 10 * min, ""), 0).unwrap();
+        add(&ctx, 1, &post("Nopost", Some(14), None, 10 * min, ""), 0).unwrap();
+        add(&ctx, 1, &post("Noted", Some(15), Some(505), 10 * min, "idleontoolbox.com/?profile=Noted"), 0).unwrap();
+        let Added::New(linked) = add(&ctx, 1, &post("Linked", Some(16), Some(506), 10 * min, ""), 0).unwrap() else { panic!("new") };
+        set_toolbox(&ctx, 1, linked, "https://idleontoolbox.com/?profile=Linked").unwrap();
+        // Already pinged: past the point of asking.
+        let Added::New(pinged) = add(&ctx, 1, &post("Pinged", Some(17), Some(507), 10 * min, ""), 0).unwrap() else { panic!("new") };
+        mark_pinged(&ctx, 1, pinged, 77).unwrap();
+        let ids = |list: Vec<Review>| list.into_iter().map(|r| r.id).collect::<Vec<_>>();
+        assert_eq!(ids(nudge_due(&ctx, 1, now).unwrap()), [due]);
+        // The notes link became the request's link, so it isn't looked at again.
+        let noted: i64 = ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM reviews WHERE name = 'Noted' AND toolbox IS NOT NULL", [], |r| r.get(0))).unwrap();
+        assert_eq!(noted, 1);
+        assert!(claim_nudge(&ctx, 1, due).unwrap());
+        assert!(!claim_nudge(&ctx, 1, due).unwrap());
+        assert!(nudge_due(&ctx, 1, now).unwrap().is_empty());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn older_rows_take_the_new_columns() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", &MIGRATIONS[..3]).unwrap();
+        ctx.db.with(|c| c.execute_batch("INSERT INTO reviews (guild_id, name, requested_at, source, pinged_at) VALUES (1, 'Kasia', 1, 'thread', 5)")).unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        let r = open(&ctx, 1).unwrap().remove(0);
+        assert_eq!((r.pinged_at, r.pinged_by, r.ready_at, r.toolbox, r.nudged_at, r.locked_at), (Some(5), None, None, None, None, None));
+        assert!(r.tags.is_empty());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn finished_posts_are_locked_once() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        ctx.db.with(|c| c.execute("UPDATE reviews_marks SET at = 0", [])).unwrap();
+        let day = 86_400_000;
+        let post = |name: &str, user: u64, thread: Option<u64>| Request { name: name.into(), user_id: Some(user), thread_id: thread, requested_at: 1, source: "thread", ..Request::default() };
+        let Added::New(id) = add(&ctx, 1, &post("Mira", 10, Some(500)), 0).unwrap() else { panic!("new") };
+        let Added::New(twitch) = add(&ctx, 1, &post("Teo", 11, None), 0).unwrap() else { panic!("new") };
+        // Open requests aren't locked.
+        assert!(!claim_lock(&ctx, 1, id).unwrap());
+        assert!(claim(&ctx, 1, id, Move::Complete, "Antho").unwrap());
+        assert!(claim(&ctx, 1, twitch, Move::Complete, "Antho").unwrap());
+        let now = now_ms();
+        // Not due within the day; due after it, and only the one with a post.
+        assert!(lock_due(&ctx, 1, now, day).unwrap().is_empty());
+        let ids = |list: Vec<Review>| list.into_iter().map(|r| r.id).collect::<Vec<_>>();
+        assert_eq!(ids(lock_due(&ctx, 1, now + day + 1000, day).unwrap()), [id]);
+        // Older than a week past the timer: left alone.
+        assert!(lock_due(&ctx, 1, now + 9 * day, day).unwrap().is_empty());
+        assert!(claim_lock(&ctx, 1, id).unwrap());
+        assert!(!claim_lock(&ctx, 1, id).unwrap());
+        assert!(lock_due(&ctx, 1, now + day + 1000, day).unwrap().is_empty());
+        // Back in the queue, the lock is let go, and it can be locked again once done.
+        release_lock(&ctx, 1, id).unwrap();
+        assert!(claim(&ctx, 1, id, Move::Reopen, "Antho").unwrap());
+        assert!(!claim_lock(&ctx, 1, id).unwrap());
+        assert!(claim(&ctx, 1, id, Move::Complete, "Antho").unwrap());
+        assert!(claim_lock(&ctx, 1, id).unwrap());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_failed_lock_waits_an_hour() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        ctx.db.with(|c| c.execute("UPDATE reviews_marks SET at = 0", [])).unwrap();
+        let day = 86_400_000;
+        let post = |name: &str, user: u64, thread: u64| Request { name: name.into(), user_id: Some(user), thread_id: Some(thread), requested_at: 1, source: "thread", ..Request::default() };
+        let Added::New(a) = add(&ctx, 1, &post("Mira", 10, 500), 0).unwrap() else { panic!("new") };
+        let Added::New(b) = add(&ctx, 1, &post("Teo", 11, 501), 0).unwrap() else { panic!("new") };
+        assert!(claim(&ctx, 1, a, Move::Complete, "Antho").unwrap());
+        assert!(claim(&ctx, 1, b, Move::Complete, "Antho").unwrap());
+        let later = now_ms() + day + 1000;
+        let ids = |list: Vec<Review>| list.into_iter().map(|r| r.id).collect::<Vec<_>>();
+        assert_eq!(ids(lock_due(&ctx, 1, later, day).unwrap()), [a, b]);
+        // The bot couldn't lock the first: the other is next, and the first returns an hour on.
+        assert!(claim_lock(&ctx, 1, a).unwrap());
+        lock_failed(&ctx, 1, a).unwrap();
+        assert_eq!(get(&ctx, 1, a).unwrap().unwrap().locked_at, None);
+        // (With the timer at 0, so "due" is right away and only the retry wait matters.)
+        assert_eq!(ids(lock_due(&ctx, 1, now_ms() + 1000, 0).unwrap()), [b]);
+        assert_eq!(ids(lock_due(&ctx, 1, now_ms() + LOCK_RETRY_MS + 1000, 0).unwrap()), [a, b]);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn an_update_leaves_existing_posts_alone() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.db.migrate("reviews", &MIGRATIONS[..3]).unwrap();
+        let now = now_ms();
+        let (h, min) = (3_600_000, 60_000);
+        // Finished two days ago and asked ten minutes ago, both before this version.
+        ctx.db
+            .with(|c| {
+                c.execute(
+                    "INSERT INTO reviews (guild_id, name, user_id, thread_id, requested_at, status, source, closed_at) VALUES
+                     (1, 'Old done', 10, 500, 1, 'done', 'thread', ?1), (1, 'Old ask', 11, 501, ?2, 'open', 'thread', NULL)",
+                    params![now - 48 * h, now - 10 * min],
+                )
+            })
+            .unwrap();
+        ctx.db.migrate("reviews", MIGRATIONS).unwrap();
+        assert!(since_v4(&ctx) <= now_ms() && since_v4(&ctx) > now - h);
+        assert!(lock_due(&ctx, 1, now_ms(), 24 * h).unwrap().is_empty());
+        assert!(nudge_due(&ctx, 1, now_ms()).unwrap().is_empty());
+        // Nothing about them looks locked or asked.
+        let old = closed(&ctx, 1).unwrap().remove(0);
+        assert_eq!((old.locked_at, old.nudged_at), (None, None));
+        // A post made after the update is asked as usual.
+        let Added::New(new) = add(&ctx, 1, &Request { name: "New".into(), user_id: Some(12), thread_id: Some(502), requested_at: now_ms(), source: "thread", ..Request::default() }, 0).unwrap() else { panic!("new") };
+        assert_eq!(nudge_due(&ctx, 1, now_ms() + NUDGE_AFTER_MS + 1000).unwrap().into_iter().map(|r| r.id).collect::<Vec<_>>(), [new]);
     }
 }

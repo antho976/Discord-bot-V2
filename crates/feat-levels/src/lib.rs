@@ -433,12 +433,17 @@ impl Feature for Levels {
                     }
                     "top" => {
                         let board = if opts.str("board") == Some("week") { Board::Week } else { Board::All };
-                        ctx.defer(&call.interaction, false).await?;
                         let page = leaderboard(ctx, guild, board, 0, call.user_id())?;
+                        // The picture is drawn while Discord takes the defer.
+                        let (deferred, png) = bot_core::tokio::join!(ctx.defer(&call.interaction, false), draw_board(ctx, &page));
+                        deferred?;
                         let token = &call.interaction.token;
-                        if let Err(e) = send_board(ctx, token, &page, false).await {
-                            bot_core::tracing::warn!(guild, error = %e, "couldn't draw the leaderboard");
-                            ctx.edit_original(&call.interaction, Reply::embed(page.embed).components(page.buttons)).await?;
+                        match post_board(ctx, token, &page, png, false).await {
+                            Ok(()) => prefetch_faces(ctx, guild, board, 1, call.user_id()),
+                            Err(e) => {
+                                bot_core::tracing::warn!(guild, error = %e, "couldn't draw the leaderboard");
+                                ctx.edit_original(&call.interaction, Reply::embed(page.embed).components(page.buttons)).await?;
+                            }
                         }
                     }
                     "prestige" => {
@@ -514,10 +519,16 @@ impl Feature for Levels {
         if let [which @ ("lb" | "lbw"), page] = call.args().as_slice() {
             let page: i64 = page.parse().unwrap_or(0);
             let board = if *which == "lbw" { Board::Week } else { Board::All };
-            ctx.defer_update(&call.interaction).await?;
             let page = leaderboard(ctx, guild, board, page.max(0), call.user_id())?;
+            // The picture is drawn while Discord takes the defer.
+            let (deferred, png) = bot_core::tokio::join!(ctx.defer_update(&call.interaction), draw_board(ctx, &page));
+            deferred?;
             let token = &call.interaction.token;
-            if let Err(e) = send_board(ctx, token, &page, true).await {
+            let posted = post_board(ctx, token, &page, png, true).await;
+            if posted.is_ok() {
+                prefetch_faces(ctx, guild, board, page.board.page + 1, call.user_id());
+            }
+            if let Err(e) = posted {
                 bot_core::tracing::warn!(guild, error = %e, "couldn't draw the leaderboard");
                 ctx.interaction()
                     .update_response(token)
@@ -809,10 +820,12 @@ struct LeaderboardPage {
     buttons: Vec<Component>,
 }
 
-/// Draw a leaderboard page and put it on the command's answer: as its first answer, or in
-/// place of the page before when `replace` (a page button).
-async fn send_board(ctx: &Ctx, token: &str, page: &LeaderboardPage, replace: bool) -> Result<()> {
-    let faces = card::avatars(ctx, page.faces.clone(), 128).await;
+/// The size faces are downloaded at for the board, where they're drawn 48 px across.
+const BOARD_FACE: u32 = 64;
+
+/// Draw a leaderboard page as a PNG, faces and all.
+async fn draw_board(ctx: &Ctx, page: &LeaderboardPage) -> Result<Vec<u8>> {
+    let faces = card::avatars(ctx, page.faces.clone(), BOARD_FACE).await;
     let board = card::Board {
         rows: page
             .board
@@ -824,8 +837,26 @@ async fn send_board(ctx: &Ctx, token: &str, page: &LeaderboardPage, replace: boo
         title: page.board.title.clone(),
         ..page.board
     };
-    let png = card::png(card::board_svg(&board)).await?;
-    let files = [Attachment::from_bytes("leaderboard.png".into(), png, 1)];
+    card::png(card::board_svg(&board)).await
+}
+
+/// Download the faces of the page after `page` in the background, so pressing Next finds them
+/// already here. Past the last page there's nothing to do.
+fn prefetch_faces(ctx: &Ctx, guild: u64, board: Board, page: i64, you: u64) {
+    let ctx = ctx.clone();
+    bot_core::tokio::spawn(async move {
+        if let Ok(next) = leaderboard(&ctx, guild, board, page, you)
+            && next.board.page == page
+        {
+            card::avatars(&ctx, next.faces, BOARD_FACE).await;
+        }
+    });
+}
+
+/// Put a drawn leaderboard page on the command's answer: as its first answer, or in place of
+/// the page before when `replace` (a page button).
+async fn post_board(ctx: &Ctx, token: &str, page: &LeaderboardPage, png: Result<Vec<u8>>, replace: bool) -> Result<()> {
+    let files = [Attachment::from_bytes("leaderboard.png".into(), png?, 1)];
     let client = ctx.interaction();
     let req = client.update_response(token).attachments(&files).components(Some(&page.buttons));
     // A page button swaps the picture: the old one goes, and so does the embed of a board

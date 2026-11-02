@@ -20,6 +20,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/guard/catches/{id}/release", post(release))
         .route("/g/{guild}/guard/catches/{id}/ban", post(ban))
         .route("/g/{guild}/guard/test", post(send_test))
+        .route("/g/{guild}/guard/notice", post(post_notice))
 }
 
 /// The two tabs, with how many catches wait on a decision.
@@ -533,7 +534,10 @@ fn test_rail(page: &Page, s: &Settings, show: Option<&str>, test: Option<&str>, 
 
 #[derive(Deserialize, Default)]
 struct SentQuery {
+    /// A test alert went out: "1" a scam one, "honeypot" a honeypot one.
     sent: Option<String>,
+    /// The honeypot notice was posted again.
+    posted: Option<String>,
 }
 
 async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<SentQuery>) -> WebResult {
@@ -553,7 +557,7 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
         (ui::field_number("new_account_days", "New accounts", Some("Accounts younger than this count against a suspicious message. 0 turns it off."), s.new_account_days, 0, 90, Some("days")))
     }));
     let honeypot = ui::section("Honeypot", Some("A channel nobody has a reason to write in. Scam bots post in every channel, so anything written there is treated as a catch."), ui::card(html! {
-        (ui::field_channel(&ctx, guild, "honeypot_channel", "Honeypot channel", Some("Tell members not to post there, for example in the channel topic."), s.honeypot_channel))
+        (ui::field_channel(&ctx, guild, "honeypot_channel", "Honeypot channel", Some("The bot posts a notice there telling members not to write in it, and keeps it up to date when you save."), s.honeypot_channel))
     }));
     let caught = ui::section("When someone is caught", Some("Their messages from the last ten minutes are deleted and they're timed out."), ui::card(html! {
         (ui::field_channel(&ctx, guild, "log_channel", "Alert channel", Some("Staff get the alert here, with buttons to remove the timeout or ban."), s.log_channel))
@@ -567,7 +571,10 @@ async fn settings_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     }));
     let body = html! {
         (style())
-        @if q.sent.is_some() { (ui::sent_toast(true, &format!("Test alert sent to {}", s.log_channel.map(|c| channel_name(&ctx, c)).unwrap_or_default()))) }
+        @if let Some(kind) = &q.sent {
+            (ui::sent_toast(true, &format!("Test {} alert sent to {}", if kind == "honeypot" { "honeypot" } else { "scam" }, s.log_channel.map(|c| channel_name(&ctx, c)).unwrap_or_default())))
+        }
+        @if q.posted.is_some() { (ui::sent_toast(true, &format!("Notice posted in {}", s.honeypot_channel.map(|c| channel_name(&ctx, c)).unwrap_or_default()))) }
         (tabs(&page, waiting, "Settings"))
         div.with-rail {
             (ui::settings_form(&page, &page.path("guard/settings"), html! {
@@ -634,13 +641,41 @@ fn flow(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
             }
             @if page.can_edit() {
                 div.gd-send {
-                    form.inline method="post" action=(page.path("guard/test")) {
-                        button.btn.small.outline type="submit" { (ui::icon(Icon::Bell)) "Send a test alert" }
+                    div.gd-send-row {
+                        form.inline method="post" action=(page.path("guard/test")) {
+                            button.btn.small.outline type="submit" { (ui::icon(Icon::Bell)) "Send a test alert" }
+                        }
+                        @if honeypot.is_some() {
+                            form.inline method="post" action=(page.path("guard/test")) {
+                                input type="hidden" name="kind" value="honeypot";
+                                button.btn.small.outline type="submit" { (ui::icon(Icon::Bell)) "Test a honeypot catch" }
+                            }
+                        }
                     }
                     p.muted.small {
                         @match &log {
                             Some(l) => { "Posts a sample alert in " (l) ", marked as a test. Nobody is timed out or banned." },
                             None => { "Pick an alert channel and save, then send a test." },
+                        }
+                    }
+                }
+            }
+        }
+        @if let Some(h) = &honeypot {
+            div.rail-block {
+                h2 { "Honeypot notice" }
+                p.muted.small {
+                    @if s.honeypot_notice.is_some_and(|(c, _)| Some(c) == s.honeypot_channel) {
+                        "The bot's notice in " (h) " tells members not to write there and what happens if they do."
+                    } @else {
+                        "There's no notice in " (h) " yet, so members aren't told to stay out of it."
+                    }
+                }
+                @if page.can_edit() {
+                    form.inline method="post" action=(page.path("guard/notice")) {
+                        button.btn.small.outline type="submit" {
+                            (ui::icon(Icon::Shield))
+                            @if s.honeypot_notice.is_some() { "Post it again" } @else { "Post the notice" }
                         }
                     }
                 }
@@ -672,6 +707,7 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
         exempt_channels: form.channels(&ctx, guild, "exempt_channels"),
         dm_member: form.bool("dm_member"),
         catch_ads: form.bool("catch_ads"),
+        honeypot_notice: ctx.settings::<Settings>(guild, KEY)?.honeypot_notice,
     };
     if s.honeypot_channel.is_some() && s.honeypot_channel == s.log_channel {
         return Err(WebError::Bad("The honeypot and the alert channel can't be the same channel.".into()));
@@ -683,25 +719,66 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     }
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed scam protection settings");
+    // The notice in the honeypot channel follows the settings: posted, moved, edited or removed.
+    // The preview has no Discord to post to.
+    let mut s = s;
+    let before = s.honeypot_notice;
+    let synced = if ctx.cfg.preview { Ok(()) } else { crate::sync_notice(&ctx, &mut s, false).await };
+    if s.honeypot_notice != before {
+        ctx.save_settings(guild, KEY, &s)?;
+    }
+    if let Err(e) = synced {
+        bot_core::tracing::warn!(guild, error = %e, "couldn't post the honeypot notice");
+        let channel = s.honeypot_channel.map(|c| channel_name(&ctx, c)).unwrap_or_default();
+        return Err(WebError::Bad(format!("Saved, but the bot couldn't post its notice in {channel}: {}", bot_core::discord::why_refused_any(&e))));
+    }
     Ok(saved(&page.path("guard/settings")))
 }
 
+/// Post the honeypot notice again, as the newest message in the channel.
+async fn post_notice(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let mut s = Settings::clone(&*ctx.settings::<Settings>(guild, KEY)?);
+    let Some(channel) = s.honeypot_channel else {
+        return Err(WebError::Bad("Pick a honeypot channel and save first.".into()));
+    };
+    if deleted(&ctx, guild, s.honeypot_channel) {
+        return Err(WebError::Bad("The honeypot channel was deleted. Pick another one and save first.".into()));
+    }
+    let before = s.honeypot_notice;
+    let synced = crate::sync_notice(&ctx, &mut s, true).await;
+    if s.honeypot_notice != before {
+        ctx.save_settings(guild, KEY, &s)?;
+    }
+    if let Err(e) = synced {
+        bot_core::tracing::warn!(guild, error = %e, "couldn't post the honeypot notice");
+        return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
+    }
+    ctx.audit(&page.user, Some(guild), KEY, format!("Posted the honeypot notice in {}", channel_name(&ctx, channel)));
+    Ok(Redirect::to(&format!("{}?posted=1", page.path("guard/settings"))).into_response())
+}
+
 /// Post a sample alert in the alert channel, as saved, so staff can see one without a scam.
-async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+async fn send_test(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: FormData) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
+    let honeypot = form.string("kind") == "honeypot";
+    if honeypot && (s.honeypot_channel.is_none() || deleted(&ctx, guild, s.honeypot_channel)) {
+        return Err(WebError::Bad("Pick a honeypot channel and save first.".into()));
+    }
     let Some(channel) = s.log_channel else {
         return Err(WebError::Bad("Pick an alert channel and save first.".into()));
     };
     if deleted(&ctx, guild, s.log_channel) {
         return Err(WebError::Bad("The alert channel was deleted. Pick another one and save first.".into()));
     }
-    if let Err(e) = crate::send_test_alert(&ctx, &s, channel, page.user.id, &page.user.name).await {
+    if let Err(e) = crate::send_test_alert(&ctx, &s, channel, honeypot, page.user.id, &page.user.name).await {
         bot_core::tracing::warn!(guild, error = %e, "test scam alert failed");
         return Err(WebError::Bad(bot_core::discord::why_refused_any(&e)));
     }
-    ctx.audit(&page.user, Some(guild), KEY, format!("Sent a test scam alert to {}", channel_name(&ctx, channel)));
-    Ok(Redirect::to(&format!("{}?sent=1", page.path("guard/settings"))).into_response())
+    let kind = if honeypot { "honeypot" } else { "scam" };
+    ctx.audit(&page.user, Some(guild), KEY, format!("Sent a test {kind} alert to {}", channel_name(&ctx, channel)));
+    Ok(Redirect::to(&format!("{}?sent={}", page.path("guard/settings"), if honeypot { "honeypot" } else { "1" })).into_response())
 }
 
 async fn release(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i64)>, form: FormData) -> WebResult {
@@ -889,6 +966,7 @@ const STYLE: &str = r#"
 .gd-flow li.muted > div > span { color: var(--ink-3); }
 .gd-flow.off .gd-flow-ic { color: var(--ink-3); }
 .gd-send { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding-top: 4px; }
+.gd-send-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .gd-exempt { display: flex; flex-wrap: wrap; gap: 6px; }
 .gd-exempt span { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border-radius: 13px; background: var(--control); color: var(--ink-2); font-size: 12.5px; }
 

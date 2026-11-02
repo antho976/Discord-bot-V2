@@ -5,6 +5,8 @@ use std::time::Duration;
 use bot_core::Ctx;
 use bot_render::escape;
 
+use crate::banners::Kind;
+
 const W: u32 = 960;
 const H: u32 = 320;
 const TEXT_X: f64 = 312.0;
@@ -66,10 +68,12 @@ fn fit(text: &str, size: f64, width: f64) -> String {
 
 /// The card as an SVG document. `names` are tried in order (display name, then username) and
 /// the first Geist can draw is used. `avatar` is a `data:` URI; without one the card draws the
-/// member's initial instead.
-pub fn svg(names: &[&str], server: &str, number: Option<i64>, avatar: Option<&str>) -> String {
-    let name = names.iter().find_map(|n| drawable(n)).unwrap_or_else(|| "new member".into());
-    let title = format!("Welcome, {name}");
+/// member's initial instead. `picture`, a `data:` URI too, is drawn behind everything, darkened
+/// on the left where the face and name sit; without one the card has its own lit ground.
+pub fn svg(kind: Kind, names: &[&str], server: &str, number: Option<i64>, avatar: Option<&str>, picture: Option<&str>) -> String {
+    let fallback = if kind == Kind::Goodbye { "a member" } else { "new member" };
+    let name = names.iter().find_map(|n| drawable(n)).unwrap_or_else(|| fallback.into());
+    let title = format!("{}, {name}", if kind == Kind::Goodbye { "Goodbye" } else { "Welcome" });
     // Long names shrink to fit the line, down to a size that still reads; past that they're cut.
     let size = (TEXT_W / em_width(&title)).clamp(30.0, 56.0);
     let title = escape(&fit(&title, size, TEXT_W));
@@ -105,7 +109,21 @@ pub fn svg(names: &[&str], server: &str, number: Option<i64>, avatar: Option<&st
         .unwrap_or_default();
 
     // A dark ground lit by the members' teal behind the face, lilac from the top right and a
-    // little coral low down; a gradient ring round the avatar.
+    // little coral low down; or the picture, under a shade that keeps the text readable on any
+    // photo. A gradient ring round the avatar either way.
+    let ground = match picture {
+        Some(uri) => format!(
+            r##"<rect width="{W}" height="{H}" fill="#0c0c14"/>
+  <image href="{uri}" width="{W}" height="{H}" preserveAspectRatio="xMidYMid slice"/>
+  <rect width="{W}" height="{H}" fill="url(#shade)"/>"##
+        ),
+        None => format!(
+            r##"<rect width="{W}" height="{H}" fill="#0c0c14"/>
+  <rect width="{W}" height="{H}" fill="url(#g1)"/>
+  <rect width="{W}" height="{H}" fill="url(#g2)"/>
+  <rect width="{W}" height="{H}" fill="url(#g3)"/>"##
+        ),
+    };
     format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">
   <defs>
@@ -113,11 +131,9 @@ pub fn svg(names: &[&str], server: &str, number: Option<i64>, avatar: Option<&st
     <radialGradient id="g2" cx="930" cy="-20" r="560" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#9d7bff" stop-opacity="0.5"/><stop offset="1" stop-color="#9d7bff" stop-opacity="0"/></radialGradient>
     <radialGradient id="g3" cx="640" cy="380" r="360" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ff8266" stop-opacity="0.16"/><stop offset="1" stop-color="#ff8266" stop-opacity="0"/></radialGradient>
     <linearGradient id="ring" x1="88" y1="72" x2="264" y2="248" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#62f0c6"/><stop offset="1" stop-color="#b99cff"/></linearGradient>
+    <linearGradient id="shade" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#08080e" stop-opacity="0.82"/><stop offset="0.62" stop-color="#08080e" stop-opacity="0.6"/><stop offset="1" stop-color="#08080e" stop-opacity="0.25"/></linearGradient>
   </defs>
-  <rect width="{W}" height="{H}" fill="#0c0c14"/>
-  <rect width="{W}" height="{H}" fill="url(#g1)"/>
-  <rect width="{W}" height="{H}" fill="url(#g2)"/>
-  <rect width="{W}" height="{H}" fill="url(#g3)"/>
+  {ground}
   <circle cx="176" cy="160" r="108" fill="none" stroke="url(#ring)" stroke-opacity="0.22" stroke-width="2"/>
   {portrait}
   <circle cx="176" cy="160" r="91" fill="none" stroke="url(#ring)" stroke-width="6"/>
@@ -139,12 +155,14 @@ pub async fn fetch_avatar(ctx: &Ctx, url: &str) -> Option<Vec<u8>> {
 }
 
 /// Draw the card and return PNG bytes. The avatar is fetched here; a missing one is not an error.
-pub async fn render(ctx: &Ctx, names: &[&str], server: &str, number: Option<i64>, avatar_url: &str) -> bot_core::anyhow::Result<Vec<u8>> {
+/// `picture` is an uploaded picture's bytes, drawn behind the card.
+pub async fn render(ctx: &Ctx, kind: Kind, names: &[&str], server: &str, number: Option<i64>, avatar_url: &str, picture: Option<&[u8]>) -> bot_core::anyhow::Result<Vec<u8>> {
     let big = avatar_url.replace("size=128", "size=256");
     // A local picture (the preview's sample faces) is fetched from this same server.
     let big = if big.starts_with('/') { format!("{}{big}", ctx.cfg.public_url.trim_end_matches('/')) } else { big };
     let avatar = fetch_avatar(ctx, &big).await.map(|b| bot_render::data_uri(&b));
-    let svg = svg(names, server, number, avatar.as_deref());
+    let picture = picture.map(bot_render::data_uri);
+    let svg = svg(kind, names, server, number, avatar.as_deref(), picture.as_deref());
     bot_core::tokio::task::spawn_blocking(move || bot_render::png(&svg)).await?
 }
 
@@ -154,7 +172,17 @@ mod tests {
 
     #[test]
     fn the_card_renders_without_an_avatar() {
-        let png = bot_render::png(&svg(&["Mira"], "Antho's server", Some(1284), None)).unwrap();
+        let png = bot_render::png(&svg(Kind::Welcome, &["Mira"], "Antho's server", Some(1284), None, None)).unwrap();
+        assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
+    }
+
+    #[test]
+    fn a_goodbye_card_over_a_picture_renders() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../core/preview");
+        let picture = bot_render::data_uri(&std::fs::read(format!("{dir}/lake.jpg")).unwrap());
+        let s = svg(Kind::Goodbye, &["Mira"], "Antho's server", None, None, Some(&picture));
+        assert!(s.contains("Goodbye, Mira") && s.contains("url(#shade)") && !s.contains("url(#g1)"));
+        let png = bot_render::png(&s).unwrap();
         assert!(png.starts_with(&[0x89, b'P', b'N', b'G']));
     }
 
@@ -164,7 +192,7 @@ mod tests {
         assert_eq!(drawable("\u{1f389}"), None);
         assert_eq!(drawable("Nguyễn Thị  Minh").as_deref(), Some("Nguyễn Thị Minh"));
         assert_eq!(drawable("Анастасия").as_deref(), Some("Анастасия"));
-        let s = svg(&["a<b>&"], "x", None, None);
+        let s = svg(Kind::Welcome, &["a<b>&"], "x", None, None, None);
         assert!(s.contains("a&lt;b&gt;&amp;"));
         assert!(!s.contains("Member #"));
     }
@@ -175,10 +203,10 @@ mod tests {
         for name in ["Αλέξανδρος", "محمد", "さくら", "Mira さくら", "דוד"] {
             assert_eq!(drawable(name), None, "{name}");
         }
-        assert!(svg(&["さくら", "sakura_09"], "Antho's server", None, None).contains("Welcome, sakura_09"));
-        assert!(svg(&["さくら", "\u{1f338}"], "Antho's server", None, None).contains("Welcome, new member"));
+        assert!(svg(Kind::Welcome, &["さくら", "sakura_09"], "Antho's server", None, None, None).contains("Welcome, sakura_09"));
+        assert!(svg(Kind::Welcome, &["さくら", "\u{1f338}"], "Antho's server", None, None, None).contains("Welcome, new member"));
         // A server name it can't draw leaves the line empty.
-        assert!(!svg(&["Mira"], "Ελληνικός σέρβερ", None, None).contains('Ε'));
+        assert!(!svg(Kind::Welcome, &["Mira"], "Ελληνικός σέρβερ", None, None, None).contains('Ε'));
     }
 
     #[test]
