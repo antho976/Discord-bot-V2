@@ -1,7 +1,9 @@
 //! `/level rank` and `/level top` as pictures: drawn as SVG and rendered to PNG, like the
 //! welcome card. Numbers are the member's own; nothing here is made up.
 
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use bot_core::Ctx;
 use bot_render::escape;
@@ -218,6 +220,13 @@ pub fn board_svg(b: &Board) -> String {
     let subtitle = if b.week { "XP gained since Monday" } else { "Members by XP" };
     let pages = if b.pages > 1 { format!("Page {} of {}", b.page + 1, b.pages) } else { String::new() };
     let figure_head = if b.week { "This week" } else { "XP" };
+    // The figure column is as wide as its widest number, and the level column sits left of it,
+    // so a member with billions of XP doesn't run into their level.
+    let figure_of = |r: &Row| if b.week { format!("+{}", num(r.figure)) } else { num(r.figure) };
+    let figure_w = b.rows.iter().map(|r| em_width(&figure_of(r)) * 26.0).fold(em_width(figure_head) * 18.0, f64::max);
+    let level_x = (952.0 - figure_w - 40.0).min(790.0);
+    let level_w = b.rows.iter().map(|r| em_width(&r.level.to_string()) * 26.0).fold(em_width("Level") * 18.0, f64::max);
+    let name_end = level_x - level_w - 24.0;
     let mut rows = String::new();
     for (i, r) in b.rows.iter().enumerate() {
         let y = HEAD_H + ROW_H * i as f64;
@@ -232,14 +241,14 @@ pub fn board_svg(b: &Board) -> String {
         let place_size = if place.chars().count() > 3 { 22.0 } else { 26.0 };
         // The name, with prestige after it in the caption grey when there is one.
         let extra = if r.prestige > 0 { format!("Prestige {}", r.prestige) } else { String::new() };
-        let room = 560.0 - em_width(&extra) * 20.0 - 14.0;
+        let room = name_end - 176.0 - em_width(&extra) * 20.0 - 14.0;
         let name = escape(&fit(&r.name, 28.0, room.max(200.0)));
-        let figure = if b.week { format!("+{}", num(r.figure)) } else { num(r.figure) };
+        let figure = figure_of(r);
         rows.push_str(&format!(
             r##"<text x="88" y="{ty:.1}" text-anchor="end" font-family="Geist" font-weight="600" font-size="{place_size}" fill="{place_fill}">{place}</text>
   {face}
   <text x="176" y="{ty:.1}" font-family="Geist" font-weight="600" font-size="28" fill="{INK}">{name}<tspan dx="14" font-weight="400" font-size="20" fill="{INK_3}">{extra}</tspan></text>
-  <text x="790" y="{ty:.1}" text-anchor="end" font-family="Geist" font-size="26" fill="{INK_2}">{level}</text>
+  <text x="{level_x:.1}" y="{ty:.1}" text-anchor="end" font-family="Geist" font-size="26" fill="{INK_2}">{level}</text>
   <text x="952" y="{ty:.1}" text-anchor="end" font-family="Geist" font-weight="600" font-size="26" fill="{INK}">{figure}</text>
   "##,
             ty = cy + 9.5,
@@ -258,7 +267,7 @@ pub fn board_svg(b: &Board) -> String {
   <text x="48" y="74" font-family="Geist" font-weight="600" font-size="34" fill="{INK}">{title}</text>
   <text x="48" y="108" font-family="Geist" font-size="22" fill="{INK_2}">{subtitle}</text>
   <text x="952" y="74" text-anchor="end" font-family="Geist" font-size="22" fill="{INK_3}">{pages}</text>
-  <text x="790" y="{hy}" text-anchor="end" font-family="Geist" font-size="18" fill="{INK_3}">Level</text>
+  <text x="{level_x:.1}" y="{hy}" text-anchor="end" font-family="Geist" font-size="18" fill="{INK_3}">Level</text>
   <text x="952" y="{hy}" text-anchor="end" font-family="Geist" font-size="18" fill="{INK_3}">{figure_head}</text>
   <rect x="48" y="{line}" width="904" height="1" fill="#ffffff" fill-opacity="0.12"/>
   {rows}
@@ -269,18 +278,52 @@ pub fn board_svg(b: &Board) -> String {
     )
 }
 
+/// How long a downloaded face is kept. A Discord avatar's address names the picture, so a new
+/// avatar is a new address and is never served stale; the limit only lets unused faces go.
+const FACE_TTL: Duration = Duration::from_secs(30 * 60);
+/// At most this many faces are kept, about 3 MB at the board's 64 px.
+const FACE_CAP: usize = 400;
+
+/// Faces already downloaded, by address: when, and the `data:` URI.
+static FACES: LazyLock<Mutex<HashMap<String, (Instant, String)>>> = LazyLock::new(Default::default);
+
+fn cached_face(url: &str, now: Instant) -> Option<String> {
+    let faces = FACES.lock().unwrap_or_else(|e| e.into_inner());
+    faces.get(url).filter(|(at, _)| now.duration_since(*at) < FACE_TTL).map(|(_, uri)| uri.clone())
+}
+
+/// Keep a face. When full, the expired ones go first, then the oldest.
+fn keep_face(url: String, uri: String, now: Instant) {
+    let mut faces = FACES.lock().unwrap_or_else(|e| e.into_inner());
+    if faces.len() >= FACE_CAP && !faces.contains_key(&url) {
+        faces.retain(|_, (at, _)| now.duration_since(*at) < FACE_TTL);
+        if faces.len() >= FACE_CAP
+            && let Some(oldest) = faces.iter().min_by_key(|(_, (at, _))| *at).map(|(k, _)| k.clone())
+        {
+            faces.remove(&oldest);
+        }
+    }
+    faces.insert(url, (now, uri));
+}
+
 /// Download an avatar as a `data:` URI, at `size` pixels. `None` when it can't be fetched in a
-/// few seconds; the card then draws the initial.
+/// few seconds; the card then draws the initial. Faces are kept for half an hour, so paging
+/// back and forth through the leaderboard doesn't download them again.
 pub async fn avatar(ctx: &Ctx, url: &str, size: u32) -> Option<String> {
     let url = url.replace("size=128", &format!("size={size}"));
     // A local picture (the preview's sample faces) is fetched from this same server.
     let url = if url.starts_with('/') { format!("{}{url}", ctx.cfg.public_url.trim_end_matches('/')) } else { url };
+    if let Some(uri) = cached_face(&url, Instant::now()) {
+        return Some(uri);
+    }
     let res = ctx.web.get(&url).timeout(Duration::from_secs(3)).send().await.ok()?;
     if !res.status().is_success() {
         return None;
     }
     let bytes = res.bytes().await.ok()?;
-    (bytes.len() < 4 * 1024 * 1024).then(|| bot_render::data_uri(&bytes))
+    let uri = (bytes.len() < 4 * 1024 * 1024).then(|| bot_render::data_uri(&bytes))?;
+    keep_face(url, uri.clone(), Instant::now());
+    Some(uri)
 }
 
 /// Several avatars at once, in order. Whatever hasn't arrived in four seconds is left out.
@@ -395,6 +438,38 @@ mod tests {
         let got = avatars(&ctx, vec!["http://127.0.0.1:9/a.png".into(), "http://127.0.0.1:9/b.png".into()], 128).await;
         assert_eq!(got, vec![None, None]);
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn faces_are_kept_for_half_an_hour_and_the_oldest_go_first() {
+        let now = Instant::now();
+        keep_face("test://a".into(), "data:a".into(), now);
+        assert_eq!(cached_face("test://a", now + Duration::from_secs(60)).as_deref(), Some("data:a"));
+        assert_eq!(cached_face("test://a", now + FACE_TTL), None);
+        // Filling past the cap pushes the oldest out and keeps the newest.
+        for i in 0..FACE_CAP + 5 {
+            keep_face(format!("test://fill{i}"), "data:x".into(), now + Duration::from_millis(i as u64 + 1));
+        }
+        let faces = FACES.lock().unwrap();
+        assert!(faces.len() <= FACE_CAP);
+        assert!(faces.contains_key(&format!("test://fill{}", FACE_CAP + 4)));
+        assert!(!faces.contains_key("test://a"));
+    }
+
+    #[test]
+    fn a_huge_figure_moves_the_level_column_left() {
+        let row = |place: i64, figure: i64| Row { place, name: "Hastill".into(), avatar: None, level: 85, figure, prestige: 0, you: false };
+        let level_x = |svg: &str| -> f64 {
+            let i = svg.rfind(r##"font-size="18" fill="#8f8ca0">Level"##).unwrap();
+            let x = &svg[..i];
+            let x = &x[x.rfind("x=\"").unwrap() + 3..];
+            x[..x.find('"').unwrap()].parse().unwrap()
+        };
+        let small = board_svg(&Board { title: "S".into(), week: false, page: 0, pages: 1, rows: vec![row(1, 4_572_310)] });
+        assert_eq!(level_x(&small), 790.0);
+        let big = board_svg(&Board { title: "S".into(), week: false, page: 0, pages: 1, rows: vec![row(1, 2_687_776_484)] });
+        // The level ends 40 px clear of where the figure starts.
+        assert!(level_x(&big) <= 952.0 - em_width("2,687,776,484") * 26.0 - 40.0 + 0.1, "{}", level_x(&big));
     }
 
     #[test]
