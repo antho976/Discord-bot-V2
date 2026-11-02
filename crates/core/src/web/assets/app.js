@@ -668,6 +668,9 @@
       // fetch drops the fragment; a link's own (#pet-12) is put back and scrolled to.
       if (!posted && u.hash && to.pathname === u.pathname) to.hash = u.hash;
       const same = to.pathname === location.pathname;
+      // Another tab or filter of the same page (Giveaways Running to Ended, a filter, All time
+      // to This week), as opposed to another page from the sidebar.
+      const sibling = same || (!!navFor(to.pathname) && navFor(to.pathname) === navFor(location.pathname));
       const swap = () => {
         closeRefusal();
         life.abort();
@@ -691,7 +694,8 @@
         main.replaceWith(fresh);
         markNav();
         syncCounts(doc);
-        if (!same) window.scrollTo(0, opts.scroll || 0);
+        // Another tab of the same page keeps where you were; another page starts at the top.
+        if (!same && !sibling) window.scrollTo(0, opts.scroll || 0);
         mount(fresh);
         run(fresh);
         if (kept) restore(fresh, kept);
@@ -703,7 +707,6 @@
       // Another tab or filter of the same page (Giveaways Running to Ended, a filter, All time
       // to This week): the header, tabs and sidebar hold still and only what changed cross-fades
       // in place. Another page from the sidebar moves as a whole.
-      const sibling = same || (!!navFor(to.pathname) && navFor(to.pathname) === navFor(location.pathname));
       root.classList.toggle("vt-soft", sibling);
       if (!calm && document.startViewTransition) {
         // html.vt stays until the next swap: taking it off would restart the entrances.
