@@ -152,6 +152,8 @@ fn a_new_player_plays_through_midgard() {
         "lab",
         "hero",
         "skagi",
+        "combat",
+        "questlog",
         "guild",
         "titan",
         "raid",

@@ -210,8 +210,13 @@ too basic; too many buttons; elite messages are spammy.
   the boss always (Rare or Epic). Loose threads refine a piece one rarity up (adds a trait) or
   reforge its traits. Salvaging Fine or better gives threads; a full pack (20 spare pieces)
   salvages new drops into threads.
-- **Categories:** the overview has Hunt, Expedition, Labyrinth, Saga, then Hero (stats, gear,
-  pack, skills, titles, help) and Skagi (forge, temple, bounty board, goals).
+- **Categories (2026-11-03, task #8):** the overview's "Right now" lines carry their own
+  button (Hunt, Plan one, Collect, Continue, Read), and one row underneath opens a menu each:
+  Combat (Titan, raid, hunt, expedition, Labyrinth, dungeons, map), Character (stats, gear,
+  forge, pack, skills, titles, help), Quests (saga, townsfolk side quests, bounty board,
+  goals), Skagi (market, temple; the button opens the temple directly when the market is
+  off) and the guild. Screens inside a menu go back to it ("← Combat", "← Quests",
+  "← Character", "← Skagi").
 - **Tutorial:** six steps shown on the overview with what, why and how; each pays 25 gold, all
   of them 2 potions, 100 gold and a title. Fights explain themselves until your first win.
   Skippable from Help.

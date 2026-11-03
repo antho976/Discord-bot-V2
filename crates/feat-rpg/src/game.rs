@@ -193,7 +193,7 @@ pub(crate) fn back(ids: &Ids) -> Btn {
     Btn::new(ids.go("hub"), "← Back")
 }
 
-fn back_to(ids: &Ids, screen: &str, label: &str) -> Btn {
+pub(crate) fn back_to(ids: &Ids, screen: &str, label: &str) -> Btn {
     Btn::new(ids.go(screen), format!("← {label}"))
 }
 
@@ -352,6 +352,7 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         let wins = (p.vigor() / data::VIGOR_PER_WIN as f64).floor() as i64;
         let hp = p.hp();
         let max = p.max_hp();
+        let saga_ready = quests::chapter(p.saga).is_some() && chapter_done(p);
         let line = if hp < max / 2 {
             format!(
                 "{} **Resting** · {hp} / {max} HP\n-# Full in {}. A potion works too.",
@@ -370,7 +371,13 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
                 e("hunt")
             )
         };
-        s.text(line);
+        s.section(
+            line,
+            Btn::new(ids.go("hunt"), "Hunt")
+                .emoji("hunt")
+                .then_primary(!primary_used && !saga_ready),
+        );
+        primary_used |= !saga_ready;
     }
     if let Some(ch) = quests::chapter(p.saga) {
         if chapter_done(p) {
@@ -384,24 +391,8 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
                     .emoji("saga")
                     .then_primary(!primary_used),
             );
-            primary_used = true;
         } else {
-            let next = ch
-                .goals
-                .iter()
-                .enumerate()
-                .find(|(i, goal)| {
-                    goal_now(p, goal, p.saga_progress.get(*i).copied().unwrap_or(0)) < goal.target()
-                })
-                .map(|(i, goal)| {
-                    let have = goal_now(p, goal, p.saga_progress.get(i).copied().unwrap_or(0));
-                    if goal.target() > 1 && !matches!(goal, quests::Goal::Level(_)) {
-                        format!("{} · {have} / {}", goal.describe(), goal.target())
-                    } else {
-                        goal.describe()
-                    }
-                })
-                .unwrap_or_default();
+            let next = saga_next(p, ch);
             s.text(format!("{} **{}**\n-# {next}", e("saga"), ch.title));
         }
     }
@@ -427,28 +418,20 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         e("offering"),
         w.pct()
     ));
+    // Everything else lives one click down, in a menu per kind of thing.
     let m = &w.modules;
-    let hunt = Btn::new(ids.go("hunt"), "Hunt").emoji("hunt");
-    let mut row1 = vec![
-        if primary_used { hunt } else { hunt.primary() },
-        Btn::new(ids.go("exp"), "Expedition").emoji("expedition"),
-    ];
-    if m.labyrinth {
-        row1.push(Btn::new(ids.go("lab"), "Labyrinth").emoji("labyrinth"));
-    }
-    if m.saga {
-        row1.push(Btn::new(ids.go("saga"), "Saga").emoji("saga"));
-    }
-    if m.map {
-        row1.push(Btn::new(ids.go("map"), "Map").emoji("map"));
-    }
-    s.buttons(row1);
-    let mut row2 = vec![
-        Btn::new(ids.go("hero"), "Hero").emoji(p.main().id()),
-        Btn::new(ids.go("skagi"), "Skagi").emoji("temple"),
+    let mut row = vec![
+        Btn::new(ids.go("combat"), "Combat").emoji("boss"),
+        Btn::new(ids.go("hero"), "Character").emoji(p.main().id()),
+        Btn::new(ids.go("questlog"), "Quests").emoji("quest"),
+        if m.market {
+            Btn::new(ids.go("skagi"), "Skagi").emoji("temple")
+        } else {
+            Btn::new(ids.go("temple"), "Temple").emoji("temple")
+        },
     ];
     if m.guilds {
-        row2.push(
+        row.push(
             Btn::new(
                 ids.go("guild"),
                 p.clan
@@ -459,11 +442,27 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
             .emoji("guild"),
         );
     }
-    if m.dungeons && !m.map {
-        row2.push(Btn::new(ids.go("dungeons"), "Dungeons").emoji("dungeon"));
-    }
-    s.buttons(row2);
+    s.buttons(row);
     s
+}
+
+/// The current chapter's first unmet goal, with progress where it counts up.
+fn saga_next(p: &Player, ch: &quests::Chapter) -> String {
+    ch.goals
+        .iter()
+        .enumerate()
+        .find(|(i, goal)| {
+            goal_now(p, goal, p.saga_progress.get(*i).copied().unwrap_or(0)) < goal.target()
+        })
+        .map(|(i, goal)| {
+            let have = goal_now(p, goal, p.saga_progress.get(i).copied().unwrap_or(0));
+            if goal.target() > 1 && !matches!(goal, quests::Goal::Level(_)) {
+                format!("{} · {have} / {}", goal.describe(), goal.target())
+            } else {
+                goal.describe()
+            }
+        })
+        .unwrap_or_default()
 }
 
 pub fn thousands(n: i64) -> String {
@@ -595,7 +594,7 @@ fn goals(
         p.bond(God::Hades)
     ));
     s.buttons(vec![
-        back(&ids),
+        back_to(&ids, "questlog", "Quests"),
         Btn::new(
             ids.act("boss", "start", ""),
             if p.boss_won {
@@ -1562,8 +1561,7 @@ fn forge(p: &Player) -> Screen {
         .collect();
     s.inner_select(ids.act("forge", "make", ""), "Make supplies…", opts);
     s.buttons(vec![
-        back(&ids),
-        Btn::new(ids.go("skagi"), "Skagi").emoji("temple"),
+        back_to(&ids, "hero", "Character"),
         Btn::new(ids.go("pack"), "Pack").emoji("pack"),
     ]);
     s
@@ -1703,8 +1701,7 @@ fn pack(p: &Player) -> Screen {
         );
     }
     s.buttons(vec![
-        back(&ids),
-        Btn::new(ids.go("hero"), "Hero").emoji(p.main().id()),
+        back_to(&ids, "hero", "Character"),
         Btn::new(ids.go("forge"), "Forge").emoji("forge"),
     ]);
     s
@@ -1794,7 +1791,7 @@ fn temple(p: &Player, w: &World, givers: &[(u64, String, i64)]) -> Screen {
         s.text(format!("-# Most generous this week\n{}", list.join("\n")));
     }
     s.buttons(vec![
-        back(&ids),
+        back_to(&ids, "skagi", "Skagi"),
         Btn::new(ids.go("patron"), "Patron and skills").emoji(p.main().id()),
     ]);
     s
@@ -1980,7 +1977,7 @@ fn patron_screen(p: &Player) -> Screen {
         .collect();
     s.inner_select(ids.act("patron", "change", ""), "Change patron…", opts);
     s.buttons(vec![
-        back(&ids),
+        back_to(&ids, "hero", "Character"),
         Btn::new(ids.go("temple"), "Temple").emoji("temple"),
     ]);
     s
@@ -2013,7 +2010,7 @@ fn help(p: &Player) -> Screen {
         e("saga"),
         e("bounty"),
     ));
-    let mut b = vec![back(&ids)];
+    let mut b = vec![back_to(&ids, "hero", "Character")];
     if p.tutorial < Tut::ALL {
         b.push(Btn::new(ids.act("tut", "skip", ""), "Skip the tutorial"));
     }
@@ -2950,6 +2947,8 @@ pub fn view(
         },
         "hero" => hero(p),
         "skagi" => skagi(p, w),
+        "combat" => combat_menu(p, w),
+        "questlog" => quest_menu(p, w),
         "hunt" | "boss" => match &p.fight {
             Some(f) => fight_screen(p, &f.clone(), None),
             None if screen == "boss" => goals(
@@ -3148,7 +3147,7 @@ fn saga_screen(p: &Player) -> Screen {
         if !picked.is_empty() {
             s.text(format!("-# Your choices in Midgard\n{}", picked.join("\n")));
         }
-        s.buttons(vec![back(&ids)]);
+        s.buttons(vec![back_to(&ids, "questlog", "Quests")]);
         return s;
     };
     title(
@@ -3225,7 +3224,7 @@ fn saga_screen(p: &Player) -> Screen {
     if !r.is_empty() {
         s.text(format!("-# Reward: {r}"));
     }
-    let mut b = vec![back(&ids)];
+    let mut b = vec![back_to(&ids, "questlog", "Quests")];
     if ch.choices.is_empty() {
         b.push(
             Btn::new(ids.act("saga", "claim", ""), ch.claim)
@@ -3320,7 +3319,7 @@ fn bounties_screen(p: &Player) -> Screen {
         "-# Finish all three for 2 healing potions on top.".into()
     });
     s.buttons(vec![
-        back(&ids),
+        back_to(&ids, "questlog", "Quests"),
         Btn::new(ids.go("hunt"), "Hunt").emoji("hunt"),
     ]);
     s
@@ -3505,7 +3504,7 @@ fn resolve_encounter(g: &mut Game, choice: &str) -> Result<Option<String>> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The tutorial, gear refining, and the Hero and Skagi screens
+// The tutorial, gear refining, and the Character, Skagi, Combat and Quests screens
 // ---------------------------------------------------------------------------------------------
 
 /// Tutorial steps, as bits: each is done once, in any order. The hub shows the first not done.
@@ -3574,21 +3573,21 @@ impl Tut {
             Tut::Forge => (
                 "Make something at the forge",
                 "Gear is Power. Forged gear comes out Common, Fine, Rare or now and then Epic, with traits.",
-                "Open **Skagi**, then **Forge**. Forge a piece you can afford, or make potions.",
+                "Open **Character**, then **Forge**. Forge a piece you can afford, or make potions.",
                 "forge",
                 "Forge",
             ),
             Tut::Saga => (
                 "Read your saga",
                 "It's the story, and every chapter pays out.",
-                "Open **Saga** and claim the first chapter.",
+                "Open **Quests**, then **Saga**, and claim the first chapter.",
                 "saga",
                 "Saga",
             ),
             Tut::Labyrinth => (
                 "Go into the Labyrinth",
                 "It drops loose threads, which refine and reforge your gear, and guardians drop gear.",
-                "Open **Labyrinth** and **Enter**. Leave whenever you like and keep everything.",
+                "Open **Combat**, then **Labyrinth**, and **Enter**. Leave whenever you like and keep everything.",
                 "lab",
                 "Labyrinth",
             ),
@@ -3812,6 +3811,7 @@ fn hero(p: &Player) -> Screen {
         }
     }
     s.text(wear.join("\n"));
+    forge_section(&mut s, &ids, p);
     s.buttons(vec![
         back(&ids),
         Btn::new(ids.go("pack"), "Pack").emoji("pack"),
@@ -3821,22 +3821,18 @@ fn hero(p: &Player) -> Screen {
     s
 }
 
-fn skagi(p: &Player, w: &World) -> Screen {
-    let ids = Ids {
-        owner: p.user,
-        version: p.version,
-    };
-    let mut s = Screen::default();
-    title(&mut s, "temple", "Skagi", "The village on the Grey Shore");
-    // The forge: what's ready to make.
-    let ready = data::GEAR.iter().filter(|g| {
-        g.level <= p.level
-            && (!g.after_boss || p.boss_won)
-            && p.gold >= g.gold
-            && g.cost.iter().all(|(id, n)| p.have(id) >= *n)
-            && p.equipped(g.slot).map(|x| x.power()).unwrap_or(0) < data::gear_power(g, 0)
-    });
-    let n = ready.count();
+/// The forge line on the Character screen: what's ready to make, and threads to refine with.
+fn forge_section(s: &mut Screen, ids: &Ids, p: &Player) {
+    let n = data::GEAR
+        .iter()
+        .filter(|g| {
+            g.level <= p.level
+                && (!g.after_boss || p.boss_won)
+                && p.gold >= g.gold
+                && g.cost.iter().all(|(id, n)| p.have(id) >= *n)
+                && p.equipped(g.slot).map(|x| x.power()).unwrap_or(0) < data::gear_power(g, 0)
+        })
+        .count();
     s.section(
         format!(
             "{} **Forge**\n-# {}{}",
@@ -3859,10 +3855,190 @@ fn skagi(p: &Player, w: &World) -> Screen {
             .emoji("forge")
             .then_primary(n > 0),
     );
+}
+
+/// The village: the market and the temple.
+fn skagi(p: &Player, w: &World) -> Screen {
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
+    let mut s = Screen::default();
+    title(&mut s, "temple", "Skagi", "The village on the Grey Shore");
     if w.modules.market {
         s.section(format!("{} **Market**\n-# Three pieces of gear picked for you, and supplies. New stock every day.", e("market")), Btn::new(ids.go("market"), "Market").emoji("market"));
     }
-    if w.modules.quests {
+    s.section(
+        format!(
+            "{} **Temple**\n-# This week's offering {}% · altars and bonds",
+            e("temple"),
+            w.pct()
+        ),
+        Btn::new(ids.go("temple"), "Temple").emoji("temple"),
+    );
+    s.buttons(vec![back(&ids)]);
+    s
+}
+
+/// Everything you fight in: hunts, expeditions, the Labyrinth, dungeons, the map and shared bosses.
+fn combat_menu(p: &Player, w: &World) -> Screen {
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
+    let m = &w.modules;
+    let mut s = Screen::default();
+    title(
+        &mut s,
+        "boss",
+        "Combat",
+        "Hunts, expeditions and the deep places",
+    );
+    let collect = p.expedition.as_ref().is_some_and(|x| p.now >= x.ends_at);
+    if let Some((name, pct, ends)) = w.titan {
+        s.section(
+            format!(
+                "{} **{name} is attacking Midgard**\n-# {pct}% left · {} to bring it down, together",
+                e("boss"),
+                dur(ends - p.now)
+            ),
+            Btn::new(ids.go("titan"), "Fight").emoji("boss").danger(),
+        );
+    }
+    if let Some((name, pct, ends)) = w.raid {
+        s.section(
+            format!(
+                "{} **Guild raid: {name}**\n-# {pct}% left · {} left",
+                e("guild"),
+                dur(ends - p.now)
+            ),
+            Btn::new(ids.go("raid"), "Raid").emoji("boss"),
+        );
+    }
+    let hunt_line = match &p.fight {
+        Some(f) => format!("In a fight with {} · turn {}", f.foe.name, f.turn),
+        None => format!("{} / {} HP · Vigor {:.0}%", p.hp(), p.max_hp(), p.vigor()),
+    };
+    s.section(
+        format!("{} **Hunt**\n-# {hunt_line}", e("hunt")),
+        Btn::new(
+            ids.go("hunt"),
+            if p.fight.is_some() {
+                "Continue"
+            } else {
+                "Hunt"
+            },
+        )
+        .emoji("hunt")
+        .then_primary(!collect && p.run.is_none()),
+    );
+    let exp_line = match &p.expedition {
+        Some(x) if collect => format!("Back from {}, ready to collect", x.plan.region().name),
+        Some(x) => format!(
+            "Out in {} · back in {}",
+            x.plan.region().name,
+            dur(x.ends_at - p.now)
+        ),
+        None => "Nothing out. It works while you're away.".into(),
+    };
+    s.section(
+        format!("{} **Expedition**\n-# {exp_line}", e("expedition")),
+        if collect {
+            Btn::new(ids.act("exp", "collect", ""), "Collect")
+                .emoji("expedition")
+                .primary()
+        } else {
+            Btn::new(ids.go("exp"), "Expedition").emoji("expedition")
+        },
+    );
+    if m.labyrinth {
+        let line = match &p.run {
+            Some(run) => format!(
+                "On floor {} · carrying {}",
+                run.floor,
+                crate::ui::truncate(&run.haul_short(), 60)
+            ),
+            None => "Doors, guardians, and the Minotaur every fifth floor".into(),
+        };
+        s.section(
+            format!("{} **Labyrinth**\n-# {line}", e("labyrinth")),
+            Btn::new(
+                ids.go("lab"),
+                if p.run.is_some() {
+                    "Continue"
+                } else {
+                    "Labyrinth"
+                },
+            )
+            .emoji("labyrinth")
+            .then_primary(p.run.is_some() && !collect),
+        );
+    }
+    if m.dungeons {
+        let line = match &p.delve {
+            Some(d) => format!(
+                "In {} · room {} of {}",
+                d.dungeon().name,
+                (d.room + 1).min(d.dungeon().rooms.len() + 1),
+                d.dungeon().rooms.len() + 1
+            ),
+            None => "A chest at the end of each, once a day".into(),
+        };
+        s.section(
+            format!("{} **Dungeons**\n-# {line}", e("dungeon")),
+            Btn::new(
+                ids.go(if p.delve.is_some() {
+                    "dungeon"
+                } else {
+                    "dungeons"
+                }),
+                if p.delve.is_some() {
+                    "Continue"
+                } else {
+                    "Dungeons"
+                },
+            )
+            .emoji("dungeon"),
+        );
+    }
+    if m.map {
+        s.section(
+            format!(
+                "{} **Map**\n-# Midgard's regions and what lives in them",
+                e("map")
+            ),
+            Btn::new(ids.go("map"), "Map").emoji("map"),
+        );
+    }
+    s.buttons(vec![back(&ids)]);
+    s
+}
+
+/// The saga, the townsfolk's side quests, the bounty board and the goals.
+fn quest_menu(p: &Player, w: &World) -> Screen {
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
+    let m = &w.modules;
+    let mut s = Screen::default();
+    title(&mut s, "quest", "Quests", "Your saga, and what Skagi needs");
+    let mut primary_used = false;
+    if m.saga {
+        let (line, ready) = match quests::chapter(p.saga) {
+            Some(ch) if chapter_done(p) => (format!("**{}** is ready to read", ch.title), true),
+            Some(ch) => (format!("**{}**\n-# {}", ch.title, saga_next(p, ch)), false),
+            None => ("**Midgard's saga is told**\n-# For now".into(), false),
+        };
+        s.section(
+            format!("{} {line}", e("saga")),
+            Btn::new(ids.go("saga"), if ready { "Read" } else { "Saga" })
+                .emoji("saga")
+                .then_primary(ready),
+        );
+        primary_used |= ready;
+    }
+    if m.quests {
         let ready = quests::SIDE
             .iter()
             .filter(|q| side_step(p, q).is_some_and(|(st, pr)| pr >= q.steps[st].goal.target()))
@@ -3882,27 +4058,19 @@ fn skagi(p: &Player, w: &World) -> Screen {
                     String::new()
                 }
             ),
-            Btn::new(ids.go("quests"), "Quests")
+            Btn::new(ids.go("quests"), "Side quests")
                 .emoji("quest")
-                .then_primary(ready > 0),
+                .then_primary(ready > 0 && !primary_used),
         );
+        primary_used |= ready > 0;
     }
-    s.section(
-        format!(
-            "{} **Temple**\n-# This week's offering {}% · altars and bonds",
-            e("temple"),
-            w.pct()
-        ),
-        Btn::new(ids.go("temple"), "Temple").emoji("temple"),
-    );
-    let bs = todays_bounties(p);
-    let done = p.bounty.iter().filter(|b| b.1).count();
-    let claim = bs
-        .iter()
-        .enumerate()
-        .filter(|(i, b)| !p.bounty[*i].1 && p.bounty[*i].0 >= b.goal.target())
-        .count();
-    if w.modules.bounties {
+    if m.bounties {
+        let done = p.bounty.iter().filter(|b| b.1).count();
+        let claim = todays_bounties(p)
+            .iter()
+            .enumerate()
+            .filter(|(i, b)| !p.bounty[*i].1 && p.bounty[*i].0 >= b.goal.target())
+            .count();
         s.section(
             format!(
                 "{} **Bounty board**\n-# {done} of 3 done today{}",
@@ -3915,15 +4083,22 @@ fn skagi(p: &Player, w: &World) -> Screen {
             ),
             Btn::new(ids.go("bounties"), "Bounties")
                 .emoji("bounty")
-                .then_primary(claim > 0),
+                .then_primary(claim > 0 && !primary_used),
         );
     }
     s.section(
         format!(
-            "{} **Goals**\n-# The Barrow King needs {} Power, you have {}",
+            "{} **Goals**\n-# {}",
             e("goals"),
-            data::BOSS_POWER,
-            p.power()
+            if p.boss_won {
+                "The Barrow King is beaten · offerings and your guild".to_string()
+            } else {
+                format!(
+                    "The Barrow King needs {} Power, you have {}",
+                    data::BOSS_POWER,
+                    p.power()
+                )
+            }
         ),
         Btn::new(ids.go("goals"), "Goals").emoji("goals"),
     );
@@ -4107,10 +4282,7 @@ fn side_screen(p: &Player) -> Screen {
     if !any {
         s.text("Nobody needs you right now. Come back as you grow.");
     }
-    s.buttons(vec![
-        back(&ids),
-        Btn::new(ids.go("skagi"), "Skagi").emoji("temple"),
-    ]);
+    s.buttons(vec![back_to(&ids, "questlog", "Quests")]);
     s
 }
 
@@ -4165,10 +4337,7 @@ fn map_screen(ctx: &Ctx, g: &Game, w: &World) -> Result<Screen> {
             Btn::new(ids.go(&format!("region_{}", r.id)), "Go").emoji(r.id),
         );
     }
-    let mut row = vec![
-        back(&ids),
-        Btn::new(ids.go("skagi"), "Skagi").emoji("temple"),
-    ];
+    let mut row = vec![back_to(&ids, "combat", "Combat")];
     if w.modules.labyrinth {
         row.push(Btn::new(ids.go("lab"), "Labyrinth").emoji("labyrinth"));
     }

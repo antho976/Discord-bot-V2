@@ -8,7 +8,7 @@ use crate::data::{self, Gear, Rarity};
 use crate::emoji::get as e;
 use crate::engine::Rng;
 use crate::engine::loot::{self, Traits};
-use crate::game::{Ids, back, thousands, title};
+use crate::game::{Ids, back_to, thousands, title};
 use crate::quests;
 use crate::store::Game;
 use crate::ui::{Btn, Opt, Screen};
@@ -145,10 +145,7 @@ pub fn screen(g: &Game) -> Result<Screen> {
         }
     }
     s.inner_select(ids.act("market", "supply", ""), "Buy supplies…", opts);
-    s.buttons(vec![
-        back(&ids),
-        Btn::new(ids.go("skagi"), "Skagi").emoji("temple"),
-    ]);
+    s.buttons(vec![back_to(&ids, "skagi", "Skagi")]);
     Ok(s)
 }
 
