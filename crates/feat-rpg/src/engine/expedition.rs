@@ -145,14 +145,13 @@ pub fn run(plan: &Plan, power: i64, scouting: i64, facts_known: &[String], pity:
             line = Some(format!("Found {} {rare_word}.", if rng.chance(0.5) { "a fine" } else { "some" }));
         }
         let p_intel = r.intel * part * (1.0 + scouting as f64 / 100.0);
-        if intel.is_none() && rng.chance(p_intel) {
-            if let Some(f) = data::FACTS.iter().find(|f| !facts_known.iter().any(|k| k == *f)) {
+        if intel.is_none() && rng.chance(p_intel)
+            && let Some(f) = data::FACTS.iter().find(|f| !facts_known.iter().any(|k| k == *f)) {
                 intel = Some(f.to_string());
                 line = Some("Tracks of something huge near the old mounds. You watched it from a distance.".into());
             }
-        }
         if line.is_none() && ratio < 1.4 && rng.chance(0.45) {
-            line = Some(rng.pick(trouble(&r.id)).to_string());
+            line = Some(rng.pick(trouble(r.id)).to_string());
         }
         story.push((format!("Hour {}", hour + 1), line.unwrap_or_else(|| rng.pick(QUIET).to_string())));
     }

@@ -573,14 +573,13 @@ pub fn autoplay(f: &Fight, potions: i64, oils: (i64, i64)) -> Action {
     if low && potions > 0 {
         return Action::Potion;
     }
-    if f.coat.is_none() && f.turn == 1 && f.knows("weakness") {
-        if let Some(w) = f.foe.weak.as_deref() {
+    if f.coat.is_none() && f.turn == 1 && f.knows("weakness")
+        && let Some(w) = f.foe.weak.as_deref() {
             let el = if w == "fire" { Element::Fire } else { Element::Frost };
             if f.blocked(Action::Oil(el), potions, oils).is_none() {
                 return Action::Oil(el);
             }
         }
-    }
     let skills = f.hero.skills();
     let ready = |s: Skill| skills.contains(&s) && f.blocked(Action::Skill(SkillId::of(s)), potions, oils).is_none();
     if matches!(intent, Move::Heavy | Move::Roar) {
@@ -591,7 +590,7 @@ pub fn autoplay(f: &Fight, potions: i64, oils: (i64, i64)) -> Action {
         }
         // Without scouting the boss's slam is a vague warning: a player guards it about half
         // the time.
-        if f.kind == Kind::Hunt || f.knows(if intent == Move::Heavy { "slam" } else { "roar" }) || f.turn % 2 == 0 {
+        if f.kind == Kind::Hunt || f.knows(if intent == Move::Heavy { "slam" } else { "roar" }) || f.turn.is_multiple_of(2) {
             return Action::Guard;
         }
     }

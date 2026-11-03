@@ -199,6 +199,7 @@ pub enum Kind {
     Trophy,
 }
 
+#[derive(Debug)]
 pub struct Item {
     pub id: &'static str,
     pub name: &'static str,
@@ -288,6 +289,7 @@ impl Slot {
     }
 }
 
+#[derive(Debug)]
 pub struct Gear {
     pub id: &'static str,
     pub name: &'static str,
@@ -384,6 +386,7 @@ impl Danger {
     }
 }
 
+#[derive(Debug)]
 pub struct Region {
     pub id: &'static str,
     pub name: &'static str,

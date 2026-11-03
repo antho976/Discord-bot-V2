@@ -197,6 +197,7 @@ dependencies = [
  "feat-modmail",
  "feat-pets",
  "feat-reviews",
+ "feat-rpg",
  "feat-rules",
  "feat-tickets",
  "feat-utility",
@@ -650,6 +651,19 @@ dependencies = [
  "bot-core",
  "maud",
  "serde",
+]
+
+[[package]]
+name = "feat-rpg"
+version = "0.1.0"
+dependencies = [
+ "bot-core",
+ "bot-render",
+ "hex",
+ "maud",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
