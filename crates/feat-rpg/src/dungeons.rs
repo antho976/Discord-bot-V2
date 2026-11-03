@@ -14,7 +14,7 @@ use crate::emoji::get as e;
 use crate::engine::Rng;
 use crate::engine::combat::Fight;
 use crate::engine::loot;
-use crate::game::{Ids, back, count_event, items_line, seed, title};
+use crate::game::{Ids, back_to, count_event, items_line, seed, title};
 use crate::quests;
 use crate::store::{Game, Player};
 use crate::ui::{Btn, Screen};
@@ -88,7 +88,7 @@ pub fn list_screen(g: &Game) -> Result<Screen> {
         );
     }
     s.buttons(vec![
-        back(&ids),
+        back_to(&ids, "combat", "Combat"),
         Btn::new(ids.go("map"), "Map").emoji("map"),
     ]);
     Ok(s)

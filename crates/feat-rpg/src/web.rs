@@ -370,13 +370,17 @@ fn screens_view(
         "map",
         "region_wolfwood",
         "guild",
+        "guildfind",
+        "guildmanage",
         "titan",
         "raid",
         "dungeons",
         "quests",
         "market",
         "lab",
+        "combat",
         "hero",
+        "questlog",
         "skagi",
         "saga",
         "bounties",
@@ -394,13 +398,17 @@ fn screens_view(
         "Map",
         "Region",
         "Guild",
+        "Find a guild",
+        "Manage guild",
         "Titan",
         "Raid",
         "Dungeons",
         "Side quests",
         "Market",
         "Labyrinth",
-        "Hero",
+        "Combat",
+        "Character",
+        "Quests",
         "Skagi",
         "Saga",
         "Bounties",
@@ -885,10 +893,14 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     })?;
     ctx.db.with(|c| {
         c.execute(
-            "UPDATE rpg_clans SET xp = 2400, treasury = 5200 WHERE id = ?1",
+            "UPDATE rpg_clans SET xp = 2400, treasury = 5200, policy = 'invite', min_week = 100 WHERE id = ?1",
             params![clan],
         )?;
         Ok(())
+    })?;
+    // Someone asking to join, for the leader's Manage page.
+    store::run(&ctx.db, guild, m[2].0, None, |g| {
+        crate::guild::ask(g, clan).map(|_| ())
     })?;
     ctx.db.with(|c| {
         let id = crate::shared::spawn(c, guild, "titan", 0, "jormungandr", 180, 36000, 48).unwrap_or(0);

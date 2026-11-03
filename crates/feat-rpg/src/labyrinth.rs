@@ -13,7 +13,7 @@ use crate::emoji::get as e;
 use crate::engine::Rng;
 use crate::engine::combat::Fight;
 use crate::engine::loot::{self, Traits};
-use crate::game::{Ids, back, count_event, items_line, seed, title};
+use crate::game::{Ids, back_to, count_event, items_line, seed, title};
 use crate::quests;
 use crate::store::{self, Game, Player};
 use crate::ui::{Btn, Screen};
@@ -219,7 +219,7 @@ pub fn screen(p: &Player, board: &[(u64, String, i64)]) -> Screen {
                 s.text(format!("-# Deepest this week\n{}", list.join("\n")));
             }
             s.buttons(vec![
-                back(&ids),
+                back_to(&ids, "combat", "Combat"),
                 Btn::new(ids.act("lab", "enter", ""), "Enter")
                     .emoji("labyrinth")
                     .primary()
