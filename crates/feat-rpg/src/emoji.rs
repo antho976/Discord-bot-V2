@@ -15,7 +15,14 @@ const SET: &str = "rpg1";
 /// Icons redrawn since the set went up, with their revision. Discord can't replace an
 /// emoji's image, so a redrawn icon goes up under a new name (`rpg1_hunt_r2`) and the old
 /// upload is deleted. Bump an icon's number whenever its drawing changes.
-const REDRAWN: &[(&str, u8)] = &[("hunt", 2), ("saga", 2)];
+const REDRAWN: &[(&str, u8)] = &[
+    ("hunt", 2),
+    ("saga", 2),
+    // Hades and his skills went from teal to red with the banner (2026-11-03).
+    ("hades", 2),
+    ("rend", 2),
+    ("bite", 2),
+];
 
 /// (name, colour, path on a 24-unit grid, filled, plain emoji stand-in).
 pub const ICONS: &[(&str, &str, &str, bool, &str)] = &[
@@ -35,8 +42,8 @@ pub const ICONS: &[(&str, &str, &str, bool, &str)] = &[
     ),
     (
         "hades",
-        "#8FD6C1",
-        "M12 21V9M7 3v4a5 5 0 0 0 10 0V3M12 3v6",
+        "#F07A6A",
+        "M12 22V13M7.5 3v5.5a4.5 4.5 0 0 0 9 0V3M5.5 5L7.5 2.5 9.5 5M14.5 5L16.5 2.5 18.5 5M10.5 16h3",
         false,
         "🔱",
     ),
@@ -317,14 +324,14 @@ pub const ICONS: &[(&str, &str, &str, bool, &str)] = &[
     ),
     (
         "rend",
-        "#8FD6C1",
+        "#F07A6A",
         "M6 20V10a6 6 0 0 1 12 0v10l-2-2-2 2-2-2-2 2-2-2z",
         false,
         "👻",
     ),
     (
         "bite",
-        "#8FD6C1",
+        "#F07A6A",
         "M7 4h10l-1 6c-.5 4-2 8-4 10-2-2-3.5-6-4-10z",
         false,
         "🐕",
@@ -570,6 +577,7 @@ mod tests {
     fn redrawn_icons_go_up_under_new_names() {
         assert_eq!(super::full_name("hunt"), "rpg1_hunt_r2");
         assert_eq!(super::full_name("saga"), "rpg1_saga_r2");
+        assert_eq!(super::full_name("hades"), "rpg1_hades_r2");
         assert_eq!(super::full_name("gold"), "rpg1_gold");
         for (name, _) in super::REDRAWN {
             assert!(super::ICONS.iter().any(|i| i.0 == *name), "{name}");

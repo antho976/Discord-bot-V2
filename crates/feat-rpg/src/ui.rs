@@ -127,6 +127,8 @@ pub enum Row {
 #[derive(Debug, Clone, Default)]
 pub struct Screen {
     pub banner: Option<String>,
+    /// The container's edge colour; bronze when unset.
+    pub accent: Option<u32>,
     pub blocks: Vec<Block>,
     pub rows: Vec<Row>,
 }
@@ -292,7 +294,7 @@ impl Screen {
         flush(&mut text, &mut inner);
         let mut out = vec![Component::Container(Container {
             id: None,
-            accent_color: Some(Some(ACCENT)),
+            accent_color: Some(Some(this.accent.unwrap_or(ACCENT))),
             spoiler: None,
             components: inner,
         })];

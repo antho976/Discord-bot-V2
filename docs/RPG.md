@@ -31,6 +31,21 @@ second looked right but its idle play, progression and content were shallow and 
 - **Look:** the "G" overview: a drawn realm banner (name, level, Power, the patron's emblem on
   the side), then what's happening now, then gold, Vigor and guild. No progress bars on the hub.
   C (the whole hub as one drawn card) was rejected; don't bring it back.
+- **Screens stay short (2026-11-03, task #9):** owner found some "so crowded with info it
+  sucks". A line earns its place only if it changes what you do now: menus show live state
+  (HP, what's out, what's ready) or just the name, never a standing description; costs read
+  as have/need on one line; a reward shared by every row is said once; explanations live in
+  Help or on the screen where they matter (dungeon lore when you enter, the townsfolk's words
+  when you claim), not repeated on every visit.
+- **Banner art (2026-11-03, task #6):** each patron has one colour and a scene drawn by
+  `crates/feat-rpg/assets/banner/gen.py` (run it with an output dir and the assets dir to redraw):
+  Hades red, the Styx with a bident (two prongs; the old three-pronged one read as Poseidon);
+  Thor blue, a storm and Mjolnir; Athena violet, the Acropolis and her owl. The top line always
+  says "Sworn to <patron>"; a title never replaces it, it gets its own line under the name.
+  The hub's container edge takes the patron's colour. Owner chose A, the drawn scene
+  ("A 100%"), over B (seal) and C (no picture); all three are in Relay design 19, page
+  "Banner rework". Changing the art means
+  changing the signing salt in `banner.rs` too, or Discord keeps the old picture cached.
 - **Per-server toggle** like every other feature.
 - **Clicks must feel fast:** v2 felt slow because each click made two trips to Discord.
 
@@ -182,7 +197,7 @@ some choices, more content, and every button on the overview instead of a menu.
 - **Content:** four monsters per region; a rare elite per region (6%, triple rewards, a title
   on the first kill, announced in the channel); encounters after hunts (merchant, shrine, lost
   traveller, buried cache), both options worth having; three daily bounties with a bonus for
-  all three; titles worn on the banner.
+  all three; titles worn on the banner, on their own line under the name.
 - **Overview:** two rows of buttons (Hunt, Expedition, Saga, Forge, Goals / Pack, Temple,
   Skills, Bounties, Help), no menu.
 - **Testing:** Settings → Test speed (×10, ×60, ×240 for expeditions, healing and Vigor);
