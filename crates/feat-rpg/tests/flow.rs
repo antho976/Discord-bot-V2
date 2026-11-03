@@ -485,13 +485,20 @@ fn the_saga_bounties_and_encounters() {
     .unwrap();
     let s = click(&ctx, "saga", "claim", "nonsense", &[]);
     assert!(text_of(&s).contains("Choose one"));
-    let amber = store::get(&ctx.db, G, U).unwrap().unwrap().have("amber");
+    let before = store::get(&ctx.db, G, U).unwrap().unwrap();
+    let amber = before.have("amber");
+    // A title is worn only when none is: the shore hunts above can roll an elite (6%) whose
+    // first kill already gave one.
+    let worn = before.title.clone();
     click(&ctx, "saga", "claim", "spare", &[]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
     assert_eq!(p.saga, 4);
     assert_eq!(p.have("amber"), amber + 4);
     assert!(p.titles.iter().any(|t| t == "Friend of Nixies"));
-    assert_eq!(p.title.as_deref(), Some("Friend of Nixies"));
+    assert_eq!(
+        p.title.as_deref(),
+        worn.as_deref().or(Some("Friend of Nixies"))
+    );
 
     // An encounter waiting after a hunt resolves once.
     store::run(&ctx.db, G, U, None, |g| g.set_event(Some("traveller"))).unwrap();

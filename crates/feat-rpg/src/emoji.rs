@@ -6,10 +6,23 @@ use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
 use bot_core::anyhow::{Context, Result};
-use bot_core::{Ctx, tokio};
+use bot_core::twilight_model::id::Id;
+use bot_core::{Ctx, tokio, tracing};
 
-/// Bumped when the drawings change, so the new ones are uploaded under new names.
+/// Bumped when the whole set is redrawn, so the new ones are uploaded under new names.
 const SET: &str = "rpg1";
+
+/// Icons redrawn since the set went up, with their revision. Discord can't replace an
+/// emoji's image, so a redrawn icon goes up under a new name (`rpg1_hunt_r2`) and the old
+/// upload is deleted. Bump an icon's number whenever its drawing changes.
+const REDRAWN: &[(&str, u8)] = &[
+    ("hunt", 2),
+    ("saga", 2),
+    // Hades and his skills went from teal to red with the banner (2026-11-03).
+    ("hades", 2),
+    ("rend", 2),
+    ("bite", 2),
+];
 
 /// (name, colour, path on a 24-unit grid, filled, plain emoji stand-in).
 pub const ICONS: &[(&str, &str, &str, bool, &str)] = &[
@@ -29,8 +42,8 @@ pub const ICONS: &[(&str, &str, &str, bool, &str)] = &[
     ),
     (
         "hades",
-        "#8FD6C1",
-        "M12 21V9M7 3v4a5 5 0 0 0 10 0V3M12 3v6",
+        "#F07A6A",
+        "M12 22V13M7.5 3v5.5a4.5 4.5 0 0 0 9 0V3M5.5 5L7.5 2.5 9.5 5M14.5 5L16.5 2.5 18.5 5M10.5 16h3",
         false,
         "🔱",
     ),
@@ -86,7 +99,7 @@ pub const ICONS: &[(&str, &str, &str, bool, &str)] = &[
     (
         "hunt",
         "#DBDEE1",
-        "M14.5 3.5H20v5.5L9.5 19.5l-5-5zM4.5 14.5l5 5M6 18l-2.5 2.5",
+        "M14 17L3.5 6.5v-3h3L17 14M12 19l7-7M16 16l3 3M18.5 21.5l3-3",
         false,
         "⚔️",
     ),
@@ -311,14 +324,14 @@ pub const ICONS: &[(&str, &str, &str, bool, &str)] = &[
     ),
     (
         "rend",
-        "#8FD6C1",
+        "#F07A6A",
         "M6 20V10a6 6 0 0 1 12 0v10l-2-2-2 2-2-2-2 2-2-2z",
         false,
         "👻",
     ),
     (
         "bite",
-        "#8FD6C1",
+        "#F07A6A",
         "M7 4h10l-1 6c-.5 4-2 8-4 10-2-2-3.5-6-4-10z",
         false,
         "🐕",
@@ -340,7 +353,7 @@ pub const ICONS: &[(&str, &str, &str, bool, &str)] = &[
     (
         "saga",
         "#D2A75E",
-        "M6 4h11a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M5 6a2 2 0 0 0-2 2v1h2M9 9h6M9 13h6",
+        "M6 3h12a2 2 0 0 1 0 4H6a2 2 0 0 1 0-4zM6 17h12a2 2 0 0 1 0 4H6a2 2 0 0 1 0-4zM6 7v10M18 7v10M9 10.5h6M9 13.5h4",
         false,
         "📜",
     ),
@@ -433,7 +446,10 @@ fn registry() -> &'static RwLock<HashMap<String, u64>> {
 }
 
 fn full_name(name: &str) -> String {
-    format!("{SET}_{name}")
+    match REDRAWN.iter().find(|r| r.0 == name) {
+        Some((_, rev)) => format!("{SET}_{name}_r{rev}"),
+        None => format!("{SET}_{name}"),
+    }
 }
 
 /// The uploaded emoji's id and full name, once the upload has happened.
@@ -515,9 +531,23 @@ pub async fn sync(ctx: &Ctx) -> Result<usize> {
         have.insert(full, e.id.get());
         uploaded += 1;
     }
+    // Drop uploads of this set that no icon uses any more: old drawings of redrawn icons.
+    let wanted: Vec<String> = ICONS.iter().map(|i| full_name(i.0)).collect();
+    let prefix = format!("{SET}_");
+    let stale: Vec<(String, u64)> = have
+        .iter()
+        .filter(|(n, _)| n.starts_with(&prefix) && !wanted.contains(n))
+        .map(|(n, id)| (n.clone(), *id))
+        .collect();
+    for (n, id) in stale {
+        have.remove(&n);
+        if let Err(e) = ctx.http.delete_application_emoji(app, Id::new(id)).await {
+            tracing::warn!(error = %e, emoji = %n, "couldn't delete an old rpg emoji");
+        }
+    }
     let mut reg = registry().write().unwrap();
     for (n, id) in have {
-        if n.starts_with(SET) {
+        if wanted.contains(&n) {
             reg.insert(n, id);
         }
     }
@@ -540,6 +570,17 @@ mod tests {
             );
             let png = bot_render::png(&super::svg(name).unwrap()).unwrap();
             assert!(png.len() > 100, "{name} drew nothing");
+        }
+    }
+
+    #[test]
+    fn redrawn_icons_go_up_under_new_names() {
+        assert_eq!(super::full_name("hunt"), "rpg1_hunt_r2");
+        assert_eq!(super::full_name("saga"), "rpg1_saga_r2");
+        assert_eq!(super::full_name("hades"), "rpg1_hades_r2");
+        assert_eq!(super::full_name("gold"), "rpg1_gold");
+        for (name, _) in super::REDRAWN {
+            assert!(super::ICONS.iter().any(|i| i.0 == *name), "{name}");
         }
     }
 }

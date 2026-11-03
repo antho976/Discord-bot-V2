@@ -833,7 +833,7 @@ pub fn screen(g: &Game) -> Result<Screen> {
         "guild",
         &format!("{} [{}]", m.name, m.tag),
         &format!(
-            "Guild level {lvl}{}",
+            "Level {lvl}{}",
             if m.leader { " · you lead it" } else { "" }
         ),
     );
@@ -848,35 +848,48 @@ pub fn screen(g: &Game) -> Result<Screen> {
         "Highest level".into()
     };
     let perks = perks(lvl);
+    // Level and what it gives everyone, on one line.
     s.text(format!(
-        "{} {next}\n-# Everyone in the guild gets: {}",
+        "{} {next}{}",
         e("guild"),
         if perks.is_empty() {
-            "nothing yet, from level 2 on +2% XP".into()
+            String::new()
         } else {
-            perks.join(", ")
+            format!(" · {} for everyone", perks.join(", "))
         }
     ));
     let (done, target, claimed) = challenge(&g.tx, m.id, week)?;
     s.text(format!(
-        "{} **Weekly challenge:** {} / {target} hunts won as a guild{}",
+        "{} **Weekly challenge** · {} / {target} hunts{}",
         e("bounty"),
         done.min(target),
         if claimed {
-            "  ·  done: +800 treasury, +600 guild XP"
+            " · done"
         } else {
-            "\n-# Pays 800 gold into the treasury and 600 guild XP"
+            "\n-# 800 treasury gold · 600 guild XP"
         }
     ));
     let raid = crate::shared::active(&g.tx, p.guild, "raid", m.id)?;
     match &raid {
         Some(r) => s.section(
-            format!("{} **Raid: {}**\n-# {}% left · ends in {}", e("boss"), data::monster(&r.boss).map(|x| x.name).unwrap_or("the wyrm"), r.hp * 100 / r.max_hp.max(1), crate::game::dur(r.ends - p.now)),
+            format!(
+                "{} **Raid: {}**\n-# {}% left · ends in {}",
+                e("boss"),
+                data::monster(&r.boss).map(|x| x.name).unwrap_or("the wyrm"),
+                r.hp * 100 / r.max_hp.max(1),
+                crate::game::dur(r.ends - p.now)
+            ),
             Btn::new(ids.go("raid"), "Raid").emoji("boss").primary(),
         ),
         None => s.section(
-            format!("{} **Raid**\n-# Fafnir the Hoard-Wyrm, fought by the whole guild over three days. Starting it costs {} from the treasury.", e("boss"), thousands(data::RAID_COST)),
-            Btn::new(ids.act("guild", "raid", ""), "Start the raid").emoji("boss").disabled(!m.leader || m.treasury < data::RAID_COST),
+            format!(
+                "{} **Raid: Fafnir**\n-# Three days, the whole guild · {} treasury gold to start",
+                e("boss"),
+                thousands(data::RAID_COST)
+            ),
+            Btn::new(ids.act("guild", "raid", ""), "Start the raid")
+                .emoji("boss")
+                .disabled(!m.leader || m.treasury < data::RAID_COST),
         ),
     };
     s.gap();
@@ -885,17 +898,25 @@ pub fn screen(g: &Game) -> Result<Screen> {
         e("gold"),
         thousands(m.treasury)
     ));
-    let ups: Vec<String> = UPGRADES
+    let built: Vec<&str> = UPGRADES
         .iter()
-        .map(|(id, name, what, cost)| {
-            if m.has(id) {
-                format!("{} {name}: {what}", e("check"))
-            } else {
-                format!("{} {name}: {what} · {} gold", e("lock"), thousands(*cost))
-            }
-        })
+        .filter(|u| m.has(u.0))
+        .map(|u| u.1)
         .collect();
-    s.text(format!("-# {}", ups.join("\n-# ")));
+    if !built.is_empty() {
+        s.text(format!("-# {} Built: {}", e("check"), built.join(", ")));
+    }
+    // Leaders see what's left, with costs, in the select below.
+    if !m.leader {
+        let left: Vec<String> = UPGRADES
+            .iter()
+            .filter(|u| !m.has(u.0))
+            .map(|(_, name, what, cost)| format!("-# {name}: {what} · {} gold", thousands(*cost)))
+            .collect();
+        if !left.is_empty() {
+            s.text(left.join("\n"));
+        }
+    }
     if m.leader {
         let opts: Vec<Opt> = UPGRADES
             .iter()
@@ -918,7 +939,7 @@ pub fn screen(g: &Game) -> Result<Screen> {
         .take(12)
         .map(|x| {
             format!(
-                "-# {}{} · level {} · {} guild XP this week",
+                "-# {}{} · level {} · {} XP this week",
                 if x.leader { "👑 " } else { "" },
                 if x.name.is_empty() {
                     "Someone"
@@ -935,15 +956,14 @@ pub fn screen(g: &Game) -> Result<Screen> {
         mem.len(),
         list.join("\n")
     ));
-    if let Some(me) = mem.iter().find(|x| x.user == p.user) {
+    // Your own XP is already in the list; say it again only against the guild's minimum.
+    if m.min_week > 0
+        && let Some(me) = mem.iter().find(|x| x.user == p.user)
+    {
         s.text(format!(
-            "-# Your share this week: {} guild XP{}",
+            "-# You: {} of the {} guild XP a week the guild asks for",
             thousands(me.week_xp),
-            if m.min_week > 0 {
-                format!(" of the {} the guild asks for", thousands(m.min_week))
-            } else {
-                String::new()
-            }
+            thousands(m.min_week)
         ));
     }
     let asking = if m.leader {
