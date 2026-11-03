@@ -472,7 +472,8 @@ fn settings_view(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
                 (ui::field_channel(ctx, guild, "channel", "RPG channel", Some("Where /rpg works and hubs live. Leave empty to allow any channel."), s.channel))
                 (ui::field_toggle("test_only", "Closed test", Some("Only testers (and anyone with Manage Server) can play."), s.test_only))
                 (ui::field_role(ctx, guild, "tester_role", "Tester role", Some("Members with this role can play during the test."), s.tester_role))
-                (ui::field_toggle("announce", "Announce boss kills", Some("Post in the channel when someone beats the Barrow King for the first time."), s.announce))
+                (ui::field_toggle("announce", "Announce kills", Some("Post in the channel when someone beats an elite or the realm boss for the first time."), s.announce))
+                (ui::field_number("announce_minutes", "Delete them after", Some("So the channel doesn't fill up. 0 keeps them."), s.announce_minutes, 0, crate::MAX_ANNOUNCE_MINUTES, Some("minutes")))
             }))
             (ui::card(html! {
                 (ui::field_number("xp_rate", "XP rate", Some("100% is the designed pace."), s.xp_rate, 10, 1000, Some("%")))
@@ -499,6 +500,7 @@ async fn save(
     s.test_only = form.bool("test_only");
     s.tester_role = form.role(&ctx, guild, "tester_role");
     s.announce = form.bool("announce");
+    s.announce_minutes = form.int_in("announce_minutes", 0, crate::MAX_ANNOUNCE_MINUTES, 30);
     s.xp_rate = form.int_in("xp_rate", 10, 1000, 100);
     s.loot_rate = form.int_in("loot_rate", 10, 1000, 100);
     s.gold_rate = form.int_in("gold_rate", 10, 1000, 100);

@@ -47,11 +47,19 @@ pub const MIGRATIONS: &[Migration] = &[MIGRATION_001, MIGRATION_002, MIGRATION_0
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, day INTEGER NOT NULL, slot TEXT NOT NULL,
             PRIMARY KEY (guild_id, user_id, day, slot));
     ",
-}, MIGRATION_005];
+}, Migration {
+    name: "005_posts",
+    sql: "
+        CREATE TABLE rpg_posts (
+            channel_id INTEGER NOT NULL, message_id INTEGER NOT NULL, delete_at INTEGER NOT NULL,
+            PRIMARY KEY (channel_id, message_id));
+        CREATE INDEX rpg_posts_due ON rpg_posts (delete_at);
+    ",
+}, MIGRATION_006];
 
 /// Guild controls: who may join, a weekly minimum, asks and invites, and a cooldown after a kick.
-const MIGRATION_005: Migration = Migration {
-    name: "005_guild_controls",
+const MIGRATION_006: Migration = Migration {
+    name: "006_guild_controls",
     sql: "
         ALTER TABLE rpg_clans ADD COLUMN policy TEXT NOT NULL DEFAULT 'open';
         ALTER TABLE rpg_clans ADD COLUMN min_week INTEGER NOT NULL DEFAULT 0;
@@ -1415,9 +1423,56 @@ pub fn lab_board(
     Ok(rows)
 }
 
+/// Remember a public line the bot posted, so the tick deletes it at `delete_at`.
+pub fn delete_later(db: &Db, channel: u64, message: u64, delete_at: i64) -> Result<()> {
+    db.with(|c| {
+        c.execute(
+            "INSERT OR REPLACE INTO rpg_posts (channel_id, message_id, delete_at) VALUES (?1, ?2, ?3)",
+            params![channel as i64, message as i64, delete_at],
+        )
+    })?;
+    Ok(())
+}
+
+/// Public lines whose time is up, as (channel, message), at most `limit`. They leave the list
+/// here: a message someone already deleted by hand shouldn't be retried forever.
+pub fn take_due_posts(db: &Db, now: i64, limit: usize) -> Result<Vec<(u64, u64)>> {
+    let mut conn = db.lock();
+    let tx = conn.transaction()?;
+    let rows: Vec<(i64, i64)> = {
+        let mut st = tx.prepare_cached(
+            "SELECT channel_id, message_id FROM rpg_posts WHERE delete_at <= ?1 ORDER BY delete_at LIMIT ?2",
+        )?;
+        st.query_map(params![now, limit as i64], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<_, _>>()?
+    };
+    for (ch, id) in &rows {
+        tx.execute(
+            "DELETE FROM rpg_posts WHERE channel_id = ?1 AND message_id = ?2",
+            params![ch, id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(rows
+        .into_iter()
+        .map(|(c, m)| (c as u64, m as u64))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn posts_come_due_once() {
+        let db = db();
+        delete_later(&db, 10, 1, 1_000).unwrap();
+        delete_later(&db, 10, 2, 5_000).unwrap();
+        assert!(take_due_posts(&db, 999, 50).unwrap().is_empty());
+        assert_eq!(take_due_posts(&db, 1_000, 50).unwrap(), vec![(10, 1)]);
+        assert!(take_due_posts(&db, 1_000, 50).unwrap().is_empty());
+        assert_eq!(take_due_posts(&db, 9_000, 50).unwrap(), vec![(10, 2)]);
+    }
 
     fn db() -> Db {
         let db = Db::memory().unwrap();

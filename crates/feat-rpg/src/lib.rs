@@ -48,6 +48,9 @@ use crate::ui::Screen;
 
 pub const KEY: &str = "rpg";
 
+/// The longest a kill line can be kept before it's deleted: a week.
+pub const MAX_ANNOUNCE_MINUTES: i64 = 7 * 24 * 60;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -60,8 +63,10 @@ pub struct Settings {
     pub xp_rate: i64,
     pub loot_rate: i64,
     pub gold_rate: i64,
-    /// Post in the channel when someone beats the realm boss for the first time.
+    /// Post in the channel when someone beats an elite or the realm boss for the first time.
     pub announce: bool,
+    /// Those posts are deleted after this many minutes (0: kept).
+    pub announce_minutes: i64,
     /// Test speed: expeditions, healing and Vigor run this many times faster.
     pub speed: i64,
     /// Which parts of the game are on, so testing can cut what doesn't work.
@@ -82,6 +87,7 @@ impl Default for Settings {
             loot_rate: 100,
             gold_rate: 100,
             announce: true,
+            announce_minutes: 30,
             speed: 1,
             modules: store::Modules::default(),
             titan_every_hours: 72,
@@ -110,42 +116,9 @@ pub struct Click {
 
 static CLICKS: Mutex<VecDeque<Click>> = Mutex::new(VecDeque::new());
 
-/// When the RPG last posted in each server, so its public lines never pile up.
-static LAST_POST: Mutex<Vec<(u64, i64)>> = Mutex::new(Vec::new());
-
-/// At most one public line per server every ten minutes.
-pub const POST_GAP_MS: i64 = 10 * 60_000;
-
-fn may_post(guild: u64, now: i64) -> bool {
-    let mut l = LAST_POST.lock().unwrap();
-    match l.iter_mut().find(|(g, _)| *g == guild) {
-        Some((_, at)) if now - *at < POST_GAP_MS => false,
-        Some((_, at)) => {
-            *at = now;
-            true
-        }
-        None => {
-            l.push((guild, now));
-            true
-        }
-    }
-}
-
 /// The last 500 clicks' timings.
 pub fn clicks() -> Vec<Click> {
     CLICKS.lock().unwrap().iter().copied().collect()
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn public_lines_are_spaced_out() {
-        assert!(super::may_post(7, 1_000_000));
-        assert!(!super::may_post(7, 1_000_000 + 60_000));
-        assert!(!super::may_post(7, 1_000_000 + super::POST_GAP_MS - 1));
-        assert!(super::may_post(7, 1_000_000 + super::POST_GAP_MS));
-        assert!(super::may_post(8, 1_000_000 + 60_000));
-    }
 }
 
 #[derive(Default)]
@@ -243,6 +216,12 @@ impl Feature for Rpg {
     }
 
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
+        // Kill lines that have had their moment, a small batch a minute so the tick stays quick.
+        for (ch, msg) in store::take_due_posts(&ctx.db, now_ms(), 20).unwrap_or_default() {
+            if let (Some(ch), Some(msg)) = (Id::new_checked(ch), Id::new_checked(msg)) {
+                let _ = ctx.http.delete_message(ch, msg).await;
+            }
+        }
         // Titans: rise on schedule, and say so when one gets away.
         for guild in ctx.enabled_guilds(KEY) {
             let s = ctx.settings::<Settings>(guild, KEY)?;
@@ -441,10 +420,12 @@ impl Feature for Rpg {
         });
         if let Some(text) = out.announce
             && s.announce
-            && (out.urgent || may_post(guild, now_ms()))
             && let Some(ch) = i.channel.as_ref().map(|c| c.id.get())
+            && let Ok(msg) = ctx.say(ch, &text).await
+            && s.announce_minutes > 0
         {
-            let _ = ctx.say(ch, &text).await;
+            let at = now_ms() + s.announce_minutes.min(MAX_ANNOUNCE_MINUTES) * 60_000;
+            let _ = store::delete_later(&ctx.db, ch, msg, at);
         }
         Ok(())
     }

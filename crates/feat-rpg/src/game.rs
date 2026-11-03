@@ -23,8 +23,6 @@ use crate::ui::{Btn, Opt, Screen};
 pub struct Outcome {
     pub screen: Screen,
     pub announce: Option<String>,
-    /// A public line that should go out even if the RPG posted recently (a Titan falling).
-    pub urgent: bool,
 }
 
 /// Where a click goes, read from its custom id `rpg:{owner}:{screen}:{action}:{arg}:{version}`.
@@ -2433,7 +2431,6 @@ pub fn handle(
     );
     let value = values.first().cloned().unwrap_or_default();
     let mut announce = None;
-    let mut urgent = false;
     let mut note: Option<String> = None;
     let screen = if stale {
         note = note_stale;
@@ -2605,7 +2602,6 @@ pub fn handle(
                             let (said, ann) = crate::shared::settle(g, &f)?;
                             count_event(g, quests::Event::Shared)?;
                             announce = ann;
-                            urgent = true;
                             to = if route.screen == "raid" {
                                 "raid"
                             } else {
@@ -2975,13 +2971,9 @@ pub fn handle(
             (screen, _) => view(ctx, g, &w, screen, None)?,
         }
     };
-    if announce.as_deref().is_some_and(|a| a.contains("falls!")) {
-        urgent = true;
-    }
     Ok(Outcome {
         screen: screen.note(note),
         announce,
-        urgent,
     })
 }
 
