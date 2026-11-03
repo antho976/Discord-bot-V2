@@ -282,8 +282,8 @@ fn screens_view(ctx: &Ctx, page: &Page, guild: u64, player: Option<u64>, focus: 
     let rows = players(ctx, guild)?;
     let pick = player.or_else(|| rows.first().map(|r| r.user));
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let names = ["hub", "saga", "bounties", "goals", "exp", "hunt", "forge", "pack", "temple", "patron", "help"];
-    let labels = ["Overview", "Saga", "Bounties", "Goals", "Expedition", "Hunt or fight", "Forge", "Pack", "Temple", "Patron", "How to play"];
+    let names = ["hub", "lab", "hero", "skagi", "saga", "bounties", "goals", "exp", "hunt", "forge", "pack", "temple", "patron", "help"];
+    let labels = ["Overview", "Labyrinth", "Hero", "Skagi", "Saga", "Bounties", "Goals", "Expedition", "Hunt or fight", "Forge", "Pack", "Temple", "Patron", "How to play"];
     let mut shots: Vec<(String, Markup)> = Vec::new();
     if let Some(u) = pick {
         let only: Vec<usize> = match focus {
@@ -502,9 +502,13 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
         for (id, n) in [("iron", 28), ("yew", 11), ("pelt", 9), ("herbs", 14), ("fish", 12), ("fang", 3), ("frost", 2), ("amber", 3)] {
             g.item(id, n, "seed")?;
         }
-        for id in ["warhammer", "mail", "ambercharm"] {
-            g.add_gear(data::gear(id).unwrap(), true)?;
-        }
+        use data::{Rarity, Trait};
+        g.add_piece(data::gear("warhammer").unwrap(), Rarity::Rare, vec![(Trait::Fierce, 5), (Trait::Keen, 4)], true, "seed")?;
+        g.add_piece(data::gear("mail").unwrap(), Rarity::Fine, vec![(Trait::Sturdy, 6)], true, "seed")?;
+        g.add_gear(data::gear("ambercharm").unwrap(), true)?;
+        g.add_piece(data::gear("handaxe").unwrap(), Rarity::Fine, vec![(Trait::Flame, 11)], false, "seed")?;
+        g.item("thread", 4, "seed")?;
+        g.set_tutorial(1 | 2 | 4)?;
         g.tribute(God::Thor, 1600)?;
         g.tribute(God::Athena, 400)?;
         g.learn("slam")?;
@@ -539,6 +543,7 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
         g.p.saga_choices.insert("volva".into(), "jarlsmen".into());
         g.save_saga()?;
         g.add_title("Wolf-bane")?;
+        g.set_tutorial(crate::game::Tut::ALL)?;
         let w = g.p.week();
         let mut f = crate::engine::combat::Fight::boss(g.p.hero(), g.p.max_hp(), w, g.p.facts.clone(), 9).with_ally(Some("jarlsmen"));
         for a in [crate::engine::combat::Action::Strike, crate::engine::combat::Action::Strike] {
@@ -569,6 +574,23 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
             g.add_title(t)?;
         }
         g.set_title(Some("Mound-breaker"))?;
+        g.set_tutorial(crate::game::Tut::ALL)?;
+        let mut items = std::collections::BTreeMap::new();
+        items.insert("frost".to_string(), 3);
+        items.insert("thread".to_string(), 4);
+        items.insert("iron".to_string(), 6);
+        g.save_run(Some(crate::labyrinth::Run {
+            floor: 8,
+            doors: vec![crate::labyrinth::Door::Treasure, crate::labyrinth::Door::Fight, crate::labyrinth::Door::Hard],
+            fighting: None,
+            gold: 212,
+            xp: 640,
+            items,
+            gear: vec![crate::labyrinth::Drop { gear: "fangnecklace".into(), rarity: data::Rarity::Rare, traits: vec![(data::Trait::Lucky, 6), (data::Trait::Vampiric, 3)] }],
+            log: vec!["A Barrow Shade falls. Into your haul: 32 gold, 1 wolf pelt.".into()],
+            seed: 5,
+        }))?;
+        g.lab_best(8)?;
         Ok(())
     })?;
     let _ = progress::week(now_ms());

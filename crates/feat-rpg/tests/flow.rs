@@ -103,7 +103,7 @@ fn a_new_player_plays_through_midgard() {
     store::create(&ctx.db, G, U, "Antho", God::Thor).unwrap();
 
     // Every screen draws within Discord's limits from the start.
-    for s in ["hub", "goals", "exp", "hunt", "boss", "forge", "pack", "temple", "givethor", "giveathena", "givehades", "patron", "help"] {
+    for s in ["hub", "goals", "exp", "hunt", "boss", "forge", "pack", "temple", "givethor", "giveathena", "givehades", "patron", "help", "saga", "bounties", "lab", "hero", "skagi"] {
         click(&ctx, s, "", "", &[]);
     }
 
@@ -360,4 +360,91 @@ fn the_saga_bounties_and_encounters() {
     click(&ctx, "boss", "start", "", &[]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
     assert_eq!(p.fight.unwrap().ally.as_deref(), Some("shieldmaiden"));
+}
+
+
+#[test]
+fn the_labyrinth_gear_and_the_tutorial() {
+    let rt = bot_core::tokio::runtime::Runtime::new().unwrap();
+    let _e = rt.enter();
+    let ctx = ctx();
+    store::create(&ctx.db, G, U, "Antho", God::Athena).unwrap();
+    // A strong hero, so the run goes a few floors.
+    store::run(&ctx.db, G, U, None, |g| {
+        g.xp(1_000_000)?;
+        for id in ["barrowblade", "mantle", "ravencharm"] {
+            g.add_gear(data::gear(id).unwrap(), true)?;
+        }
+        g.item("potion", 5, "test")
+    })
+    .unwrap();
+
+    // The welcome step, then the tutorial points somewhere.
+    let s = click(&ctx, "hub", "", "", &[]);
+    assert!(text_of(&s).contains("How this works"));
+    click(&ctx, "tut", "ok", "", &[]);
+
+    // Into the Labyrinth.
+    click(&ctx, "lab", "enter", "", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert!(p.run.is_some());
+    assert!(p.tutorial_has(game::Tut::Labyrinth));
+    // Open doors until floor 6 (past the first guardian) or the run ends.
+    for _ in 0..200 {
+        let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+        let Some(run) = p.run.clone() else { break };
+        if run.floor > 6 {
+            break;
+        }
+        if let Some(ref f) = p.fight {
+            let a = feat_rpg::engine::combat::autoplay(f, p.have("potion"), (0, 0));
+            let arg = match a {
+                feat_rpg::engine::combat::Action::Strike => "strike".to_string(),
+                feat_rpg::engine::combat::Action::Guard => "guard".into(),
+                feat_rpg::engine::combat::Action::Potion => "potion".into(),
+                feat_rpg::engine::combat::Action::Oil(e) => e.oil().into(),
+                feat_rpg::engine::combat::Action::Skill(s) => s.skill().id().into(),
+            };
+            click(&ctx, "lab", "act", &arg, &[]);
+        } else {
+            // Prefer shrines when hurt, else the first door.
+            let i = if p.hp() * 2 < p.max_hp() { run.doors.iter().position(|d| format!("{d:?}") == "Shrine").unwrap_or(0) } else { 0 };
+            let id = format!("{:?}", run.doors[i]).to_lowercase();
+            click(&ctx, "lab", "door", &format!("{i}.{id}"), &[]);
+        }
+    }
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    if p.run.is_some() {
+        let before = p.gold;
+        let s = click(&ctx, "lab", "out", "", &[]);
+        assert!(text_of(&s).contains("carry out"), "{}", text_of(&s));
+        let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+        assert!(p.run.is_none());
+        assert!(p.gold > before);
+    }
+    let best: i64 = ctx.db.with(|c| c.query_row("SELECT COALESCE(MAX(best), 0) FROM rpg_lab", [], |r| r.get(0))).unwrap();
+    assert!(best >= 5, "a full-power hero only reached floor {best}");
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert!(p.have("thread") >= 3, "the guardian should have left threads");
+
+    // Refine a worn piece with threads, then reforge it.
+    store::run(&ctx.db, G, U, None, |g| {
+        g.item("thread", 20, "test")?;
+        g.gold(5000, "test")
+    })
+    .unwrap();
+    // The run may have dropped better gear; refine whichever worn piece can still go up.
+    let piece = data::SLOTS.iter().filter_map(|sl| p.equipped(*sl)).find(|g| g.rarity != data::Rarity::Epic).unwrap().clone();
+    click(&ctx, "forge", "refine", "", &[&piece.id.to_string()]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    let after = p.gear.iter().find(|g| g.id == piece.id).unwrap();
+    assert_eq!(after.rarity.index(), piece.rarity.index() + 1);
+    assert_eq!(after.traits.len(), piece.traits.len() + 1);
+    let threads = p.have("thread");
+    click(&ctx, "forge", "reforge", "", &[&piece.id.to_string()]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert!(p.have("thread") < threads);
+    assert_eq!(p.gear.iter().find(|g| g.id == piece.id).unwrap().traits.len(), after.traits.len());
+    // Traits reach fights.
+    assert!(p.hero().mods.damage > 0.0 || p.hero().mods.crit > 0.0 || p.hero().mods.steal > 0.0 || p.hero().mods.fire > 0.0 || p.hero().mods.frost > 0.0);
 }

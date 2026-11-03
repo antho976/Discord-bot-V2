@@ -9,7 +9,7 @@ fn main() {
     let lesser = God::from_id(a.get(2).map(String::as_str).unwrap_or("-"));
     let power: i64 = a.get(3).and_then(|s| s.parse().ok()).unwrap_or(420);
     let seed: u64 = a.get(4).and_then(|s| s.parse().ok()).unwrap_or(1);
-    let h = Hero { main, lesser, bonds: [2, 2, 2], power, scouting: 0 };
+    let h = Hero { main, lesser, bonds: [2, 2, 2], power, scouting: 0, mods: Default::default() };
     let (max, _) = h.stats();
     let facts: Vec<String> = data::FACTS.iter().map(|s| s.to_string()).collect();
     let mut f = Fight::boss(h, max, seed as i64, facts, seed * 7 + 1);

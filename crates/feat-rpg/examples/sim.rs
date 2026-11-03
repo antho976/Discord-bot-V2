@@ -10,7 +10,7 @@ fn boss_rate(main: God, lesser: Option<God>, power: i64, facts: &[String], n: u6
     let mut wins = 0;
     let mut turns = 0u64;
     for seed in 0..n {
-        let h = Hero { main, lesser, bonds: [2, 2, 2], power, scouting: 0 };
+        let h = Hero { main, lesser, bonds: [2, 2, 2], power, scouting: 0, mods: Default::default() };
         let (max, _) = h.stats();
         let mut f = Fight::boss(h, max, seed as i64, facts.to_vec(), seed * 7 + 1);
         let (mut p, mut o) = (3i64, (2i64, 2i64));

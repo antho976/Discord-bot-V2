@@ -82,7 +82,7 @@ impl P {
     fn hero(&self) -> Hero {
         let bonds = [0, 1, 2].map(|i| progress::bond_rank(self.tribute[i], data::BOND_CAP));
         let scouting = data::SLOTS.iter().filter_map(|s| self.best(*s)).map(|(g, _)| g.scouting).sum();
-        Hero { main: self.main, lesser: None, bonds, power: self.power(), scouting }
+        Hero { main: self.main, lesser: None, bonds, power: self.power(), scouting, mods: Default::default() }
     }
     fn have(&self, id: &str) -> i64 {
         self.items.get(id).copied().unwrap_or(0)

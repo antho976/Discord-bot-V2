@@ -10,6 +10,7 @@ pub mod data;
 pub mod emoji;
 pub mod engine;
 pub mod game;
+pub mod labyrinth;
 pub mod quests;
 pub mod store;
 pub mod ui;
@@ -78,9 +79,42 @@ pub struct Click {
 
 static CLICKS: Mutex<VecDeque<Click>> = Mutex::new(VecDeque::new());
 
+/// When the RPG last posted in each server, so its public lines never pile up.
+static LAST_POST: Mutex<Vec<(u64, i64)>> = Mutex::new(Vec::new());
+
+/// At most one public line per server every ten minutes.
+pub const POST_GAP_MS: i64 = 10 * 60_000;
+
+fn may_post(guild: u64, now: i64) -> bool {
+    let mut l = LAST_POST.lock().unwrap();
+    match l.iter_mut().find(|(g, _)| *g == guild) {
+        Some((_, at)) if now - *at < POST_GAP_MS => false,
+        Some((_, at)) => {
+            *at = now;
+            true
+        }
+        None => {
+            l.push((guild, now));
+            true
+        }
+    }
+}
+
 /// The last 500 clicks' timings.
 pub fn clicks() -> Vec<Click> {
     CLICKS.lock().unwrap().iter().copied().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn public_lines_are_spaced_out() {
+        assert!(super::may_post(7, 1_000_000));
+        assert!(!super::may_post(7, 1_000_000 + 60_000));
+        assert!(!super::may_post(7, 1_000_000 + super::POST_GAP_MS - 1));
+        assert!(super::may_post(7, 1_000_000 + super::POST_GAP_MS));
+        assert!(super::may_post(8, 1_000_000 + 60_000));
+    }
 }
 
 #[derive(Default)]
@@ -245,6 +279,7 @@ impl Feature for Rpg {
         self.record(Click { at: now_ms(), work_us: work, reply_ms: t.elapsed().as_millis() as i64 });
         if let Some(text) = out.announce
             && s.announce
+            && may_post(guild, now_ms())
             && let Some(ch) = i.channel.as_ref().map(|c| c.id.get())
         {
             let _ = ctx.say(ch, &text).await;

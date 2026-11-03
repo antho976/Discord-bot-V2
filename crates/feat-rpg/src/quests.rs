@@ -26,18 +26,20 @@ pub enum Goal {
     Boss,
     /// Give this much tribute at any altar.
     Give(i64),
+    /// Clear this Labyrinth floor in one run.
+    Floor(u32),
 }
 
 impl Goal {
     /// Goals counted from what happens (the rest are read from the player).
     pub fn counted(&self) -> bool {
-        matches!(self, Goal::Wins { .. } | Goal::Expeditions { .. } | Goal::Forge { .. } | Goal::Give(_))
+        matches!(self, Goal::Wins { .. } | Goal::Expeditions { .. } | Goal::Forge { .. } | Goal::Give(_) | Goal::Floor(_))
     }
     pub fn target(&self) -> i64 {
         match self {
             Goal::Wins { n, .. } | Goal::Expeditions { n, .. } | Goal::Forge { n } => *n as i64,
             Goal::Facts(n) | Goal::Level(n) => *n as i64,
-            Goal::Boss => 1,
+            Goal::Boss | Goal::Floor(_) => 1,
             Goal::Give(n) => *n,
         }
     }
@@ -53,6 +55,7 @@ impl Goal {
             Goal::Level(n) => format!("Reach level {n}"),
             Goal::Boss => "Defeat the Barrow King".into(),
             Goal::Give(n) => format!("Give {n} tribute at the temple"),
+            Goal::Floor(n) => format!("Clear floor {n} of the Labyrinth"),
         }
     }
 }
@@ -104,7 +107,7 @@ pub const CHAPTERS: &[Chapter] = &[
         id: "loom",
         title: "The Loom",
         place: "Between the worlds",
-        text: "Your patron leads you into a hall with no walls. Three Norns and three Fates sit at one loom, weaving every saga that ever was, side by side. One thread hangs cut.\n\n\"Someone is unweaving the old stories,\" says Urd. \"Live them again, and find out who.\"\n\nYour fingers touch the cloth. Then cold, and salt in your mouth.",
+        text: "Your patron leads you into a hall with no walls. Three Norns and three Fates sit at one loom, weaving every saga that ever was, side by side. One thread hangs cut.\n\n\"Someone is unweaving the old stories,\" says Urd. \"Live them again, and find out who.\" Below the hall something scrapes in the dark: Daedalus' labyrinth, where loose threads fall.\n\nYour fingers touch the cloth. Then cold, and salt in your mouth.",
         patron: Some([
             "Thor cracks his knuckles. \"Find them. Then I hit them.\"",
             "Athena studies the cut end. \"Clean. Whoever did this knew exactly which thread to take.\"",
@@ -289,7 +292,7 @@ pub const CHAPTERS: &[Chapter] = &[
         id: "apple",
         title: "A Golden Apple",
         place: "The Loom",
-        text: "You wake at the Loom with the golden thread in your fist. The Norns tie it back. Skagi's saga is whole again.\n\nBut at the cut, the Fates find two things that don't belong to any saga: a golden apple, and a sprig of mistletoe.",
+        text: "You wake at the Loom with the golden thread in your fist. The Norns tie it back. Skagi's saga is whole again.\n\nBut at the cut, the Fates find two things that don't belong to any saga: a golden apple, and a sprig of mistletoe. And a trail of loose threads, leading down into the Labyrinth.",
         patron: Some([
             "\"Mistletoe,\" Thor says, and the hall goes cold. \"I know whose that is.\"",
             "\"An apple of discord,\" Athena says. \"Eris. Or someone who wants us to think so.\"",
@@ -323,6 +326,8 @@ pub enum Event<'a> {
     Expedition { region: &'a str },
     Forged,
     Gave(i64),
+    /// A Labyrinth floor cleared.
+    Floor(u32),
 }
 
 impl Goal {
@@ -335,6 +340,7 @@ impl Goal {
             (Goal::Expeditions { region, .. }, Event::Expedition { region: r }) => i64::from(region.is_none_or(|x| x == r)),
             (Goal::Forge { .. }, Event::Forged) => 1,
             (Goal::Give(_), Event::Gave(n)) => n,
+            (Goal::Floor(f), Event::Floor(at)) => i64::from(at >= *f),
             _ => 0,
         }
     }
@@ -368,6 +374,7 @@ pub fn bounties(user: u64, day: i64, level: u32, region: &'static data::Region) 
         Goal::Expeditions { region: Some(region.id), n: 1 },
         Goal::Forge { n: 1 },
         Goal::Give(200 + 20 * level as i64),
+        Goal::Floor(3 + level / 3),
     ];
     let mut picked: Vec<usize> = Vec::new();
     while picked.len() < 3 {

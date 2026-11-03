@@ -56,6 +56,8 @@ impl Element {
 pub enum Kind {
     Hunt,
     Boss,
+    /// A floor of the Labyrinth.
+    Lab,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +151,28 @@ impl Fight {
         Self::start(Kind::Hunt, region.id, hero, hp, foe, Vec::new(), rng)
     }
 
+    /// A Labyrinth floor: `monster` at `power`, harder by `mult`.
+    pub fn floor(hero: Hero, hp: i64, monster: &data::Monster, power: i64, mult: f64, seed: u64) -> Fight {
+        let mut rng = Rng::new(seed);
+        let p = power as f64 * mult;
+        let foe = Foe {
+            id: monster.id.into(),
+            name: monster.name.into(),
+            hp: (p * monster.hp * data::HUNT_HP) as i64,
+            max_hp: (p * monster.hp * data::HUNT_HP) as i64,
+            atk: (p * monster.atk * data::HUNT_ATK).max(3.0) as i64,
+            step: (rng.next_u64() % monster.pattern.len() as u64) as usize,
+            phase: 1,
+            weak: monster.weak.map(str::to_owned),
+            braced: false,
+            burn: 0,
+            bleed: 0,
+            bleed_dmg: 0,
+            cursed: 0,
+        };
+        Self::start(Kind::Lab, "labyrinth", hero, hp, foe, Vec::new(), rng)
+    }
+
     /// The realm boss. `week` decides its weakness; `scouted` is what the player knows.
     pub fn boss(hero: Hero, hp: i64, week: i64, scouted: Vec<String>, seed: u64) -> Fight {
         let foe = Foe {
@@ -171,6 +195,7 @@ impl Fight {
 
     fn start(kind: Kind, region: &str, hero: Hero, hp: i64, foe: Foe, scouted: Vec<String>, rng: Rng) -> Fight {
         let (max_hp, atk) = hero.stats();
+        let stamina = (3 + hero.mods.stamina).min(MAX_STAMINA);
         let mut f = Fight {
             kind,
             region: region.into(),
@@ -179,7 +204,7 @@ impl Fight {
             hp: hp.clamp(1, max_hp),
             max_hp,
             atk,
-            stamina: 3,
+            stamina,
             turn: 1,
             charge: 0,
             cooldowns: Vec::new(),
@@ -229,7 +254,7 @@ impl Fight {
         match self.kind {
             Kind::Boss if self.foe.phase == 2 => data::BOSS_P2,
             Kind::Boss => data::BOSS_P1,
-            Kind::Hunt => data::monster(&self.foe.id).map(|m| m.pattern).unwrap_or(&[Move::Hit]),
+            Kind::Hunt | Kind::Lab => data::monster(&self.foe.id).map(|m| m.pattern).unwrap_or(&[Move::Hit]),
         }
     }
 
@@ -246,7 +271,7 @@ impl Fight {
     }
 
     pub fn knows(&self, fact: &str) -> bool {
-        self.kind == Kind::Hunt || self.scouted.iter().any(|f| f == fact)
+        self.kind != Kind::Boss || self.scouted.iter().any(|f| f == fact)
     }
 
     /// What the player sees of the foe's next move, and whether it's thanks to scouting.
@@ -314,6 +339,12 @@ impl Fight {
         if self.ally.as_deref() == Some("jarlsmen") {
             m *= 1.08;
         }
+        m *= 1.0 + self.hero.mods.damage;
+        match self.foe.weak.as_deref() {
+            Some("fire") => m *= 1.0 + self.hero.mods.fire,
+            Some("frost") => m *= 1.0 + self.hero.mods.frost,
+            _ => {}
+        }
         if let Some((el, left)) = self.coat {
             let weak = self.foe.weak.as_deref() == Some(el.id());
             m *= if weak { 1.6 } else { 1.1 };
@@ -326,12 +357,12 @@ impl Fight {
             m *= 0.5;
             self.foe.braced = false;
         }
-        if self.rng.chance(0.10) {
+        if self.rng.chance(0.10 + self.hero.mods.crit) {
             m *= 1.5;
         }
         let dmg = scale(&mut self.rng, self.atk as f64 * m);
         self.foe.hp -= dmg;
-        let mut steal = self.hero.main.lifesteal() + if self.hero.lesser == Some(God::Hades) { 0.04 } else { 0.0 };
+        let mut steal = self.hero.main.lifesteal() + if self.hero.lesser == Some(God::Hades) { 0.04 } else { 0.0 } + self.hero.mods.steal;
         if self.kind == Kind::Boss {
             // The dead don't bleed much: lifesteal is weaker against the realm boss.
             steal *= data::BOSS_LIFESTEAL;
@@ -546,7 +577,8 @@ impl Fight {
             return 0;
         }
         if self.guarding {
-            d = (d as f64 * (1.0 - self.hero.main.body().2)) as i64;
+            let stop = (self.hero.main.body().2 + self.hero.mods.guard).min(0.85);
+            d = (d as f64 * (1.0 - stop)) as i64;
         }
         if self.shield > 0 {
             let s = self.shield.min(d);
@@ -631,7 +663,7 @@ pub fn autoplay(f: &Fight, potions: i64, oils: (i64, i64)) -> Action {
         }
         // Without scouting the boss's slam is a vague warning: a player guards it about half
         // the time.
-        if f.kind == Kind::Hunt || f.knows(if intent == Move::Heavy { "slam" } else { "roar" }) || f.turn.is_multiple_of(2) {
+        if f.kind != Kind::Boss || f.knows(if intent == Move::Heavy { "slam" } else { "roar" }) || f.turn.is_multiple_of(2) {
             return Action::Guard;
         }
     }
@@ -659,7 +691,7 @@ mod tests {
     use super::*;
 
     fn hero(main: God, lesser: Option<God>, power: i64) -> Hero {
-        Hero { main, lesser, bonds: [2, 2, 2], power, scouting: 0 }
+        Hero { main, lesser, bonds: [2, 2, 2], power, scouting: 0, mods: Default::default() }
     }
 
     fn run(mut f: Fight) -> Fight {

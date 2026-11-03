@@ -188,3 +188,32 @@ some choices, more content, and every button on the overview instead of a menu.
 - **Testing:** Settings → Test speed (×10, ×60, ×240 for expeditions, healing and Vigor);
   Players → a player → set level, give items, finish their expedition, make them boss-ready,
   jump their saga to a chapter, heal.
+
+## Third pass: a core loop (2026-11-03)
+
+Owner, after the second test: much better, but it needs a core loop and something to grab
+attention besides hunts and expeditions; a tutorial that explains what, why and how; gear is
+too basic; too many buttons; elite messages are spammy.
+
+- **The loop:** expeditions and hunts bring materials, the forge makes gear, gear takes you
+  deeper into the Labyrinth, the Labyrinth gives loose threads to make gear better. The saga and
+  the Barrow King sit on top.
+- **The Labyrinth of Daedalus** (`src/labyrinth.rs`): under the Loom, where cut threads fall.
+  Pick one of three doors per floor (fight, hard fight for double haul, treasure that may be
+  trapped, shrine that heals); the Minotaur guards every fifth floor. Leave any time with
+  everything; fall and keep half (gear found is lost). Wins heal only 8%. Weekly server board
+  of deepest floors. Simulated depth: a new player about floor 4, mid-game about 7, boss-ready
+  about 13 (`--example labsim`).
+- **Gear rarity and traits:** Common, Fine, Rare, Epic; each step adds a trait (Fierce,
+  Sturdy, Vampiric, Keen, Steady, Warding, Lucky, Seeing, Flame- or Frost-touched) and 4% Power.
+  Forged gear rolls rarity; hunts drop gear 3% of the time, elites always, the guardian always,
+  the boss always (Rare or Epic). Loose threads refine a piece one rarity up (adds a trait) or
+  reforge its traits. Salvaging Fine or better gives threads; a full pack (20 spare pieces)
+  salvages new drops into threads.
+- **Categories:** the overview has Hunt, Expedition, Labyrinth, Saga, then Hero (stats, gear,
+  pack, skills, titles, help) and Skagi (forge, temple, bounty board, goals).
+- **Tutorial:** six steps shown on the overview with what, why and how; each pays 25 gold, all
+  of them 2 potions, 100 gold and a title. Fights explain themselves until your first win.
+  Skippable from Help.
+- **Announcements:** elites only on a player's first kill of that elite, and the RPG posts at
+  most once per server every 10 minutes.

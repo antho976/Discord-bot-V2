@@ -227,6 +227,7 @@ pub const ITEMS: &[Item] = &[
     Item { id: "potion", name: "healing potion", plural: "healing potions", kind: Kind::Combat, tribute: 0, used_for: "heals 40% in a fight", emoji: "potion" },
     Item { id: "fireoil", name: "fire oil", plural: "fire oil", kind: Kind::Combat, tribute: 0, used_for: "fire on your next 3 hits", emoji: "fireoil" },
     Item { id: "frostoil", name: "frost oil", plural: "frost oil", kind: Kind::Combat, tribute: 0, used_for: "frost on your next 3 hits", emoji: "frostoil" },
+    Item { id: "thread", name: "loose thread", plural: "loose threads", kind: Kind::Trophy, tribute: 25, used_for: "refining and reforging gear at the forge", emoji: "thread" },
     Item { id: "shard", name: "crown shard", plural: "crown shards", kind: Kind::Trophy, tribute: 60, used_for: "the Barrow King's gear", emoji: "shard" },
 ];
 
@@ -498,6 +499,7 @@ pub const MONSTERS: &[Monster] = &[
     Monster { id: "hound", name: "Grave Hound", hp: 1.3, atk: 0.24, pattern: &[Move::Hit, Move::Hit, Move::Roar, Move::Heavy], windup: "bares its rotten teeth", weak: Some("fire"), elite: false },
     Monster { id: "shade", name: "Barrow Shade", hp: 1.5, atk: 0.22, pattern: &[Move::Hit, Move::Brace, Move::Heavy], windup: "goes still and cold", weak: Some("frost"), elite: false },
     // Elites: one per region, rare.
+    Monster { id: "minotaur", name: "The Minotaur", hp: 1.7 * 1.8, atk: 0.22 * 1.2, pattern: &[Move::Hit, Move::Heavy, Move::Roar, Move::Hit, Move::Brace, Move::Heavy], windup: "lowers its horns and paws the stone", weak: Some("frost"), elite: true },
     Monster { id: "siren", name: "The Siren of the Skerries", hp: 1.6 * ELITE_HP, atk: 0.20 * ELITE_ATK, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "takes a breath that pulls at your ears", weak: Some("fire"), elite: true },
     Monster { id: "grimtooth", name: "Old Grimtooth", hp: 1.4 * ELITE_HP, atk: 0.22 * ELITE_ATK, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "crouches, every scar on him tight", weak: Some("fire"), elite: true },
     Monster { id: "champion", name: "Hrolf's Champion", hp: 1.6 * ELITE_HP, atk: 0.21 * ELITE_ATK, pattern: &[Move::Hit, Move::Brace, Move::Hit, Move::Heavy], windup: "raises a sword as long as you are", weak: Some("frost"), elite: true },
@@ -627,9 +629,11 @@ mod tests {
         for i in ITEMS {
             let used = GEAR.iter().any(|g| g.cost.iter().any(|(id, _)| *id == i.id))
                 || SUPPLY_RECIPES.iter().any(|r| r.cost.iter().any(|(id, _)| *id == i.id))
-                || matches!(i.kind, Kind::Supply | Kind::Combat);
+                || matches!(i.kind, Kind::Supply | Kind::Combat)
+                || i.id == "thread";
             assert!(used, "{} has no use", i.id);
             let source = REGIONS.iter().any(|r| r.drops.iter().any(|(id, _)| *id == i.id) || r.rare.0 == i.id)
+                || i.id == "thread"
                 || SUPPLY_RECIPES.iter().any(|r| r.makes == i.id)
                 || i.kind == Kind::Trophy;
             assert!(source, "{} can't be found or made", i.id);
@@ -662,3 +666,201 @@ mod tests {
         }
     }
 }
+
+// ---- gear quality and traits ----
+
+/// How good a piece came out. Each step adds a trait and a little Power.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub enum Rarity {
+    Common,
+    Fine,
+    Rare,
+    Epic,
+}
+
+pub const RARITIES: [Rarity; 4] = [Rarity::Common, Rarity::Fine, Rarity::Rare, Rarity::Epic];
+
+impl Rarity {
+    pub fn from_index(i: i64) -> Rarity {
+        RARITIES[(i.clamp(0, 3)) as usize]
+    }
+    pub fn index(self) -> i64 {
+        self as i64
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Rarity::Common => "Common",
+            Rarity::Fine => "Fine",
+            Rarity::Rare => "Rare",
+            Rarity::Epic => "Epic",
+        }
+    }
+    pub fn emoji(self) -> &'static str {
+        match self {
+            Rarity::Common => "common",
+            Rarity::Fine => "fine",
+            Rarity::Rare => "rare",
+            Rarity::Epic => "epic",
+        }
+    }
+    /// Power on top of the piece's base, in percent.
+    pub fn power_pct(self) -> i64 {
+        4 * self.index()
+    }
+}
+
+/// Odds of each rarity, in percent, by where the piece came from.
+pub fn rarity_odds(source: &str) -> [u32; 4] {
+    match source {
+        "forge" => [60, 30, 9, 1],
+        "hunt" => [50, 35, 13, 2],
+        "elite" => [0, 60, 32, 8],
+        "guardian" => [0, 50, 40, 10],
+        "boss" => [0, 0, 70, 30],
+        _ => [100, 0, 0, 0],
+    }
+}
+
+/// A small extra on a piece of gear. Values are in percent unless said otherwise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Trait {
+    Fierce,
+    Sturdy,
+    Vampiric,
+    Keen,
+    Steady,
+    Warding,
+    Lucky,
+    Seeing,
+    Flame,
+    Frost,
+}
+
+pub const TRAITS: [Trait; 10] = [Trait::Fierce, Trait::Sturdy, Trait::Vampiric, Trait::Keen, Trait::Steady, Trait::Warding, Trait::Lucky, Trait::Seeing, Trait::Flame, Trait::Frost];
+
+impl Trait {
+    pub fn name(self) -> &'static str {
+        match self {
+            Trait::Fierce => "Fierce",
+            Trait::Sturdy => "Sturdy",
+            Trait::Vampiric => "Vampiric",
+            Trait::Keen => "Keen",
+            Trait::Steady => "Steady",
+            Trait::Warding => "Warding",
+            Trait::Lucky => "Lucky",
+            Trait::Seeing => "Seeing",
+            Trait::Flame => "Flame-touched",
+            Trait::Frost => "Frost-touched",
+        }
+    }
+    /// The range a roll lands in.
+    pub fn range(self) -> (i64, i64) {
+        match self {
+            Trait::Fierce => (3, 6),
+            Trait::Sturdy => (4, 8),
+            Trait::Vampiric => (2, 4),
+            Trait::Keen => (3, 6),
+            Trait::Steady => (1, 1),
+            Trait::Warding => (4, 8),
+            Trait::Lucky => (4, 8),
+            Trait::Seeing => (4, 8),
+            Trait::Flame | Trait::Frost => (8, 15),
+        }
+    }
+    pub fn describe(self, v: i64) -> String {
+        match self {
+            Trait::Fierce => format!("+{v}% damage"),
+            Trait::Sturdy => format!("+{v}% max HP"),
+            Trait::Vampiric => format!("hits heal {v}% of the damage"),
+            Trait::Keen => format!("+{v}% critical hits"),
+            Trait::Steady => "start fights with 1 more stamina".into(),
+            Trait::Warding => format!("guarding stops {v}% more"),
+            Trait::Lucky => format!("+{v}% materials"),
+            Trait::Seeing => format!("+{v}% scouting"),
+            Trait::Flame => format!("+{v}% damage to foes weak to fire"),
+            Trait::Frost => format!("+{v}% damage to foes weak to frost"),
+        }
+    }
+    /// Which slots can carry it.
+    pub fn fits(self, slot: Slot) -> bool {
+        match self {
+            Trait::Fierce | Trait::Flame | Trait::Frost => slot == Slot::Weapon,
+            Trait::Sturdy | Trait::Warding => slot == Slot::Armour,
+            Trait::Lucky | Trait::Seeing => slot == Slot::Charm,
+            Trait::Keen | Trait::Vampiric => slot != Slot::Armour,
+            Trait::Steady => slot != Slot::Weapon,
+        }
+    }
+}
+
+/// Everything your traits add up to, for fights and expeditions.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+pub struct Mods {
+    pub damage: f64,
+    pub hp: f64,
+    pub steal: f64,
+    pub crit: f64,
+    pub stamina: i32,
+    pub guard: f64,
+    pub loot: f64,
+    pub scouting: f64,
+    pub fire: f64,
+    pub frost: f64,
+}
+
+impl Mods {
+    pub fn add(&mut self, t: Trait, v: i64) {
+        let f = v as f64 / 100.0;
+        match t {
+            Trait::Fierce => self.damage += f,
+            Trait::Sturdy => self.hp += f,
+            Trait::Vampiric => self.steal += f,
+            Trait::Keen => self.crit += f,
+            Trait::Steady => self.stamina += v as i32,
+            Trait::Warding => self.guard += f,
+            Trait::Lucky => self.loot += f,
+            Trait::Seeing => self.scouting += f,
+            Trait::Flame => self.fire += f,
+            Trait::Frost => self.frost += f,
+        }
+    }
+}
+
+/// Raise a piece one rarity with loose threads: threads and gold for the step to `to`.
+pub fn refine_cost(to: Rarity, level: u32) -> (i64, i64) {
+    (3 * to.index(), 40 * to.index() * level as i64)
+}
+
+/// Reroll a piece's traits: threads and gold.
+pub fn reforge_cost(r: Rarity, level: u32) -> (i64, i64) {
+    (r.index().max(1), 25 * level as i64)
+}
+
+/// Spare gear kept in the pack; more drops are salvaged automatically.
+pub const PACK_GEAR: usize = 20;
+
+// ---- the Labyrinth of Daedalus ----
+
+/// Foes' Power on a floor.
+pub fn floor_power(floor: u32) -> i64 {
+    30 + 22 * floor as i64
+}
+
+/// Every fifth floor is a guardian.
+pub fn guardian_floor(floor: u32) -> bool {
+    floor > 0 && floor.is_multiple_of(5)
+}
+
+/// Where a floor's materials come from.
+pub fn floor_region(floor: u32) -> &'static Region {
+    match floor {
+        0..=4 => &REGIONS[0],
+        5..=9 => &REGIONS[1],
+        _ => &REGIONS[2],
+    }
+}
+
+/// Share of max HP a labyrinth win gives back (less than a hunt: the deep wears you down).
+pub const LAB_WIN_HEAL: f64 = 0.08;
+/// Share of the haul you keep when you fall.
+pub const LAB_KEEP_ON_DEATH: f64 = 0.5;

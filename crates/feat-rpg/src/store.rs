@@ -13,7 +13,22 @@ use crate::engine::combat::Fight;
 use crate::engine::expedition::{Plan, Report};
 use crate::engine::{Hero, progress};
 
-pub const MIGRATIONS: &[Migration] = &[MIGRATION_001, Migration {
+pub const MIGRATIONS: &[Migration] = &[MIGRATION_001, MIGRATION_002, Migration {
+    name: "003_gear_and_labyrinth",
+    sql: "
+        ALTER TABLE rpg_gear ADD COLUMN rarity INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE rpg_gear ADD COLUMN traits TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE rpg_players ADD COLUMN tutorial INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE rpg_runs (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, state TEXT NOT NULL,
+            PRIMARY KEY (guild_id, user_id));
+        CREATE TABLE rpg_lab (
+            guild_id INTEGER NOT NULL, week INTEGER NOT NULL, user_id INTEGER NOT NULL, best INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, week, user_id));
+    ",
+}];
+
+const MIGRATION_002: Migration = Migration {
     name: "002_saga",
     sql: "
         ALTER TABLE rpg_players ADD COLUMN title TEXT;
@@ -29,7 +44,7 @@ pub const MIGRATIONS: &[Migration] = &[MIGRATION_001, Migration {
             progress INTEGER NOT NULL DEFAULT 0, claimed INTEGER NOT NULL DEFAULT 0, level INTEGER NOT NULL,
             PRIMARY KEY (guild_id, user_id, day, idx));
     ",
-}];
+};
 
 const MIGRATION_001: Migration = Migration {
     name: "001_rpg",
@@ -97,14 +112,20 @@ pub struct GearRow {
     pub gear: &'static data::Gear,
     pub upgrade: i64,
     pub equipped: bool,
+    pub rarity: data::Rarity,
+    pub traits: crate::engine::loot::Traits,
 }
 
 impl GearRow {
     pub fn power(&self) -> i64 {
-        data::gear_power(self.gear, self.upgrade)
+        let base = data::gear_power(self.gear, self.upgrade);
+        base + base * self.rarity.power_pct() / 100
     }
     pub fn label(&self) -> String {
         if self.upgrade > 0 { format!("{} +{}", self.gear.name, self.upgrade) } else { self.gear.name.to_owned() }
+    }
+    pub fn traits_text(&self) -> String {
+        self.traits.iter().map(|(t, v)| format!("{}: {}", t.name(), t.describe(*v))).collect::<Vec<_>>().join(" · ")
     }
 }
 
@@ -159,6 +180,10 @@ pub struct Player {
     pub bounty: [(i64, bool); 3],
     /// The level today's bounties were set at, once they've been seen.
     pub bounty_level: Option<u32>,
+    /// Tutorial step; past the last step means done.
+    pub tutorial: i64,
+    /// A Labyrinth run in progress.
+    pub run: Option<crate::labyrinth::Run>,
 }
 
 impl Player {
@@ -174,8 +199,17 @@ impl Player {
     pub fn power(&self) -> i64 {
         data::level_power(self.level) + data::SLOTS.iter().filter_map(|s| self.equipped(*s)).map(GearRow::power).sum::<i64>()
     }
+    pub fn mods(&self) -> data::Mods {
+        let mut m = data::Mods::default();
+        for g in data::SLOTS.iter().filter_map(|s| self.equipped(*s)) {
+            for (t, v) in &g.traits {
+                m.add(*t, *v);
+            }
+        }
+        m
+    }
     pub fn scouting(&self) -> i64 {
-        data::SLOTS.iter().filter_map(|s| self.equipped(*s)).map(|g| g.gear.scouting).sum()
+        data::SLOTS.iter().filter_map(|s| self.equipped(*s)).map(|g| g.gear.scouting).sum::<i64>() + (self.mods().scouting * 100.0) as i64
     }
     pub fn bond(&self, g: God) -> u32 {
         progress::bond_rank(self.tribute[g as usize], data::BOND_CAP)
@@ -187,6 +221,7 @@ impl Player {
             bonds: [0, 1, 2].map(|i| progress::bond_rank(self.tribute[i], data::BOND_CAP)),
             power: self.power(),
             scouting: self.scouting(),
+            mods: self.mods(),
         }
     }
     pub fn max_hp(&self) -> i64 {
@@ -240,7 +275,7 @@ fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player
         .query_row(
             "SELECT name, patron, lesser, level, xp, gold, hp, hp_at, vigor, vigor_at, version, boss_won,
                     boss_reward_week, hub_channel, hub_message, report, created_at,
-                    title, event, saga, saga_progress, saga_choices
+                    title, event, saga, saga_progress, saga_choices, tutorial
              FROM rpg_players WHERE guild_id = ?1 AND user_id = ?2",
             params![guild as i64, user as i64],
             |r| {
@@ -281,6 +316,8 @@ fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player
                     saga_choices: serde_json::from_str(&r.get::<_, String>(21)?).unwrap_or_default(),
                     bounty: [(0, false); 3],
                     bounty_level: None,
+                    tutorial: r.get(22)?,
+                    run: None,
                 })
             },
         )
@@ -289,11 +326,15 @@ fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player
     let (g, u) = (guild as i64, user as i64);
     let mut st = c.prepare_cached("SELECT item, qty FROM rpg_items WHERE guild_id = ?1 AND user_id = ?2 AND qty != 0")?;
     p.items = st.query_map(params![g, u], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
-    let mut st = c.prepare_cached("SELECT id, gear, upgrade, equipped FROM rpg_gear WHERE guild_id = ?1 AND user_id = ?2 ORDER BY id")?;
+    let mut st = c.prepare_cached("SELECT id, gear, upgrade, equipped, rarity, traits FROM rpg_gear WHERE guild_id = ?1 AND user_id = ?2 ORDER BY id")?;
     p.gear = st
-        .query_map(params![g, u], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)? != 0)))?
+        .query_map(params![g, u], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, i64>(3)? != 0, r.get::<_, i64>(4)?, r.get::<_, String>(5)?))
+        })?
         .filter_map(|r| r.ok())
-        .filter_map(|(id, gear, upgrade, equipped)| data::gear(&gear).map(|gear| GearRow { id, gear, upgrade, equipped }))
+        .filter_map(|(id, gear, upgrade, equipped, rarity, traits)| {
+            data::gear(&gear).map(|gear| GearRow { id, gear, upgrade, equipped, rarity: data::Rarity::from_index(rarity), traits: serde_json::from_str(&traits).unwrap_or_default() })
+        })
         .collect();
     let mut st = c.prepare_cached("SELECT god, tribute FROM rpg_bonds WHERE guild_id = ?1 AND user_id = ?2")?;
     for row in st.query_map(params![g, u], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
@@ -325,6 +366,10 @@ fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player
         }
     }
     p.facts.sort_by_key(|f| data::FACTS.iter().position(|x| x == f));
+    p.run = c
+        .query_row("SELECT state FROM rpg_runs WHERE guild_id = ?1 AND user_id = ?2", params![g, u], |r| r.get::<_, String>(0))
+        .optional()?
+        .and_then(|s| serde_json::from_str(&s).ok());
     let mut st = c.prepare_cached("SELECT title FROM rpg_titles WHERE guild_id = ?1 AND user_id = ?2 ORDER BY at")?;
     p.titles = st.query_map(params![g, u], |r| r.get(0))?.collect::<Result<_, _>>()?;
     let mut st = c.prepare_cached("SELECT idx, progress, claimed, level FROM rpg_bounties WHERE guild_id = ?1 AND user_id = ?2 AND day = ?3")?;
@@ -485,18 +530,74 @@ impl Game<'_> {
     }
 
     pub fn add_gear(&mut self, gear: &'static data::Gear, equip: bool) -> Result<i64> {
+        self.add_piece(gear, data::Rarity::Common, Vec::new(), equip, "forged")
+    }
+
+    pub fn add_piece(&mut self, gear: &'static data::Gear, rarity: data::Rarity, traits: crate::engine::loot::Traits, equip: bool, why: &str) -> Result<i64> {
         let (g, u) = self.ids();
         if equip {
             self.unequip(gear.slot)?;
         }
         self.tx.execute(
-            "INSERT INTO rpg_gear (guild_id, user_id, gear, upgrade, equipped, made_at) VALUES (?1, ?2, ?3, 0, ?4, ?5)",
-            params![g, u, gear.id, equip, self.p.now],
+            "INSERT INTO rpg_gear (guild_id, user_id, gear, upgrade, equipped, made_at, rarity, traits) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7)",
+            params![g, u, gear.id, equip, self.p.now, rarity.index(), serde_json::to_string(&traits)?],
         )?;
         let id = self.tx.last_insert_rowid();
-        self.p.gear.push(GearRow { id, gear, upgrade: 0, equipped: equip });
-        self.ledger(gear.id, 1, "forged")?;
+        self.p.gear.push(GearRow { id, gear, upgrade: 0, equipped: equip, rarity, traits });
+        self.ledger(gear.id, 1, why)?;
         Ok(id)
+    }
+
+    pub fn set_piece(&mut self, gear_id: i64, rarity: data::Rarity, traits: crate::engine::loot::Traits) -> Result<()> {
+        self.tx.execute("UPDATE rpg_gear SET rarity = ?2, traits = ?3 WHERE id = ?1", params![gear_id, rarity.index(), serde_json::to_string(&traits)?])?;
+        if let Some(r) = self.p.gear.iter_mut().find(|r| r.id == gear_id) {
+            r.rarity = rarity;
+            r.traits = traits;
+        }
+        Ok(())
+    }
+
+    pub fn set_tutorial(&mut self, step: i64) -> Result<()> {
+        let (g, u) = self.ids();
+        self.tx.execute("UPDATE rpg_players SET tutorial = ?3 WHERE guild_id = ?1 AND user_id = ?2", params![g, u, step])?;
+        self.p.tutorial = step;
+        Ok(())
+    }
+
+    pub fn save_run(&mut self, run: Option<crate::labyrinth::Run>) -> Result<()> {
+        let (g, u) = self.ids();
+        match &run {
+            Some(r) => {
+                self.tx.execute(
+                    "INSERT INTO rpg_runs (guild_id, user_id, state) VALUES (?1, ?2, ?3) ON CONFLICT (guild_id, user_id) DO UPDATE SET state = excluded.state",
+                    params![g, u, serde_json::to_string(r)?],
+                )?;
+            }
+            None => {
+                self.tx.execute("DELETE FROM rpg_runs WHERE guild_id = ?1 AND user_id = ?2", params![g, u])?;
+            }
+        }
+        self.p.run = run;
+        Ok(())
+    }
+
+    /// Record a floor reached this week; true if it's the player's best.
+    pub fn lab_best(&mut self, floor: u32) -> Result<bool> {
+        let (g, u) = self.ids();
+        let week = self.p.week();
+        let old: i64 = self
+            .tx
+            .query_row("SELECT best FROM rpg_lab WHERE guild_id = ?1 AND week = ?2 AND user_id = ?3", params![g, week, u], |r| r.get(0))
+            .optional()?
+            .unwrap_or(0);
+        if floor as i64 > old {
+            self.tx.execute(
+                "INSERT INTO rpg_lab (guild_id, week, user_id, best) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (guild_id, week, user_id) DO UPDATE SET best = excluded.best",
+                params![g, week, u, floor as i64],
+            )?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     fn unequip(&mut self, slot: Slot) -> Result<()> {
@@ -820,6 +921,18 @@ pub fn top_givers(c: &Connection, guild: u64, week: i64, limit: i64) -> Result<V
     let rows = st.query_map(params![guild as i64, week, limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
     Ok(rows)
 }
+
+/// This week's deepest Labyrinth floors: (user, name, floor).
+pub fn lab_board(c: &Connection, guild: u64, week: i64, limit: i64) -> Result<Vec<(u64, String, i64)>> {
+    let mut st = c.prepare_cached(
+        "SELECT l.user_id, COALESCE(p.name, ''), l.best FROM rpg_lab l
+         LEFT JOIN rpg_players p ON p.guild_id = l.guild_id AND p.user_id = l.user_id
+         WHERE l.guild_id = ?1 AND l.week = ?2 ORDER BY l.best DESC LIMIT ?3",
+    )?;
+    let rows = st.query_map(params![guild as i64, week, limit], |r| Ok((r.get::<_, i64>(0)? as u64, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
+    Ok(rows)
+}
+
 
 #[cfg(test)]
 mod tests {
