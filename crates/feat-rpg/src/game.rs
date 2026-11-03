@@ -87,6 +87,9 @@ pub struct World {
     pub goal: i64,
     pub blessing: Option<God>,
     pub rates: Rates,
+    /// For the overview: players asking to join (if you lead), or guilds that invited you.
+    pub guild_asks: usize,
+    pub guild_invites: usize,
 }
 
 impl World {
@@ -119,6 +122,20 @@ impl World {
             goal: store::goal(&g.tx, g.p.guild, week)?,
             blessing: store::blessing(&g.tx, g.p.guild, week)?,
             rates,
+            guild_asks: match &g.p.clan {
+                Some(c) if modules.guilds && c.leader => {
+                    crate::guild::asks(&g.tx, c.id, now)?.len()
+                }
+                _ => 0,
+            },
+            guild_invites: if modules.guilds && g.p.clan.is_none() {
+                crate::guild::pending(&g.tx, g.p.guild, g.p.user, now)?
+                    .iter()
+                    .filter(|x| x.1 == "invite")
+                    .count()
+            } else {
+                0
+            },
         })
     }
     pub fn total(&self) -> i64 {
@@ -254,6 +271,30 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
                 dur(ends - p.now)
             ),
             Btn::new(ids.go("raid"), "Raid").emoji("boss"),
+        );
+    }
+    if w.guild_asks > 0 {
+        s.section(
+            format!(
+                "{} **{} asking to join your guild**\n-# Accept or decline under Manage",
+                e("guild"),
+                w.guild_asks
+            ),
+            Btn::new(ids.go("guildmanage"), "Manage").emoji("guild"),
+        );
+    }
+    if w.guild_invites > 0 {
+        s.section(
+            format!(
+                "{} **{} invited you**\n-# Invites last a week",
+                e("guild"),
+                if w.guild_invites == 1 {
+                    "A guild".to_string()
+                } else {
+                    format!("{} guilds", w.guild_invites)
+                }
+            ),
+            Btn::new(ids.go("guild"), "See").emoji("guild"),
         );
     }
     if let Some(run) = &p.run {
@@ -1567,7 +1608,7 @@ fn forge(p: &Player) -> Screen {
     s
 }
 
-trait ThenPrimary {
+pub(crate) trait ThenPrimary {
     fn then_primary(self, on: bool) -> Self;
 }
 impl ThenPrimary for Btn {
@@ -2599,8 +2640,58 @@ pub fn handle(
                 crate::guild::screen(g)?
             }
             ("guild", "join") => {
-                note = crate::guild::join(g, value.parse().unwrap_or(-1))?;
+                let clan = if route.arg.is_empty() {
+                    &value
+                } else {
+                    &route.arg
+                };
+                note = crate::guild::join(g, clan.parse().unwrap_or(-1))?;
                 crate::guild::screen(g)?
+            }
+            ("guild", "find") => {
+                let f = crate::guild::Find {
+                    page: 0,
+                    open_only: false,
+                    query: crate::guild::clean(&value),
+                };
+                crate::guild::find_screen(g, &f)?
+            }
+            ("guild", "page") => {
+                crate::guild::find_screen(g, &crate::guild::Find::parse(&route.arg))?
+            }
+            ("guild", "ask" | "withdraw") => {
+                let (clan, rest) = route.arg.split_once('.').unwrap_or((&route.arg, ""));
+                let clan = clan.parse().unwrap_or(-1);
+                note = if route.action == "ask" {
+                    crate::guild::ask(g, clan)?
+                } else {
+                    crate::guild::withdraw(g, clan)?
+                };
+                if g.p.clan.is_some() {
+                    crate::guild::screen(g)?
+                } else {
+                    crate::guild::find_screen(g, &crate::guild::Find::parse(rest))?
+                }
+            }
+            ("guild", "accept") => {
+                note = crate::guild::accept(g, route.arg.parse().unwrap_or(0))?;
+                crate::guild::manage_screen(g)?
+            }
+            ("guild", "decline") => {
+                note = crate::guild::decline(g, value.parse().unwrap_or(0))?;
+                crate::guild::manage_screen(g)?
+            }
+            ("guild", "invite") => {
+                note = crate::guild::invite(g, value.parse().unwrap_or(0))?;
+                crate::guild::manage_screen(g)?
+            }
+            ("guild", "policy") => {
+                note = crate::guild::set_policy(g, &value)?;
+                crate::guild::manage_screen(g)?
+            }
+            ("guild", "minimum") => {
+                note = crate::guild::set_minimum(g, value.parse().unwrap_or(0))?;
+                crate::guild::manage_screen(g)?
             }
             ("guild", "leave") => {
                 note = crate::guild::leave(g)?;
@@ -2616,7 +2707,7 @@ pub fn handle(
             }
             ("guild", "kick") => {
                 note = crate::guild::kick(g, value.parse().unwrap_or(0))?;
-                crate::guild::screen(g)?
+                crate::guild::manage_screen(g)?
             }
             ("guild", "raid") => {
                 note = start_raid(g)?;
@@ -2915,6 +3006,10 @@ pub fn view(
             None => expedition_plan(p, w, &default_plan(p)),
         },
         "guild" if w.modules.guilds => crate::guild::screen(g)?,
+        "guildfind" if w.modules.guilds => {
+            crate::guild::find_screen(g, &crate::guild::Find::parse(""))?
+        }
+        "guildmanage" if w.modules.guilds => crate::guild::manage_screen(g)?,
         "titan" if w.modules.titans => match &p.fight {
             Some(f) if f.kind == crate::engine::combat::Kind::Shared => {
                 fight_screen(p, &f.clone(), None)

@@ -402,6 +402,18 @@ impl Feature for Rpg {
                 )
                 .await;
         }
+        // Searching for a guild asks for the name in a form too.
+        if route.screen == "guild" && route.action == "search" {
+            let id = format!("rpg:{user}:guild:find::{}", route.version.max(0));
+            return ctx
+                .modal(
+                    i,
+                    &id,
+                    "Find a guild",
+                    &[("name", "Guild name or tag", false, true, None)],
+                )
+                .await;
+        }
         let started = Instant::now();
         // A new player swearing to a patron: make the character first.
         if route.screen == "patron"

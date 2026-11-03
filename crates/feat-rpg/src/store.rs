@@ -47,7 +47,21 @@ pub const MIGRATIONS: &[Migration] = &[MIGRATION_001, MIGRATION_002, MIGRATION_0
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, day INTEGER NOT NULL, slot TEXT NOT NULL,
             PRIMARY KEY (guild_id, user_id, day, slot));
     ",
-}];
+}, MIGRATION_005];
+
+/// Guild controls: who may join, a weekly minimum, asks and invites, and a cooldown after a kick.
+const MIGRATION_005: Migration = Migration {
+    name: "005_guild_controls",
+    sql: "
+        ALTER TABLE rpg_clans ADD COLUMN policy TEXT NOT NULL DEFAULT 'open';
+        ALTER TABLE rpg_clans ADD COLUMN min_week INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE rpg_clan_members ADD COLUMN last_xp INTEGER NOT NULL DEFAULT 0;
+        CREATE TABLE rpg_clan_invites (
+            guild_id INTEGER NOT NULL, clan_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+            kind TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (clan_id, user_id));
+        CREATE INDEX rpg_clan_invites_user ON rpg_clan_invites (guild_id, user_id);
+    ",
+};
 
 const MIGRATION_003: Migration = Migration {
     name: "003_gear_and_labyrinth",
