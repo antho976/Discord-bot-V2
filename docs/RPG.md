@@ -188,3 +188,71 @@ some choices, more content, and every button on the overview instead of a menu.
 - **Testing:** Settings → Test speed (×10, ×60, ×240 for expeditions, healing and Vigor);
   Players → a player → set level, give items, finish their expedition, make them boss-ready,
   jump their saga to a chapter, heal.
+
+## Third pass: a core loop (2026-11-03)
+
+Owner, after the second test: much better, but it needs a core loop and something to grab
+attention besides hunts and expeditions; a tutorial that explains what, why and how; gear is
+too basic; too many buttons; elite messages are spammy.
+
+- **The loop:** expeditions and hunts bring materials, the forge makes gear, gear takes you
+  deeper into the Labyrinth, the Labyrinth gives loose threads to make gear better. The saga and
+  the Barrow King sit on top.
+- **The Labyrinth of Daedalus** (`src/labyrinth.rs`): under the Loom, where cut threads fall.
+  Pick one of three doors per floor (fight, hard fight for double haul, treasure that may be
+  trapped, shrine that heals); the Minotaur guards every fifth floor. Leave any time with
+  everything; fall and keep half (gear found is lost). Wins heal only 8%. Weekly server board
+  of deepest floors. Simulated depth: a new player about floor 4, mid-game about 7, boss-ready
+  about 13 (`--example labsim`).
+- **Gear rarity and traits:** Common, Fine, Rare, Epic; each step adds a trait (Fierce,
+  Sturdy, Vampiric, Keen, Steady, Warding, Lucky, Seeing, Flame- or Frost-touched) and 4% Power.
+  Forged gear rolls rarity; hunts drop gear 3% of the time, elites always, the guardian always,
+  the boss always (Rare or Epic). Loose threads refine a piece one rarity up (adds a trait) or
+  reforge its traits. Salvaging Fine or better gives threads; a full pack (20 spare pieces)
+  salvages new drops into threads.
+- **Categories:** the overview has Hunt, Expedition, Labyrinth, Saga, then Hero (stats, gear,
+  pack, skills, titles, help) and Skagi (forge, temple, bounty board, goals).
+- **Tutorial:** six steps shown on the overview with what, why and how; each pays 25 gold, all
+  of them 2 potions, 100 gold and a title. Fights explain themselves until your first win.
+  Skippable from Help.
+- **Announcements:** elites only on a player's first kill of that elite, and the RPG posts at
+  most once per server every 10 minutes.
+
+## Fourth pass: the big build (2026-11-03, overnight)
+
+Owner: make it good enough to ship without shipping; more content, more weight to the
+mechanics, guilds, boss battles, server-wide events, dungeons, raids, maybe a map. Bloat is
+fine: they test it, cut what they don't like, and we go through what's left.
+
+Every system below has a switch on the dashboard (RPG, Settings, Modules), so cutting one is a
+click before it is a code change. Switched off, its buttons and announcements disappear and
+its saved progress stays.
+
+| Switch | What it is |
+| --- | --- |
+| Labyrinth | Floor-by-floor runs (third pass) |
+| Dungeons | Three fixed delves, one per region: the Drowned Hall (level 5), the Wolf-King's Den (11), Hrolf's Treasury (17). Four rooms then a boss with its own pattern. First clear each day opens the chest: gear (Fine or better), 2 loose threads, the region's rare material, gold. Fall and keep half of what you carried |
+| Guilds | Found one for 500 gold (name and tag in a form), up to 12 members. Guild XP comes only from what members do; levels give small shared perks (up to +5% gold and a title). The treasury only buys upgrades (Mead Hall, War Banner, Longship), never power for one member. Weekly challenge: 12 wins per member pays the treasury |
+| Guild raids | The leader spends 1,500 from the treasury to wake Fafnir. 7,000 HP per member, 72 hours, 2 attempts a day of 10 turns each. Everyone who hit claims when it falls (a smaller reward if it gets away) |
+| Titans | Server-wide: one of Jormungandr, Typhon or Hrimthurs rises every 72 hours for 48 (staff can raise one now from the dashboard). 9,000 HP per active player, 3 attempts a day. The one announcement that bypasses the 10-minute quiet gap |
+| Map | A drawn map of Midgard on the overview's Map screen: open regions, dungeon doors, where your expedition is, a Titan in the sea when one is up |
+| Saga | The Loom saga (second pass) |
+| Side quests | Skagi's townsfolk, six short lines with their own small story: Asa the fisherman's widow, Eydis the shieldmaiden, Jarl Sigrun, Old Hakon the hunter, Bragi the skald, the völva. Each step pays gold, XP or supplies; each line ends with a title |
+| Bounties | The daily bounty board (second pass) |
+| Market | Skagi's daily stall: three pieces picked for you (Fine or better, no repeats) and supplies with daily limits. Somewhere for gold to go besides the forge |
+| Encounters | Random events on hunts (second pass) |
+| Elites | Elite monsters and their once-per-player announcement |
+
+Mechanics given more weight in the same pass:
+
+- **Fights read better:** critical hits say so; guarding a heavy blow from a normal foe is a
+  perfect guard and the next hit lands 50% harder. Not against the Barrow King: he is balanced
+  around guarding his slam already, and with it Hades won 60 of 60 fights at 80% of the Power
+  he needs.
+- **Allies:** the saga's choice at the völva picks who stands with you once in the Barrow
+  King's fight (the völva, Eydis, or the Jarl's men).
+- **Dashboard test tools:** a player view (give gold, make them boss-ready, move their saga chapter, heal); Raise a Titan now; the
+  module switches; a preview seeded with a guild (Ravenhold), a Titan, a raid and side quests.
+
+Still untested in Discord itself: the guild form (a modal), the Titan announcement, and the map
+image through the public address. The click-through tests cover each flow in the database.

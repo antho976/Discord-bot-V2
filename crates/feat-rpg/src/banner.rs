@@ -43,13 +43,25 @@ fn sign(secret: &str, body: &str) -> String {
 
 impl Spec {
     fn body(&self) -> String {
-        format!("{}.{}.{}.{}.{}.{}", self.patron.id(), self.level, self.power, self.xp10, hex::encode(self.name.as_bytes()), hex::encode(self.title.as_bytes()))
+        format!(
+            "{}.{}.{}.{}.{}.{}",
+            self.patron.id(),
+            self.level,
+            self.power,
+            self.xp10,
+            hex::encode(self.name.as_bytes()),
+            hex::encode(self.title.as_bytes())
+        )
     }
 
     /// The banner's address, signed so nobody can make the bot draw other words.
     pub fn url(&self, ctx: &Ctx) -> String {
         let body = self.body();
-        format!("{}/p/rpg/banner/{body}.{}.png", ctx.cfg.public_url.trim_end_matches('/'), sign(&ctx.cfg.discord_client_secret, &body))
+        format!(
+            "{}/p/rpg/banner/{body}.{}.png",
+            ctx.cfg.public_url.trim_end_matches('/'),
+            sign(&ctx.cfg.discord_client_secret, &body)
+        )
     }
 
     fn parse(ctx: &Ctx, spec: &str) -> Option<Spec> {
@@ -65,7 +77,14 @@ impl Spec {
         let xp10 = p.next()?.parse().ok()?;
         let name = String::from_utf8(hex::decode(p.next()?).ok()?).ok()?;
         let title = String::from_utf8(hex::decode(p.next().unwrap_or("")).ok()?).ok()?;
-        Some(Spec { patron, name, level, power, xp10, title })
+        Some(Spec {
+            patron,
+            name,
+            level,
+            power,
+            xp10,
+            title,
+        })
     }
 }
 
@@ -75,7 +94,9 @@ fn cache() -> &'static Mutex<HashMap<String, Vec<u8>>> {
 }
 
 async fn serve(State(ctx): State<Ctx>, Path(spec): Path<String>) -> Response {
-    let Some(s) = Spec::parse(&ctx, &spec) else { return StatusCode::NOT_FOUND.into_response() };
+    let Some(s) = Spec::parse(&ctx, &spec) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let hit = cache().lock().unwrap().get(&spec).cloned();
     let png = match hit {
         Some(p) => p,
@@ -94,20 +115,46 @@ async fn serve(State(ctx): State<Ctx>, Path(spec): Path<String>) -> Response {
             }
         }
     };
-    ([(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "public, max-age=31536000, immutable")], png).into_response()
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        png,
+    )
+        .into_response()
 }
 
 /// The scene per patron: sky top and bottom, ridge colours, emblem colour.
 fn palette(g: God) -> (&'static str, &'static str, [&'static str; 3], &'static str) {
     match g {
-        God::Thor => ("#2A4170", "#121A30", ["#1D2C52", "#152040", "#0C1122"], "#E4EEFF"),
-        God::Athena => ("#3B3462", "#17142A", ["#2A2550", "#1E1A3C", "#100E1E"], "#EEE8FF"),
-        God::Hades => ("#1D4A47", "#0D1A1E", ["#173A3A", "#10292B", "#081314"], "#DDFBF2"),
+        God::Thor => (
+            "#2A4170",
+            "#121A30",
+            ["#1D2C52", "#152040", "#0C1122"],
+            "#E4EEFF",
+        ),
+        God::Athena => (
+            "#3B3462",
+            "#17142A",
+            ["#2A2550", "#1E1A3C", "#100E1E"],
+            "#EEE8FF",
+        ),
+        God::Hades => (
+            "#1D4A47",
+            "#0D1A1E",
+            ["#173A3A", "#10292B", "#081314"],
+            "#DDFBF2",
+        ),
     }
 }
 
 fn emblem(g: God) -> &'static str {
-    crate::emoji::ICONS.iter().find(|i| i.0 == g.id()).map(|i| i.2).unwrap_or("")
+    crate::emoji::ICONS
+        .iter()
+        .find(|i| i.0 == g.id())
+        .map(|i| i.2)
+        .unwrap_or("")
 }
 
 /// The banner at 932 x 264 (twice its shown size).
@@ -115,7 +162,14 @@ pub fn svg(s: &Spec) -> String {
     let (top, bottom, ridges, glow) = palette(s.patron);
     let esc = bot_render::escape;
     let name = esc(&crate::ui::truncate(&s.name, 22));
-    let eyebrow = if s.title.is_empty() { format!("MIDGARD · SWORN TO {}", s.patron.name().to_uppercase()) } else { format!("MIDGARD · {}", esc(&crate::ui::truncate(&s.title, 28)).to_uppercase()) };
+    let eyebrow = if s.title.is_empty() {
+        format!("MIDGARD · SWORN TO {}", s.patron.name().to_uppercase())
+    } else {
+        format!(
+            "MIDGARD · {}",
+            esc(&crate::ui::truncate(&s.title, 28)).to_uppercase()
+        )
+    };
     let xp_w = 400 * s.xp10.min(10) / 10;
     let accent = match s.patron {
         God::Thor => "#9CC2FF",
@@ -177,7 +231,14 @@ mod tests {
     #[test]
     fn every_patron_banner_draws() {
         for g in crate::data::GODS {
-            let s = Spec { patron: g, name: "Antho & <friends>".into(), level: 14, power: 312, xp10: 6, title: "Wolf-friend".into() };
+            let s = Spec {
+                patron: g,
+                name: "Antho & <friends>".into(),
+                level: 14,
+                power: 312,
+                xp10: 6,
+                title: "Wolf-friend".into(),
+            };
             let png = bot_render::png(&svg(&s)).unwrap();
             assert!(png.len() > 1000);
         }

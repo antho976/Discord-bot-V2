@@ -56,12 +56,20 @@ impl Element {
 pub enum Kind {
     Hunt,
     Boss,
+    /// A floor of the Labyrinth.
+    Lab,
+    /// A room of a dungeon.
+    Dungeon,
+    /// An attempt on a shared boss: a Titan or a guild raid.
+    Shared,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum End {
     Won,
     Lost,
+    /// A shared-boss attempt ran out of turns.
+    Spent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +126,9 @@ pub struct Fight {
     pub ally: Option<String>,
     #[serde(default)]
     pub ally_used: bool,
+    /// Turns an attempt lasts (shared bosses).
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
 fn scale(r: &mut Rng, v: f64) -> i64 {
@@ -127,9 +138,19 @@ fn scale(r: &mut Rng, v: f64) -> i64 {
 impl Fight {
     /// A hunt against one of the region's monsters (now and then its elite), starting at `hp`.
     pub fn hunt(hero: Hero, hp: i64, region: &data::Region, seed: u64) -> Fight {
+        Self::hunt_with(hero, hp, region, seed, true)
+    }
+
+    /// A hunt, with or without the chance of meeting the region's elite.
+    pub fn hunt_with(hero: Hero, hp: i64, region: &data::Region, seed: u64, elites: bool) -> Fight {
         let mut rng = Rng::new(seed);
         let regular = data::monster(rng.pick(region.monsters)).unwrap_or(&data::MONSTERS[0]);
-        let m = if rng.chance(data::ELITE_CHANCE) { data::elite(region.id).unwrap_or(regular) } else { regular };
+        let elite = rng.chance(data::ELITE_CHANCE);
+        let m = if elite && elites {
+            data::elite(region.id).unwrap_or(regular)
+        } else {
+            regular
+        };
         let p = region.power as f64;
         let foe = Foe {
             id: m.id.into(),
@@ -147,6 +168,75 @@ impl Fight {
             cursed: 0,
         };
         Self::start(Kind::Hunt, region.id, hero, hp, foe, Vec::new(), rng)
+    }
+
+    /// A Labyrinth floor: `monster` at `power`, harder by `mult`.
+    pub fn floor(
+        hero: Hero,
+        hp: i64,
+        monster: &data::Monster,
+        power: i64,
+        mult: f64,
+        seed: u64,
+    ) -> Fight {
+        let mut rng = Rng::new(seed);
+        let p = power as f64 * mult;
+        let foe = Foe {
+            id: monster.id.into(),
+            name: monster.name.into(),
+            hp: (p * monster.hp * data::HUNT_HP) as i64,
+            max_hp: (p * monster.hp * data::HUNT_HP) as i64,
+            atk: (p * monster.atk * data::HUNT_ATK).max(3.0) as i64,
+            step: (rng.next_u64() % monster.pattern.len() as u64) as usize,
+            phase: 1,
+            weak: monster.weak.map(str::to_owned),
+            braced: false,
+            burn: 0,
+            bleed: 0,
+            bleed_dmg: 0,
+            cursed: 0,
+        };
+        Self::start(Kind::Lab, "labyrinth", hero, hp, foe, Vec::new(), rng)
+    }
+
+    /// A dungeon room or boss: like a floor, but its own kind.
+    pub fn room(
+        hero: Hero,
+        hp: i64,
+        monster: &data::Monster,
+        power: i64,
+        mult: f64,
+        seed: u64,
+    ) -> Fight {
+        let mut f = Self::floor(hero, hp, monster, power, mult, seed);
+        f.kind = Kind::Dungeon;
+        f.region = "dungeon".into();
+        f
+    }
+
+    /// An attempt on a shared boss: it has far more HP than one attempt can take, and the
+    /// attempt ends after `turns`. What you take off goes to everyone's total.
+    pub fn shared(
+        hero: Hero,
+        hp: i64,
+        monster: &data::Monster,
+        power: i64,
+        turns: u32,
+        id: i64,
+        seed: u64,
+    ) -> Fight {
+        let mut f = Self::floor(hero, hp, monster, power, 1.0, seed);
+        f.kind = Kind::Shared;
+        f.region = id.to_string();
+        f.foe.hp *= 8;
+        f.foe.max_hp *= 8;
+        f.limit = Some(turns);
+        f
+    }
+
+    /// Damage dealt so far (shared bosses count this).
+    pub fn dealt(&self) -> i64 {
+        (self.foe.max_hp - self.foe.hp).max(0)
     }
 
     /// The realm boss. `week` decides its weakness; `scouted` is what the player knows.
@@ -169,8 +259,17 @@ impl Fight {
         Self::start(Kind::Boss, "barrow", hero, hp, foe, scouted, Rng::new(seed))
     }
 
-    fn start(kind: Kind, region: &str, hero: Hero, hp: i64, foe: Foe, scouted: Vec<String>, rng: Rng) -> Fight {
+    fn start(
+        kind: Kind,
+        region: &str,
+        hero: Hero,
+        hp: i64,
+        foe: Foe,
+        scouted: Vec<String>,
+        rng: Rng,
+    ) -> Fight {
         let (max_hp, atk) = hero.stats();
+        let stamina = (3 + hero.mods.stamina).min(MAX_STAMINA);
         let mut f = Fight {
             kind,
             region: region.into(),
@@ -179,7 +278,7 @@ impl Fight {
             hp: hp.clamp(1, max_hp),
             max_hp,
             atk,
-            stamina: 3,
+            stamina,
             turn: 1,
             charge: 0,
             cooldowns: Vec::new(),
@@ -199,6 +298,7 @@ impl Fight {
             used: Vec::new(),
             ally: None,
             ally_used: false,
+            limit: None,
         };
         f.log.push(format!("{} blocks your way.", f.foe.name));
         f
@@ -212,9 +312,18 @@ impl Fight {
         self.ally = ally.map(str::to_owned);
         match ally {
             Some("volva") => {
-                if let Some(f) = data::FACTS.iter().find(|f| !self.scouted.iter().any(|k| k == *f)) {
+                if let Some(f) = data::FACTS
+                    .iter()
+                    .find(|f| !self.scouted.iter().any(|k| k == *f))
+                {
                     self.scouted.push(f.to_string());
-                    self.log.push(format!("The völva whispers: \"{}.\"", data::fact_text(f, 0).split(" this week").next().unwrap_or("")));
+                    self.log.push(format!(
+                        "The völva whispers: \"{}.\"",
+                        data::fact_text(f, 0)
+                            .split(" this week")
+                            .next()
+                            .unwrap_or("")
+                    ));
                 }
                 self.ally_used = true;
             }
@@ -229,7 +338,9 @@ impl Fight {
         match self.kind {
             Kind::Boss if self.foe.phase == 2 => data::BOSS_P2,
             Kind::Boss => data::BOSS_P1,
-            Kind::Hunt => data::monster(&self.foe.id).map(|m| m.pattern).unwrap_or(&[Move::Hit]),
+            _ => data::monster(&self.foe.id)
+                .map(|m| m.pattern)
+                .unwrap_or(&[Move::Hit]),
         }
     }
 
@@ -242,11 +353,13 @@ impl Fight {
     /// The foe's moves after this one, when Owl's Sight shows them.
     pub fn upcoming(&self) -> Vec<Move> {
         let p = self.pattern();
-        (1..=self.sight as usize).map(|i| p[(self.foe.step + i) % p.len()]).collect()
+        (1..=self.sight as usize)
+            .map(|i| p[(self.foe.step + i) % p.len()])
+            .collect()
     }
 
     pub fn knows(&self, fact: &str) -> bool {
-        self.kind == Kind::Hunt || self.scouted.iter().any(|f| f == fact)
+        self.kind != Kind::Boss || self.scouted.iter().any(|f| f == fact)
     }
 
     /// What the player sees of the foe's next move, and whether it's thanks to scouting.
@@ -254,14 +367,24 @@ impl Fight {
         let boss = self.kind == Kind::Boss;
         match self.intent() {
             Move::Hit => ("It readies a strike".into(), false),
-            Move::Brace => ("It raises its guard: your next hit lands at half".into(), false),
-            Move::Heavy if boss && self.knows("slam") => ("Lifts the barrow stone: it slams next turn".into(), true),
+            Move::Brace => (
+                "It raises its guard: your next hit lands at half".into(),
+                false,
+            ),
+            Move::Heavy if boss && self.knows("slam") => {
+                ("Lifts the barrow stone: it slams next turn".into(), true)
+            }
             Move::Heavy if boss => ("It shifts its weight. Something is coming".into(), false),
             Move::Heavy => {
-                let w = data::monster(&self.foe.id).map(|m| m.windup).unwrap_or("winds up");
+                let w = data::monster(&self.foe.id)
+                    .map(|m| m.windup)
+                    .unwrap_or("winds up");
                 (format!("It {w}: a heavy blow lands next turn"), false)
             }
-            Move::Roar if boss && self.knows("roar") => ("It fills its lungs: a roar that drains 2 stamina unless you guard".into(), true),
+            Move::Roar if boss && self.knows("roar") => (
+                "It fills its lungs: a roar that drains 2 stamina unless you guard".into(),
+                true,
+            ),
             Move::Roar if boss => ("It fills its lungs".into(), false),
             Move::Roar => ("It's about to howl: guard or lose stamina".into(), false),
         }
@@ -269,7 +392,11 @@ impl Fight {
 
     pub fn cooldown(&self, s: Skill) -> u32 {
         let id = SkillId::of(s);
-        self.cooldowns.iter().find(|(k, _)| *k == id).map(|(_, t)| *t).unwrap_or(0)
+        self.cooldowns
+            .iter()
+            .find(|(k, _)| *k == id)
+            .map(|(_, t)| *t)
+            .unwrap_or(0)
     }
 
     /// Why an action can't be used now, if it can't.
@@ -314,6 +441,12 @@ impl Fight {
         if self.ally.as_deref() == Some("jarlsmen") {
             m *= 1.08;
         }
+        m *= 1.0 + self.hero.mods.damage;
+        match self.foe.weak.as_deref() {
+            Some("fire") => m *= 1.0 + self.hero.mods.fire,
+            Some("frost") => m *= 1.0 + self.hero.mods.frost,
+            _ => {}
+        }
         if let Some((el, left)) = self.coat {
             let weak = self.foe.weak.as_deref() == Some(el.id());
             m *= if weak { 1.6 } else { 1.1 };
@@ -326,12 +459,22 @@ impl Fight {
             m *= 0.5;
             self.foe.braced = false;
         }
-        if self.rng.chance(0.10) {
+        let crit = self.rng.chance(0.10 + self.hero.mods.crit);
+        if crit {
             m *= 1.5;
         }
         let dmg = scale(&mut self.rng, self.atk as f64 * m);
+        if crit {
+            self.log.push("A critical hit.".into());
+        }
         self.foe.hp -= dmg;
-        let mut steal = self.hero.main.lifesteal() + if self.hero.lesser == Some(God::Hades) { 0.04 } else { 0.0 };
+        let mut steal = self.hero.main.lifesteal()
+            + if self.hero.lesser == Some(God::Hades) {
+                0.04
+            } else {
+                0.0
+            }
+            + self.hero.mods.steal;
         if self.kind == Kind::Boss {
             // The dead don't bleed much: lifesteal is weaker against the realm boss.
             steal *= data::BOSS_LIFESTEAL;
@@ -395,7 +538,11 @@ impl Fight {
                 self.log.push(format!(
                     "You coated your weapon in {} oil.{}",
                     el.id(),
-                    if weak && self.knows("weakness") { " It's weak to it." } else { "" }
+                    if weak && self.knows("weakness") {
+                        " It's weak to it."
+                    } else {
+                        ""
+                    }
                 ));
             }
             Action::Skill(id) => {
@@ -406,14 +553,18 @@ impl Fight {
                 match s {
                     Skill::Mjolnir => {
                         let d = self.hit(1.7 + 0.2 * self.charge as f64, true);
-                        self.log.push(format!("Mjolnir landed for {d}. It flies back to you next turn."));
+                        self.log.push(format!(
+                            "Mjolnir landed for {d}. It flies back to you next turn."
+                        ));
                         self.charge = 0;
                     }
                     Skill::Thunderclap => {
                         let d = self.hit(1.7, true);
                         if intent == Move::Heavy || intent == Move::Roar {
                             stunned = true;
-                            self.log.push(format!("Thunderclap hit for {d} and stunned it. Its attack is cancelled."));
+                            self.log.push(format!(
+                                "Thunderclap hit for {d} and stunned it. Its attack is cancelled."
+                            ));
                         } else {
                             self.log.push(format!("Thunderclap hit for {d}."));
                         }
@@ -426,29 +577,38 @@ impl Fight {
                     Skill::OwlSight => {
                         self.sight = 2;
                         self.bonus_next = 0.6;
-                        self.log.push("The owl shows you its next moves. Your next hit lands harder.".into());
+                        self.log.push(
+                            "The owl shows you its next moves. Your next hit lands harder.".into(),
+                        );
                     }
                     Skill::SoulRend => {
                         let d = self.hit(1.6, true);
                         let h = d * 6 / 10;
                         self.heal(h);
-                        self.log.push(format!("Soul Rend tore for {d} and healed you {h}."));
+                        self.log
+                            .push(format!("Soul Rend tore for {d} and healed you {h}."));
                     }
                     Skill::CerberusBite => {
                         let d = self.hit(0.8, true);
                         self.foe.bleed = 3;
-                        self.foe.bleed_dmg = (self.atk as f64 * 0.6 * self.hero.skill_mult()) as i64;
-                        self.log.push(format!("Cerberus Bite hit for {d}. It bleeds."));
+                        self.foe.bleed_dmg =
+                            (self.atk as f64 * 0.6 * self.hero.skill_mult()) as i64;
+                        self.log
+                            .push(format!("Cerberus Bite hit for {d}. It bleeds."));
                     }
                     Skill::AegisStorm if main == God::Athena => {
                         self.block_next = true;
                         self.reflect = true;
-                        self.log.push("You raised the Aegis. The next hit comes back as lightning.".into());
+                        self.log.push(
+                            "You raised the Aegis. The next hit comes back as lightning.".into(),
+                        );
                     }
                     Skill::AegisStorm => {
                         let d = self.hit(1.3, true);
                         self.block_next = true;
-                        self.log.push(format!("Aegis Storm bashed for {d}. The next hit can't touch you."));
+                        self.log.push(format!(
+                            "Aegis Storm bashed for {d}. The next hit can't touch you."
+                        ));
                     }
                     Skill::GraveThunder if main == God::Hades => {
                         let d = self.hit(0.8, true);
@@ -458,18 +618,24 @@ impl Fight {
                     Skill::GraveThunder => {
                         let d = self.hit(2.0, true);
                         self.heal(d / 3);
-                        self.log.push(format!("Grave Thunder struck for {d} and healed you {}.", d / 3));
+                        self.log.push(format!(
+                            "Grave Thunder struck for {d} and healed you {}.",
+                            d / 3
+                        ));
                     }
                     Skill::Judgement if main == God::Hades => {
                         let d = self.hit(1.2, true);
                         self.heal(d);
                         self.shield = d;
-                        self.log.push(format!("Judgement drained {d}, healed you and shielded you for it."));
+                        self.log.push(format!(
+                            "Judgement drained {d}, healed you and shielded you for it."
+                        ));
                     }
                     Skill::Judgement => {
                         self.guarding = true;
                         self.heal_turns = 3;
-                        self.log.push("Judgement: you guard and will heal for three turns.".into());
+                        self.log
+                            .push("Judgement: you guard and will heal for three turns.".into());
                     }
                 }
             }
@@ -485,7 +651,8 @@ impl Fight {
         if self.foe.bleed > 0 && self.foe.hp > 0 {
             self.foe.hp -= self.foe.bleed_dmg;
             self.foe.bleed -= 1;
-            self.log.push(format!("It bleeds for {}.", self.foe.bleed_dmg));
+            self.log
+                .push(format!("It bleeds for {}.", self.foe.bleed_dmg));
         }
         if self.foe.hp <= 0 {
             self.foe.hp = 0;
@@ -499,7 +666,8 @@ impl Fight {
             self.foe.phase = 2;
             self.foe.step = 0;
             self.foe.atk = (self.foe.atk as f64 * data::BOSS_P2_ATK) as i64;
-            self.log.push("The Barrow King rises in fury. Phase 2.".into());
+            self.log
+                .push("The Barrow King rises in fury. Phase 2.".into());
         }
 
         // The foe's move.
@@ -530,6 +698,13 @@ impl Fight {
         self.stamina = (self.stamina + 1).min(MAX_STAMINA);
         self.foe.step += 1;
         self.turn += 1;
+        if let Some(limit) = self.limit
+            && self.turn > limit
+        {
+            self.end = Some(End::Spent);
+            self.log
+                .push(format!("{name} throws you back. Your attempt is over."));
+        }
         Ok(())
     }
 
@@ -541,12 +716,14 @@ impl Fight {
                 self.reflect = false;
                 let back = raw;
                 self.foe.hp -= back;
-                self.log.push(format!("The Aegis threw {back} back as lightning."));
+                self.log
+                    .push(format!("The Aegis threw {back} back as lightning."));
             }
             return 0;
         }
         if self.guarding {
-            d = (d as f64 * (1.0 - self.hero.main.body().2)) as i64;
+            let stop = (self.hero.main.body().2 + self.hero.mods.guard).min(0.85);
+            d = (d as f64 * (1.0 - stop)) as i64;
         }
         if self.shield > 0 {
             let s = self.shield.min(d);
@@ -568,12 +745,26 @@ impl Fight {
             }
             Move::Heavy if self.ally.as_deref() == Some("shieldmaiden") && !self.ally_used => {
                 self.ally_used = true;
-                self.log.push("Eydis steps in front of you and takes the slam on her shield.".into());
+                self.log
+                    .push("Eydis steps in front of you and takes the slam on her shield.".into());
             }
             Move::Heavy => {
                 let raw = scale(&mut self.rng, atk * 2.4);
+                // Reading the warning and guarding it opens the foe up. Not the realm boss: it is
+                // balanced around guarding the slam already, and Hades' lifesteal ran away with it.
+                let perfect = self.guarding && self.kind != Kind::Boss;
                 let d = self.take(raw);
-                let what = if self.kind == Kind::Boss { "It slammed the stone down" } else { "Its heavy blow landed" };
+                if perfect {
+                    self.bonus_next = self.bonus_next.max(0.5);
+                    self.log.push(
+                        "A perfect guard. It's off balance: your next hit lands 50% harder.".into(),
+                    );
+                }
+                let what = if self.kind == Kind::Boss {
+                    "It slammed the stone down"
+                } else {
+                    "Its heavy blow landed"
+                };
                 self.log.push(format!("{what} for {d}."));
                 self.counter_back();
             }
@@ -585,10 +776,12 @@ impl Fight {
                 let raw = scale(&mut self.rng, atk * 0.5);
                 let d = self.take(raw);
                 if self.guarding {
-                    self.log.push(format!("It roared. Your guard held ({d} damage)."));
+                    self.log
+                        .push(format!("It roared. Your guard held ({d} damage)."));
                 } else {
                     self.stamina = (self.stamina - 2).max(0);
-                    self.log.push(format!("It roared for {d} and drained 2 stamina."));
+                    self.log
+                        .push(format!("It roared for {d} and drained 2 stamina."));
                 }
             }
         }
@@ -614,36 +807,69 @@ pub fn autoplay(f: &Fight, potions: i64, oils: (i64, i64)) -> Action {
     if low && potions > 0 {
         return Action::Potion;
     }
-    if f.coat.is_none() && f.turn == 1 && f.knows("weakness")
-        && let Some(w) = f.foe.weak.as_deref() {
-            let el = if w == "fire" { Element::Fire } else { Element::Frost };
-            if f.blocked(Action::Oil(el), potions, oils).is_none() {
-                return Action::Oil(el);
-            }
+    if f.coat.is_none()
+        && f.turn == 1
+        && f.knows("weakness")
+        && let Some(w) = f.foe.weak.as_deref()
+    {
+        let el = if w == "fire" {
+            Element::Fire
+        } else {
+            Element::Frost
+        };
+        if f.blocked(Action::Oil(el), potions, oils).is_none() {
+            return Action::Oil(el);
         }
+    }
     let skills = f.hero.skills();
-    let ready = |s: Skill| skills.contains(&s) && f.blocked(Action::Skill(SkillId::of(s)), potions, oils).is_none();
+    let ready = |s: Skill| {
+        skills.contains(&s)
+            && f.blocked(Action::Skill(SkillId::of(s)), potions, oils)
+                .is_none()
+    };
     if matches!(intent, Move::Heavy | Move::Roar) {
-        for s in [Skill::Thunderclap, Skill::SpearCounter, Skill::AegisStorm, Skill::Judgement] {
+        for s in [
+            Skill::Thunderclap,
+            Skill::SpearCounter,
+            Skill::AegisStorm,
+            Skill::Judgement,
+        ] {
             if ready(s) {
                 return Action::Skill(SkillId::of(s));
             }
         }
         // Without scouting the boss's slam is a vague warning: a player guards it about half
         // the time.
-        if f.kind == Kind::Hunt || f.knows(if intent == Move::Heavy { "slam" } else { "roar" }) || f.turn.is_multiple_of(2) {
+        if f.kind != Kind::Boss
+            || f.knows(if intent == Move::Heavy {
+                "slam"
+            } else {
+                "roar"
+            })
+            || f.turn.is_multiple_of(2)
+        {
             return Action::Guard;
         }
     }
     // Its guard is up and it won't attack: build stamina, or poke it if full.
     if intent == Move::Brace {
-        return if f.stamina >= 4 { Action::Strike } else { Action::Guard };
+        return if f.stamina >= 4 {
+            Action::Strike
+        } else {
+            Action::Guard
+        };
     }
     // Hades curses first when there's stamina to follow it up.
     if f.hero.main == God::Hades && f.stamina >= 4 && ready(Skill::GraveThunder) {
         return Action::Skill(SkillId::of(Skill::GraveThunder));
     }
-    for s in [Skill::GraveThunder, Skill::Mjolnir, Skill::SoulRend, Skill::CerberusBite, Skill::OwlSight] {
+    for s in [
+        Skill::GraveThunder,
+        Skill::Mjolnir,
+        Skill::SoulRend,
+        Skill::CerberusBite,
+        Skill::OwlSight,
+    ] {
         if s == Skill::GraveThunder && f.hero.main == God::Hades {
             continue;
         }
@@ -651,7 +877,11 @@ pub fn autoplay(f: &Fight, potions: i64, oils: (i64, i64)) -> Action {
             return Action::Skill(SkillId::of(s));
         }
     }
-    if f.stamina >= 1 { Action::Strike } else { Action::Guard }
+    if f.stamina >= 1 {
+        Action::Strike
+    } else {
+        Action::Guard
+    }
 }
 
 #[cfg(test)]
@@ -659,7 +889,14 @@ mod tests {
     use super::*;
 
     fn hero(main: God, lesser: Option<God>, power: i64) -> Hero {
-        Hero { main, lesser, bonds: [2, 2, 2], power, scouting: 0 }
+        Hero {
+            main,
+            lesser,
+            bonds: [2, 2, 2],
+            power,
+            scouting: 0,
+            mods: Default::default(),
+        }
     }
 
     fn run(mut f: Fight) -> Fight {
@@ -697,17 +934,31 @@ mod tests {
         let mut f = Fight::hunt(hero(God::Athena, None, 60), 999, r, 1);
         let before = (f.hp, f.turn, f.stamina);
         assert!(f.act(Action::Potion, 0, (0, 0)).is_err());
-        assert!(f.act(Action::Skill(SkillId::of(Skill::Mjolnir)), 0, (0, 0)).is_err());
+        assert!(
+            f.act(Action::Skill(SkillId::of(Skill::Mjolnir)), 0, (0, 0))
+                .is_err()
+        );
         assert_eq!(before, (f.hp, f.turn, f.stamina));
     }
 
     fn rate(main: God, lesser: Option<God>, power: i64, intel: bool) -> u32 {
-        let facts: Vec<String> = if intel { data::FACTS.iter().map(|s| s.to_string()).collect() } else { Vec::new() };
+        let facts: Vec<String> = if intel {
+            data::FACTS.iter().map(|s| s.to_string()).collect()
+        } else {
+            Vec::new()
+        };
         (0..60u64)
             .filter(|seed| {
                 let h = hero(main, lesser, power);
                 let (max, _) = h.stats();
-                run(Fight::boss(h, max, *seed as i64, facts.clone(), seed * 7 + 1)).end == Some(End::Won)
+                run(Fight::boss(
+                    h,
+                    max,
+                    *seed as i64,
+                    facts.clone(),
+                    seed * 7 + 1,
+                ))
+                .end == Some(End::Won)
             })
             .count() as u32
     }
@@ -722,8 +973,14 @@ mod tests {
             let blind = rate(main, None, data::BOSS_POWER, false);
             let under = rate(main, None, data::BOSS_POWER * 8 / 10, true);
             let far = rate(main, None, data::BOSS_POWER * 6 / 10, false);
-            assert!((40..=60).contains(&full), "{main:?}: {full}/60 at recommended Power with intel");
-            assert!(blind < full, "{main:?}: intel should help ({blind} without, {full} with)");
+            assert!(
+                (40..=60).contains(&full),
+                "{main:?}: {full}/60 at recommended Power with intel"
+            );
+            assert!(
+                blind < full,
+                "{main:?}: intel should help ({blind} without, {full} with)"
+            );
             assert!(under <= 30, "{main:?}: {under}/60 at 80% Power");
             assert_eq!(far, 0, "{main:?}: won at 60% Power with no intel");
         }
@@ -736,7 +993,10 @@ mod tests {
             let solo = rate(main, None, data::BOSS_POWER * 9 / 10, true);
             for lesser in data::GODS.into_iter().filter(|l| *l != main) {
                 let pair = rate(main, Some(lesser), data::BOSS_POWER * 9 / 10, true);
-                assert!(pair + 12 >= solo, "{main:?}+{lesser:?}: {pair}/60, alone {solo}/60");
+                assert!(
+                    pair + 12 >= solo,
+                    "{main:?}+{lesser:?}: {pair}/60, alone {solo}/60"
+                );
             }
         }
     }

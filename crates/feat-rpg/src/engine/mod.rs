@@ -3,6 +3,7 @@
 
 pub mod combat;
 pub mod expedition;
+pub mod loot;
 pub mod progress;
 pub mod sim;
 
@@ -49,6 +50,9 @@ pub struct Hero {
     pub power: i64,
     /// Extra scouting chance from gear, in percent.
     pub scouting: i64,
+    /// What gear traits add.
+    #[serde(default)]
+    pub mods: data::Mods,
 }
 
 impl Hero {
@@ -57,7 +61,8 @@ impl Hero {
     }
 
     pub fn stats(&self) -> (i64, i64) {
-        data::stats(self.power, self.main)
+        let (hp, atk) = data::stats(self.power, self.main);
+        ((hp as f64 * (1.0 + self.mods.hp)).round() as i64, atk)
     }
 
     /// Skills this hero can use: the patron's first, the second at bond 2, the pair skill

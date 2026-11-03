@@ -38,12 +38,18 @@ impl SimReport {
             .collect();
         format!(
             "boss on day {} · level {} on day 10 · gold {} earned, {} spent · tribute {} · barely used: {}",
-            self.boss_day.map(|d| d.to_string()).unwrap_or_else(|| "never".into()),
+            self.boss_day
+                .map(|d| d.to_string())
+                .unwrap_or_else(|| "never".into()),
             self.level_day10,
             self.gold_earned,
             self.gold_spent,
             self.tribute,
-            if piles.is_empty() { "none".into() } else { piles.join(", ") }
+            if piles.is_empty() {
+                "none".into()
+            } else {
+                piles.join(", ")
+            }
         )
     }
 }
@@ -69,7 +75,14 @@ struct P {
 
 impl P {
     fn power(&self) -> i64 {
-        let gear: i64 = data::SLOTS.iter().map(|s| self.best(*s).map(|(g, u)| data::gear_power(g, u)).unwrap_or(0)).sum();
+        let gear: i64 = data::SLOTS
+            .iter()
+            .map(|s| {
+                self.best(*s)
+                    .map(|(g, u)| data::gear_power(g, u))
+                    .unwrap_or(0)
+            })
+            .sum();
         data::level_power(self.level) + gear
     }
     fn best(&self, slot: Slot) -> Option<(&'static data::Gear, i64)> {
@@ -81,8 +94,19 @@ impl P {
     }
     fn hero(&self) -> Hero {
         let bonds = [0, 1, 2].map(|i| progress::bond_rank(self.tribute[i], data::BOND_CAP));
-        let scouting = data::SLOTS.iter().filter_map(|s| self.best(*s)).map(|(g, _)| g.scouting).sum();
-        Hero { main: self.main, lesser: None, bonds, power: self.power(), scouting }
+        let scouting = data::SLOTS
+            .iter()
+            .filter_map(|s| self.best(*s))
+            .map(|(g, _)| g.scouting)
+            .sum();
+        Hero {
+            main: self.main,
+            lesser: None,
+            bonds,
+            power: self.power(),
+            scouting,
+            mods: Default::default(),
+        }
     }
     fn have(&self, id: &str) -> i64 {
         self.items.get(id).copied().unwrap_or(0)
@@ -120,16 +144,28 @@ impl P {
             .iter()
             .filter(|g| !g.after_boss || self.boss_won)
             .filter(|g| g.level <= self.level + 2)
-            .filter(|g| self.best(g.slot).map(|(b, u)| data::gear_power(b, u)).unwrap_or(0) < g.power)
+            .filter(|g| {
+                self.best(g.slot)
+                    .map(|(b, u)| data::gear_power(b, u))
+                    .unwrap_or(0)
+                    < g.power
+            })
             .min_by_key(|g| (g.level, g.power))
     }
     fn craft(&mut self) {
         loop {
-            let next = data::GEAR.iter().filter(|g| !g.after_boss || self.boss_won).find(|g| {
-                g.level <= self.level
-                    && self.best(g.slot).map(|(b, u)| data::gear_power(b, u)).unwrap_or(0) < g.power
-                    && self.can_pay(g.cost, g.gold)
-            });
+            let next = data::GEAR
+                .iter()
+                .filter(|g| !g.after_boss || self.boss_won)
+                .find(|g| {
+                    g.level <= self.level
+                        && self
+                            .best(g.slot)
+                            .map(|(b, u)| data::gear_power(b, u))
+                            .unwrap_or(0)
+                            < g.power
+                        && self.can_pay(g.cost, g.gold)
+                });
             let Some(g) = next else { break };
             self.pay(g.cost, g.gold);
             self.gear.push((g.id.into(), 0));
@@ -181,7 +217,13 @@ impl P {
         let supply = (self.have("rations") > 0).then(|| "rations".to_string());
         let need: Vec<&str> = self
             .wanted()
-            .map(|g| g.cost.iter().filter(|(id, n)| self.have(id) < *n).map(|(id, _)| *id).collect())
+            .map(|g| {
+                g.cost
+                    .iter()
+                    .filter(|(id, n)| self.have(id) < *n)
+                    .map(|(id, _)| *id)
+                    .collect()
+            })
             .unwrap_or_default();
         let mut best: Option<(f64, Plan)> = None;
         for r in data::REGIONS {
@@ -189,19 +231,34 @@ impl P {
                 if d == Danger::Heroic && !self.boss_won {
                     continue;
                 }
-                let p = Plan { region: r.id.into(), danger: d, hours, supply: supply.clone() };
+                let p = Plan {
+                    region: r.id.into(),
+                    danger: d,
+                    hours,
+                    supply: supply.clone(),
+                };
                 if (p.effective(power) as f64) < p.needs() as f64 * 1.05 {
                     continue;
                 }
-                let drops_need = r.drops.iter().any(|(id, _)| need.contains(id)) || need.contains(&r.rare.0);
-                let intel = if !self.boss_won && self.facts.len() < 4 && r.id == "barrow" { 1.3 } else { 1.0 };
+                let drops_need =
+                    r.drops.iter().any(|(id, _)| need.contains(id)) || need.contains(&r.rare.0);
+                let intel = if !self.boss_won && self.facts.len() < 4 && r.id == "barrow" {
+                    1.3
+                } else {
+                    1.0
+                };
                 let score = r.xp * d.loot() * intel * if drops_need { 2.0 } else { 1.0 };
                 if best.as_ref().is_none_or(|(s, _)| score > *s) {
                     best = Some((score, p));
                 }
             }
         }
-        best.map(|(_, p)| p).unwrap_or(Plan { region: "shore".into(), danger: Danger::Normal, hours, supply })
+        best.map(|(_, p)| p).unwrap_or(Plan {
+            region: "shore".into(),
+            danger: Danger::Normal,
+            hours,
+            supply,
+        })
     }
     fn expedition(&mut self, hours: u32, seed: u64) {
         let p = self.plan(hours);
@@ -210,7 +267,15 @@ impl P {
         }
         let pity = self.pity.get(&p.region).copied().unwrap_or(0);
         let h = self.hero();
-        let r = expedition::run(&p, h.power, h.scouting, &self.facts, pity, Rates::default(), seed);
+        let r = expedition::run(
+            &p,
+            h.power,
+            h.scouting,
+            &self.facts,
+            pity,
+            Rates::default(),
+            seed,
+        );
         for (id, n) in &r.items {
             self.add(id, *n);
         }
@@ -224,7 +289,14 @@ impl P {
     }
     fn hunt(&mut self, minutes: u32, seed: u64) {
         let power = self.power();
-        let Some(region) = data::REGIONS.iter().rev().find(|r| power as f64 >= r.power as f64 * 1.4).or(data::REGIONS.first()) else { return };
+        let Some(region) = data::REGIONS
+            .iter()
+            .rev()
+            .find(|r| power as f64 >= r.power as f64 * 1.4)
+            .or(data::REGIONS.first())
+        else {
+            return;
+        };
         let mut t = 0u32;
         let mut s = seed;
         let max = self.hero().stats().0;
@@ -232,7 +304,8 @@ impl P {
             if self.hp < max / 2 {
                 // Wait for HP to come back.
                 t += 5;
-                self.hp = (self.hp as f64 + max as f64 * data::REGEN_PER_MIN * 5.0).min(max as f64) as i64;
+                self.hp = (self.hp as f64 + max as f64 * data::REGEN_PER_MIN * 5.0).min(max as f64)
+                    as i64;
                 continue;
             }
             s += 1;
@@ -252,7 +325,11 @@ impl P {
             if f.end == Some(End::Won) {
                 self.hp = (self.hp + (max as f64 * data::WIN_HEAL) as i64).min(max);
                 let (xp, gold) = data::hunt_reward(region);
-                let double = if self.vigor >= data::VIGOR_PER_WIN as f64 { 2 } else { 1 };
+                let double = if self.vigor >= data::VIGOR_PER_WIN as f64 {
+                    2
+                } else {
+                    1
+                };
                 if double == 2 {
                     self.vigor -= data::VIGOR_PER_WIN as f64;
                 }
@@ -301,7 +378,10 @@ pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
         xp: 0,
         gold: 50,
         items: BTreeMap::new(),
-        gear: data::STARTER_GEAR.iter().map(|g| (g.to_string(), 0)).collect(),
+        gear: data::STARTER_GEAR
+            .iter()
+            .map(|g| (g.to_string(), 0))
+            .collect(),
         tribute: [0; 3],
         facts: Vec::new(),
         pity: BTreeMap::new(),
@@ -313,7 +393,15 @@ pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
         mats: BTreeMap::new(),
     };
     p.hp = p.hero().stats().0;
-    let mut out = SimReport { days: Vec::new(), boss_day: None, level_day10: 0, gold_earned: 0, gold_spent: 0, mats: BTreeMap::new(), tribute: 0 };
+    let mut out = SimReport {
+        days: Vec::new(),
+        boss_day: None,
+        level_day10: 0,
+        gold_earned: 0,
+        gold_spent: 0,
+        mats: BTreeMap::new(),
+        tribute: 0,
+    };
     let mut s = seed * 1000;
     for day in 1..=days {
         // Runs back to back through the day, as each style checks in.
@@ -325,7 +413,9 @@ pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
             Style::Light => 15,
             Style::Heavy => 240,
         };
-        p.vigor = (p.vigor + data::VIGOR_PER_HOUR * if style == Style::Light { 22.0 } else { 14.0 }).min(100.0);
+        p.vigor = (p.vigor
+            + data::VIGOR_PER_HOUR * if style == Style::Light { 22.0 } else { 14.0 })
+        .min(100.0);
         for h in runs {
             s += 1;
             p.expedition(*h, s);
@@ -346,7 +436,9 @@ pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
         let spare: Vec<(String, i64)> = p
             .items
             .iter()
-            .filter(|(id, n)| data::item(id).is_some_and(|i| i.kind == data::Kind::Material) && **n > 60)
+            .filter(|(id, n)| {
+                data::item(id).is_some_and(|i| i.kind == data::Kind::Material) && **n > 60
+            })
             .map(|(id, n)| (id.clone(), n - 60))
             .collect();
         for (id, n) in spare {
@@ -360,7 +452,17 @@ pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
         if day == 10 {
             out.level_day10 = p.level;
         }
-        let gear: Vec<String> = data::SLOTS.iter().filter_map(|sl| p.best(*sl)).map(|(g, u)| if u > 0 { format!("{}+{u}", g.id) } else { g.id.into() }).collect();
+        let gear: Vec<String> = data::SLOTS
+            .iter()
+            .filter_map(|sl| p.best(*sl))
+            .map(|(g, u)| {
+                if u > 0 {
+                    format!("{}+{u}", g.id)
+                } else {
+                    g.id.into()
+                }
+            })
+            .collect();
         out.days.push(format!(
             "day {day:>2}: level {:>2}, Power {:>3}, gold {:>5}, bond {}, intel {}/4 | {}",
             p.level,
@@ -389,9 +491,18 @@ mod tests {
         for main in data::GODS {
             let light = play(main, Style::Light, 20, 3).boss_day.unwrap_or(99);
             let heavy = play(main, Style::Heavy, 20, 3).boss_day.unwrap_or(99);
-            assert!((8..=13).contains(&light), "{main:?}: light player beat the boss on day {light}");
-            assert!((4..=9).contains(&heavy), "{main:?}: heavy player beat the boss on day {heavy}");
-            assert!(heavy <= light, "{main:?}: heavy {heavy} slower than light {light}");
+            assert!(
+                (8..=13).contains(&light),
+                "{main:?}: light player beat the boss on day {light}"
+            );
+            assert!(
+                (4..=9).contains(&heavy),
+                "{main:?}: heavy player beat the boss on day {heavy}"
+            );
+            assert!(
+                heavy <= light,
+                "{main:?}: heavy {heavy} slower than light {light}"
+            );
         }
     }
 }
