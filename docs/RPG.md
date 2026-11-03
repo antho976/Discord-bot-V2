@@ -215,8 +215,10 @@ too basic; too many buttons; elite messages are spammy.
 - **Tutorial:** six steps shown on the overview with what, why and how; each pays 25 gold, all
   of them 2 potions, 100 gold and a title. Fights explain themselves until your first win.
   Skippable from Help.
-- **Announcements:** elites only on a player's first kill of that elite, and the RPG posts at
-  most once per server every 10 minutes.
+- **Announcements:** elites only on a player's first kill of that elite. Every one goes out
+  (the old limit of one post per server every 10 minutes hid most of them) and the bot deletes
+  it after 30 minutes, so the channel doesn't fill up. "Delete them after" in the RPG settings
+  changes that; 0 keeps them.
 
 ## Fourth pass: the big build (2026-11-03, overnight)
 
