@@ -217,3 +217,42 @@ too basic; too many buttons; elite messages are spammy.
   Skippable from Help.
 - **Announcements:** elites only on a player's first kill of that elite, and the RPG posts at
   most once per server every 10 minutes.
+
+## Fourth pass: the big build (2026-11-03, overnight)
+
+Owner: make it good enough to ship without shipping; more content, more weight to the
+mechanics, guilds, boss battles, server-wide events, dungeons, raids, maybe a map. Bloat is
+fine: they test it, cut what they don't like, and we go through what's left.
+
+Every system below has a switch on the dashboard (RPG, Settings, Modules), so cutting one is a
+click before it is a code change. Switched off, its buttons and announcements disappear and
+its saved progress stays.
+
+| Switch | What it is |
+| --- | --- |
+| Labyrinth | Floor-by-floor runs (third pass) |
+| Dungeons | Three fixed delves, one per region: the Drowned Hall (level 5), the Wolf-King's Den (11), Hrolf's Treasury (17). Four rooms then a boss with its own pattern. First clear each day opens the chest: gear (Fine or better), 2 loose threads, the region's rare material, gold. Fall and keep half of what you carried |
+| Guilds | Found one for 500 gold (name and tag in a form), up to 12 members. Guild XP comes only from what members do; levels give small shared perks (up to +5% gold and a title). The treasury only buys upgrades (Mead Hall, War Banner, Longship), never power for one member. Weekly challenge: 12 wins per member pays the treasury |
+| Guild raids | The leader spends 1,500 from the treasury to wake Fafnir. 7,000 HP per member, 72 hours, 2 attempts a day of 10 turns each. Everyone who hit claims when it falls (a smaller reward if it gets away) |
+| Titans | Server-wide: one of Jormungandr, Typhon or Hrimthurs rises every 72 hours for 48 (staff can raise one now from the dashboard). 9,000 HP per active player, 3 attempts a day. The one announcement that bypasses the 10-minute quiet gap |
+| Map | A drawn map of Midgard on the overview's Map screen: open regions, dungeon doors, where your expedition is, a Titan in the sea when one is up |
+| Saga | The Loom saga (second pass) |
+| Side quests | Skagi's townsfolk, six short lines with their own small story: Asa the fisherman's widow, Eydis the shieldmaiden, Jarl Sigrun, Old Hakon the hunter, Bragi the skald, the völva. Each step pays gold, XP or supplies; each line ends with a title |
+| Bounties | The daily bounty board (second pass) |
+| Market | Skagi's daily stall: three pieces picked for you (Fine or better, no repeats) and supplies with daily limits. Somewhere for gold to go besides the forge |
+| Encounters | Random events on hunts (second pass) |
+| Elites | Elite monsters and their once-per-player announcement |
+
+Mechanics given more weight in the same pass:
+
+- **Fights read better:** critical hits say so; guarding a heavy blow from a normal foe is a
+  perfect guard and the next hit lands 50% harder. Not against the Barrow King: he is balanced
+  around guarding his slam already, and with it Hades won 60 of 60 fights at 80% of the Power
+  he needs.
+- **Allies:** the saga's choice at the völva picks who stands with you once in the Barrow
+  King's fight (the völva, Eydis, or the Jarl's men).
+- **Dashboard test tools:** a player view (give gold, make them boss-ready, move their saga chapter, heal); Raise a Titan now; the
+  module switches; a preview seeded with a guild (Ravenhold), a Titan, a raid and side quests.
+
+Still untested in Discord itself: the guild form (a modal), the Titan announcement, and the map
+image through the public address. The click-through tests cover each flow in the database.
