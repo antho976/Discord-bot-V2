@@ -42,8 +42,9 @@ second looked right but its idle play, progression and content were shallow and 
   Hades red, the Styx with a bident (two prongs; the old three-pronged one read as Poseidon);
   Thor blue, a storm and Mjolnir; Athena violet, the Acropolis and her owl. The top line always
   says "Sworn to <patron>"; a title never replaces it, it gets its own line under the name.
-  The hub's container edge takes the patron's colour. Owner picks between A (scene, built),
-  B (seal) and C (no picture) in Relay design 19, page "Banner rework". Changing the art means
+  The hub's container edge takes the patron's colour. Owner chose A, the drawn scene
+  ("A 100%"), over B (seal) and C (no picture); all three are in Relay design 19, page
+  "Banner rework". Changing the art means
   changing the signing salt in `banner.rs` too, or Discord keeps the old picture cached.
 - **Per-server toggle** like every other feature.
 - **Clicks must feel fast:** v2 felt slow because each click made two trips to Discord.
