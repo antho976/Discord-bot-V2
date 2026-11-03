@@ -152,6 +152,10 @@ fn a_new_player_plays_through_midgard() {
         "lab",
         "hero",
         "skagi",
+        "combat",
+        "questlog",
+        "guildfind",
+        "guildmanage",
         "guild",
         "titan",
         "raid",
@@ -806,6 +810,160 @@ fn guilds_raids_and_titans() {
     click(&ctx, "guild", "leave", "", &[]);
     let m = store::get(&ctx.db, G, 21).unwrap().unwrap().clan.unwrap();
     assert!(m.leader);
+}
+
+/// Click as someone other than the main player.
+fn click_as(
+    ctx: &Ctx,
+    user: u64,
+    screen: &str,
+    action: &str,
+    arg: &str,
+    values: &[&str],
+) -> Screen {
+    let version = store::get(&ctx.db, G, user).unwrap().unwrap().version;
+    let route = Route {
+        owner: user,
+        screen: screen.into(),
+        action: action.into(),
+        arg: arg.into(),
+        version,
+    };
+    let values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
+    let out = store::run(&ctx.db, G, user, None, |g| {
+        game::handle(ctx, g, &route, &values, Rates::default())
+    })
+    .unwrap()
+    .unwrap();
+    check(&out.screen);
+    out.screen
+}
+
+fn clan_of(ctx: &Ctx, user: u64) -> Option<i64> {
+    store::get(&ctx.db, G, user)
+        .unwrap()
+        .unwrap()
+        .clan
+        .map(|c| c.id)
+}
+
+#[test]
+fn guild_controls() {
+    let rt = bot_core::tokio::runtime::Runtime::new().unwrap();
+    let _e = rt.enter();
+    let ctx = ctx();
+    store::create(&ctx.db, G, U, "Antho", God::Thor).unwrap();
+    strong(&ctx);
+    click(&ctx, "guild", "create", "", &["Ravenhold", "rvn"]);
+    let clan = clan_of(&ctx, U).unwrap();
+    for (u, name) in [(31, "Mira"), (32, "Oskar"), (33, "Teo")] {
+        store::create(&ctx.db, G, u, name, God::Athena).unwrap();
+    }
+
+    // Invite only: joining straight in is refused, asking works, and the leader accepts.
+    let s = click(&ctx, "guild", "policy", "", &["invite"]);
+    assert!(text_of(&s).contains("invite only"), "{}", text_of(&s));
+    let s = click_as(&ctx, 31, "guild", "join", &clan.to_string(), &[]);
+    assert!(text_of(&s).contains("invite only"), "{}", text_of(&s));
+    assert_eq!(clan_of(&ctx, 31), None);
+    let s = click_as(&ctx, 31, "guildfind", "", "", &[]);
+    assert!(text_of(&s).contains("Ask to join"), "{}", text_of(&s));
+    click_as(&ctx, 31, "guild", "ask", &format!("{clan}.0.0."), &[]);
+    let s = click_as(&ctx, 31, "guild", "", "", &[]);
+    assert!(
+        text_of(&s).contains("Waiting to hear from Ravenhold"),
+        "{}",
+        text_of(&s)
+    );
+    let hub = click(&ctx, "hub", "", "", &[]);
+    assert!(
+        text_of(&hub).contains("1 asking to join"),
+        "{}",
+        text_of(&hub)
+    );
+    let s = click(&ctx, "guildmanage", "", "", &[]);
+    assert!(text_of(&s).contains("Mira"), "{}", text_of(&s));
+    click(&ctx, "guild", "accept", "31", &[]);
+    assert_eq!(clan_of(&ctx, 31), Some(clan));
+
+    // An ask can be withdrawn, and a declined one is gone.
+    click_as(&ctx, 32, "guild", "ask", &format!("{clan}.0.0."), &[]);
+    click_as(&ctx, 32, "guild", "withdraw", &format!("{clan}.0.0."), &[]);
+    let s = click(&ctx, "guild", "accept", "32", &[]);
+    assert!(text_of(&s).contains("request is gone"), "{}", text_of(&s));
+    click_as(&ctx, 32, "guild", "ask", &format!("{clan}.0.0."), &[]);
+    click(&ctx, "guild", "decline", "", &["32"]);
+    assert_eq!(clan_of(&ctx, 32), None);
+
+    // The leader invites; the invite shows on the player's pages and lets them in.
+    click(&ctx, "guild", "invite", "", &["33"]);
+    let hub = click_as(&ctx, 33, "hub", "", "", &[]);
+    assert!(text_of(&hub).contains("invited you"), "{}", text_of(&hub));
+    let s = click_as(&ctx, 33, "guild", "", "", &[]);
+    assert!(text_of(&s).contains("invited you"), "{}", text_of(&s));
+    click_as(&ctx, 33, "guild", "join", &clan.to_string(), &[]);
+    assert_eq!(clan_of(&ctx, 33), Some(clan));
+
+    // A weekly minimum: members who were in all last week and fell short are marked.
+    click(&ctx, "guild", "minimum", "", &["250"]);
+    assert_eq!(
+        store::get(&ctx.db, G, U)
+            .unwrap()
+            .unwrap()
+            .clan
+            .unwrap()
+            .min_week,
+        250
+    );
+    let week = store::get(&ctx.db, G, U).unwrap().unwrap().week();
+    ctx.db
+        .with(|c| {
+            c.execute(
+                "UPDATE rpg_clan_members SET joined = 0, week = ?2, week_xp = 40 WHERE user_id = ?1",
+                params![31, week - 1],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let s = click(&ctx, "guildmanage", "", "", &[]);
+    assert!(text_of(&s).contains("under the minimum"), "{}", text_of(&s));
+    assert!(
+        text_of(&s).contains("Under the minimum last week (40)"),
+        "{}",
+        text_of(&s)
+    );
+
+    // Kicking: out, and no straight rejoin or ask for a while, unless invited again.
+    click(&ctx, "guild", "policy", "", &["open"]);
+    click(&ctx, "guild", "kick", "", &["31"]);
+    assert_eq!(clan_of(&ctx, 31), None);
+    let s = click_as(&ctx, 31, "guild", "join", &clan.to_string(), &[]);
+    assert!(
+        text_of(&s).contains("removed you lately"),
+        "{}",
+        text_of(&s)
+    );
+    assert_eq!(clan_of(&ctx, 31), None);
+    click(&ctx, "guild", "invite", "", &["31"]);
+    click_as(&ctx, 31, "guild", "join", &clan.to_string(), &[]);
+    assert_eq!(clan_of(&ctx, 31), Some(clan));
+
+    // Search: by part of the name or the tag, and open-only.
+    store::run(&ctx.db, G, 32, None, |g| {
+        g.gold(2000, "test")?;
+        feat_rpg::guild::found(g, "Wolfwood Watch", "WW")?;
+        feat_rpg::guild::set_policy(g, "invite")?;
+        Ok(())
+    })
+    .unwrap();
+    let s = click_as(&ctx, 32, "guild", "find", "", &["raven"]);
+    assert!(text_of(&s).contains("Ravenhold") && !text_of(&s).contains("Wolfwood Watch"));
+    let s = click_as(&ctx, 32, "guild", "find", "", &["ww"]);
+    assert!(text_of(&s).contains("Wolfwood Watch"), "{}", text_of(&s));
+    let s = click_as(&ctx, 32, "guild", "page", "0.1.", &[]);
+    assert!(text_of(&s).contains("Ravenhold") && !text_of(&s).contains("Wolfwood Watch"));
+    let s = click_as(&ctx, 32, "guild", "find", "", &["nobody:here"]);
+    assert!(text_of(&s).contains("No guild matches"), "{}", text_of(&s));
 }
 
 #[test]

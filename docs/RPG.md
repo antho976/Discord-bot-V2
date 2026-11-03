@@ -167,7 +167,7 @@ two fights before needing potions, lifesteal barely healing); wanted a story wit
 some choices, more content, and every button on the overview instead of a menu.
 
 - **Fights are shorter and you keep playing.** Hunt monsters have less HP (`HUNT_HP`); a win
-  heals 15%; HP refills in 15 minutes instead of 45; the inn heals at once for gold. Hades'
+  heals 8% (15% at first, too much for the owner); HP refills in 15 minutes instead of 45; the inn heals at once for gold. Hades'
   lifesteal is 20% (40% of that against the boss) and Soul Rend heals 60%. Thor guards 60%.
   Measured: a new player's fight is 7 to 10 turns and costs 4 to 38% HP before the win heal.
 - **Pace after it** (simulator): light player at the boss on day 9, heavy on day 4 or 5.
@@ -210,13 +210,20 @@ too basic; too many buttons; elite messages are spammy.
   the boss always (Rare or Epic). Loose threads refine a piece one rarity up (adds a trait) or
   reforge its traits. Salvaging Fine or better gives threads; a full pack (20 spare pieces)
   salvages new drops into threads.
-- **Categories:** the overview has Hunt, Expedition, Labyrinth, Saga, then Hero (stats, gear,
-  pack, skills, titles, help) and Skagi (forge, temple, bounty board, goals).
+- **Categories (2026-11-03, task #8):** the overview's "Right now" lines carry their own
+  button (Hunt, Plan one, Collect, Continue, Read), and one row underneath opens a menu each:
+  Combat (Titan, raid, hunt, expedition, Labyrinth, dungeons, map), Character (stats, gear,
+  forge, pack, skills, titles, help), Quests (saga, townsfolk side quests, bounty board,
+  goals), Skagi (market, temple; the button opens the temple directly when the market is
+  off) and the guild. Screens inside a menu go back to it ("← Combat", "← Quests",
+  "← Character", "← Skagi").
 - **Tutorial:** six steps shown on the overview with what, why and how; each pays 25 gold, all
   of them 2 potions, 100 gold and a title. Fights explain themselves until your first win.
   Skippable from Help.
-- **Announcements:** elites only on a player's first kill of that elite, and the RPG posts at
-  most once per server every 10 minutes.
+- **Announcements:** elites only on a player's first kill of that elite. Every one goes out
+  (the old limit of one post per server every 10 minutes hid most of them) and the bot deletes
+  it after 30 minutes, so the channel doesn't fill up. "Delete them after" in the RPG settings
+  changes that; 0 keeps them.
 
 ## Fourth pass: the big build (2026-11-03, overnight)
 
@@ -232,7 +239,7 @@ its saved progress stays.
 | --- | --- |
 | Labyrinth | Floor-by-floor runs (third pass) |
 | Dungeons | Three fixed delves, one per region: the Drowned Hall (level 5), the Wolf-King's Den (11), Hrolf's Treasury (17). Four rooms then a boss with its own pattern. First clear each day opens the chest: gear (Fine or better), 2 loose threads, the region's rare material, gold. Fall and keep half of what you carried |
-| Guilds | Found one for 500 gold (name and tag in a form), up to 12 members. Guild XP comes only from what members do; levels give small shared perks (up to +5% gold and a title). The treasury only buys upgrades (Mead Hall, War Banner, Longship), never power for one member. Weekly challenge: 12 wins per member pays the treasury |
+| Guilds | Found one for 500 gold (name and tag in a form), up to 12 members. Guild XP comes only from what members do; levels give small shared perks (up to +5% gold and a title). The treasury only buys upgrades (Mead Hall, War Banner, Longship), never power for one member. Weekly challenge: 12 wins per member pays the treasury. **Controls (task #10):** the leader's Manage page sets Open or Invite only (players ask, the leader accepts or declines, or invites a player who isn't in a guild; asks and invites last 7 days, 3 open asks per player), a weekly guild-XP minimum (none, 50 to 1,000; members who were in all last week and fell short are marked and listed first to kick; nothing is automatic), and kicks (a kicked player can't join or ask that guild for 3 days unless invited). Find a guild lists guilds strongest first, 6 a page, with search by name or tag (a form) and an Open-only filter. The overview shows asks to leaders and invites to players |
 | Guild raids | The leader spends 1,500 from the treasury to wake Fafnir. 7,000 HP per member, 72 hours, 2 attempts a day of 10 turns each. Everyone who hit claims when it falls (a smaller reward if it gets away) |
 | Titans | Server-wide: one of Jormungandr, Typhon or Hrimthurs rises every 72 hours for 48 (staff can raise one now from the dashboard). 9,000 HP per active player, 3 attempts a day. The one announcement that bypasses the 10-minute quiet gap |
 | Map | A drawn map of Midgard on the overview's Map screen: open regions, dungeon doors, where your expedition is, a Titan in the sea when one is up |
