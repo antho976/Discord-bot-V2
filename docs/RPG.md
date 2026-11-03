@@ -167,7 +167,7 @@ two fights before needing potions, lifesteal barely healing); wanted a story wit
 some choices, more content, and every button on the overview instead of a menu.
 
 - **Fights are shorter and you keep playing.** Hunt monsters have less HP (`HUNT_HP`); a win
-  heals 15%; HP refills in 15 minutes instead of 45; the inn heals at once for gold. Hades'
+  heals 8% (15% at first, too much for the owner); HP refills in 15 minutes instead of 45; the inn heals at once for gold. Hades'
   lifesteal is 20% (40% of that against the boss) and Soul Rend heals 60%. Thor guards 60%.
   Measured: a new player's fight is 7 to 10 turns and costs 4 to 38% HP before the win heal.
 - **Pace after it** (simulator): light player at the boss on day 9, heavy on day 4 or 5.
@@ -215,8 +215,10 @@ too basic; too many buttons; elite messages are spammy.
 - **Tutorial:** six steps shown on the overview with what, why and how; each pays 25 gold, all
   of them 2 potions, 100 gold and a title. Fights explain themselves until your first win.
   Skippable from Help.
-- **Announcements:** elites only on a player's first kill of that elite, and the RPG posts at
-  most once per server every 10 minutes.
+- **Announcements:** elites only on a player's first kill of that elite. Every one goes out
+  (the old limit of one post per server every 10 minutes hid most of them) and the bot deletes
+  it after 30 minutes, so the channel doesn't fill up. "Delete them after" in the RPG settings
+  changes that; 0 keeps them.
 
 ## Fourth pass: the big build (2026-11-03, overnight)
 
