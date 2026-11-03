@@ -10,6 +10,7 @@ pub mod data;
 pub mod emoji;
 pub mod engine;
 pub mod game;
+pub mod quests;
 pub mod store;
 pub mod ui;
 mod web;
@@ -51,11 +52,13 @@ pub struct Settings {
     pub gold_rate: i64,
     /// Post in the channel when someone beats the realm boss for the first time.
     pub announce: bool,
+    /// Test speed: expeditions, healing and Vigor run this many times faster.
+    pub speed: i64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { channel: None, test_only: true, tester_role: None, xp_rate: 100, loot_rate: 100, gold_rate: 100, announce: true }
+        Self { channel: None, test_only: true, tester_role: None, xp_rate: 100, loot_rate: 100, gold_rate: 100, announce: true, speed: 1 }
     }
 }
 
@@ -174,6 +177,7 @@ impl Feature for Rpg {
         let i = &call.interaction;
         let Some(guild) = call.guild_id() else { return Ok(()) };
         let s = ctx.settings::<Settings>(guild, KEY)?;
+        store::set_speed(guild, s.speed);
         if !may_play(&s, i) {
             return ctx.reply(i, Reply::text("The RPG is in a closed test for now. It opens to everyone soon.").ephemeral()).await;
         }
@@ -218,6 +222,7 @@ impl Feature for Rpg {
             return ctx.reply(i, Reply::text(format!("This is <@{}>'s adventure. Use `/rpg` to start yours.", route.owner)).ephemeral()).await;
         }
         let s = ctx.settings::<Settings>(guild, KEY)?;
+        store::set_speed(guild, s.speed);
         if !may_play(&s, i) {
             return ctx.reply(i, Reply::text("The RPG is in a closed test for now.").ephemeral()).await;
         }

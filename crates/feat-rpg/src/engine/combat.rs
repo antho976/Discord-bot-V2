@@ -113,6 +113,11 @@ pub struct Fight {
     pub end: Option<End>,
     /// Items the fight used up, for the caller to take from the pack.
     pub used: Vec<String>,
+    /// Who stands with you (the saga's choice at the völva), and whether their help is spent.
+    #[serde(default)]
+    pub ally: Option<String>,
+    #[serde(default)]
+    pub ally_used: bool,
 }
 
 fn scale(r: &mut Rng, v: f64) -> i64 {
@@ -120,17 +125,18 @@ fn scale(r: &mut Rng, v: f64) -> i64 {
 }
 
 impl Fight {
-    /// A hunt against one of the region's monsters, starting at `hp`.
+    /// A hunt against one of the region's monsters (now and then its elite), starting at `hp`.
     pub fn hunt(hero: Hero, hp: i64, region: &data::Region, seed: u64) -> Fight {
         let mut rng = Rng::new(seed);
-        let m = data::monster(rng.pick(region.monsters)).unwrap_or(&data::MONSTERS[0]);
+        let regular = data::monster(rng.pick(region.monsters)).unwrap_or(&data::MONSTERS[0]);
+        let m = if rng.chance(data::ELITE_CHANCE) { data::elite(region.id).unwrap_or(regular) } else { regular };
         let p = region.power as f64;
         let foe = Foe {
             id: m.id.into(),
             name: m.name.into(),
-            hp: (p * m.hp * 2.2) as i64,
-            max_hp: (p * m.hp * 2.2) as i64,
-            atk: (p * m.atk * 0.9).max(3.0) as i64,
+            hp: (p * m.hp * data::HUNT_HP) as i64,
+            max_hp: (p * m.hp * data::HUNT_HP) as i64,
+            atk: (p * m.atk * data::HUNT_ATK).max(3.0) as i64,
             step: (rng.next_u64() % m.pattern.len() as u64) as usize,
             phase: 1,
             weak: m.weak.map(str::to_owned),
@@ -191,9 +197,32 @@ impl Fight {
             rng,
             end: None,
             used: Vec::new(),
+            ally: None,
+            ally_used: false,
         };
         f.log.push(format!("{} blocks your way.", f.foe.name));
         f
+    }
+
+    /// Bring an ally into a boss fight. The völva tells you one thing you haven't scouted.
+    pub fn with_ally(mut self, ally: Option<&str>) -> Fight {
+        if self.kind != Kind::Boss {
+            return self;
+        }
+        self.ally = ally.map(str::to_owned);
+        match ally {
+            Some("volva") => {
+                if let Some(f) = data::FACTS.iter().find(|f| !self.scouted.iter().any(|k| k == *f)) {
+                    self.scouted.push(f.to_string());
+                    self.log.push(format!("The völva whispers: \"{}.\"", data::fact_text(f, 0).split(" this week").next().unwrap_or("")));
+                }
+                self.ally_used = true;
+            }
+            Some("shieldmaiden") => self.log.push("Eydis raises her shield beside you.".into()),
+            Some("jarlsmen") => self.log.push("The jarl's men bang their shields.".into()),
+            _ => {}
+        }
+        self
     }
 
     fn pattern(&self) -> &'static [Move] {
@@ -282,6 +311,9 @@ impl Fight {
         if self.foe.cursed > 0 {
             m *= 1.6;
         }
+        if self.ally.as_deref() == Some("jarlsmen") {
+            m *= 1.08;
+        }
         if let Some((el, left)) = self.coat {
             let weak = self.foe.weak.as_deref() == Some(el.id());
             m *= if weak { 1.6 } else { 1.1 };
@@ -299,7 +331,11 @@ impl Fight {
         }
         let dmg = scale(&mut self.rng, self.atk as f64 * m);
         self.foe.hp -= dmg;
-        let steal = self.hero.main.lifesteal() + if self.hero.lesser == Some(God::Hades) { 0.04 } else { 0.0 };
+        let mut steal = self.hero.main.lifesteal() + if self.hero.lesser == Some(God::Hades) { 0.04 } else { 0.0 };
+        if self.kind == Kind::Boss {
+            // The dead don't bleed much: lifesteal is weaker against the realm boss.
+            steal *= data::BOSS_LIFESTEAL;
+        }
         if steal > 0.0 {
             self.heal((dmg as f64 * steal) as i64);
         }
@@ -394,8 +430,9 @@ impl Fight {
                     }
                     Skill::SoulRend => {
                         let d = self.hit(1.6, true);
-                        self.heal(d / 2);
-                        self.log.push(format!("Soul Rend tore for {d} and healed you {}.", d / 2));
+                        let h = d * 6 / 10;
+                        self.heal(h);
+                        self.log.push(format!("Soul Rend tore for {d} and healed you {h}."));
                     }
                     Skill::CerberusBite => {
                         let d = self.hit(0.8, true);
@@ -528,6 +565,10 @@ impl Fight {
                 let d = self.take(raw);
                 self.log.push(format!("It hit you for {d}."));
                 self.counter_back();
+            }
+            Move::Heavy if self.ally.as_deref() == Some("shieldmaiden") && !self.ally_used => {
+                self.ally_used = true;
+                self.log.push("Eydis steps in front of you and takes the slam on her shield.".into());
             }
             Move::Heavy => {
                 let raw = scale(&mut self.rng, atk * 2.4);

@@ -159,3 +159,32 @@ turn), `--example clickbench` (bot work per click), `--example banner -- <dir>` 
   with level 1's Power alone even the easiest region was too dangerous.
 - Selling boss intel, guilds, trading and Titan events are after the test, as planned. The
   Goals screen points to scouting instead of buying intel.
+
+## Second pass, after the owner's first test (2026-11-03)
+
+Owner: progression felt slow in a way that stopped you playing (one hard-won fight as Hades,
+two fights before needing potions, lifesteal barely healing); wanted a story with steps and
+some choices, more content, and every button on the overview instead of a menu.
+
+- **Fights are shorter and you keep playing.** Hunt monsters have less HP (`HUNT_HP`); a win
+  heals 15%; HP refills in 15 minutes instead of 45; the inn heals at once for gold. Hades'
+  lifesteal is 20% (40% of that against the boss) and Soul Rend heals 60%. Thor guards 60%.
+  Measured: a new player's fight is 7 to 10 turns and costs 4 to 38% HP before the win heal.
+- **Pace after it** (simulator): light player at the boss on day 9, heavy on day 4 or 5.
+  Boss at 420 Power with intel: Thor 97%, Athena 85%, Hades 100%.
+- **The saga** (`src/quests.rs`): the Loom frame (the Norns and the Fates weave every saga;
+  someone cut a thread, you relive the sagas to find who) around Midgard's 12-chapter saga,
+  "The King Under the Mound". Goals use what you already do. Three chapters end in a choice,
+  never back to back; options are sidegrades (a test checks their worth is within 2×). The
+  völva's choice picks a boss ally: Eydis blocks the first slam, the völva reveals a fact, the
+  jarl's men add 8% damage. The ending hints at the culprit (a golden apple and mistletoe) for
+  the next realm.
+- **Content:** four monsters per region; a rare elite per region (6%, triple rewards, a title
+  on the first kill, announced in the channel); encounters after hunts (merchant, shrine, lost
+  traveller, buried cache), both options worth having; three daily bounties with a bonus for
+  all three; titles worn on the banner.
+- **Overview:** two rows of buttons (Hunt, Expedition, Saga, Forge, Goals / Pack, Temple,
+  Skills, Bounties, Help), no menu.
+- **Testing:** Settings → Test speed (×10, ×60, ×240 for expeditions, healing and Vigor);
+  Players → a player → set level, give items, finish their expedition, make them boss-ready,
+  jump their saga to a chapter, heal.

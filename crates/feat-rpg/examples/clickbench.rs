@@ -56,7 +56,7 @@ fn main() {
     // The banner is drawn when Discord first fetches its address, not during the click.
     let mut b = Vec::new();
     for i in 0..30u32 {
-        let spec = feat_rpg::banner::Spec { patron: data::GODS[(i % 3) as usize], name: "Antho".into(), level: 14, power: 312 + i as i64, xp10: i % 10 };
+        let spec = feat_rpg::banner::Spec { patron: data::GODS[(i % 3) as usize], name: "Antho".into(), level: 14, power: 312 + i as i64, xp10: i % 10, title: String::new() };
         let start = Instant::now();
         let png = bot_render::png(&feat_rpg::banner::svg(&spec)).unwrap();
         b.push((start.elapsed().as_micros(), png.len()));
