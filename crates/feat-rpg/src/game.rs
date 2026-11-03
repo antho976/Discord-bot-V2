@@ -23,6 +23,8 @@ use crate::ui::{Btn, Opt, Screen};
 pub struct Outcome {
     pub screen: Screen,
     pub announce: Option<String>,
+    /// A public line that should go out even if the RPG posted recently (a Titan falling).
+    pub urgent: bool,
 }
 
 /// Where a click goes, read from its custom id `rpg:{owner}:{screen}:{action}:{arg}:{version}`.
@@ -69,6 +71,14 @@ impl Ids {
 
 /// Server-wide numbers the screens show.
 pub struct World {
+    /// A Titan that's up, and the guild's raid: (name, % left, ends at).
+    pub titan: Option<(&'static str, i64, i64)>,
+    pub raid: Option<(&'static str, i64, i64)>,
+    pub modules: store::Modules,
+    /// Guild perks, in percent.
+    pub guild_xp: i64,
+    pub guild_loot: i64,
+    pub guild_gold: i64,
     pub week: i64,
     pub offerings: [i64; 3],
     pub goal: i64,
@@ -79,7 +89,21 @@ pub struct World {
 impl World {
     pub fn load(g: &Game, rates: Rates) -> Result<World> {
         let week = g.p.week();
+        let modules = store::modules(g.p.guild);
+        let now = g.p.now;
+        let up = |x: Option<crate::shared::Shared>| x.filter(|t| !t.over(now)).map(|t| (t.name(), t.hp * 100 / t.max_hp.max(1), t.ends));
+        let titan = if modules.titans { up(crate::shared::active(&g.tx, g.p.guild, "titan", 0)?) } else { None };
+        let raid = match &g.p.clan {
+            Some(c) if modules.raids => up(crate::shared::active(&g.tx, g.p.guild, "raid", c.id)?),
+            _ => None,
+        };
         Ok(World {
+            titan,
+            raid,
+            modules,
+            guild_xp: crate::guild::xp_bonus(&g.p),
+            guild_loot: crate::guild::loot_bonus(&g.p),
+            guild_gold: crate::guild::gold_bonus(&g.p),
             week,
             offerings: store::offerings(&g.tx, g.p.guild, week)?,
             goal: store::goal(&g.tx, g.p.guild, week)?,
@@ -95,11 +119,11 @@ impl World {
     }
     /// Rates with this week's blessing.
     fn xp_rate(&self) -> i64 {
-        self.rates.xp * if self.blessing == Some(God::Athena) { 110 } else { 100 } / 100
+        self.rates.xp * if self.blessing == Some(God::Athena) { 110 } else { 100 } / 100 * (100 + self.guild_xp) / 100
     }
     fn expedition_rates(&self) -> Rates {
         let loot = if self.blessing == Some(God::Hades) { 110 } else { 100 };
-        Rates { xp: self.xp_rate(), loot: self.rates.loot * loot / 100, gold: self.rates.gold * loot / 100 }
+        Rates { xp: self.xp_rate(), loot: self.rates.loot * loot / 100 * (100 + self.guild_loot) / 100, gold: self.rates.gold * loot / 100 * (100 + self.guild_gold) / 100 }
     }
     fn hunt_mult(&self) -> i64 {
         if self.blessing == Some(God::Thor) { 110 } else { 100 }
@@ -158,8 +182,18 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
     tutorial_block(&mut s, p, &ids);
     s.text("-# Right now");
     let mut primary_used = false;
+    if let Some((name, pct, ends)) = w.titan {
+        s.section(format!("{} **{name} is attacking Midgard**\n-# {pct}% left · {} to bring it down, together", e("boss"), dur(ends - p.now)), Btn::new(ids.go("titan"), "Fight").emoji("boss").danger());
+    }
+    if let Some((name, pct, ends)) = w.raid {
+        s.section(format!("{} **Guild raid: {name}**\n-# {pct}% left · {} left", e("guild"), dur(ends - p.now)), Btn::new(ids.go("raid"), "Raid").emoji("boss"));
+    }
     if let Some(run) = &p.run {
         s.section(format!("{} **In the Labyrinth, floor {}**\n-# Carrying: {}", e("labyrinth"), run.floor, crate::ui::truncate(&run.haul_short(), 90)), Btn::new(ids.go("lab"), "Continue").emoji("labyrinth").primary());
+        primary_used = true;
+    }
+    if let Some(d) = &p.delve {
+        s.section(format!("{} **In {}**\n-# Room {} of {}", e("dungeon"), d.dungeon().name, (d.room + 1).min(d.dungeon().rooms.len() + 1), d.dungeon().rooms.len() + 1), Btn::new(ids.go("dungeon"), "Continue").emoji("dungeon").then_primary(!primary_used));
         primary_used = true;
     }
     match &p.expedition {
@@ -234,14 +268,27 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         e("offering"),
         w.pct()
     ));
+    let m = &w.modules;
     let hunt = Btn::new(ids.go("hunt"), "Hunt").emoji("hunt");
-    s.buttons(vec![
-        if primary_used { hunt } else { hunt.primary() },
-        Btn::new(ids.go("exp"), "Expedition").emoji("expedition"),
-        Btn::new(ids.go("lab"), "Labyrinth").emoji("labyrinth"),
-        Btn::new(ids.go("saga"), "Saga").emoji("saga"),
-    ]);
-    s.buttons(vec![Btn::new(ids.go("hero"), "Hero").emoji(p.main().id()), Btn::new(ids.go("skagi"), "Skagi").emoji("temple")]);
+    let mut row1 = vec![if primary_used { hunt } else { hunt.primary() }, Btn::new(ids.go("exp"), "Expedition").emoji("expedition")];
+    if m.labyrinth {
+        row1.push(Btn::new(ids.go("lab"), "Labyrinth").emoji("labyrinth"));
+    }
+    if m.saga {
+        row1.push(Btn::new(ids.go("saga"), "Saga").emoji("saga"));
+    }
+    if m.map {
+        row1.push(Btn::new(ids.go("map"), "Map").emoji("map"));
+    }
+    s.buttons(row1);
+    let mut row2 = vec![Btn::new(ids.go("hero"), "Hero").emoji(p.main().id()), Btn::new(ids.go("skagi"), "Skagi").emoji("temple")];
+    if m.guilds {
+        row2.push(Btn::new(ids.go("guild"), p.clan.as_ref().map(|c| format!("[{}]", c.tag)).unwrap_or_else(|| "Guild".into())).emoji("guild"));
+    }
+    if m.dungeons && !m.map {
+        row2.push(Btn::new(ids.go("dungeons"), "Dungeons").emoji("dungeon"));
+    }
+    s.buttons(row2);
     s
 }
 
@@ -575,16 +622,33 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
     let ids = Ids { owner: p.user, version: p.version };
     let boss = f.kind == crate::engine::combat::Kind::Boss;
     let lab = f.kind == crate::engine::combat::Kind::Lab;
-    let screen = if boss { "boss" } else if lab { "lab" } else { "hunt" };
+    let dungeon = f.kind == crate::engine::combat::Kind::Dungeon;
+    let shared = f.kind == crate::engine::combat::Kind::Shared;
+    let shared_kind = if f.region.starts_with("raid") { "raid" } else { "titan" };
+    let screen = if boss {
+        "boss"
+    } else if lab {
+        "lab"
+    } else if dungeon {
+        "dungeon"
+    } else if shared {
+        shared_kind
+    } else {
+        "hunt"
+    };
     let mut s = Screen::default();
     let meta = if boss {
         format!("Phase {} · turn {}", f.foe.phase, f.turn)
     } else if lab {
         format!("The Labyrinth · floor {} · turn {}", p.run.as_ref().map(|r| r.floor).unwrap_or(0), f.turn)
+    } else if dungeon {
+        format!("{} · turn {}", p.delve.as_ref().map(|d| d.dungeon().name).unwrap_or("A dungeon"), f.turn)
+    } else if shared {
+        format!("{} · turn {} of {} · you've dealt {}", if shared_kind == "raid" { "Guild raid" } else { "Titan" }, f.turn.min(data::SHARED_TURNS), data::SHARED_TURNS, thousands(f.dealt()))
     } else {
         format!("{} · turn {}", data::region(&f.region).map(|r| r.name).unwrap_or(""), f.turn)
     };
-    title(&mut s, if boss { "boss" } else if lab { "labyrinth" } else { "hunt" }, &f.foe.name, &meta);
+    title(&mut s, if boss || shared { "boss" } else if lab { "labyrinth" } else if dungeon { "dungeon" } else { "hunt" }, &f.foe.name, &meta);
     if !p.tutorial_has(Tut::Hunt) && f.end.is_none() && f.turn <= 3 {
         s.text(format!(
             "-# {} **How fights work:** each turn you act, then the foe does what it showed. A warning means a big hit is coming: **Guard** it. Strike costs 1 stamina; you get 1 back each turn, 2 when you guard.",
@@ -640,6 +704,11 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
         } else if lab {
             let on = p.run.is_some();
             s.buttons(vec![back(&ids), Btn::new(ids.go("lab"), if on { "Choose a door" } else { "The Labyrinth" }).emoji("labyrinth").primary()]);
+        } else if dungeon {
+            let on = p.delve.is_some();
+            s.buttons(vec![back(&ids), Btn::new(ids.go(if on { "dungeon" } else { "dungeons" }), if on { "Onward" } else { "Dungeons" }).emoji("dungeon").primary()]);
+        } else if shared {
+            s.buttons(vec![back(&ids), Btn::new(ids.go(shared_kind), if shared_kind == "raid" { "The raid" } else { "The Titan" }).emoji("boss").primary()]);
         } else {
             let again = Btn::new(ids.act("hunt", "start", &f.region), "Hunt again").emoji("hunt").primary().disabled(p.hp() * 10 < p.max_hp() * 3);
             s.buttons(vec![back(&ids), again]);
@@ -668,7 +737,7 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
     if oils.1 > 0 {
         row2.push(Btn::new(act("frostoil"), format!("Frost oil · {}", oils.1)).emoji("frostoil"));
     }
-    row2.push(Btn::new(ids.act(screen, "leave", ""), if boss { "Retreat" } else if lab { "Flee" } else { "Leave" }));
+    row2.push(Btn::new(ids.act(screen, "leave", ""), if boss { "Retreat" } else if lab || dungeon { "Flee" } else if shared { "Break off" } else { "Leave" }));
     s.buttons(row1);
     s.buttons(row2);
     // Locked skills, so players know what's coming.
@@ -1107,6 +1176,28 @@ fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Opt
         None => {
             g.save_fight(Some(f))?;
         }
+        Some(_) if f.kind == crate::engine::combat::Kind::Shared => {
+            let hp = if f.end == Some(End::Lost) { 1 } else { f.hp };
+            g.set_hp(hp)?;
+            g.save_fight(None)?;
+            let (said, ann) = crate::shared::settle(g, &f)?;
+            count_event(g, quests::Event::Shared)?;
+            result = Some(said);
+            announce = ann;
+            g.p.fight = Some(f);
+        }
+        Some(End::Won) | Some(End::Lost) if f.kind == crate::engine::combat::Kind::Dungeon => {
+            g.save_fight(None)?;
+            let (said, ann) = crate::dungeons::fight_over(g, &f, f.end == Some(End::Won))?;
+            result = Some(said);
+            announce = ann;
+            g.p.fight = Some(f);
+        }
+        Some(End::Spent) => {
+            g.set_hp(f.hp)?;
+            g.save_fight(None)?;
+            g.p.fight = Some(f);
+        }
         Some(End::Lost) if f.kind == crate::engine::combat::Kind::Lab => {
             g.save_fight(None)?;
             result = Some(crate::labyrinth::fight_over(g, &f, false)?);
@@ -1127,7 +1218,7 @@ fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Opt
             let breath = if f.kind == crate::engine::combat::Kind::Hunt { (f.max_hp as f64 * data::WIN_HEAL) as i64 } else { 0 };
             g.set_hp(f.hp + breath)?;
             match f.kind {
-                crate::engine::combat::Kind::Lab => {}
+                crate::engine::combat::Kind::Lab | crate::engine::combat::Kind::Dungeon | crate::engine::combat::Kind::Shared => {}
                 crate::engine::combat::Kind::Hunt => {
                     let r = data::region(&f.region).unwrap_or(&data::REGIONS[0]);
                     let (xp, gold) = data::hunt_reward(r);
@@ -1195,7 +1286,7 @@ fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Opt
                         (data::WIN_HEAL * 100.0) as i64
                     ));
                     // Now and then, something on the way back.
-                    if !elite && rng.chance(0.14) {
+                    if !elite && w.modules.encounters && rng.chance(0.14) {
                         let enc = rng.pick(ENCOUNTERS);
                         g.set_event(Some(enc.id))?;
                     }
@@ -1245,6 +1336,7 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
     let note_stale = Some("That button was from before your last move. Here's where things are now.".to_string());
     let value = values.first().cloned().unwrap_or_default();
     let mut announce = None;
+    let mut urgent = false;
     let mut note: Option<String> = None;
     let screen = if stale {
         note = note_stale;
@@ -1331,7 +1423,7 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                     if g.p.event.is_some() {
                         g.set_event(None)?;
                     }
-                    let f = Fight::hunt(g.p.hero(), g.p.hp(), r, seed(&g.p, 5));
+                    let f = Fight::hunt_with(g.p.hero(), g.p.hp(), r, seed(&g.p, 5), w.modules.elites);
                     g.save_fight(Some(f))?;
                     g.bump()?;
                 }
@@ -1349,7 +1441,7 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                 }
                 view(ctx, g, &w, "boss", None)?
             }
-            ("hunt" | "boss" | "lab", "act") => match parse_action(&route.arg) {
+            ("hunt" | "boss" | "lab" | "dungeon" | "titan" | "raid", "act") => match parse_action(&route.arg) {
                 Some(a) => {
                     let (n, result, ann) = fight_turn(g, &w, a)?;
                     note = n;
@@ -1361,23 +1453,108 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                 }
                 None => view(ctx, g, &w, &route.screen, None)?,
             },
-            ("hunt" | "boss" | "lab", "leave") => {
+            ("hunt" | "boss" | "lab" | "dungeon" | "titan" | "raid", "leave") => {
                 let mut to = "hub";
                 if let Some(f) = g.p.fight.clone() {
                     g.set_hp(f.hp)?;
                     g.save_fight(None)?;
-                    if f.kind == crate::engine::combat::Kind::Lab {
-                        crate::labyrinth::fled(g)?;
-                        to = "lab";
+                    match f.kind {
+                        crate::engine::combat::Kind::Lab => {
+                            crate::labyrinth::fled(g)?;
+                            to = "lab";
+                        }
+                        crate::engine::combat::Kind::Dungeon => {
+                            crate::dungeons::fled(g)?;
+                            to = "dungeon";
+                        }
+                        crate::engine::combat::Kind::Shared => {
+                            // Breaking off early still counts what you dealt.
+                            let (said, ann) = crate::shared::settle(g, &f)?;
+                            count_event(g, quests::Event::Shared)?;
+                            announce = ann;
+                            urgent = true;
+                            to = if route.screen == "raid" { "raid" } else { "titan" };
+                            note = Some(said);
+                        }
+                        _ => {}
                     }
                     g.bump()?;
-                    note = Some(match f.kind {
-                        crate::engine::combat::Kind::Boss => "You retreat. The King's wounds will heal; yours too.".into(),
-                        crate::engine::combat::Kind::Lab => "You back out and pull the door shut. The other doors are still there.".into(),
-                        _ => "You slip away from the fight.".into(),
-                    });
+                    if note.is_none() {
+                        note = Some(match f.kind {
+                            crate::engine::combat::Kind::Boss => "You retreat. The King's wounds will heal; yours too.".into(),
+                            crate::engine::combat::Kind::Lab | crate::engine::combat::Kind::Dungeon => "You back out and pull the door shut.".into(),
+                            _ => "You slip away from the fight.".into(),
+                        });
+                    }
                 }
                 view(ctx, g, &w, to, None)?
+            }
+            ("guild", "create") => {
+                note = crate::guild::found(g, values.first().map(String::as_str).unwrap_or(""), values.get(1).map(String::as_str).unwrap_or(""))?;
+                crate::guild::screen(g)?
+            }
+            ("guild", "join") => {
+                note = crate::guild::join(g, value.parse().unwrap_or(-1))?;
+                crate::guild::screen(g)?
+            }
+            ("guild", "leave") => {
+                note = crate::guild::leave(g)?;
+                crate::guild::screen(g)?
+            }
+            ("guild", "give") => {
+                note = crate::guild::give(g, route.arg.parse().unwrap_or(0).clamp(0, 100_000))?;
+                crate::guild::screen(g)?
+            }
+            ("guild", "buy") => {
+                note = crate::guild::buy(g, &value)?;
+                crate::guild::screen(g)?
+            }
+            ("guild", "kick") => {
+                note = crate::guild::kick(g, value.parse().unwrap_or(0))?;
+                crate::guild::screen(g)?
+            }
+            ("guild", "raid") => {
+                note = start_raid(g)?;
+                crate::guild::screen(g)?
+            }
+            ("titan" | "raid", "fight") => {
+                note = crate::shared::attempt(g, &route.screen)?;
+                view(ctx, g, &w, &route.screen, None)?
+            }
+            ("titan" | "raid", "claim") => {
+                note = crate::shared::claim(g, &route.screen)?;
+                view(ctx, g, &w, &route.screen, None)?
+            }
+            ("dungeon", "enter") => {
+                note = crate::dungeons::enter(g, &route.arg)?;
+                view(ctx, g, &w, "dungeon", None)?
+            }
+            ("dungeon", "next") => {
+                note = crate::dungeons::next(g)?;
+                view(ctx, g, &w, "dungeon", None)?
+            }
+            ("dungeon", "out") => {
+                note = crate::dungeons::leave(g)?;
+                view(ctx, g, &w, "dungeons", None)?
+            }
+            ("quests", "claim") => {
+                note = claim_side(g, &route.arg)?;
+                view(ctx, g, &w, "quests", None)?
+            }
+            ("market", "gear") => {
+                note = crate::market::buy_gear(g, route.arg.parse().unwrap_or(9))?;
+                view(ctx, g, &w, "market", None)?
+            }
+            ("market", "supply") => {
+                note = crate::market::buy_supply(g, &value)?;
+                view(ctx, g, &w, "market", None)?
+            }
+            ("exp", "plan") => {
+                let mut plan = default_plan(&g.p);
+                if let Some(r) = data::region(&route.arg) {
+                    plan.region = r.id.into();
+                }
+                expedition_plan(&g.p, &w, &plan)
             }
             ("lab", "enter") => {
                 note = crate::labyrinth::enter(g)?;
@@ -1566,7 +1743,10 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
             (screen, _) => view(ctx, g, &w, screen, None)?,
         }
     };
-    Ok(Outcome { screen: screen.note(note), announce })
+    if announce.as_deref().is_some_and(|a| a.contains("falls!")) {
+        urgent = true;
+    }
+    Ok(Outcome { screen: screen.note(note), announce, urgent })
 }
 
 /// Show a screen without changing anything.
@@ -1578,6 +1758,25 @@ pub fn view(ctx: &Ctx, g: &mut Game, w: &World, screen: &str, _arg: Option<&str>
             Some(x) => expedition_out(p, w, &x.clone()),
             None => expedition_plan(p, w, &default_plan(p)),
         },
+        "guild" if w.modules.guilds => crate::guild::screen(g)?,
+        "titan" if w.modules.titans => match &p.fight {
+            Some(f) if f.kind == crate::engine::combat::Kind::Shared => fight_screen(p, &f.clone(), None),
+            _ => crate::shared::screen(g, "titan")?,
+        },
+        "raid" if w.modules.raids => match &p.fight {
+            Some(f) if f.kind == crate::engine::combat::Kind::Shared => fight_screen(p, &f.clone(), None),
+            _ => crate::shared::screen(g, "raid")?,
+        },
+        "dungeons" if w.modules.dungeons => crate::dungeons::list_screen(g)?,
+        "dungeon" if w.modules.dungeons => match (&p.fight, &p.delve) {
+            (Some(f), _) if f.kind == crate::engine::combat::Kind::Dungeon => fight_screen(p, &f.clone(), None),
+            (_, Some(d)) => crate::dungeons::delve_screen(p, &d.clone()),
+            _ => crate::dungeons::list_screen(g)?,
+        },
+        "map" if w.modules.map => map_screen(ctx, g, w)?,
+        "quests" if w.modules.quests => side_screen(p),
+        "market" if w.modules.market => crate::market::screen(g)?,
+        x if x.starts_with("region_") => region_screen(g, w, &x[7..])?,
         "lab" => match &p.fight {
             Some(f) if f.kind == crate::engine::combat::Kind::Lab => fight_screen(p, &f.clone(), None),
             _ => crate::labyrinth::screen(p, &crate::labyrinth::board(g, 5)?),
@@ -1646,6 +1845,15 @@ pub fn todays_bounties(p: &Player) -> Vec<quests::Bounty> {
 
 /// Count something that happened toward the saga and today's bounties.
 pub(crate) fn count_event(g: &mut Game, ev: quests::Event) -> Result<()> {
+    count_side(g, ev)?;
+    match ev {
+        quests::Event::Win { .. } => crate::guild::credit(g, 4, 1)?,
+        quests::Event::Expedition { .. } => crate::guild::credit(g, 15, 0)?,
+        quests::Event::Floor(_) => crate::guild::credit(g, 6, 0)?,
+        quests::Event::Forged => crate::guild::credit(g, 5, 0)?,
+        quests::Event::Gave(n) => crate::guild::credit(g, n / 20, 0)?,
+        _ => {}
+    }
     if let Some(ch) = quests::chapter(g.p.saga) {
         if g.p.saga_progress.len() < ch.goals.len() {
             g.p.saga_progress.resize(ch.goals.len(), 0);
@@ -2185,18 +2393,227 @@ fn skagi(p: &Player, w: &World) -> Screen {
         format!("{} **Forge**\n-# {}{}", e("forge"), if n > 0 { format!("{n} upgrade{} ready to forge", if n == 1 { "" } else { "s" }) } else { "Gear, supplies, and refining with loose threads".into() }, if p.have("thread") > 0 { format!(" · {} loose threads", p.have("thread")) } else { String::new() }),
         Btn::new(ids.go("forge"), "Forge").emoji("forge").then_primary(n > 0),
     );
+    if w.modules.market {
+        s.section(format!("{} **Market**\n-# Three pieces of gear picked for you, and supplies. New stock every day.", e("market")), Btn::new(ids.go("market"), "Market").emoji("market"));
+    }
+    if w.modules.quests {
+        let ready = quests::SIDE.iter().filter(|q| side_step(p, q).is_some_and(|(st, pr)| pr >= q.steps[st].goal.target())).count();
+        let open = quests::SIDE.iter().filter(|q| side_step(p, q).is_some()).count();
+        s.section(
+            format!("{} **Townsfolk**\n-# {open} side quest{} open{}", e("quest"), if open == 1 { "" } else { "s" }, if ready > 0 { format!(" · {ready} ready to hand in") } else { String::new() }),
+            Btn::new(ids.go("quests"), "Quests").emoji("quest").then_primary(ready > 0),
+        );
+    }
     s.section(format!("{} **Temple**\n-# This week's offering {}% · altars and bonds", e("temple"), w.pct()), Btn::new(ids.go("temple"), "Temple").emoji("temple"));
     let bs = todays_bounties(p);
     let done = p.bounty.iter().filter(|b| b.1).count();
     let claim = bs.iter().enumerate().filter(|(i, b)| !p.bounty[*i].1 && p.bounty[*i].0 >= b.goal.target()).count();
+    if w.modules.bounties {
     s.section(
         format!("{} **Bounty board**\n-# {done} of 3 done today{}", e("bounty"), if claim > 0 { format!(" · {claim} ready to claim") } else { String::new() }),
         Btn::new(ids.go("bounties"), "Bounties").emoji("bounty").then_primary(claim > 0),
     );
+    }
     s.section(
         format!("{} **Goals**\n-# The Barrow King needs {} Power, you have {}", e("goals"), data::BOSS_POWER, p.power()),
         Btn::new(ids.go("goals"), "Goals").emoji("goals"),
     );
+    s.buttons(vec![back(&ids)]);
+    s
+}
+
+// ---------------------------------------------------------------------------------------------
+// The map, regions, side quests and raids
+// ---------------------------------------------------------------------------------------------
+
+fn start_raid(g: &mut Game) -> Result<Option<String>> {
+    if !store::modules(g.p.guild).raids {
+        return Ok(None);
+    }
+    let Some(m) = g.p.clan.clone() else { return Ok(None) };
+    if !m.leader {
+        return Ok(Some("Only the guild's leader starts a raid.".into()));
+    }
+    if let Some(r) = crate::shared::active(&g.tx, g.p.guild, "raid", m.id)?
+        && !r.over(g.p.now)
+    {
+        return Ok(Some("A raid is already on.".into()));
+    }
+    if m.treasury < data::RAID_COST {
+        return Ok(Some(format!("Starting a raid takes {} from the treasury.", thousands(data::RAID_COST))));
+    }
+    let members = crate::guild::members(&g.tx, g.p.guild, m.id, g.p.week())?;
+    let avg: i64 = members.iter().map(|x| x.level).sum::<i64>() / members.len().max(1) as i64;
+    let power = (60 + avg * 16).max(120);
+    let hp = data::RAID_HP_PER_MEMBER * (members.len() as i64).max(3);
+    g.tx.execute("UPDATE rpg_clans SET treasury = treasury - ?2 WHERE id = ?1", bot_core::rusqlite::params![m.id, data::RAID_COST])?;
+    crate::shared::spawn(&g.tx, g.p.guild, "raid", m.id, data::RAID_BOSS, power, hp, data::RAID_HOURS)?;
+    g.p.clan = crate::guild::membership(&g.tx, g.p.guild, g.p.user)?;
+    g.bump()?;
+    Ok(Some(format!("Fafnir stirs. Your guild has {} hours, {} attempts each a day.", data::RAID_HOURS, data::RAID_ATTEMPTS)))
+}
+
+/// A side quest's current step, if the line is open and not finished.
+fn side_step(p: &Player, q: &quests::SideQuest) -> Option<(usize, i64)> {
+    if p.level < q.level {
+        return None;
+    }
+    let (step, progress) = p.side.iter().find(|x| x.0 == q.id).map(|x| (x.1, x.2)).unwrap_or((0, 0));
+    (step < q.steps.len()).then_some((step, progress))
+}
+
+fn count_side(g: &mut Game, ev: quests::Event) -> Result<()> {
+    if !store::modules(g.p.guild).quests {
+        return Ok(());
+    }
+    for q in quests::SIDE {
+        let Some((step, progress)) = side_step(&g.p, q) else { continue };
+        let goal = q.steps[step].goal;
+        let n = goal.counts(ev);
+        if n > 0 && progress < goal.target() {
+            g.save_side(q.id, step, (progress + n).min(goal.target()))?;
+        }
+    }
+    Ok(())
+}
+
+fn claim_side(g: &mut Game, id: &str) -> Result<Option<String>> {
+    let Some(q) = quests::side(id) else { return Ok(None) };
+    let Some((step, progress)) = side_step(&g.p, q) else { return Ok(None) };
+    let st = q.steps[step];
+    if progress < st.goal.target() {
+        return Ok(Some("Not done yet.".into()));
+    }
+    give_reward(g, &st.reward, &format!("{}: {}", q.npc, q.title))?;
+    g.save_side(q.id, step + 1, 0)?;
+    g.bump()?;
+    let done = step + 1 >= q.steps.len();
+    Ok(Some(format!(
+        "{} {}{}",
+        reward_line(&st.reward, g.p.main()),
+        if done { format!("\n**{}** is done. {} thanks you.", q.title, q.npc.split(',').next().unwrap_or(q.npc)) } else { String::new() },
+        ""
+    )))
+}
+
+fn side_screen(p: &Player) -> Screen {
+    let ids = Ids { owner: p.user, version: p.version };
+    let mut s = Screen::default();
+    title(&mut s, "quest", "Skagi's townsfolk", "Side quests: no choices, just good work and good pay");
+    let mut any = false;
+    for q in quests::SIDE {
+        if p.level < q.level {
+            s.text(format!("-# {} {}: opens at level {}", e("lock"), q.npc, q.level));
+            continue;
+        }
+        let Some((step, progress)) = side_step(p, q) else {
+            s.text(format!("-# {} **{}** · {} · done", e("check"), q.title, q.npc));
+            continue;
+        };
+        any = true;
+        let st = q.steps[step];
+        let target = st.goal.target();
+        let line = format!(
+            "{} **{}** · {} · step {} of {}\n{}\n-# {}{} · {}",
+            e("quest"),
+            q.title,
+            q.npc,
+            step + 1,
+            q.steps.len(),
+            st.text,
+            st.goal.describe(),
+            if target > 1 { format!(" · {} / {target}", progress.min(target)) } else { String::new() },
+            reward_line(&st.reward, p.main())
+        );
+        s.section(line, Btn::new(ids.act("quests", "claim", q.id), "Claim").emoji("quest").disabled(progress < target).then_primary(progress >= target));
+    }
+    if !any {
+        s.text("Nobody needs you right now. Come back as you grow.");
+    }
+    s.buttons(vec![back(&ids), Btn::new(ids.go("skagi"), "Skagi").emoji("temple")]);
+    s
+}
+
+fn map_spec(g: &Game) -> Result<crate::map::Spec> {
+    let p = &g.p;
+    let power = p.power();
+    let mut open = 0u8;
+    for (i, r) in data::REGIONS.iter().enumerate() {
+        if power >= r.power || i == 0 {
+            open |= 1 << i;
+        }
+    }
+    let expedition = p.expedition.as_ref().and_then(|x| data::REGIONS.iter().position(|r| r.id == x.plan.region)).map(|i| i as u8 + 1).unwrap_or(0);
+    let titan = store::modules(p.guild).titans && crate::shared::active(&g.tx, p.guild, "titan", 0)?.is_some_and(|t| !t.over(p.now));
+    Ok(crate::map::Spec { open, expedition, titan })
+}
+
+fn map_screen(ctx: &Ctx, g: &Game, w: &World) -> Result<Screen> {
+    let p = &g.p;
+    let ids = Ids { owner: p.user, version: p.version };
+    let mut s = Screen::default();
+    let spec = map_spec(g)?;
+    s.banner = Some(spec.url(ctx));
+    s.text(format!("### {} Midgard", e("map")));
+    for r in data::REGIONS {
+        let open = p.power() >= r.power || r.id == "shore";
+        s.section(
+            format!("{} **{}**\n-# {}{}", e(r.id), r.name, r.blurb, if open { String::new() } else { format!(" · {} needs {} Power", e("lock"), r.power) }),
+            Btn::new(ids.go(&format!("region_{}", r.id)), "Go").emoji(r.id),
+        );
+    }
+    let mut row = vec![back(&ids), Btn::new(ids.go("skagi"), "Skagi").emoji("temple")];
+    if w.modules.labyrinth {
+        row.push(Btn::new(ids.go("lab"), "Labyrinth").emoji("labyrinth"));
+    }
+    if w.modules.dungeons {
+        row.push(Btn::new(ids.go("dungeons"), "Dungeons").emoji("dungeon"));
+    }
+    if spec.titan {
+        row.push(Btn::new(ids.go("titan"), "The Titan").emoji("boss").danger());
+    }
+    s.buttons(row);
+    Ok(s)
+}
+
+fn region_screen(g: &Game, w: &World, id: &str) -> Result<Screen> {
+    let p = &g.p;
+    let ids = Ids { owner: p.user, version: p.version };
+    let mut s = Screen::default();
+    let Some(r) = data::region(id) else { return Ok(hub_fallback(p)) };
+    title(&mut s, r.id, r.name, &format!("Needs {} Power on Normal · {} on Hard", r.power, r.power * 2));
+    s.text(r.blurb);
+    let mons: Vec<&str> = r.monsters.iter().filter_map(|m| data::monster(m)).map(|m| m.name).collect();
+    let mut lines = vec![
+        format!("{} **Foes:** {}", e("hunt"), mons.join(", ")),
+        format!("{} **Drops:** {}, and now and then {}", e("pack"), r.drops.iter().map(|(i, _)| data::item(i).map(|x| x.plural).unwrap_or(i)).collect::<Vec<_>>().join(", "), data::item(r.rare.0).map(|x| x.name).unwrap_or("")),
+    ];
+    if w.modules.elites
+        && let Some(el) = data::elite(r.id)
+    {
+        lines.push(format!("{} **Elite:** {} walks here, rarely", e("elite"), el.name));
+    }
+    if r.intel > 0.05 {
+        lines.push(format!("{} Expeditions here scout the Barrow King", e("intel")));
+    }
+    s.text(lines.join("\n"));
+    let mut b = vec![Btn::new(ids.go("map"), "← Map"), Btn::new(ids.act("hunt", "start", r.id), "Hunt here").emoji("hunt").primary().disabled(p.fight.is_some() || p.hp() * 10 < p.max_hp() * 3)];
+    b.push(Btn::new(ids.act("exp", "plan", r.id), "Expedition here").emoji("expedition").disabled(p.expedition.is_some()));
+    if w.modules.dungeons
+        && let Some(d) = data::DUNGEONS.iter().find(|d| d.region == r.id)
+    {
+        let today = crate::dungeons::clears_today(g, d.id)?;
+        s.text(format!("{} **{}** · {}\n-# Opens at level {} · fights at {} Power{}", e("dungeon"), d.name, d.blurb, d.level, d.power, if today == 0 { " · chest waiting today" } else { " · cleared today" }));
+        b.push(Btn::new(ids.act("dungeon", "enter", d.id), "Enter the dungeon").emoji("dungeon").disabled(p.level < d.level || p.delve.is_some() || p.fight.is_some()));
+    }
+    s.buttons(b);
+    Ok(s)
+}
+
+fn hub_fallback(p: &Player) -> Screen {
+    let ids = Ids { owner: p.user, version: p.version };
+    let mut s = Screen::default();
+    s.text("That place isn't on the map.");
     s.buttons(vec![back(&ids)]);
     s
 }

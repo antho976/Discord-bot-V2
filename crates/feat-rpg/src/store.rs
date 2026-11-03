@@ -13,7 +13,43 @@ use crate::engine::combat::Fight;
 use crate::engine::expedition::{Plan, Report};
 use crate::engine::{Hero, progress};
 
-pub const MIGRATIONS: &[Migration] = &[MIGRATION_001, MIGRATION_002, Migration {
+pub const MIGRATIONS: &[Migration] = &[MIGRATION_001, MIGRATION_002, MIGRATION_003, Migration {
+    name: "004_world",
+    sql: "
+        CREATE TABLE rpg_clans (
+            id INTEGER PRIMARY KEY, guild_id INTEGER NOT NULL, name TEXT NOT NULL, tag TEXT NOT NULL,
+            leader INTEGER NOT NULL, xp INTEGER NOT NULL DEFAULT 0, treasury INTEGER NOT NULL DEFAULT 0,
+            upgrades TEXT NOT NULL DEFAULT '[]', created INTEGER NOT NULL,
+            week INTEGER NOT NULL DEFAULT 0, week_wins INTEGER NOT NULL DEFAULT 0, week_claimed INTEGER NOT NULL DEFAULT 0);
+        CREATE UNIQUE INDEX rpg_clans_name ON rpg_clans (guild_id, name);
+        CREATE TABLE rpg_clan_members (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, clan_id INTEGER NOT NULL, role TEXT NOT NULL,
+            joined INTEGER NOT NULL, week INTEGER NOT NULL DEFAULT 0, week_xp INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (guild_id, user_id));
+        CREATE INDEX rpg_clan_members_clan ON rpg_clan_members (clan_id);
+        CREATE TABLE rpg_shared (
+            id INTEGER PRIMARY KEY, guild_id INTEGER NOT NULL, kind TEXT NOT NULL, clan_id INTEGER NOT NULL DEFAULT 0,
+            boss TEXT NOT NULL, power INTEGER NOT NULL, hp INTEGER NOT NULL, max_hp INTEGER NOT NULL,
+            starts INTEGER NOT NULL, ends INTEGER NOT NULL, killed_at INTEGER, announced INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX rpg_shared_guild ON rpg_shared (guild_id, kind, ends);
+        CREATE TABLE rpg_shared_dmg (
+            shared_id INTEGER NOT NULL, user_id INTEGER NOT NULL, damage INTEGER NOT NULL DEFAULT 0,
+            attempts INTEGER NOT NULL DEFAULT 0, day INTEGER NOT NULL DEFAULT 0, day_attempts INTEGER NOT NULL DEFAULT 0,
+            claimed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (shared_id, user_id));
+        CREATE TABLE rpg_druns (guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, state TEXT NOT NULL, PRIMARY KEY (guild_id, user_id));
+        CREATE TABLE rpg_dclears (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, dungeon TEXT NOT NULL, day INTEGER NOT NULL, clears INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, user_id, dungeon, day));
+        CREATE TABLE rpg_side (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, quest TEXT NOT NULL, step INTEGER NOT NULL DEFAULT 0,
+            progress INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (guild_id, user_id, quest));
+        CREATE TABLE rpg_bought (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, day INTEGER NOT NULL, slot TEXT NOT NULL,
+            PRIMARY KEY (guild_id, user_id, day, slot));
+    ",
+}];
+
+const MIGRATION_003: Migration = Migration {
     name: "003_gear_and_labyrinth",
     sql: "
         ALTER TABLE rpg_gear ADD COLUMN rarity INTEGER NOT NULL DEFAULT 0;
@@ -26,7 +62,7 @@ pub const MIGRATIONS: &[Migration] = &[MIGRATION_001, MIGRATION_002, Migration {
             guild_id INTEGER NOT NULL, week INTEGER NOT NULL, user_id INTEGER NOT NULL, best INTEGER NOT NULL,
             PRIMARY KEY (guild_id, week, user_id));
     ",
-}];
+};
 
 const MIGRATION_002: Migration = Migration {
     name: "002_saga",
@@ -184,6 +220,11 @@ pub struct Player {
     pub tutorial: i64,
     /// A Labyrinth run in progress.
     pub run: Option<crate::labyrinth::Run>,
+    /// A dungeon delve in progress.
+    pub delve: Option<crate::dungeons::Delve>,
+    pub clan: Option<crate::guild::Membership>,
+    /// Side quests: (quest, step, progress).
+    pub side: Vec<(String, usize, i64)>,
 }
 
 impl Player {
@@ -238,7 +279,10 @@ impl Player {
         progress::hp_now(self.hp_stored, self.hp_at, self.max_hp(), self.fast(self.hp_at))
     }
     pub fn vigor(&self) -> f64 {
-        progress::vigor(self.vigor_stored, self.vigor_at, self.fast(self.vigor_at))
+        let mead = if self.clan.as_ref().is_some_and(|c| c.upgrades.iter().any(|u| u == "mead")) { 1.1 } else { 1.0 };
+        let at = self.vigor_at;
+        let fast = at + ((self.fast(at) - at) as f64 * mead) as i64;
+        progress::vigor(self.vigor_stored, at, fast)
     }
     /// Real minutes until HP is full.
     pub fn minutes_to_full(&self) -> i64 {
@@ -262,6 +306,96 @@ pub fn set_speed(guild: u64, speed: i64) {
     speeds().write().unwrap().insert(guild, speed.clamp(1, 600));
 }
 
+/// Parts of the game a server can switch off.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
+#[serde(default)]
+pub struct Modules {
+    pub labyrinth: bool,
+    pub dungeons: bool,
+    pub guilds: bool,
+    pub raids: bool,
+    pub titans: bool,
+    pub map: bool,
+    pub saga: bool,
+    pub quests: bool,
+    pub bounties: bool,
+    pub market: bool,
+    pub encounters: bool,
+    pub elites: bool,
+}
+
+impl Default for Modules {
+    fn default() -> Self {
+        Self { labyrinth: true, dungeons: true, guilds: true, raids: true, titans: true, map: true, saga: true, quests: true, bounties: true, market: true, encounters: true, elites: true }
+    }
+}
+
+impl Modules {
+    /// (field, label, what it is) for the dashboard.
+    pub const LIST: [(&'static str, &'static str, &'static str); 12] = [
+        ("labyrinth", "Labyrinth", "Floor-by-floor runs, loose threads, the weekly board"),
+        ("dungeons", "Dungeons", "Fixed delves with a boss and a daily chest"),
+        ("guilds", "Guilds", "Player guilds, treasury, upgrades, weekly challenge"),
+        ("raids", "Guild raids", "A guild fights one boss together over a few days"),
+        ("titans", "Titans", "Server-wide boss events everyone chips away at"),
+        ("map", "Map", "The drawn map of Midgard and its places"),
+        ("saga", "Saga", "The Loom story and its chapters"),
+        ("quests", "Side quests", "Skagi's townsfolk and their quest lines"),
+        ("bounties", "Bounties", "Three small jobs a day"),
+        ("market", "Market", "A daily stall of gear and supplies for gold"),
+        ("encounters", "Encounters", "Small choices after hunts"),
+        ("elites", "Elites", "Rare named monsters in hunts"),
+    ];
+    pub fn get(&self, key: &str) -> bool {
+        match key {
+            "labyrinth" => self.labyrinth,
+            "dungeons" => self.dungeons,
+            "guilds" => self.guilds,
+            "raids" => self.raids,
+            "titans" => self.titans,
+            "map" => self.map,
+            "saga" => self.saga,
+            "quests" => self.quests,
+            "bounties" => self.bounties,
+            "market" => self.market,
+            "encounters" => self.encounters,
+            "elites" => self.elites,
+            _ => true,
+        }
+    }
+    pub fn set(&mut self, key: &str, on: bool) {
+        match key {
+            "labyrinth" => self.labyrinth = on,
+            "dungeons" => self.dungeons = on,
+            "guilds" => self.guilds = on,
+            "raids" => self.raids = on,
+            "titans" => self.titans = on,
+            "map" => self.map = on,
+            "saga" => self.saga = on,
+            "quests" => self.quests = on,
+            "bounties" => self.bounties = on,
+            "market" => self.market = on,
+            "encounters" => self.encounters = on,
+            "elites" => self.elites = on,
+            _ => {}
+        }
+    }
+}
+
+fn module_map() -> &'static std::sync::RwLock<std::collections::HashMap<u64, Modules>> {
+    static M: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<u64, Modules>>> = std::sync::OnceLock::new();
+    M.get_or_init(Default::default)
+}
+
+pub fn set_modules(guild: u64, m: Modules) {
+    module_map().write().unwrap().insert(guild, m);
+}
+
+/// The server's switches (all on until settings are read).
+pub fn modules(guild: u64) -> Modules {
+    module_map().read().unwrap().get(&guild).copied().unwrap_or_default()
+}
+
 pub fn speed(guild: u64) -> i64 {
     speeds().read().unwrap().get(&guild).copied().unwrap_or(1)
 }
@@ -270,7 +404,7 @@ pub fn week_now() -> i64 {
     progress::week(now_ms())
 }
 
-fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player>> {
+pub(crate) fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player>> {
     let row = c
         .query_row(
             "SELECT name, patron, lesser, level, xp, gold, hp, hp_at, vigor, vigor_at, version, boss_won,
@@ -318,6 +452,9 @@ fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player
                     bounty_level: None,
                     tutorial: r.get(22)?,
                     run: None,
+                    delve: None,
+                    clan: None,
+                    side: Vec::new(),
                 })
             },
         )
@@ -370,6 +507,13 @@ fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player
         .query_row("SELECT state FROM rpg_runs WHERE guild_id = ?1 AND user_id = ?2", params![g, u], |r| r.get::<_, String>(0))
         .optional()?
         .and_then(|s| serde_json::from_str(&s).ok());
+    p.delve = c
+        .query_row("SELECT state FROM rpg_druns WHERE guild_id = ?1 AND user_id = ?2", params![g, u], |r| r.get::<_, String>(0))
+        .optional()?
+        .and_then(|s| serde_json::from_str(&s).ok());
+    p.clan = crate::guild::membership(c, guild, user)?;
+    let mut st = c.prepare_cached("SELECT quest, step, progress FROM rpg_side WHERE guild_id = ?1 AND user_id = ?2")?;
+    p.side = st.query_map(params![g, u], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize, r.get::<_, i64>(2)?)))?.collect::<Result<_, _>>()?;
     let mut st = c.prepare_cached("SELECT title FROM rpg_titles WHERE guild_id = ?1 AND user_id = ?2 ORDER BY at")?;
     p.titles = st.query_map(params![g, u], |r| r.get(0))?.collect::<Result<_, _>>()?;
     let mut st = c.prepare_cached("SELECT idx, progress, claimed, level FROM rpg_bounties WHERE guild_id = ?1 AND user_id = ?2 AND day = ?3")?;
@@ -561,6 +705,40 @@ impl Game<'_> {
         let (g, u) = self.ids();
         self.tx.execute("UPDATE rpg_players SET tutorial = ?3 WHERE guild_id = ?1 AND user_id = ?2", params![g, u, step])?;
         self.p.tutorial = step;
+        Ok(())
+    }
+
+    pub fn save_delve(&mut self, d: Option<crate::dungeons::Delve>) -> Result<()> {
+        let (g, u) = self.ids();
+        match &d {
+            Some(x) => {
+                self.tx.execute(
+                    "INSERT INTO rpg_druns (guild_id, user_id, state) VALUES (?1, ?2, ?3) ON CONFLICT (guild_id, user_id) DO UPDATE SET state = excluded.state",
+                    params![g, u, serde_json::to_string(x)?],
+                )?;
+            }
+            None => {
+                self.tx.execute("DELETE FROM rpg_druns WHERE guild_id = ?1 AND user_id = ?2", params![g, u])?;
+            }
+        }
+        self.p.delve = d;
+        Ok(())
+    }
+
+    pub fn save_side(&mut self, quest: &str, step: usize, progress: i64) -> Result<()> {
+        let (g, u) = self.ids();
+        self.tx.execute(
+            "INSERT INTO rpg_side (guild_id, user_id, quest, step, progress) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (guild_id, user_id, quest) DO UPDATE SET step = excluded.step, progress = excluded.progress",
+            params![g, u, quest, step as i64, progress],
+        )?;
+        match self.p.side.iter_mut().find(|x| x.0 == quest) {
+            Some(x) => {
+                x.1 = step;
+                x.2 = progress;
+            }
+            None => self.p.side.push((quest.to_owned(), step, progress)),
+        }
         Ok(())
     }
 

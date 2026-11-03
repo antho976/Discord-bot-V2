@@ -58,12 +58,18 @@ pub enum Kind {
     Boss,
     /// A floor of the Labyrinth.
     Lab,
+    /// A room of a dungeon.
+    Dungeon,
+    /// An attempt on a shared boss: a Titan or a guild raid.
+    Shared,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum End {
     Won,
     Lost,
+    /// A shared-boss attempt ran out of turns.
+    Spent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,6 +126,9 @@ pub struct Fight {
     pub ally: Option<String>,
     #[serde(default)]
     pub ally_used: bool,
+    /// Turns an attempt lasts (shared bosses).
+    #[serde(default)]
+    pub limit: Option<u32>,
 }
 
 fn scale(r: &mut Rng, v: f64) -> i64 {
@@ -129,9 +138,15 @@ fn scale(r: &mut Rng, v: f64) -> i64 {
 impl Fight {
     /// A hunt against one of the region's monsters (now and then its elite), starting at `hp`.
     pub fn hunt(hero: Hero, hp: i64, region: &data::Region, seed: u64) -> Fight {
+        Self::hunt_with(hero, hp, region, seed, true)
+    }
+
+    /// A hunt, with or without the chance of meeting the region's elite.
+    pub fn hunt_with(hero: Hero, hp: i64, region: &data::Region, seed: u64, elites: bool) -> Fight {
         let mut rng = Rng::new(seed);
         let regular = data::monster(rng.pick(region.monsters)).unwrap_or(&data::MONSTERS[0]);
-        let m = if rng.chance(data::ELITE_CHANCE) { data::elite(region.id).unwrap_or(regular) } else { regular };
+        let elite = rng.chance(data::ELITE_CHANCE);
+        let m = if elite && elites { data::elite(region.id).unwrap_or(regular) } else { regular };
         let p = region.power as f64;
         let foe = Foe {
             id: m.id.into(),
@@ -171,6 +186,31 @@ impl Fight {
             cursed: 0,
         };
         Self::start(Kind::Lab, "labyrinth", hero, hp, foe, Vec::new(), rng)
+    }
+
+    /// A dungeon room or boss: like a floor, but its own kind.
+    pub fn room(hero: Hero, hp: i64, monster: &data::Monster, power: i64, mult: f64, seed: u64) -> Fight {
+        let mut f = Self::floor(hero, hp, monster, power, mult, seed);
+        f.kind = Kind::Dungeon;
+        f.region = "dungeon".into();
+        f
+    }
+
+    /// An attempt on a shared boss: it has far more HP than one attempt can take, and the
+    /// attempt ends after `turns`. What you take off goes to everyone's total.
+    pub fn shared(hero: Hero, hp: i64, monster: &data::Monster, power: i64, turns: u32, id: i64, seed: u64) -> Fight {
+        let mut f = Self::floor(hero, hp, monster, power, 1.0, seed);
+        f.kind = Kind::Shared;
+        f.region = id.to_string();
+        f.foe.hp *= 8;
+        f.foe.max_hp *= 8;
+        f.limit = Some(turns);
+        f
+    }
+
+    /// Damage dealt so far (shared bosses count this).
+    pub fn dealt(&self) -> i64 {
+        (self.foe.max_hp - self.foe.hp).max(0)
     }
 
     /// The realm boss. `week` decides its weakness; `scouted` is what the player knows.
@@ -224,6 +264,7 @@ impl Fight {
             used: Vec::new(),
             ally: None,
             ally_used: false,
+            limit: None,
         };
         f.log.push(format!("{} blocks your way.", f.foe.name));
         f
@@ -254,7 +295,7 @@ impl Fight {
         match self.kind {
             Kind::Boss if self.foe.phase == 2 => data::BOSS_P2,
             Kind::Boss => data::BOSS_P1,
-            Kind::Hunt | Kind::Lab => data::monster(&self.foe.id).map(|m| m.pattern).unwrap_or(&[Move::Hit]),
+            _ => data::monster(&self.foe.id).map(|m| m.pattern).unwrap_or(&[Move::Hit]),
         }
     }
 
@@ -561,6 +602,12 @@ impl Fight {
         self.stamina = (self.stamina + 1).min(MAX_STAMINA);
         self.foe.step += 1;
         self.turn += 1;
+        if let Some(limit) = self.limit
+            && self.turn > limit
+        {
+            self.end = Some(End::Spent);
+            self.log.push(format!("{name} throws you back. Your attempt is over."));
+        }
         Ok(())
     }
 

@@ -28,18 +28,23 @@ pub enum Goal {
     Give(i64),
     /// Clear this Labyrinth floor in one run.
     Floor(u32),
+    /// Clear a dungeon (any, or this one).
+    Dungeon(Option<&'static str>),
+    /// Attempts on a Titan or a raid boss.
+    Shared(u32),
 }
 
 impl Goal {
     /// Goals counted from what happens (the rest are read from the player).
     pub fn counted(&self) -> bool {
-        matches!(self, Goal::Wins { .. } | Goal::Expeditions { .. } | Goal::Forge { .. } | Goal::Give(_) | Goal::Floor(_))
+        matches!(self, Goal::Wins { .. } | Goal::Expeditions { .. } | Goal::Forge { .. } | Goal::Give(_) | Goal::Floor(_) | Goal::Dungeon(_) | Goal::Shared(_))
     }
     pub fn target(&self) -> i64 {
         match self {
             Goal::Wins { n, .. } | Goal::Expeditions { n, .. } | Goal::Forge { n } => *n as i64,
             Goal::Facts(n) | Goal::Level(n) => *n as i64,
-            Goal::Boss | Goal::Floor(_) => 1,
+            Goal::Boss | Goal::Floor(_) | Goal::Dungeon(_) => 1,
+            Goal::Shared(n) => *n as i64,
             Goal::Give(n) => *n,
         }
     }
@@ -56,6 +61,9 @@ impl Goal {
             Goal::Boss => "Defeat the Barrow King".into(),
             Goal::Give(n) => format!("Give {n} tribute at the temple"),
             Goal::Floor(n) => format!("Clear floor {n} of the Labyrinth"),
+            Goal::Dungeon(Some(d)) => format!("Clear {}", data::dungeon(d).map(|x| x.name).unwrap_or("a dungeon")),
+            Goal::Dungeon(None) => "Clear a dungeon".into(),
+            Goal::Shared(n) => format!("Make {n} attempt{} on a Titan or a guild raid", if *n == 1 { "" } else { "s" }),
         }
     }
 }
@@ -328,6 +336,10 @@ pub enum Event<'a> {
     Gave(i64),
     /// A Labyrinth floor cleared.
     Floor(u32),
+    /// A dungeon cleared.
+    Dungeon(&'a str),
+    /// An attempt on a Titan or a raid boss.
+    Shared,
 }
 
 impl Goal {
@@ -341,6 +353,8 @@ impl Goal {
             (Goal::Forge { .. }, Event::Forged) => 1,
             (Goal::Give(_), Event::Gave(n)) => n,
             (Goal::Floor(f), Event::Floor(at)) => i64::from(at >= *f),
+            (Goal::Dungeon(d), Event::Dungeon(at)) => i64::from(d.is_none_or(|x| x == at)),
+            (Goal::Shared(_), Event::Shared) => 1,
             _ => 0,
         }
     }
@@ -462,4 +476,96 @@ mod tests {
             }
         }
     }
+}
+
+
+// ---- side quests: Skagi's townsfolk ----
+
+#[derive(Debug, Clone, Copy)]
+pub struct SideStep {
+    pub text: &'static str,
+    pub goal: Goal,
+    pub reward: Reward,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SideQuest {
+    pub id: &'static str,
+    pub npc: &'static str,
+    pub title: &'static str,
+    pub level: u32,
+    pub steps: &'static [SideStep],
+}
+
+pub const SIDE: &[SideQuest] = &[
+    SideQuest {
+        id: "nets",
+        npc: "Asa, the fisherman's widow",
+        title: "Nets for Skagi",
+        level: 1,
+        steps: &[
+            SideStep { text: "\"The nets come back torn every morning. Something in the shallows.\"", goal: Goal::Wins { region: Some("shore"), monster: None, n: 4 }, reward: Reward { gold: 60, xp: 80, ..NO } },
+            SideStep { text: "\"Bring me herring and herbs from the shore. The village eats tonight.\"", goal: Goal::Expeditions { region: Some("shore"), n: 1 }, reward: Reward { xp: 120, items: &[("potion", 2)], ..NO } },
+            SideStep { text: "\"It's the serpents. Young ones, but they grow.\"", goal: Goal::Wins { region: None, monster: Some("serpent"), n: 3 }, reward: Reward { gold: 150, xp: 200, title: Some("Net-mender"), ..NO } },
+        ],
+    },
+    SideQuest {
+        id: "drills",
+        npc: "Eydis the shieldmaiden",
+        title: "Shield Drills",
+        level: 3,
+        steps: &[
+            SideStep { text: "\"Show me you can keep your feet. Ten fights, any ground.\"", goal: Goal::Wins { region: None, monster: None, n: 10 }, reward: Reward { gold: 100, xp: 200, ..NO } },
+            SideStep { text: "\"The Drowned Hall. Go in, come out. That's the drill.\"", goal: Goal::Dungeon(Some("drowned")), reward: Reward { xp: 300, items: &[("thread", 1)], ..NO } },
+            SideStep { text: "\"Now the deep. Fifth floor of the Labyrinth, past the horned thing.\"", goal: Goal::Floor(5), reward: Reward { gold: 250, xp: 400, title: Some("Shield-sworn"), ..NO } },
+        ],
+    },
+    SideQuest {
+        id: "wall",
+        npc: "Jarl Sigrun",
+        title: "Iron for the Wall",
+        level: 5,
+        steps: &[
+            SideStep { text: "\"Skagi needs a wall. Start with the forge: two things, anything.\"", goal: Goal::Forge { n: 2 }, reward: Reward { gold: 120, xp: 200, ..NO } },
+            SideStep { text: "\"The gods watch walls go up. Give at the temple, and they'll watch ours.\"", goal: Goal::Give(400), reward: Reward { xp: 300, tribute: 200, ..NO } },
+            SideStep { text: "\"Wolfwood timber for the gate. Bring it back yourself.\"", goal: Goal::Expeditions { region: Some("wolfwood"), n: 2 }, reward: Reward { gold: 300, xp: 400, title: Some("Wall-builder"), ..NO } },
+        ],
+    },
+    SideQuest {
+        id: "beasts",
+        npc: "Old Hakon the hunter",
+        title: "The Old Beasts",
+        level: 8,
+        steps: &[
+            SideStep { text: "\"Wolfwood's gone wrong. Thin the pack before the big ones come.\"", goal: Goal::Wins { region: Some("wolfwood"), monster: None, n: 8 }, reward: Reward { gold: 150, xp: 300, ..NO } },
+            SideStep { text: "\"Under the oldest pine there's a den. Fenrir's blood. Clear it.\"", goal: Goal::Dungeon(Some("den")), reward: Reward { xp: 500, items: &[("fang", 3)], ..NO } },
+            SideStep { text: "\"Old Grimtooth. He's taken three of my dogs. Bring him down, if you ever meet him.\"", goal: Goal::Wins { region: None, monster: Some("grimtooth"), n: 1 }, reward: Reward { gold: 500, xp: 600, title: Some("Hakon's Heir"), ..NO } },
+        ],
+    },
+    SideQuest {
+        id: "skald",
+        npc: "Bragi the skald",
+        title: "Songs Worth Singing",
+        level: 10,
+        steps: &[
+            SideStep { text: "\"Nobody sings about safe people. Go and fight something enormous.\"", goal: Goal::Shared(2), reward: Reward { gold: 200, xp: 400, ..NO } },
+            SideStep { text: "\"Better. Now something deep. The eighth floor, at least.\"", goal: Goal::Floor(8), reward: Reward { xp: 600, items: &[("thread", 2)], ..NO } },
+            SideStep { text: "\"And the gods must hear it. A real offering this time.\"", goal: Goal::Give(1500), reward: Reward { gold: 400, xp: 800, title: Some("Sung of in Skagi"), ..NO } },
+        ],
+    },
+    SideQuest {
+        id: "echoes",
+        npc: "The völva",
+        title: "Echoes Below",
+        level: 14,
+        steps: &[
+            SideStep { text: "\"The Labyrinth hums. Go down and listen. The tenth floor.\"", goal: Goal::Floor(10), reward: Reward { gold: 300, xp: 800, ..NO } },
+            SideStep { text: "\"Hrolf hid something with his treasure. Clear his treasury.\"", goal: Goal::Dungeon(Some("treasury")), reward: Reward { xp: 900, items: &[("thread", 3)], ..NO } },
+            SideStep { text: "\"Now the twelfth. Someone walked down there before you, and left a trail of apple seeds.\"", goal: Goal::Floor(12), reward: Reward { gold: 600, xp: 1200, title: Some("Who Listens Below"), ..NO } },
+        ],
+    },
+];
+
+pub fn side(id: &str) -> Option<&'static SideQuest> {
+    SIDE.iter().find(|q| q.id == id)
 }

@@ -71,6 +71,11 @@ pub const ICONS: &[(&str, &str, &str, bool, &str)] = &[
     ("fine", "#7FCB8A", "M12 4l8 8-8 8-8-8z", true, "🟢"),
     ("rare", "#7FB2FF", "M12 4l8 8-8 8-8-8z", true, "🔵"),
     ("epic", "#C9B8FF", "M12 4l8 8-8 8-8-8z", true, "🟣"),
+    ("guild", "#E0C47A", "M6 3h12v8c0 5-6 9-6 9s-6-4-6-9zM12 7v8M9 10h6", false, "🛡️"),
+    ("dungeon", "#E0C47A", "M5 21V10a7 7 0 0 1 14 0v11M9 21v-6h6v6M3 21h18", false, "🚪"),
+    ("map", "#D2A75E", "M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15", false, "🗺️"),
+    ("market", "#E2BD5C", "M4 9l2-5h12l2 5M4 9h16v11H4zM4 9c0 2 4 2 4 0 0 2 4 2 4 0 0 2 4 2 4 0 0 2 4 2 4 0M10 20v-5h4v5", false, "🏪"),
+    ("quest", "#E0C47A", "M12 2a4 4 0 1 1 0 8 4 4 0 0 1 0-8M5 21c0-4 3-7 7-7s7 3 7 7", false, "🗣️"),
     ("help", "#DBDEE1", "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.7M12 16.5v.5", false, "❓"),
 ];
 

@@ -103,7 +103,7 @@ fn a_new_player_plays_through_midgard() {
     store::create(&ctx.db, G, U, "Antho", God::Thor).unwrap();
 
     // Every screen draws within Discord's limits from the start.
-    for s in ["hub", "goals", "exp", "hunt", "boss", "forge", "pack", "temple", "givethor", "giveathena", "givehades", "patron", "help", "saga", "bounties", "lab", "hero", "skagi"] {
+    for s in ["hub", "goals", "exp", "hunt", "boss", "forge", "pack", "temple", "givethor", "giveathena", "givehades", "patron", "help", "saga", "bounties", "lab", "hero", "skagi", "guild", "titan", "raid", "dungeons", "dungeon", "map", "region_shore", "region_barrow", "quests", "market"] {
         click(&ctx, s, "", "", &[]);
     }
 
@@ -314,10 +314,11 @@ fn the_saga_bounties_and_encounters() {
     .unwrap();
     let s = click(&ctx, "saga", "claim", "nonsense", &[]);
     assert!(text_of(&s).contains("Choose one"));
+    let amber = store::get(&ctx.db, G, U).unwrap().unwrap().have("amber");
     click(&ctx, "saga", "claim", "spare", &[]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
     assert_eq!(p.saga, 4);
-    assert_eq!(p.have("amber"), 4);
+    assert_eq!(p.have("amber"), amber + 4);
     assert!(p.titles.iter().any(|t| t == "Friend of Nixies"));
     assert_eq!(p.title.as_deref(), Some("Friend of Nixies"));
 
@@ -447,4 +448,170 @@ fn the_labyrinth_gear_and_the_tutorial() {
     assert_eq!(p.gear.iter().find(|g| g.id == piece.id).unwrap().traits.len(), after.traits.len());
     // Traits reach fights.
     assert!(p.hero().mods.damage > 0.0 || p.hero().mods.crit > 0.0 || p.hero().mods.steal > 0.0 || p.hero().mods.fire > 0.0 || p.hero().mods.frost > 0.0);
+}
+
+
+fn play_fight(ctx: &Ctx, screen: &str) {
+    for _ in 0..200 {
+        let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+        let Some(ref f) = p.fight else { break };
+        let a = feat_rpg::engine::combat::autoplay(f, p.have("potion"), (p.have("fireoil"), p.have("frostoil")));
+        let arg = match a {
+            feat_rpg::engine::combat::Action::Strike => "strike".to_string(),
+            feat_rpg::engine::combat::Action::Guard => "guard".into(),
+            feat_rpg::engine::combat::Action::Potion => "potion".into(),
+            feat_rpg::engine::combat::Action::Oil(e) => e.oil().into(),
+            feat_rpg::engine::combat::Action::Skill(s) => s.skill().id().into(),
+        };
+        click(ctx, screen, "act", &arg, &[]);
+    }
+}
+
+fn strong(ctx: &Ctx) {
+    store::run(&ctx.db, G, U, None, |g| {
+        g.xp(1_000_000)?;
+        for id in ["barrowblade", "mantle", "ravencharm"] {
+            let row = g.add_gear(data::gear(id).unwrap(), true)?;
+            for _ in 0..3 {
+                g.upgrade(row)?;
+            }
+        }
+        g.gold(20_000, "test")?;
+        g.item("potion", 10, "test")
+    })
+    .unwrap();
+}
+
+fn heal(ctx: &Ctx) {
+    store::run(&ctx.db, G, U, None, |g| {
+        let max = g.p.max_hp();
+        g.set_hp(max)
+    })
+    .unwrap();
+}
+
+#[test]
+fn guilds_raids_and_titans() {
+    let rt = bot_core::tokio::runtime::Runtime::new().unwrap();
+    let _e = rt.enter();
+    let ctx = ctx();
+    store::create(&ctx.db, G, U, "Antho", God::Thor).unwrap();
+    strong(&ctx);
+    // Found a guild through the form's values.
+    let s = click(&ctx, "guild", "create", "", &["Ravenhold", "rvn"]);
+    assert!(text_of(&s).contains("Ravenhold"), "{}", text_of(&s));
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    let clan = p.clan.clone().expect("in a guild");
+    assert!(clan.leader);
+    assert_eq!(clan.tag, "RVN");
+    // A second player joins.
+    store::create(&ctx.db, G, 21, "Mira", God::Athena).unwrap();
+    store::run(&ctx.db, G, 21, None, |g| feat_rpg::guild::join(g, clan.id)).unwrap();
+    assert_eq!(store::get(&ctx.db, G, 21).unwrap().unwrap().clan.unwrap().id, clan.id);
+    // Hunting earns guild XP and counts toward the weekly challenge.
+    hunt_until_done(&ctx, "shore");
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert!(p.clan.as_ref().unwrap().xp > 0);
+    // Treasury, upgrade, raid.
+    click(&ctx, "guild", "give", "1000", &[]);
+    for _ in 0..10 {
+        click(&ctx, "guild", "give", "1000", &[]);
+    }
+    click(&ctx, "guild", "buy", "", &["mead"]);
+    assert!(store::get(&ctx.db, G, U).unwrap().unwrap().clan.unwrap().has("mead"));
+    click(&ctx, "guild", "raid", "", &[]);
+    let raid = ctx.db.with(|c| Ok(feat_rpg::shared::active(c, G, "raid", clan.id).unwrap())).unwrap().expect("raid started");
+    heal(&ctx);
+    click(&ctx, "raid", "fight", "", &[]);
+    play_fight(&ctx, "raid");
+    let after = ctx.db.with(|c| Ok(feat_rpg::shared::by_id(c, raid.id).unwrap().unwrap())).unwrap();
+    assert!(after.hp < raid.hp, "the attempt dealt no damage");
+    // Fell it by hand and claim.
+    ctx.db.with(|c| c.execute("UPDATE rpg_shared SET hp = 0, killed_at = 1 WHERE id = ?1", bot_core::rusqlite::params![raid.id])).unwrap();
+    let shards_before = store::get(&ctx.db, G, U).unwrap().unwrap().gear.len();
+    click(&ctx, "raid", "claim", "", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.gear.len(), shards_before + 1);
+    assert!(p.titles.iter().any(|t| t == "Wyrmbane"));
+    // Claiming twice gives nothing more.
+    click(&ctx, "raid", "claim", "", &[]);
+    assert_eq!(store::get(&ctx.db, G, U).unwrap().unwrap().gear.len(), shards_before + 1);
+
+    // A Titan rises, takes damage from an attempt, and attempts are limited per day.
+    let text = ctx.db.with(|c| Ok(feat_rpg::shared::rise_titan(c, G, 48).unwrap())).unwrap();
+    assert!(text.is_some());
+    assert!(ctx.db.with(|c| Ok(feat_rpg::shared::rise_titan(c, G, 48).unwrap())).unwrap().is_none(), "two Titans at once");
+    for _ in 0..data::TITAN_ATTEMPTS {
+        heal(&ctx);
+        click(&ctx, "titan", "fight", "", &[]);
+        play_fight(&ctx, "titan");
+    }
+    heal(&ctx);
+    let s = click(&ctx, "titan", "fight", "", &[]);
+    assert!(text_of(&s).contains("today's attempts"), "{}", text_of(&s));
+    let t = ctx.db.with(|c| Ok(feat_rpg::shared::active(c, G, "titan", 0).unwrap().unwrap())).unwrap();
+    assert!(t.hp < t.max_hp);
+
+    // Leaving the guild as leader hands it on.
+    click(&ctx, "guild", "leave", "", &[]);
+    let m = store::get(&ctx.db, G, 21).unwrap().unwrap().clan.unwrap();
+    assert!(m.leader);
+}
+
+#[test]
+fn dungeons_quests_market_and_switches() {
+    let rt = bot_core::tokio::runtime::Runtime::new().unwrap();
+    let _e = rt.enter();
+    let ctx = ctx();
+    store::create(&ctx.db, G, U, "Antho", God::Hades).unwrap();
+    strong(&ctx);
+    // A dungeon: four rooms and the boss, and the chest the first time.
+    let gear_before = store::get(&ctx.db, G, U).unwrap().unwrap().gear.len();
+    click(&ctx, "dungeon", "enter", "drowned", &[]);
+    for _ in 0..6 {
+        let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+        if p.delve.is_none() {
+            break;
+        }
+        click(&ctx, "dungeon", "next", "", &[]);
+        play_fight(&ctx, "dungeon");
+    }
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert!(p.delve.is_none(), "the delve never ended");
+    assert_eq!(p.gear.len(), gear_before + 1, "no chest gear");
+    // The side quest from Eydis counted the clear once its earlier step is done.
+    store::run(&ctx.db, G, U, None, |g| g.save_side("drills", 1, 0)).unwrap();
+    click(&ctx, "dungeon", "enter", "drowned", &[]);
+    for _ in 0..6 {
+        if store::get(&ctx.db, G, U).unwrap().unwrap().delve.is_none() {
+            break;
+        }
+        click(&ctx, "dungeon", "next", "", &[]);
+        play_fight(&ctx, "dungeon");
+    }
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.side.iter().find(|x| x.0 == "drills").map(|x| x.2), Some(1));
+    click(&ctx, "quests", "claim", "drills", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.side.iter().find(|x| x.0 == "drills").map(|x| x.1), Some(2));
+
+    // The market sells a piece once a day, and supplies up to a limit.
+    let gold = p.gold;
+    click(&ctx, "market", "gear", "0", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert!(p.gold < gold);
+    let again = click(&ctx, "market", "gear", "0", &[]);
+    assert!(text_of(&again).contains("sold"));
+    for _ in 0..8 {
+        click(&ctx, "market", "supply", "", &["thread"]);
+    }
+    let bought: i64 = ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM rpg_bought WHERE slot LIKE 'thread%'", [], |r| r.get(0))).unwrap();
+    assert_eq!(bought, 2);
+
+    // Switching a system off hides it.
+    store::set_modules(G, store::Modules { labyrinth: false, guilds: false, ..Default::default() });
+    let s = click(&ctx, "hub", "", "", &[]);
+    let rows = format!("{:?}", s.rows);
+    assert!(!rows.contains("Labyrinth") && !rows.contains("\"Guild\""));
+    store::set_modules(G, store::Modules::default());
 }

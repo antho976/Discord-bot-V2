@@ -10,6 +10,11 @@ pub mod data;
 pub mod emoji;
 pub mod engine;
 pub mod game;
+pub mod guild;
+pub mod dungeons;
+pub mod map;
+pub mod market;
+pub mod shared;
 pub mod labyrinth;
 pub mod quests;
 pub mod store;
@@ -22,7 +27,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Instant;
 
 use bot_core::anyhow::Result;
-use bot_core::discord::{CommandCall, ComponentCall, Reply};
+use bot_core::discord::{CommandCall, ComponentCall, ModalCall, Reply};
 use bot_core::twilight_model::application::command::{Command, CommandType};
 use bot_core::twilight_model::application::interaction::Interaction;
 use bot_core::twilight_model::channel::message::{AllowedMentions, MessageFlags};
@@ -55,11 +60,17 @@ pub struct Settings {
     pub announce: bool,
     /// Test speed: expeditions, healing and Vigor run this many times faster.
     pub speed: i64,
+    /// Which parts of the game are on, so testing can cut what doesn't work.
+    pub modules: store::Modules,
+    /// A Titan rises every this many hours (0: only when started from the dashboard).
+    pub titan_every_hours: i64,
+    /// How long a Titan stays.
+    pub titan_hours: i64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { channel: None, test_only: true, tester_role: None, xp_rate: 100, loot_rate: 100, gold_rate: 100, announce: true, speed: 1 }
+        Self { channel: None, test_only: true, tester_role: None, xp_rate: 100, loot_rate: 100, gold_rate: 100, announce: true, speed: 1, modules: store::Modules::default(), titan_every_hours: 72, titan_hours: 48 }
     }
 }
 
@@ -187,10 +198,38 @@ impl Feature for Rpg {
     }
 
     fn routes(&self) -> bot_core::axum::Router<Ctx> {
-        banner::routes().merge(web::routes())
+        banner::routes().merge(map::routes()).merge(web::routes())
     }
 
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
+        // Titans: rise on schedule, and say so when one gets away.
+        for guild in ctx.enabled_guilds(KEY) {
+            let s = ctx.settings::<Settings>(guild, KEY)?;
+            store::set_modules(guild, s.modules);
+            if !s.modules.titans {
+                continue;
+            }
+            let lines: Vec<(Option<i64>, String)> = ctx.db.with(|c| {
+                let mut out = Vec::new();
+                for (id, text) in shared::unannounced_endings(c, guild).unwrap_or_default() {
+                    out.push((Some(id), text));
+                }
+                if shared::titan_due(c, guild, s.titan_every_hours).unwrap_or(false)
+                    && let Ok(Some(text)) = shared::rise_titan(c, guild, s.titan_hours.clamp(1, 168))
+                {
+                    out.push((None, text));
+                }
+                Ok(out)
+            })?;
+            for (id, text) in lines {
+                if let Some(id) = id {
+                    let _ = ctx.db.with(|c| Ok(shared::mark_announced(c, id).is_ok()));
+                }
+                if let Some(ch) = s.channel {
+                    let _ = ctx.say(ch, &text).await;
+                }
+            }
+        }
         if emoji::ready() || ctx.cfg.preview || ctx.enabled_guilds(KEY).is_empty() {
             return Ok(());
         }
@@ -212,6 +251,7 @@ impl Feature for Rpg {
         let Some(guild) = call.guild_id() else { return Ok(()) };
         let s = ctx.settings::<Settings>(guild, KEY)?;
         store::set_speed(guild, s.speed);
+        store::set_modules(guild, s.modules);
         if !may_play(&s, i) {
             return ctx.reply(i, Reply::text("The RPG is in a closed test for now. It opens to everyone soon.").ephemeral()).await;
         }
@@ -257,10 +297,18 @@ impl Feature for Rpg {
         }
         let s = ctx.settings::<Settings>(guild, KEY)?;
         store::set_speed(guild, s.speed);
+        store::set_modules(guild, s.modules);
         if !may_play(&s, i) {
             return ctx.reply(i, Reply::text("The RPG is in a closed test for now.").ephemeral()).await;
         }
         let name = display_name(i);
+        // Founding a guild asks for its name in a form first.
+        if route.screen == "guild" && route.action == "new" {
+            let id = format!("rpg:{user}:guild:create::{}", route.version.max(0));
+            return ctx
+                .modal(i, &id, "Found a guild", &[("name", "Guild name", false, true, None), ("tag", "Tag: 2 to 4 letters, like SKG", false, true, None)])
+                .await;
+        }
         let started = Instant::now();
         // A new player swearing to a patron: make the character first.
         if route.screen == "patron" && route.action == "swear" && store::get(&ctx.db, guild, user)?.is_none()
@@ -279,10 +327,31 @@ impl Feature for Rpg {
         self.record(Click { at: now_ms(), work_us: work, reply_ms: t.elapsed().as_millis() as i64 });
         if let Some(text) = out.announce
             && s.announce
-            && may_post(guild, now_ms())
+            && (out.urgent || may_post(guild, now_ms()))
             && let Some(ch) = i.channel.as_ref().map(|c| c.id.get())
         {
             let _ = ctx.say(ch, &text).await;
+        }
+        Ok(())
+    }
+
+    async fn on_modal(&self, ctx: &Ctx, call: &ModalCall) -> Result<()> {
+        let i = &call.interaction;
+        let Some(guild) = i.guild_id.map(|g| g.get()) else { return Ok(()) };
+        let Some(mut route) = Route::parse(&call.data.custom_id) else { return Ok(()) };
+        let user = i.author_id().map(|u| u.get()).unwrap_or_default();
+        if route.owner != user {
+            return Ok(());
+        }
+        let s = ctx.settings::<Settings>(guild, KEY)?;
+        store::set_modules(guild, s.modules);
+        // A form's answer isn't a stale button: run it at the current version.
+        route.version = -1;
+        let values = vec![call.value("name").unwrap_or_default(), call.value("tag").unwrap_or_default()];
+        let name = display_name(i);
+        let out = store::run(&ctx.db, guild, user, Some(&name), |g| game::handle(ctx, g, &route, &values, s.rates()))?;
+        if let Some(out) = out {
+            send(ctx, i, InteractionResponseType::UpdateMessage, &out.screen).await?;
         }
         Ok(())
     }

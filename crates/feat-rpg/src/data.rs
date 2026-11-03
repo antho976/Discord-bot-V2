@@ -499,6 +499,15 @@ pub const MONSTERS: &[Monster] = &[
     Monster { id: "hound", name: "Grave Hound", hp: 1.3, atk: 0.24, pattern: &[Move::Hit, Move::Hit, Move::Roar, Move::Heavy], windup: "bares its rotten teeth", weak: Some("fire"), elite: false },
     Monster { id: "shade", name: "Barrow Shade", hp: 1.5, atk: 0.22, pattern: &[Move::Hit, Move::Brace, Move::Heavy], windup: "goes still and cold", weak: Some("frost"), elite: false },
     // Elites: one per region, rare.
+    // Titans and the guild raid boss: shared bosses.
+    Monster { id: "jormungandr", name: "Spawn of Jormungandr", hp: 2.0, atk: 0.24, pattern: &[Move::Hit, Move::Roar, Move::Heavy, Move::Hit, Move::Brace, Move::Heavy], windup: "coils, and the ground tilts", weak: Some("frost"), elite: true },
+    Monster { id: "typhon", name: "Shade of Typhon", hp: 2.0, atk: 0.25, pattern: &[Move::Hit, Move::Heavy, Move::Hit, Move::Roar, Move::Heavy], windup: "breathes in a storm", weak: Some("frost"), elite: true },
+    Monster { id: "hrimthurs", name: "Hrimthurs the Frost Giant", hp: 2.2, atk: 0.23, pattern: &[Move::Brace, Move::Hit, Move::Heavy, Move::Hit, Move::Roar], windup: "raises a fist of ice", weak: Some("fire"), elite: true },
+    Monster { id: "fafnir", name: "Fafnir the Hoard-Wyrm", hp: 2.2, atk: 0.25, pattern: &[Move::Hit, Move::Roar, Move::Heavy, Move::Hit, Move::Heavy, Move::Brace], windup: "swells with poison", weak: Some("frost"), elite: true },
+    // Dungeon bosses.
+    Monster { id: "handmaiden", name: "Ran's Handmaiden", hp: 2.6, atk: 0.24, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy, Move::Brace], windup: "pulls the tide back with both hands", weak: Some("fire"), elite: true },
+    Monster { id: "whelp", name: "Fenrir's Whelp", hp: 2.4, atk: 0.27, pattern: &[Move::Hit, Move::Hit, Move::Heavy, Move::Roar, Move::Heavy], windup: "bares teeth the size of daggers", weak: Some("fire"), elite: true },
+    Monster { id: "warden", name: "The Treasury Warden", hp: 2.8, atk: 0.25, pattern: &[Move::Brace, Move::Hit, Move::Heavy, Move::Hit, Move::Roar, Move::Heavy], windup: "lifts a chest-lid like a shield, then swings it", weak: Some("frost"), elite: true },
     Monster { id: "minotaur", name: "The Minotaur", hp: 1.7 * 1.8, atk: 0.22 * 1.2, pattern: &[Move::Hit, Move::Heavy, Move::Roar, Move::Hit, Move::Brace, Move::Heavy], windup: "lowers its horns and paws the stone", weak: Some("frost"), elite: true },
     Monster { id: "siren", name: "The Siren of the Skerries", hp: 1.6 * ELITE_HP, atk: 0.20 * ELITE_ATK, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "takes a breath that pulls at your ears", weak: Some("fire"), elite: true },
     Monster { id: "grimtooth", name: "Old Grimtooth", hp: 1.4 * ELITE_HP, atk: 0.22 * ELITE_ATK, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "crouches, every scar on him tight", weak: Some("fire"), elite: true },
@@ -864,3 +873,72 @@ pub fn floor_region(floor: u32) -> &'static Region {
 pub const LAB_WIN_HEAL: f64 = 0.08;
 /// Share of the haul you keep when you fall.
 pub const LAB_KEEP_ON_DEATH: f64 = 0.5;
+
+
+// ---- shared bosses: Titans (the whole server) and guild raids ----
+
+pub const TITANS: [&str; 3] = ["jormungandr", "typhon", "hrimthurs"];
+pub const RAID_BOSS: &str = "fafnir";
+/// Turns one attempt lasts.
+pub const SHARED_TURNS: u32 = 10;
+/// Attempts per player per day.
+pub const TITAN_ATTEMPTS: i64 = 3;
+pub const RAID_ATTEMPTS: i64 = 2;
+/// Shared HP per player counted (active players for a Titan, members for a raid).
+pub const TITAN_HP_PER_PLAYER: i64 = 9000;
+pub const RAID_HP_PER_MEMBER: i64 = 7000;
+/// What starting a raid costs the guild's treasury.
+pub const RAID_COST: i64 = 1500;
+pub const RAID_HOURS: i64 = 72;
+
+// ---- dungeons ----
+
+#[derive(Debug)]
+pub struct Dungeon {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub region: &'static str,
+    pub blurb: &'static str,
+    pub level: u32,
+    /// Power its foes fight at.
+    pub power: i64,
+    pub rooms: &'static [&'static str],
+    pub boss: &'static str,
+}
+
+pub const DUNGEONS: &[Dungeon] = &[
+    Dungeon {
+        id: "drowned",
+        name: "The Drowned Hall",
+        region: "shore",
+        blurb: "A longhouse the sea took whole. Ran keeps her servants there.",
+        level: 5,
+        power: 95,
+        rooms: &["drowned", "serpent", "nixie", "drowned"],
+        boss: "handmaiden",
+    },
+    Dungeon {
+        id: "den",
+        name: "The Wolf-King's Den",
+        region: "wolfwood",
+        blurb: "Under the oldest pine, something of Fenrir's blood has made a home.",
+        level: 11,
+        power: 190,
+        rooms: &["wolf", "satyr", "troll", "centaur"],
+        boss: "whelp",
+    },
+    Dungeon {
+        id: "treasury",
+        name: "Hrolf's Treasury",
+        region: "barrow",
+        blurb: "The King's grave-goods, still guarded by the dead who carried them in.",
+        level: 17,
+        power: 300,
+        rooms: &["draugr", "hound", "shade", "wight"],
+        boss: "warden",
+    },
+];
+
+pub fn dungeon(id: &str) -> Option<&'static Dungeon> {
+    DUNGEONS.iter().find(|d| d.id == id)
+}

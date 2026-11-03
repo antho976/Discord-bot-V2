@@ -25,6 +25,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/rpg/player/{user}/reset", post(reset))
         .route("/g/{guild}/rpg/player/{user}/grant", post(grant))
         .route("/g/{guild}/rpg/player/{user}/tool", post(tool))
+        .route("/g/{guild}/rpg/titan", post(titan_now))
 }
 
 #[derive(Deserialize)]
@@ -173,6 +174,7 @@ fn test_view(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Result<Markup>
                 div.row { div.row-text { label { "Rates" } p.help { "XP, loot and gold, for tuning during the test without a deploy." } } div.row-control { span { (s.xp_rate) "% · " (s.loot_rate) "% · " (s.gold_rate) "%" } } }
             }
         }))
+        (ui::section("Titan", Some("Server-wide boss events. One rises on the schedule in Settings, or now."), titan_block(ctx, page, guild)?))
         (ui::section("How fast the buttons answer", Some("From Discord's click arriving to the new screen being sent. Work is the bot's own time: loading the player, the rules, saving. Reply is Discord accepting the new screen."), clicks))
         @if page.can_edit() { p.muted.small { "Tip: open Screens to see exactly what any player sees right now." } }
     })
@@ -321,6 +323,11 @@ fn screens_view(ctx: &Ctx, page: &Page, guild: u64, player: Option<u64>, focus: 
 fn settings_view(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
     ui::settings_form(page, &page.path("rpg/settings"), html! {
         (ui::card(html! {
+            @for (key, label, what) in store::Modules::LIST {
+                (ui::field_toggle(&format!("mod_{key}"), label, Some(what), s.modules.get(key)))
+            }
+        }))
+        (ui::card(html! {
             (ui::field_channel(ctx, guild, "channel", "RPG channel", Some("Where /rpg works and hubs live. Leave empty to allow any channel."), s.channel))
             (ui::field_toggle("test_only", "Closed test", Some("Only testers (and anyone with Manage Server) can play."), s.test_only))
             (ui::field_role(ctx, guild, "tester_role", "Tester role", Some("Members with this role can play during the test."), s.tester_role))
@@ -330,6 +337,8 @@ fn settings_view(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
             (ui::field_number("xp_rate", "XP rate", Some("100% is the designed pace."), s.xp_rate, 10, 1000, Some("%")))
             (ui::field_number("loot_rate", "Loot rate", Some("Materials from expeditions."), s.loot_rate, 10, 1000, Some("%")))
             (ui::field_number("gold_rate", "Gold rate", Some("Gold from expeditions and hunts."), s.gold_rate, 10, 1000, Some("%")))
+            (ui::field_number("titan_every_hours", "A Titan every", Some("Hours between Titans. 0: only when you raise one from the Test tab."), s.titan_every_hours, 0, 720, Some("hours")))
+            (ui::field_number("titan_hours", "Titans stay for", None, s.titan_hours, 1, 168, Some("hours")))
             (ui::field_select("speed", "Test speed", Some("Expeditions, healing and Vigor run this many times faster, for testing. A 4-hour expedition takes 4 minutes at ×60. Set it back to ×1 before opening to everyone."),
                 &[("1".into(), "×1, real time".into()), ("10".into(), "×10".into()), ("60".into(), "×60".into()), ("240".into(), "×240".into())], &s.speed.to_string()))
         }))
@@ -347,6 +356,12 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     s.loot_rate = form.int_in("loot_rate", 10, 1000, 100);
     s.gold_rate = form.int_in("gold_rate", 10, 1000, 100);
     s.speed = form.int_in("speed", 1, 600, 1);
+    for (key, ..) in store::Modules::LIST {
+        s.modules.set(key, form.bool(&format!("mod_{key}")));
+    }
+    store::set_modules(guild, s.modules);
+    s.titan_every_hours = form.int_in("titan_every_hours", 0, 720, 72);
+    s.titan_hours = form.int_in("titan_hours", 1, 168, 48);
     store::set_speed(guild, s.speed);
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed RPG settings");
@@ -595,4 +610,40 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
     })?;
     let _ = progress::week(now_ms());
     Ok(())
+}
+
+fn titan_block(ctx: &Ctx, page: &Page, guild: u64) -> Result<Markup> {
+    let t = ctx.db.with(|c| Ok(crate::shared::active(c, guild, "titan", 0).unwrap_or(None)))?;
+    let now = now_ms();
+    Ok(html! {
+        div.card {
+            div.row {
+                div.row-text {
+                    @match &t {
+                        Some(t) if !t.over(now) => { label { (t.name()) " is up" } p.help { (t.hp * 100 / t.max_hp.max(1)) "% left · " (crate::game::dur(t.ends - now)) " to go" } }
+                        Some(t) => { label { "Last: " (t.name()) } p.help { @if t.killed_at.is_some() { "Brought down." } @else { "Got away." } } }
+                        None => { label { "No Titan yet" } p.help { "The first rises a day after people start playing, if the schedule is on." } }
+                    }
+                }
+                div.row-control {
+                    @if page.can_edit() && t.as_ref().is_none_or(|t| t.over(now)) {
+                        (ui::action_button(&page.path("rpg/titan"), "Raise a Titan now", Tone::Accent, false))
+                    }
+                }
+            }
+        }
+    })
+}
+
+async fn titan_now(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    let text = ctx.db.with(|c| Ok(crate::shared::rise_titan(c, guild, s.titan_hours.clamp(1, 168)).unwrap_or(None)))?;
+    if let Some(t) = text {
+        if let Some(ch) = s.channel {
+            let _ = ctx.say(ch, &t).await;
+        }
+        ctx.audit(&page.user, Some(guild), KEY, "Raised a Titan");
+    }
+    Ok(Redirect::to(&page.path("rpg")).into_response())
 }
