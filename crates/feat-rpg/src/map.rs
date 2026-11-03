@@ -10,7 +10,12 @@ use bot_core::axum::http::{StatusCode, header};
 use bot_core::axum::response::{IntoResponse, Response};
 use bot_core::axum::routing::get;
 use bot_core::{Ctx, tokio};
+
+use crate::data;
 use sha2::{Digest, Sha256};
+
+/// Bumped whenever the drawing changes.
+const REVISION: u8 = 2;
 
 pub fn routes() -> Router<Ctx> {
     Router::new().route("/p/rpg/map/{spec}", get(serve))
@@ -34,8 +39,15 @@ fn sign(secret: &str, body: &str) -> String {
 }
 
 impl Spec {
+    /// The last part is the drawing's revision, so a redrawn map gets a new address and
+    /// Discord's image cache doesn't keep showing the old one. Older addresses still parse.
     fn body(&self) -> String {
-        format!("{}.{}.{}", self.open, self.expedition, u8::from(self.titan))
+        format!(
+            "{}.{}.{}.{REVISION}",
+            self.open,
+            self.expedition,
+            u8::from(self.titan)
+        )
     }
     pub fn url(&self, ctx: &Ctx) -> String {
         let b = self.body();
@@ -93,155 +105,156 @@ async fn serve(State(ctx): State<Ctx>, Path(spec): Path<String>) -> Response {
         .into_response()
 }
 
-fn label(x: i32, y: i32, text: &str, sub: &str, open: bool) -> String {
-    let fill = if open { "#F4F1EA" } else { "#8A8F99" };
-    format!(
-        r##"<text x="{x}" y="{y}" font-family="Geist" font-weight="600" font-size="22" fill="{fill}" text-anchor="middle">{text}</text><text x="{x}" y="{}" font-family="Geist" font-size="15" fill="#9AA6BE" text-anchor="middle">{sub}</text>"##,
-        y + 20
-    )
+/// The drawn map without its live layer: coast, Skagi, the Loom, the Labyrinth, the river,
+/// Wolfwood, the Barrow Fields and the three dungeons. Static art, drawn by hand.
+const ART: &str = include_str!("map.svg");
+
+/// Where the live layer goes in `ART`.
+const LIVE: &str = "<!--live-->";
+
+/// A place name with a dark halo so it reads over the art.
+fn label(out: &mut String, x: i32, y: i32, text: &str, sub: &str, open: bool) {
+    let (fill, subfill) = if open {
+        ("#F4F1EA", "#AEB8CC")
+    } else {
+        ("#8A8F99", "#8A8F99")
+    };
+    let halo =
+        r##"stroke="#0B0F18" stroke-width="4" stroke-linejoin="round" paint-order="stroke""##;
+    out.push_str(&format!(
+        r##"<text x="{x}" y="{y}" font-family="Geist" font-weight="600" font-size="19" letter-spacing="0.5" fill="{fill}" text-anchor="middle" {halo}>{text}</text>"##
+    ));
+    if sub.is_empty() {
+        return;
+    }
+    let sy = y + 18;
+    if open {
+        out.push_str(&format!(
+            r##"<text x="{x}" y="{sy}" font-family="Geist" font-size="13" fill="{subfill}" text-anchor="middle" {halo}>{sub}</text>"##
+        ));
+    } else {
+        // A small padlock before the text; Geist at 13 px runs about 6.6 px a character.
+        let w = sub.chars().count() as i32 * 66 / 10;
+        let lx = x - w / 2 - 9;
+        out.push_str(&format!(
+            r##"<g transform="translate({lx},{})" fill="none" stroke="{subfill}" stroke-width="1.4"><rect x="-4.5" y="-1" width="9" height="7" rx="1.5" fill="{subfill}" stroke="none"/><path d="M-2.6,-1 v-2.2 a2.6,2.6 0 0 1 5.2,0 v2.2"/></g>"##,
+            sy - 7
+        ));
+        out.push_str(&format!(
+            r##"<text x="{}" y="{sy}" font-family="Geist" font-size="13" fill="{subfill}" text-anchor="middle" {halo}>{sub}</text>"##,
+            x + 6
+        ));
+    }
 }
 
-fn pin(x: i32, y: i32, colour: &str) -> String {
-    format!(
-        r##"<g transform="translate({x},{y})"><path d="M0,0 C-12,-16 -12,-30 0,-34 C12,-30 12,-16 0,0Z" fill="{colour}" stroke="#0E1120" stroke-width="2"/><circle cx="0" cy="-22" r="5" fill="#0E1120"/></g>"##
-    )
+/// A small name for a landmark.
+fn note(out: &mut String, x: i32, y: i32, text: &str) {
+    out.push_str(&format!(
+        r##"<text x="{x}" y="{y}" font-family="Geist" font-size="11" fill="#8C97AC" text-anchor="middle" stroke="#0B0F18" stroke-width="3" stroke-linejoin="round" paint-order="stroke">{text}</text>"##
+    ));
 }
+
+/// Where your expedition is camped.
+fn pin(out: &mut String, x: i32, y: i32) {
+    out.push_str(&format!(
+        r##"<g transform="translate({x},{y})"><ellipse cx="0" cy="1" rx="9" ry="3.5" fill="#000" opacity="0.45"/><circle cx="0" cy="-20" r="16" fill="url(#gold)"/><path d="M0,0 C-10,-13 -11,-26 0,-31 C11,-26 10,-13 0,0Z" fill="#D2A75E" stroke="#0B0F18" stroke-width="2"/><circle cx="0" cy="-20" r="4.5" fill="#0B0F18"/><text x="0" y="-38" font-family="Geist" font-weight="600" font-size="12" fill="#E0C47A" text-anchor="middle" stroke="#0B0F18" stroke-width="3" stroke-linejoin="round" paint-order="stroke">Your expedition</text></g>"##
+    ));
+}
+
+/// A Titan wading out of the western sea.
+const TITAN: &str = r##"<g transform="translate(112,236)">
+<ellipse cx="0" cy="40" rx="78" ry="16" fill="#F0866B" opacity="0.10" filter="url(#soft)"/>
+<path d="M-64,44 C-60,8 -40,-6 -22,-10 C-18,-30 -14,-46 0,-50 C14,-46 18,-30 22,-10 C40,-6 60,8 64,44 Z" fill="#2A1216"/>
+<path d="M-64,44 C-60,8 -40,-6 -22,-10 C-18,-30 -14,-46 0,-50 C14,-46 18,-30 22,-10 C40,-6 60,8 64,44" fill="none" stroke="#F0866B" stroke-width="1.6" opacity="0.7"/>
+<path d="M-12,-44 l-10,-14 l14,8 M12,-44 l10,-14 l-14,8" fill="#2A1216" stroke="#F0866B" stroke-width="1.2" stroke-linejoin="round" opacity="0.9"/>
+<circle cx="-6" cy="-30" r="3" fill="#FFB49C"/><circle cx="6" cy="-30" r="3" fill="#FFB49C"/>
+<circle cx="-6" cy="-30" r="8" fill="#F0866B" opacity="0.25"/><circle cx="6" cy="-30" r="8" fill="#F0866B" opacity="0.25"/>
+<path d="M-40,8 l-4,12 M40,8 l4,12 M-24,0 l-2,8" stroke="#F0866B" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/>
+<path d="M-84,44 q10,-8 20,0 t20,0 t20,0 t20,0 t20,0 t20,0 t20,0 t20,0" fill="none" stroke="#8FB8D8" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+<path d="M-70,50 q8,-5 16,0 t16,0 t16,0 t16,0 t16,0 t16,0 t16,0 t16,0" fill="none" stroke="#35588A" stroke-width="1.5" stroke-linecap="round"/>
+<text x="0" y="76" font-family="Geist" font-weight="600" font-size="16" fill="#F0866B" text-anchor="middle" stroke="#0B0F18" stroke-width="4" stroke-linejoin="round" paint-order="stroke">A Titan rises</text>
+</g>"##;
 
 /// The map at 932 x 520.
 pub fn svg(s: &Spec) -> String {
     let open = |i: u8| s.open & (1 << i) != 0;
-    let dim = |i: u8| if open(i) { "" } else { r##" opacity="0.45""## };
-    let mut out = String::from(
-        r##"<svg xmlns="http://www.w3.org/2000/svg" width="932" height="520" viewBox="0 0 932 520">
-<defs>
-  <linearGradient id="sea" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#101A30"/><stop offset="1" stop-color="#18284A"/></linearGradient>
-  <linearGradient id="land" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2A2F2A"/><stop offset="1" stop-color="#1F231F"/></linearGradient>
-  <clipPath id="r"><rect width="932" height="520" rx="14"/></clipPath>
-</defs>
-<g clip-path="url(#r)">
-<rect width="932" height="520" fill="url(#sea)"/>
-<path d="M210,0 C250,80 190,150 240,220 C280,280 220,350 260,420 C280,470 250,500 270,520 L932,520 L932,0 Z" fill="url(#land)"/>
-"##,
-    );
-    // Sea waves.
-    for (x, y) in [(60, 120), (110, 260), (50, 380), (140, 460), (90, 60)] {
-        out.push_str(&format!(r##"<path d="M{x},{y} q12,-8 24,0 t24,0" fill="none" stroke="#2D4A7A" stroke-width="2"/>"##));
-    }
-    // Mountains along the top, the Loom's hall above them.
-    out.push_str(r##"<path d="M330,110 L380,40 L420,95 L470,30 L530,100 L580,50 L640,110 Z" fill="#363C44"/><path d="M380,40 L392,58 L368,58 Z M470,30 L484,50 L456,50 Z M580,50 L592,66 L568,66 Z" fill="#C8D2E0" opacity="0.7"/>"##);
-    // Grey Shore: the coastline strip.
-    out.push_str(&format!(r##"<g{}><path d="M240,220 C280,280 220,350 260,420 L330,420 C300,350 350,290 320,220 Z" fill="#3A4448"/>"##, dim(0)));
-    for (x, y) in [(270, 300), (285, 360), (300, 250)] {
-        out.push_str(&format!(
-            r##"<circle cx="{x}" cy="{y}" r="4" fill="#8FB8D8"/>"##
-        ));
-    }
-    out.push_str("</g>");
-    // Skagi village.
-    out.push_str(r##"<g transform="translate(330,170)"><path d="M-22,10 L0,-12 L22,10 Z" fill="#D2A75E"/><rect x="-16" y="10" width="32" height="18" fill="#8C6A3A"/><path d="M14,4 L28,-8 L42,4 Z" fill="#B88A48"/><rect x="18" y="4" width="20" height="14" fill="#6E5430"/></g>"##);
-    out.push_str(&label(352, 228, "Skagi", "the village", true));
-    // Wolfwood: trees.
-    out.push_str(&format!("<g{}>", dim(1)));
-    for (x, y) in [
-        (470, 290),
-        (500, 325),
-        (535, 285),
-        (560, 340),
-        (480, 360),
-        (520, 370),
-        (595, 310),
-        (450, 330),
-        (575, 265),
-    ] {
-        out.push_str(&format!(r##"<path d="M{x},{} L{},{} L{},{} Z" fill="#2F5A3A"/><path d="M{x},{} L{},{} L{},{} Z" fill="#3E7A4C"/>"##, y - 34, x - 16, y, x + 16, y, y - 46, x - 11, y - 20, x + 11, y - 20));
-    }
-    out.push_str("</g>");
-    // Barrow Fields: mounds.
-    out.push_str(&format!("<g{}>", dim(2)));
-    for (x, y, w) in [
-        (720, 300, 70),
-        (800, 260, 55),
-        (780, 350, 60),
-        (860, 320, 45),
-        (700, 230, 40),
-    ] {
-        out.push_str(&format!(r##"<path d="M{},{y} Q{x},{} {},{y} Z" fill="#454B55"/><rect x="{}" y="{}" width="4" height="14" fill="#8A93A0"/>"##, x - w / 2, y - w / 2, x + w / 2, x - 2, y - w / 2 - 10));
-    }
-    out.push_str("</g>");
-    // The Labyrinth's mouth, under the mountains.
-    out.push_str(r##"<g transform="translate(470,150)"><circle r="26" fill="#1A1626" stroke="#C9B8FF" stroke-width="2"/><path d="M0,-16 A16,16 0 1,1 -16,0 A10,10 0 1,1 0,-8 A4,4 0 1,1 -4,0" fill="none" stroke="#C9B8FF" stroke-width="2.5"/></g>"##);
-    out.push_str(&label(470, 205, "The Labyrinth", "under the Loom", true));
-    // Dungeon doors.
-    for (i, (x, y)) in [(0u8, (300, 400)), (1, (625, 385)), (2, (860, 380))] {
-        if open(i) {
-            out.push_str(&format!(r##"<g transform="translate({x},{y})"><path d="M-10,12 L-10,-4 A10,10 0 0,1 10,-4 L10,12 Z" fill="#1A1626" stroke="#E0C47A" stroke-width="2"/></g>"##));
+    let mut live = String::new();
+    // Fog over the regions you can't reach yet.
+    for (i, id) in ["shore", "wolfwood", "barrow"].into_iter().enumerate() {
+        if !open(i as u8) {
+            live.push_str(&format!(
+                r##"<use href="#fog-{id}" fill="#080B12" opacity="0.62" filter="url(#soft)"/>"##
+            ));
         }
     }
-    out.push_str(&label(
-        288,
-        470,
-        "Grey Shore",
-        if open(0) {
-            "nixies, herring, amber"
+    note(&mut live, 522, 90, "the Loom");
+    note(&mut live, 150, 460, "the Drowned Hall");
+    note(&mut live, 606, 432, "the Wolf-King's Den");
+    note(&mut live, 820, 480, "Hrolf's Treasury");
+    label(&mut live, 340, 272, "Skagi", "the village", true);
+    label(&mut live, 472, 204, "The Labyrinth", "under the Loom", true);
+    let place = [
+        (0u8, 268, 404, "nixies, herring, amber"),
+        (1, 520, 328, "wolves, yew, fangs"),
+        (2, 790, 352, "the dead, iron, frost hides"),
+    ];
+    for (i, x, y, what) in place {
+        let r = &data::REGIONS[i as usize];
+        let sub = if open(i) {
+            what.to_owned()
         } else {
-            "locked"
-        },
-        open(0),
-    ));
-    out.push_str(&label(
-        520,
-        410,
-        "Wolfwood",
-        if open(1) {
-            "wolves, yew, fangs"
-        } else {
-            "needs 90 Power"
-        },
-        open(1),
-    ));
-    out.push_str(&label(
-        780,
-        420,
-        "Barrow Fields",
-        if open(2) {
-            "the dead, iron, frost hides"
-        } else {
-            "needs 150 Power"
-        },
-        open(2),
-    ));
-    // Where the expedition is.
-    let pos = [(0, 0), (290, 330), (520, 335), (780, 300)];
+            format!("needs {} Power", r.power)
+        };
+        label(&mut live, x, y, r.name, &sub, open(i));
+    }
+    let camp = [(0, 0), (246, 372), (566, 306), (790, 318)];
     if (1..=3).contains(&s.expedition) {
-        let (x, y) = pos[s.expedition as usize];
-        out.push_str(&pin(x, y, "#D2A75E"));
+        let (x, y) = camp[s.expedition as usize];
+        pin(&mut live, x, y);
     }
-    // A Titan rising from the sea.
     if s.titan {
-        out.push_str(r##"<g transform="translate(120,190)"><path d="M-40,60 C-30,0 -10,-30 0,-40 C10,-30 30,0 40,60 Z" fill="#5A1E24" opacity="0.9"/><circle cx="-10" cy="-8" r="5" fill="#F0866B"/><circle cx="10" cy="-8" r="5" fill="#F0866B"/></g>"##);
-        out.push_str(r##"<text x="120" y="280" font-family="Geist" font-weight="600" font-size="18" fill="#F0866B" text-anchor="middle">A Titan rises</text>"##);
+        live.push_str(TITAN);
     }
-    out.push_str(r##"<text x="902" y="40" font-family="Geist" font-weight="600" font-size="15" letter-spacing="3" fill="#9AA6BE" text-anchor="end">MIDGARD</text>"##);
-    out.push_str("</g></svg>");
-    out
+    ART.replacen(LIVE, &live, 1)
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_live_layer_lands_in_the_art() {
+        assert_eq!(super::ART.matches(super::LIVE).count(), 1);
+        let all = super::svg(&super::Spec {
+            open: 7,
+            expedition: 2,
+            titan: true,
+        });
+        assert!(!all.contains(super::LIVE));
+        assert!(all.contains("Your expedition") && all.contains("A Titan rises"));
+        let none = super::svg(&super::Spec {
+            open: 1,
+            expedition: 0,
+            titan: false,
+        });
+        assert_eq!(
+            none.matches("fog-").count() - all.matches("fog-").count(),
+            2
+        );
+        assert!(none.contains("needs 90 Power") && none.contains("needs 150 Power"));
+    }
+
+    #[test]
     fn every_state_draws() {
-        for open in [0u8, 1, 3, 7] {
-            for exp in 0..=3 {
-                for titan in [false, true] {
-                    let png = bot_render::png(&super::svg(&super::Spec {
-                        open,
-                        expedition: exp,
-                        titan,
-                    }))
-                    .unwrap();
-                    assert!(png.len() > 1000);
-                }
-            }
+        // Each lock, each camp and the Titan, without rendering all 64 states.
+        for (open, expedition, titan) in
+            [(0u8, 0, false), (1, 1, false), (3, 2, true), (7, 3, true)]
+        {
+            let png = bot_render::png(&super::svg(&super::Spec {
+                open,
+                expedition,
+                titan,
+            }))
+            .unwrap();
+            assert!(png.len() > 1000);
         }
     }
 }
