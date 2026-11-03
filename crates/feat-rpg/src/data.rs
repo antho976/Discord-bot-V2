@@ -1160,7 +1160,7 @@ pub const REGEN_PER_MIN: f64 = 1.0 / 15.0;
 pub const HUNT_HP: f64 = 1.25;
 pub const HUNT_ATK: f64 = 0.75;
 /// Share of max HP a hunt win gives back: you catch your breath.
-pub const WIN_HEAL: f64 = 0.15;
+pub const WIN_HEAL: f64 = 0.08;
 /// Lifesteal works at this share against the realm boss.
 pub const BOSS_LIFESTEAL: f64 = 0.4;
 /// Gold per level to rest at the inn and be at full HP at once.
