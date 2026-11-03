@@ -147,6 +147,18 @@ fn a_new_player_plays_through_midgard() {
     }
     assert!(store::get(&ctx.db, G, U).unwrap().unwrap().fight.is_none(), "the hunt never ended");
 
+    // Hurt: too hurt to hunt, a potion fixes it.
+    store::run(&ctx.db, G, U, None, |g| g.set_hp(1)).unwrap();
+    let s = click(&ctx, "hunt", "start", "shore", &[]);
+    assert!(text_of(&s).contains("too hurt"));
+    let potions = store::get(&ctx.db, G, U).unwrap().unwrap().have("potion");
+    if potions > 0 {
+        click(&ctx, "hunt", "drink", "", &[]);
+        let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+        assert_eq!(p.have("potion"), potions - 1);
+        assert!(p.hp() > 1);
+    }
+
     // Forge supplies from materials.
     grant(&ctx, &[("herbs", 40), ("fish", 30), ("iron", 50), ("yew", 30), ("amber", 4)], 2000);
     let potions = store::get(&ctx.db, G, U).unwrap().unwrap().have("potion");

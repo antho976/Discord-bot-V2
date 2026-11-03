@@ -241,7 +241,7 @@ pub fn thousands(n: i64) -> String {
 fn goals(p: &Player, w: &World, givers: &[(u64, String, i64)]) -> Screen {
     let ids = Ids { owner: p.user, version: p.version };
     let mut s = Screen::default();
-    title(&mut s, "goals", "Goals", &format!("Midgard · week {}", w.week.rem_euclid(52) + 1));
+    title(&mut s, "goals", "Goals", "Midgard · offerings reset on Monday");
     s.text("-# Realm boss");
     let power = p.power();
     let ready = power >= data::BOSS_POWER;
@@ -503,7 +503,11 @@ fn hunt_pick(p: &Player, region: Option<&str>) -> Screen {
     );
     let mons: Vec<String> = pick.monsters.iter().filter_map(|m| data::monster(m)).map(|m| m.name.to_owned()).collect();
     s.text(format!("-# {}: {}. Wins drop {}.", pick.name, mons.join(", "), pick.drops.iter().map(|(id, _)| data::item(id).map(|i| i.plural).unwrap_or(id)).collect::<Vec<_>>().join(", ")));
-    s.buttons(vec![back(&ids), Btn::new(ids.act("hunt", "start", pick.id), "Start hunting").emoji("hunt").primary().disabled(hp < 1)]);
+    let mut b = vec![back(&ids), Btn::new(ids.act("hunt", "start", pick.id), "Start hunting").emoji("hunt").primary().disabled(hp * 10 < max * 3)];
+    if hp < max && p.have("potion") > 0 {
+        b.push(Btn::new(ids.act("hunt", "drink", ""), format!("Drink a potion · {}", p.have("potion"))).emoji("potion"));
+    }
+    s.buttons(b);
     s
 }
 
@@ -587,7 +591,7 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
         if boss {
             s.buttons(vec![back(&ids), Btn::new(ids.go("goals"), "Goals").emoji("goals")]);
         } else {
-            let again = Btn::new(ids.act("hunt", "start", &f.region), "Hunt again").emoji("hunt").primary().disabled(p.hp() < 1);
+            let again = Btn::new(ids.act("hunt", "start", &f.region), "Hunt again").emoji("hunt").primary().disabled(p.hp() * 10 < p.max_hp() * 3);
             s.buttons(vec![back(&ids), again]);
         }
         return s;
@@ -1107,11 +1111,22 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                 None => view(ctx, g, &w, "exp", None)?,
             },
             ("hunt", "pick") => hunt_pick(&g.p, Some(&value)),
+            ("hunt", "drink") => {
+                if g.p.fight.is_none() && g.p.have("potion") > 0 && g.p.hp() < g.p.max_hp() {
+                    let heal = g.p.max_hp() * 4 / 10;
+                    let hp = g.p.hp();
+                    g.item("potion", -1, "drank a potion")?;
+                    g.set_hp(hp + heal)?;
+                    g.bump()?;
+                    note = Some(format!("You drank a potion: {} / {} HP.", g.p.hp(), g.p.max_hp()));
+                }
+                hunt_pick(&g.p, None)
+            }
             ("hunt", "start") => {
                 if g.p.fight.is_some() {
                     note = Some("Finish the fight you're in first.".into());
-                } else if g.p.hp() < 1 {
-                    note = Some("You need to rest first.".into());
+                } else if g.p.hp() * 10 < g.p.max_hp() * 3 {
+                    note = Some(format!("You're too hurt to hunt ({} / {} HP). Rest a little or drink a potion.", g.p.hp(), g.p.max_hp()));
                 } else {
                     let r = data::region(&route.arg).unwrap_or(&data::REGIONS[0]);
                     let f = Fight::hunt(g.p.hero(), g.p.hp(), r, seed(&g.p, 5));

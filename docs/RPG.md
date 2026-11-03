@@ -103,3 +103,59 @@ second looked right but its idle play, progression and content were shallow and 
 
 Guilds, selling boss intel, trading (level-locked gear, materials with a weekly cap), realms 2
 and 3, Titan events, more patrons (only once all their pairs are designed).
+
+## Status (2026-11-03)
+
+Phases 0 to 3 are built in `crates/feat-rpg`. Phase 4 (the closed test) is the owner's to start.
+
+### Starting the closed test
+
+1. Dashboard → Features: switch **RPG** on for the server.
+2. RPG → Settings: pick the **RPG channel** and the **tester role**. The closed test is on by
+   default: only that role (and anyone with Manage Server) can play.
+3. Give testers the role and tell them to use `/rpg` in the channel.
+4. The bot uploads its emoji set within a minute of the feature being on somewhere. Plain
+   emojis show until then.
+5. During the test: RPG → Players (who's where), Economy (gold in and out, materials piling up),
+   Screens (exactly what any player sees), and the XP, loot and gold rates in Settings for
+   tuning without a deploy.
+
+### What the code does
+
+| Part | Where |
+|---|---|
+| Content and every balance number | `src/data.rs` |
+| Combat, expeditions, progression (no Discord, seeded) | `src/engine/` |
+| A whole player played for 30 days | `src/engine/sim.rs`, `examples/sim.rs` |
+| Tables, the transaction per click, the ledger | `src/store.rs` |
+| Every screen and action | `src/game.rs` |
+| Screen model to Components V2 and to HTML | `src/ui.rs` |
+| Banner (signed URL, cached), emoji set | `src/banner.rs`, `src/emoji.rs` |
+| Dashboard | `src/web.rs` |
+
+Tools: `cargo run --release -p feat-rpg --example sim -- boss` (boss win rates per pairing),
+`-- days` (30-day pace and economy), `--example trace -- athena thor 380 3` (one fight turn by
+turn), `--example clickbench` (bot work per click), `--example banner -- <dir>` (draw banners),
+`--example preview -- 3101` (dashboard with sample players in four states).
+
+### Balance at launch (from the simulator)
+
+- First boss: light player (two long runs and a few fights a day) on day 10, heavy player
+  (about six hours a day) on days 6 to 8, for every patron.
+- Barrow King at its recommended 420 Power with all four facts scouted: Thor 90%, Athena 85%,
+  Hades 100% of fights won; without scouting 14 to 74%; at 340 Power about 0%.
+- Every material is used by a recipe; spare materials and gold go to the altars.
+- Tests pin these: `boss_pace_for_every_patron`, `lesser_vows_help`, `pace_matches_the_plan`,
+  `every_item_has_a_use_and_a_source`, and the click-through in `tests/flow.rs`, which also
+  checks every screen against Discord's message limits (40 components, unique custom ids).
+
+### Changed from the concept while building
+
+- Thunderclap stuns a foe that's winding up (cancelling the attack) instead of hitting a pack:
+  fights are one foe at a time.
+- Athena's Aegis Storm throws the whole blocked hit back, not half: half made the pair weaker
+  than Athena alone.
+- New players start with an Iron Hand-axe and a Wolf-hide Vest, two potions and two rations:
+  with level 1's Power alone even the easiest region was too dangerous.
+- Selling boss intel, guilds, trading and Titan events are after the test, as planned. The
+  Goals screen points to scouting instead of buying intel.
