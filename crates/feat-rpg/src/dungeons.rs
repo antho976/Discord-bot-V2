@@ -61,8 +61,12 @@ pub fn list_screen(g: &Game) -> Result<Screen> {
         version: p.version,
     };
     let mut s = Screen::default();
-    title(&mut s, "dungeon", "Dungeons", "One in each region");
-    s.text("Four rooms and a boss, in order. The first clear each day opens the boss's chest: gear (Fine or better), loose threads and gold.");
+    title(
+        &mut s,
+        "dungeon",
+        "Dungeons",
+        "Four rooms, then a boss. Your first clear each day opens its chest.",
+    );
     for d in data::DUNGEONS {
         let open = p.level >= d.level;
         let today = clears_today(g, d.id)?;
@@ -76,10 +80,9 @@ pub fn list_screen(g: &Game) -> Result<Screen> {
         };
         s.section(
             format!(
-                "{} **{}** · {region}\n-# {} Fights at {} Power. {status}",
+                "{} **{}** · {region}\n-# {} Power · {status}",
                 e("dungeon"),
                 d.name,
-                d.blurb,
                 d.power
             ),
             Btn::new(ids.act("dungeon", "enter", d.id), "Enter")
@@ -119,6 +122,8 @@ pub fn delve_screen(p: &Player, d: &Delve) -> Screen {
                 .collect::<Vec<_>>()
                 .join("\n"),
         );
+    } else if d.room == 0 {
+        s.text(format!("-# {}", dg.blurb));
     }
     let mut haul = Vec::new();
     if d.gold > 0 {

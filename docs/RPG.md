@@ -31,6 +31,12 @@ second looked right but its idle play, progression and content were shallow and 
 - **Look:** the "G" overview: a drawn realm banner (name, level, Power, the patron's emblem on
   the side), then what's happening now, then gold, Vigor and guild. No progress bars on the hub.
   C (the whole hub as one drawn card) was rejected; don't bring it back.
+- **Screens stay short (2026-11-03, task #9):** owner found some "so crowded with info it
+  sucks". A line earns its place only if it changes what you do now: menus show live state
+  (HP, what's out, what's ready) or just the name, never a standing description; costs read
+  as have/need on one line; a reward shared by every row is said once; explanations live in
+  Help or on the screen where they matter (dungeon lore when you enter, the townsfolk's words
+  when you claim), not repeated on every visit.
 - **Banner art (2026-11-03, task #6):** each patron has one colour and a scene drawn by
   `crates/feat-rpg/assets/banner/gen.py` (run it with an output dir and the assets dir to redraw):
   Hades red, the Styx with a bident (two prongs; the old three-pronged one read as Poseidon);

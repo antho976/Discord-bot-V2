@@ -190,9 +190,8 @@ pub fn screen(p: &Player, board: &[(u64, String, i64)]) -> Screen {
                 "Under the Loom, where cut threads fall",
             );
             s.text(format!(
-                "Daedalus built a maze under the Loom to catch what falls from it. Loose threads collect down there, and so do the things that feed on them.\n\n\
-                 {} **How it works:** pick a door on each floor. Every fifth floor, the Minotaur. Leave whenever you like and keep everything; fall and you keep half.\n\
-                 {} **Why:** loose threads refine and reforge gear at the forge, guardians drop gear, and the deepest floor each week goes on the board.",
+                "{} Pick a door on each floor; the Minotaur waits on every fifth. Leave any time and keep it all, fall and keep half.\n\
+                 -# {} Loose threads from down here refine and reforge gear at the forge.",
                 e("labyrinth"),
                 e("thread")
             ));
