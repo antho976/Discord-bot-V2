@@ -19,7 +19,11 @@ pub fn roll_rarity(source: &str, rng: &mut Rng) -> Rarity {
 
 /// `n` different traits that fit the piece's slot.
 pub fn roll_traits(g: &Gear, n: usize, rng: &mut Rng) -> Traits {
-    let mut pool: Vec<Trait> = data::TRAITS.iter().copied().filter(|t| t.fits(g.slot)).collect();
+    let mut pool: Vec<Trait> = data::TRAITS
+        .iter()
+        .copied()
+        .filter(|t| t.fits(g.slot))
+        .collect();
     let mut out = Vec::new();
     while out.len() < n && !pool.is_empty() {
         let i = (rng.next_u64() % pool.len() as u64) as usize;
@@ -38,10 +42,17 @@ pub fn roll(g: &Gear, source: &str, rng: &mut Rng) -> (Rarity, Traits) {
 
 /// A piece of gear to drop: one the player could wear soon, from any slot.
 pub fn drop_piece(level: u32, boss_won: bool, rng: &mut Rng) -> &'static Gear {
-    let fits: Vec<&Gear> = data::GEAR.iter().filter(|g| g.level <= level + 2 && (!g.after_boss || boss_won)).collect();
+    let fits: Vec<&Gear> = data::GEAR
+        .iter()
+        .filter(|g| g.level <= level + 2 && (!g.after_boss || boss_won))
+        .collect();
     // Lean towards the newest pieces you can wear.
     let top = fits.iter().map(|g| g.level).max().unwrap_or(1);
-    let near: Vec<&Gear> = fits.iter().copied().filter(|g| g.level + 8 >= top).collect();
+    let near: Vec<&Gear> = fits
+        .iter()
+        .copied()
+        .filter(|g| g.level + 8 >= top)
+        .collect();
     near[(rng.next_u64() % near.len() as u64) as usize]
 }
 
@@ -56,7 +67,10 @@ mod tests {
             for _ in 0..50 {
                 let (r, t) = roll(g, "elite", &mut rng);
                 assert_eq!(t.len(), r.index() as usize);
-                assert!(t.iter().all(|(x, v)| x.fits(g.slot) && *v >= x.range().0 && *v <= x.range().1));
+                assert!(
+                    t.iter()
+                        .all(|(x, v)| x.fits(g.slot) && *v >= x.range().0 && *v <= x.range().1)
+                );
                 let kinds: std::collections::HashSet<_> = t.iter().map(|x| x.0 as u8).collect();
                 assert_eq!(kinds.len(), t.len());
             }

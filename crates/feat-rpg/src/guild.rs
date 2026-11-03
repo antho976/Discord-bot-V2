@@ -69,8 +69,18 @@ pub fn perks(level: u32) -> Vec<&'static str> {
 /// (id, name, what it does, treasury cost)
 pub const UPGRADES: [(&str, &str, &str, i64); 3] = [
     ("mead", "Mead Hall", "+10% Vigor while away", 4000),
-    ("banner", "War Banner", "+5% damage against Titans and raids", 6000),
-    ("longship", "Longship", "+5% materials from expeditions", 8000),
+    (
+        "banner",
+        "War Banner",
+        "+5% damage against Titans and raids",
+        6000,
+    ),
+    (
+        "longship",
+        "Longship",
+        "+5% materials from expeditions",
+        8000,
+    ),
 ];
 
 pub fn membership(c: &Connection, guild: u64, user: u64) -> Result<Option<Membership>> {
@@ -102,7 +112,13 @@ pub struct Member {
 }
 
 pub fn members(c: &Connection, guild: u64, clan: i64, week: i64) -> Result<Vec<Member>> {
-    let leader: i64 = c.query_row("SELECT leader FROM rpg_clans WHERE id = ?1", params![clan], |r| r.get(0)).unwrap_or(0);
+    let leader: i64 = c
+        .query_row(
+            "SELECT leader FROM rpg_clans WHERE id = ?1",
+            params![clan],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
     let mut st = c.prepare_cached(
         "SELECT m.user_id, COALESCE(p.name, ''), CASE WHEN m.week = ?3 THEN m.week_xp ELSE 0 END, COALESCE(p.level, 1)
          FROM rpg_clan_members m LEFT JOIN rpg_players p ON p.guild_id = m.guild_id AND p.user_id = m.user_id
@@ -111,7 +127,13 @@ pub fn members(c: &Connection, guild: u64, clan: i64, week: i64) -> Result<Vec<M
     let rows = st
         .query_map(params![guild as i64, clan, week], |r| {
             let u = r.get::<_, i64>(0)?;
-            Ok(Member { user: u as u64, name: r.get(1)?, leader: u == leader, week_xp: r.get(2)?, level: r.get(3)? })
+            Ok(Member {
+                user: u as u64,
+                name: r.get(1)?,
+                leader: u == leader,
+                week_xp: r.get(2)?,
+                level: r.get(3)?,
+            })
         })?
         .collect::<Result<_, _>>()?;
     Ok(rows)
@@ -127,7 +149,9 @@ pub fn open_guilds(c: &Connection, guild: u64) -> Result<Vec<Listed>> {
          FROM rpg_clans c WHERE c.guild_id = ?1 ORDER BY c.xp DESC LIMIT 25",
     )?;
     let rows = st
-        .query_map(params![guild as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, level(r.get(4)?))))?
+        .query_map(params![guild as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, level(r.get(4)?)))
+        })?
         .collect::<Result<Vec<Listed>, _>>()?;
     Ok(rows)
 }
@@ -148,7 +172,9 @@ pub fn challenge(c: &Connection, clan: i64, week: i64) -> Result<(i64, i64, bool
 
 /// A member did something: guild XP, their weekly share, and hunt wins for the challenge.
 pub fn credit(g: &mut Game, xp: i64, wins: i64) -> Result<()> {
-    let Some(m) = g.p.clan.clone() else { return Ok(()) };
+    let Some(m) = g.p.clan.clone() else {
+        return Ok(());
+    };
     if xp <= 0 && wins <= 0 {
         return Ok(());
     }
@@ -196,9 +222,12 @@ pub fn found(g: &mut Game, name: &str, tag: &str) -> Result<Option<String>> {
     if g.p.gold < FOUND_GOLD {
         return Ok(Some(format!("Founding a guild costs {FOUND_GOLD} gold.")));
     }
-    let taken: bool = g
-        .tx
-        .query_row("SELECT 1 FROM rpg_clans WHERE guild_id = ?1 AND lower(name) = lower(?2)", params![g.p.guild as i64, name], |_| Ok(true))
+    let taken: bool =
+        g.tx.query_row(
+            "SELECT 1 FROM rpg_clans WHERE guild_id = ?1 AND lower(name) = lower(?2)",
+            params![g.p.guild as i64, name],
+            |_| Ok(true),
+        )
         .optional()?
         .unwrap_or(false);
     if taken {
@@ -231,7 +260,9 @@ pub fn join(g: &mut Game, clan: i64) -> Result<Option<String>> {
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    let Some((name, n)) = row else { return Ok(Some("That guild is gone.".into())) };
+    let Some((name, n)) = row else {
+        return Ok(Some("That guild is gone.".into()));
+    };
     if n >= MAX_MEMBERS {
         return Ok(Some(format!("{name} is full.")));
     }
@@ -245,19 +276,33 @@ pub fn join(g: &mut Game, clan: i64) -> Result<Option<String>> {
 }
 
 pub fn leave(g: &mut Game) -> Result<Option<String>> {
-    let Some(m) = g.p.clan.clone() else { return Ok(None) };
-    g.tx.execute("DELETE FROM rpg_clan_members WHERE guild_id = ?1 AND user_id = ?2", params![g.p.guild as i64, g.p.user as i64])?;
-    let next: Option<i64> = g
-        .tx
-        .query_row("SELECT user_id FROM rpg_clan_members WHERE clan_id = ?1 ORDER BY joined LIMIT 1", params![m.id], |r| r.get(0))
+    let Some(m) = g.p.clan.clone() else {
+        return Ok(None);
+    };
+    g.tx.execute(
+        "DELETE FROM rpg_clan_members WHERE guild_id = ?1 AND user_id = ?2",
+        params![g.p.guild as i64, g.p.user as i64],
+    )?;
+    let next: Option<i64> =
+        g.tx.query_row(
+            "SELECT user_id FROM rpg_clan_members WHERE clan_id = ?1 ORDER BY joined LIMIT 1",
+            params![m.id],
+            |r| r.get(0),
+        )
         .optional()?;
     match next {
         None => {
             g.tx.execute("DELETE FROM rpg_clans WHERE id = ?1", params![m.id])?;
         }
         Some(u) if m.leader => {
-            g.tx.execute("UPDATE rpg_clans SET leader = ?2 WHERE id = ?1", params![m.id, u])?;
-            g.tx.execute("UPDATE rpg_clan_members SET role = 'leader' WHERE clan_id = ?1 AND user_id = ?2", params![m.id, u])?;
+            g.tx.execute(
+                "UPDATE rpg_clans SET leader = ?2 WHERE id = ?1",
+                params![m.id, u],
+            )?;
+            g.tx.execute(
+                "UPDATE rpg_clan_members SET role = 'leader' WHERE clan_id = ?1 AND user_id = ?2",
+                params![m.id, u],
+            )?;
         }
         _ => {}
     }
@@ -267,33 +312,49 @@ pub fn leave(g: &mut Game) -> Result<Option<String>> {
 }
 
 pub fn kick(g: &mut Game, user: u64) -> Result<Option<String>> {
-    let Some(m) = g.p.clan.clone() else { return Ok(None) };
+    let Some(m) = g.p.clan.clone() else {
+        return Ok(None);
+    };
     if !m.leader || user == g.p.user {
         return Ok(None);
     }
-    g.tx.execute("DELETE FROM rpg_clan_members WHERE guild_id = ?1 AND user_id = ?2 AND clan_id = ?3", params![g.p.guild as i64, user as i64, m.id])?;
+    g.tx.execute(
+        "DELETE FROM rpg_clan_members WHERE guild_id = ?1 AND user_id = ?2 AND clan_id = ?3",
+        params![g.p.guild as i64, user as i64, m.id],
+    )?;
     g.bump()?;
     Ok(Some("They're no longer in the guild.".into()))
 }
 
 pub fn give(g: &mut Game, n: i64) -> Result<Option<String>> {
-    let Some(m) = g.p.clan.clone() else { return Ok(None) };
+    let Some(m) = g.p.clan.clone() else {
+        return Ok(None);
+    };
     if g.p.gold < n {
         return Ok(Some("You don't have that much gold.".into()));
     }
     g.gold(-n, "guild treasury")?;
-    g.tx.execute("UPDATE rpg_clans SET treasury = treasury + ?2 WHERE id = ?1", params![m.id, n])?;
+    g.tx.execute(
+        "UPDATE rpg_clans SET treasury = treasury + ?2 WHERE id = ?1",
+        params![m.id, n],
+    )?;
     credit(g, n / 20, 0)?;
     if let Some(c) = g.p.clan.as_mut() {
         c.treasury += n;
     }
     g.bump()?;
-    Ok(Some(format!("{n} gold into the treasury. It only ever buys guild upgrades.")))
+    Ok(Some(format!(
+        "{n} gold into the treasury. It only ever buys guild upgrades."
+    )))
 }
 
 pub fn buy(g: &mut Game, id: &str) -> Result<Option<String>> {
-    let Some(m) = g.p.clan.clone() else { return Ok(None) };
-    let Some((_, name, _, cost)) = UPGRADES.iter().find(|u| u.0 == id) else { return Ok(None) };
+    let Some(m) = g.p.clan.clone() else {
+        return Ok(None);
+    };
+    let Some((_, name, _, cost)) = UPGRADES.iter().find(|u| u.0 == id) else {
+        return Ok(None);
+    };
     if !m.leader {
         return Ok(Some("Only the guild's leader buys upgrades.".into()));
     }
@@ -301,11 +362,17 @@ pub fn buy(g: &mut Game, id: &str) -> Result<Option<String>> {
         return Ok(Some("The guild already has that.".into()));
     }
     if m.treasury < *cost {
-        return Ok(Some(format!("The treasury needs {} gold for the {name}.", thousands(*cost))));
+        return Ok(Some(format!(
+            "The treasury needs {} gold for the {name}.",
+            thousands(*cost)
+        )));
     }
     let mut ups = m.upgrades.clone();
     ups.push(id.to_owned());
-    g.tx.execute("UPDATE rpg_clans SET treasury = treasury - ?2, upgrades = ?3 WHERE id = ?1", params![m.id, cost, serde_json::to_string(&ups)?])?;
+    g.tx.execute(
+        "UPDATE rpg_clans SET treasury = treasury - ?2, upgrades = ?3 WHERE id = ?1",
+        params![m.id, cost, serde_json::to_string(&ups)?],
+    )?;
     g.p.clan = membership(&g.tx, g.p.guild, g.p.user)?;
     g.bump()?;
     Ok(Some(format!("The guild built the **{name}**.")))
@@ -313,7 +380,10 @@ pub fn buy(g: &mut Game, id: &str) -> Result<Option<String>> {
 
 pub fn screen(g: &Game) -> Result<Screen> {
     let p = &g.p;
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     let Some(m) = &p.clan else {
         title(&mut s, "guild", "Guilds", "Band together");
@@ -324,32 +394,70 @@ pub fn screen(g: &Game) -> Result<Screen> {
         let opts: Vec<Opt> = open
             .iter()
             .filter(|x| x.3 < MAX_MEMBERS)
-            .map(|(id, name, tag, n, lvl)| Opt::new(format!("{name} [{tag}]"), id.to_string()).emoji("guild").desc(format!("Level {lvl} · {n} of {MAX_MEMBERS} members")))
+            .map(|(id, name, tag, n, lvl)| {
+                Opt::new(format!("{name} [{tag}]"), id.to_string())
+                    .emoji("guild")
+                    .desc(format!("Level {lvl} · {n} of {MAX_MEMBERS} members"))
+            })
             .collect();
         if opts.is_empty() {
             s.text("-# No guilds yet. Found the first one.");
         } else {
             s.inner_select(ids.act("guild", "join", ""), "Join a guild…", opts);
         }
-        s.buttons(vec![back(&ids), Btn::new(ids.act("guild", "new", ""), format!("Found a guild · {FOUND_GOLD} gold")).emoji("guild").primary().disabled(p.gold < FOUND_GOLD)]);
+        s.buttons(vec![
+            back(&ids),
+            Btn::new(
+                ids.act("guild", "new", ""),
+                format!("Found a guild · {FOUND_GOLD} gold"),
+            )
+            .emoji("guild")
+            .primary()
+            .disabled(p.gold < FOUND_GOLD),
+        ]);
         return Ok(s);
     };
     let lvl = m.level();
     let week = p.week();
-    title(&mut s, "guild", &format!("{} [{}]", m.name, m.tag), &format!("Guild level {lvl}{}", if m.leader { " · you lead it" } else { "" }));
-    let next = if lvl < 10 { format!("{} / {} XP to level {}", thousands(m.xp), thousands(xp_for(lvl + 1)), lvl + 1) } else { "Highest level".into() };
+    title(
+        &mut s,
+        "guild",
+        &format!("{} [{}]", m.name, m.tag),
+        &format!(
+            "Guild level {lvl}{}",
+            if m.leader { " · you lead it" } else { "" }
+        ),
+    );
+    let next = if lvl < 10 {
+        format!(
+            "{} / {} XP to level {}",
+            thousands(m.xp),
+            thousands(xp_for(lvl + 1)),
+            lvl + 1
+        )
+    } else {
+        "Highest level".into()
+    };
     let perks = perks(lvl);
     s.text(format!(
         "{} {next}\n-# Everyone in the guild gets: {}",
         e("guild"),
-        if perks.is_empty() { "nothing yet, from level 2 on +2% XP".into() } else { perks.join(", ") }
+        if perks.is_empty() {
+            "nothing yet, from level 2 on +2% XP".into()
+        } else {
+            perks.join(", ")
+        }
     ));
     let (done, target, claimed) = challenge(&g.tx, m.id, week)?;
     s.text(format!(
         "{} **Weekly challenge:** {} / {target} hunts won as a guild{}",
         e("bounty"),
         done.min(target),
-        if claimed { "  ·  done: +800 treasury, +600 guild XP" } else { "\n-# Pays 800 gold into the treasury and 600 guild XP" }
+        if claimed {
+            "  ·  done: +800 treasury, +600 guild XP"
+        } else {
+            "\n-# Pays 800 gold into the treasury and 600 guild XP"
+        }
     ));
     let raid = crate::shared::active(&g.tx, p.guild, "raid", m.id)?;
     match &raid {
@@ -363,24 +471,89 @@ pub fn screen(g: &Game) -> Result<Screen> {
         ),
     };
     s.gap();
-    s.text(format!("{} **Treasury:** {} gold", e("gold"), thousands(m.treasury)));
-    let ups: Vec<String> = UPGRADES.iter().map(|(id, name, what, cost)| if m.has(id) { format!("{} {name}: {what}", e("check")) } else { format!("{} {name}: {what} · {} gold", e("lock"), thousands(*cost)) }).collect();
+    s.text(format!(
+        "{} **Treasury:** {} gold",
+        e("gold"),
+        thousands(m.treasury)
+    ));
+    let ups: Vec<String> = UPGRADES
+        .iter()
+        .map(|(id, name, what, cost)| {
+            if m.has(id) {
+                format!("{} {name}: {what}", e("check"))
+            } else {
+                format!("{} {name}: {what} · {} gold", e("lock"), thousands(*cost))
+            }
+        })
+        .collect();
     s.text(format!("-# {}", ups.join("\n-# ")));
     if m.leader {
-        let opts: Vec<Opt> = UPGRADES.iter().filter(|u| !m.has(u.0)).map(|(id, name, what, cost)| Opt::new(format!("{name} · {} gold", thousands(*cost)), *id).emoji("guild").desc(*what)).collect();
-        s.inner_select(ids.act("guild", "buy", ""), "Build an upgrade from the treasury…", opts);
+        let opts: Vec<Opt> = UPGRADES
+            .iter()
+            .filter(|u| !m.has(u.0))
+            .map(|(id, name, what, cost)| {
+                Opt::new(format!("{name} · {} gold", thousands(*cost)), *id)
+                    .emoji("guild")
+                    .desc(*what)
+            })
+            .collect();
+        s.inner_select(
+            ids.act("guild", "buy", ""),
+            "Build an upgrade from the treasury…",
+            opts,
+        );
     }
     let mem = members(&g.tx, p.guild, m.id, week)?;
-    let list: Vec<String> = mem.iter().take(12).map(|x| format!("-# {}{} · level {} · {} guild XP this week", if x.leader { "👑 " } else { "" }, if x.name.is_empty() { "Someone" } else { &x.name }, x.level, thousands(x.week_xp))).collect();
-    s.text(format!("-# Members ({} of {MAX_MEMBERS})\n{}", mem.len(), list.join("\n")));
+    let list: Vec<String> = mem
+        .iter()
+        .take(12)
+        .map(|x| {
+            format!(
+                "-# {}{} · level {} · {} guild XP this week",
+                if x.leader { "👑 " } else { "" },
+                if x.name.is_empty() {
+                    "Someone"
+                } else {
+                    &x.name
+                },
+                x.level,
+                thousands(x.week_xp)
+            )
+        })
+        .collect();
+    s.text(format!(
+        "-# Members ({} of {MAX_MEMBERS})\n{}",
+        mem.len(),
+        list.join("\n")
+    ));
     if m.leader && mem.len() > 1 {
-        let opts: Vec<Opt> = mem.iter().filter(|x| x.user != p.user).map(|x| Opt::new(format!("Remove {}", if x.name.is_empty() { "this member" } else { &x.name }), x.user.to_string())).collect();
+        let opts: Vec<Opt> = mem
+            .iter()
+            .filter(|x| x.user != p.user)
+            .map(|x| {
+                Opt::new(
+                    format!(
+                        "Remove {}",
+                        if x.name.is_empty() {
+                            "this member"
+                        } else {
+                            &x.name
+                        }
+                    ),
+                    x.user.to_string(),
+                )
+            })
+            .collect();
         s.inner_select(ids.act("guild", "kick", ""), "Remove a member…", opts);
     }
     s.buttons(vec![
         back(&ids),
-        Btn::new(ids.act("guild", "give", "100"), "Give 100 gold").emoji("gold").disabled(p.gold < 100),
-        Btn::new(ids.act("guild", "give", "1000"), "Give 1,000").emoji("gold").disabled(p.gold < 1000),
+        Btn::new(ids.act("guild", "give", "100"), "Give 100 gold")
+            .emoji("gold")
+            .disabled(p.gold < 100),
+        Btn::new(ids.act("guild", "give", "1000"), "Give 1,000")
+            .emoji("gold")
+            .disabled(p.gold < 1000),
         Btn::new(ids.act("guild", "leave", ""), "Leave").danger(),
     ]);
     Ok(s)
@@ -388,15 +561,24 @@ pub fn screen(g: &Game) -> Result<Screen> {
 
 /// XP bonus from the guild, in percent.
 pub fn xp_bonus(p: &Player) -> i64 {
-    p.clan.as_ref().map(|c| if c.level() >= 2 { 2 } else { 0 }).unwrap_or(0)
+    p.clan
+        .as_ref()
+        .map(|c| if c.level() >= 2 { 2 } else { 0 })
+        .unwrap_or(0)
 }
 
 pub fn loot_bonus(p: &Player) -> i64 {
-    p.clan.as_ref().map(|c| (if c.level() >= 4 { 3 } else { 0 }) + if c.has("longship") { 5 } else { 0 }).unwrap_or(0)
+    p.clan
+        .as_ref()
+        .map(|c| (if c.level() >= 4 { 3 } else { 0 }) + if c.has("longship") { 5 } else { 0 })
+        .unwrap_or(0)
 }
 
 pub fn gold_bonus(p: &Player) -> i64 {
-    p.clan.as_ref().map(|c| if c.level() >= 8 { 5 } else { 0 }).unwrap_or(0)
+    p.clan
+        .as_ref()
+        .map(|c| if c.level() >= 8 { 5 } else { 0 })
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

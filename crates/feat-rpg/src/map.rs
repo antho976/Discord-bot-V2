@@ -39,7 +39,11 @@ impl Spec {
     }
     pub fn url(&self, ctx: &Ctx) -> String {
         let b = self.body();
-        format!("{}/p/rpg/map/{b}.{}.png", ctx.cfg.public_url.trim_end_matches('/'), sign(&ctx.cfg.discord_client_secret, &b))
+        format!(
+            "{}/p/rpg/map/{b}.{}.png",
+            ctx.cfg.public_url.trim_end_matches('/'),
+            sign(&ctx.cfg.discord_client_secret, &b)
+        )
     }
     fn parse(ctx: &Ctx, spec: &str) -> Option<Spec> {
         let spec = spec.strip_suffix(".png")?;
@@ -48,7 +52,11 @@ impl Spec {
             return None;
         }
         let mut p = body.split('.');
-        Some(Spec { open: p.next()?.parse().ok()?, expedition: p.next()?.parse().ok()?, titan: p.next()? == "1" })
+        Some(Spec {
+            open: p.next()?.parse().ok()?,
+            expedition: p.next()?.parse().ok()?,
+            titan: p.next()? == "1",
+        })
     }
 }
 
@@ -58,7 +66,9 @@ fn cache() -> &'static Mutex<HashMap<String, Vec<u8>>> {
 }
 
 async fn serve(State(ctx): State<Ctx>, Path(spec): Path<String>) -> Response {
-    let Some(s) = Spec::parse(&ctx, &spec) else { return StatusCode::NOT_FOUND.into_response() };
+    let Some(s) = Spec::parse(&ctx, &spec) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
     let hit = cache().lock().unwrap().get(&spec).cloned();
     let png = match hit {
         Some(p) => p,
@@ -73,7 +83,14 @@ async fn serve(State(ctx): State<Ctx>, Path(spec): Path<String>) -> Response {
             }
         }
     };
-    ([(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "public, max-age=31536000, immutable")], png).into_response()
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        png,
+    )
+        .into_response()
 }
 
 fn label(x: i32, y: i32, text: &str, sub: &str, open: bool) -> String {
@@ -85,7 +102,9 @@ fn label(x: i32, y: i32, text: &str, sub: &str, open: bool) -> String {
 }
 
 fn pin(x: i32, y: i32, colour: &str) -> String {
-    format!(r##"<g transform="translate({x},{y})"><path d="M0,0 C-12,-16 -12,-30 0,-34 C12,-30 12,-16 0,0Z" fill="{colour}" stroke="#0E1120" stroke-width="2"/><circle cx="0" cy="-22" r="5" fill="#0E1120"/></g>"##)
+    format!(
+        r##"<g transform="translate({x},{y})"><path d="M0,0 C-12,-16 -12,-30 0,-34 C12,-30 12,-16 0,0Z" fill="{colour}" stroke="#0E1120" stroke-width="2"/><circle cx="0" cy="-22" r="5" fill="#0E1120"/></g>"##
+    )
 }
 
 /// The map at 932 x 520.
@@ -113,7 +132,9 @@ pub fn svg(s: &Spec) -> String {
     // Grey Shore: the coastline strip.
     out.push_str(&format!(r##"<g{}><path d="M240,220 C280,280 220,350 260,420 L330,420 C300,350 350,290 320,220 Z" fill="#3A4448"/>"##, dim(0)));
     for (x, y) in [(270, 300), (285, 360), (300, 250)] {
-        out.push_str(&format!(r##"<circle cx="{x}" cy="{y}" r="4" fill="#8FB8D8"/>"##));
+        out.push_str(&format!(
+            r##"<circle cx="{x}" cy="{y}" r="4" fill="#8FB8D8"/>"##
+        ));
     }
     out.push_str("</g>");
     // Skagi village.
@@ -121,13 +142,29 @@ pub fn svg(s: &Spec) -> String {
     out.push_str(&label(352, 228, "Skagi", "the village", true));
     // Wolfwood: trees.
     out.push_str(&format!("<g{}>", dim(1)));
-    for (x, y) in [(470, 250), (500, 285), (530, 245), (555, 300), (480, 320), (520, 330), (590, 270), (450, 290), (560, 225)] {
+    for (x, y) in [
+        (470, 290),
+        (500, 325),
+        (535, 285),
+        (560, 340),
+        (480, 360),
+        (520, 370),
+        (595, 310),
+        (450, 330),
+        (575, 265),
+    ] {
         out.push_str(&format!(r##"<path d="M{x},{} L{},{} L{},{} Z" fill="#2F5A3A"/><path d="M{x},{} L{},{} L{},{} Z" fill="#3E7A4C"/>"##, y - 34, x - 16, y, x + 16, y, y - 46, x - 11, y - 20, x + 11, y - 20));
     }
     out.push_str("</g>");
     // Barrow Fields: mounds.
     out.push_str(&format!("<g{}>", dim(2)));
-    for (x, y, w) in [(720, 300, 70), (800, 260, 55), (780, 350, 60), (860, 320, 45), (700, 230, 40)] {
+    for (x, y, w) in [
+        (720, 300, 70),
+        (800, 260, 55),
+        (780, 350, 60),
+        (860, 320, 45),
+        (700, 230, 40),
+    ] {
         out.push_str(&format!(r##"<path d="M{},{y} Q{x},{} {},{y} Z" fill="#454B55"/><rect x="{}" y="{}" width="4" height="14" fill="#8A93A0"/>"##, x - w / 2, y - w / 2, x + w / 2, x - 2, y - w / 2 - 10));
     }
     out.push_str("</g>");
@@ -135,16 +172,46 @@ pub fn svg(s: &Spec) -> String {
     out.push_str(r##"<g transform="translate(470,150)"><circle r="26" fill="#1A1626" stroke="#C9B8FF" stroke-width="2"/><path d="M0,-16 A16,16 0 1,1 -16,0 A10,10 0 1,1 0,-8 A4,4 0 1,1 -4,0" fill="none" stroke="#C9B8FF" stroke-width="2.5"/></g>"##);
     out.push_str(&label(470, 205, "The Labyrinth", "under the Loom", true));
     // Dungeon doors.
-    for (i, (x, y)) in [(0u8, (300, 445)), (1, (600, 345)), (2, (860, 400))] {
+    for (i, (x, y)) in [(0u8, (300, 400)), (1, (625, 385)), (2, (860, 380))] {
         if open(i) {
             out.push_str(&format!(r##"<g transform="translate({x},{y})"><path d="M-10,12 L-10,-4 A10,10 0 0,1 10,-4 L10,12 Z" fill="#1A1626" stroke="#E0C47A" stroke-width="2"/></g>"##));
         }
     }
-    out.push_str(&label(288, 470, "Grey Shore", if open(0) { "nixies, herring, amber" } else { "locked" }, open(0)));
-    out.push_str(&label(520, 380, "Wolfwood", if open(1) { "wolves, yew, fangs" } else { "needs 90 Power" }, open(1)));
-    out.push_str(&label(780, 420, "Barrow Fields", if open(2) { "the dead, iron, frost hides" } else { "needs 150 Power" }, open(2)));
+    out.push_str(&label(
+        288,
+        470,
+        "Grey Shore",
+        if open(0) {
+            "nixies, herring, amber"
+        } else {
+            "locked"
+        },
+        open(0),
+    ));
+    out.push_str(&label(
+        520,
+        410,
+        "Wolfwood",
+        if open(1) {
+            "wolves, yew, fangs"
+        } else {
+            "needs 90 Power"
+        },
+        open(1),
+    ));
+    out.push_str(&label(
+        780,
+        420,
+        "Barrow Fields",
+        if open(2) {
+            "the dead, iron, frost hides"
+        } else {
+            "needs 150 Power"
+        },
+        open(2),
+    ));
     // Where the expedition is.
-    let pos = [(0, 0), (290, 330), (520, 300), (780, 300)];
+    let pos = [(0, 0), (290, 330), (520, 335), (780, 300)];
     if (1..=3).contains(&s.expedition) {
         let (x, y) = pos[s.expedition as usize];
         out.push_str(&pin(x, y, "#D2A75E"));
@@ -166,7 +233,12 @@ mod tests {
         for open in [0u8, 1, 3, 7] {
             for exp in 0..=3 {
                 for titan in [false, true] {
-                    let png = bot_render::png(&super::svg(&super::Spec { open, expedition: exp, titan })).unwrap();
+                    let png = bot_render::png(&super::svg(&super::Spec {
+                        open,
+                        expedition: exp,
+                        titan,
+                    }))
+                    .unwrap();
                     assert!(png.len() > 1000);
                 }
             }

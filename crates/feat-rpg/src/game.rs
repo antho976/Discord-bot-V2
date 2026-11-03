@@ -9,12 +9,12 @@ use bot_core::rusqlite::params;
 use bot_core::{Ctx, now_ms};
 
 use crate::banner;
-use crate::quests;
 use crate::data::{self, Danger, God, Kind, Move, Skill, Slot};
 use crate::emoji::get as e;
 use crate::engine::combat::{Action, Element, End, Fight, SkillId};
 use crate::engine::expedition::{self, Plan, Rates, Report};
 use crate::engine::progress;
+use crate::quests;
 use crate::store::{self, Expedition, Game, Player};
 use crate::ui::{Btn, Opt, Screen};
 
@@ -65,7 +65,10 @@ impl Ids {
         format!("rpg:{}:{screen}:::0", self.owner)
     }
     pub fn act(&self, screen: &str, action: &str, arg: &str) -> String {
-        format!("rpg:{}:{screen}:{action}:{arg}:{}", self.owner, self.version)
+        format!(
+            "rpg:{}:{screen}:{action}:{arg}:{}",
+            self.owner, self.version
+        )
     }
 }
 
@@ -91,8 +94,15 @@ impl World {
         let week = g.p.week();
         let modules = store::modules(g.p.guild);
         let now = g.p.now;
-        let up = |x: Option<crate::shared::Shared>| x.filter(|t| !t.over(now)).map(|t| (t.name(), t.hp * 100 / t.max_hp.max(1), t.ends));
-        let titan = if modules.titans { up(crate::shared::active(&g.tx, g.p.guild, "titan", 0)?) } else { None };
+        let up = |x: Option<crate::shared::Shared>| {
+            x.filter(|t| !t.over(now))
+                .map(|t| (t.name(), t.hp * 100 / t.max_hp.max(1), t.ends))
+        };
+        let titan = if modules.titans {
+            up(crate::shared::active(&g.tx, g.p.guild, "titan", 0)?)
+        } else {
+            None
+        };
         let raid = match &g.p.clan {
             Some(c) if modules.raids => up(crate::shared::active(&g.tx, g.p.guild, "raid", c.id)?),
             _ => None,
@@ -119,24 +129,57 @@ impl World {
     }
     /// Rates with this week's blessing.
     fn xp_rate(&self) -> i64 {
-        self.rates.xp * if self.blessing == Some(God::Athena) { 110 } else { 100 } / 100 * (100 + self.guild_xp) / 100
+        self.rates.xp
+            * if self.blessing == Some(God::Athena) {
+                110
+            } else {
+                100
+            }
+            / 100
+            * (100 + self.guild_xp)
+            / 100
     }
     fn expedition_rates(&self) -> Rates {
-        let loot = if self.blessing == Some(God::Hades) { 110 } else { 100 };
-        Rates { xp: self.xp_rate(), loot: self.rates.loot * loot / 100 * (100 + self.guild_loot) / 100, gold: self.rates.gold * loot / 100 * (100 + self.guild_gold) / 100 }
+        let loot = if self.blessing == Some(God::Hades) {
+            110
+        } else {
+            100
+        };
+        Rates {
+            xp: self.xp_rate(),
+            loot: self.rates.loot * loot / 100 * (100 + self.guild_loot) / 100,
+            gold: self.rates.gold * loot / 100 * (100 + self.guild_gold) / 100,
+        }
     }
     fn hunt_mult(&self) -> i64 {
-        if self.blessing == Some(God::Thor) { 110 } else { 100 }
+        if self.blessing == Some(God::Thor) {
+            110
+        } else {
+            100
+        }
     }
 }
 
 pub(crate) fn dur(ms: i64) -> String {
     let m = (ms.max(0) + 59_999) / 60_000;
-    if m >= 60 { if m % 60 == 0 { format!("{}h", m / 60) } else { format!("{}h {}m", m / 60, m % 60) } } else { format!("{m}m") }
+    if m >= 60 {
+        if m % 60 == 0 {
+            format!("{}h", m / 60)
+        } else {
+            format!("{}h {}m", m / 60, m % 60)
+        }
+    } else {
+        format!("{m}m")
+    }
 }
 
 pub(crate) fn items_line(items: &[(String, i64)]) -> String {
-    items.iter().filter(|(_, n)| *n > 0).map(|(id, n)| format!("{} {}", e(id), data::count(id, *n))).collect::<Vec<_>>().join("  ·  ")
+    items
+        .iter()
+        .filter(|(_, n)| *n > 0)
+        .map(|(id, n)| format!("{} {}", e(id), data::count(id, *n)))
+        .collect::<Vec<_>>()
+        .join("  ·  ")
 }
 
 pub(crate) fn title(md: &mut Screen, icon: &str, text: &str, meta: &str) {
@@ -162,7 +205,12 @@ fn back_to(ids: &Ids, screen: &str, label: &str) -> Btn {
 pub fn patron_choice(owner: u64, name: &str) -> Screen {
     let ids = Ids { owner, version: 0 };
     let mut s = Screen::default();
-    title(&mut s, "offering", "Swear to a god", &format!("Welcome, {name}"));
+    title(
+        &mut s,
+        "offering",
+        "Swear to a god",
+        &format!("Welcome, {name}"),
+    );
     s.text("Olympus and Asgard have gone quiet. Between them, the realms fill with monsters and old gold. No mortal walks them alone. Choose who you serve.");
     for g in data::GODS {
         s.section(
@@ -175,10 +223,23 @@ pub fn patron_choice(owner: u64, name: &str) -> Screen {
 }
 
 pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     let xp10 = (p.xp * 10 / p.xp_needed().max(1)).clamp(0, 10) as u32;
-    s.banner = Some(banner::Spec { patron: p.main(), name: p.name.clone(), level: p.level, power: p.power(), xp10, title: p.title.clone().unwrap_or_default() }.url(ctx));
+    s.banner = Some(
+        banner::Spec {
+            patron: p.main(),
+            name: p.name.clone(),
+            level: p.level,
+            power: p.power(),
+            xp10,
+            title: p.title.clone().unwrap_or_default(),
+        }
+        .url(ctx),
+    );
     tutorial_block(&mut s, p, &ids);
     s.text("-# Right now");
     let mut primary_used = false;
@@ -186,34 +247,78 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         s.section(format!("{} **{name} is attacking Midgard**\n-# {pct}% left · {} to bring it down, together", e("boss"), dur(ends - p.now)), Btn::new(ids.go("titan"), "Fight").emoji("boss").danger());
     }
     if let Some((name, pct, ends)) = w.raid {
-        s.section(format!("{} **Guild raid: {name}**\n-# {pct}% left · {} left", e("guild"), dur(ends - p.now)), Btn::new(ids.go("raid"), "Raid").emoji("boss"));
+        s.section(
+            format!(
+                "{} **Guild raid: {name}**\n-# {pct}% left · {} left",
+                e("guild"),
+                dur(ends - p.now)
+            ),
+            Btn::new(ids.go("raid"), "Raid").emoji("boss"),
+        );
     }
     if let Some(run) = &p.run {
-        s.section(format!("{} **In the Labyrinth, floor {}**\n-# Carrying: {}", e("labyrinth"), run.floor, crate::ui::truncate(&run.haul_short(), 90)), Btn::new(ids.go("lab"), "Continue").emoji("labyrinth").primary());
+        s.section(
+            format!(
+                "{} **In the Labyrinth, floor {}**\n-# Carrying: {}",
+                e("labyrinth"),
+                run.floor,
+                crate::ui::truncate(&run.haul_short(), 90)
+            ),
+            Btn::new(ids.go("lab"), "Continue")
+                .emoji("labyrinth")
+                .primary(),
+        );
         primary_used = true;
     }
     if let Some(d) = &p.delve {
-        s.section(format!("{} **In {}**\n-# Room {} of {}", e("dungeon"), d.dungeon().name, (d.room + 1).min(d.dungeon().rooms.len() + 1), d.dungeon().rooms.len() + 1), Btn::new(ids.go("dungeon"), "Continue").emoji("dungeon").then_primary(!primary_used));
+        s.section(
+            format!(
+                "{} **In {}**\n-# Room {} of {}",
+                e("dungeon"),
+                d.dungeon().name,
+                (d.room + 1).min(d.dungeon().rooms.len() + 1),
+                d.dungeon().rooms.len() + 1
+            ),
+            Btn::new(ids.go("dungeon"), "Continue")
+                .emoji("dungeon")
+                .then_primary(!primary_used),
+        );
         primary_used = true;
     }
     match &p.expedition {
         Some(x) if p.now >= x.ends_at => {
             s.section(
-                format!("{} **Back from {}**\n-# {} · {}h · ready to collect", e("expedition"), x.plan.region().name, x.plan.danger.name(), x.plan.hours),
-                Btn::new(ids.act("exp", "collect", ""), "Collect").emoji("expedition").primary(),
+                format!(
+                    "{} **Back from {}**\n-# {} · {}h · ready to collect",
+                    e("expedition"),
+                    x.plan.region().name,
+                    x.plan.danger.name(),
+                    x.plan.hours
+                ),
+                Btn::new(ids.act("exp", "collect", ""), "Collect")
+                    .emoji("expedition")
+                    .primary(),
             );
             primary_used = true;
         }
         Some(x) => {
             let f = expedition::forecast(&x.plan, x.power, x.scouting, w.expedition_rates());
-            let top: Vec<(String, i64)> = f.items.into_iter().filter(|(_, n)| *n > 0).take(3).collect();
+            let top: Vec<(String, i64)> = f
+                .items
+                .into_iter()
+                .filter(|(_, n)| *n > 0)
+                .take(3)
+                .collect();
             s.text(format!(
                 "{} **{} · {}** · back in {}\n-# Expected: {}",
                 e("expedition"),
                 x.plan.region().name,
                 x.plan.danger.name(),
                 dur(x.ends_at - p.now),
-                top.iter().map(|(id, n)| data::count(id, *n)).collect::<Vec<_>>().join(", ")
+                top.iter()
+                    .map(|(id, n)| data::count(id, *n))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         None => {
@@ -221,42 +326,96 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         }
     }
     if let Some(f) = &p.fight {
-        let what = if f.kind == crate::engine::combat::Kind::Boss { "Fighting the Barrow King" } else { "In a fight" };
-        s.section(format!("{} **{what}**\n-# {} · turn {}", e("hunt"), f.foe.name, f.turn), Btn::new(ids.go(if f.kind == crate::engine::combat::Kind::Boss { "boss" } else { "hunt" }), "Continue").emoji("hunt"));
+        let what = if f.kind == crate::engine::combat::Kind::Boss {
+            "Fighting the Barrow King"
+        } else {
+            "In a fight"
+        };
+        s.section(
+            format!(
+                "{} **{what}**\n-# {} · turn {}",
+                e("hunt"),
+                f.foe.name,
+                f.turn
+            ),
+            Btn::new(
+                ids.go(if f.kind == crate::engine::combat::Kind::Boss {
+                    "boss"
+                } else {
+                    "hunt"
+                }),
+                "Continue",
+            )
+            .emoji("hunt"),
+        );
     } else {
         let wins = (p.vigor() / data::VIGOR_PER_WIN as f64).floor() as i64;
         let hp = p.hp();
         let max = p.max_hp();
         let line = if hp < max / 2 {
-            format!("{} **Resting** · {hp} / {max} HP\n-# Full in {}. A potion works too.", e("hp"), dur(p.minutes_to_full() * 60_000))
+            format!(
+                "{} **Resting** · {hp} / {max} HP\n-# Full in {}. A potion works too.",
+                e("hp"),
+                dur(p.minutes_to_full() * 60_000)
+            )
         } else if wins > 0 {
-            format!("{} **Free to hunt**\n-# Vigor doubles your next {wins} win{}", e("hunt"), if wins == 1 { "" } else { "s" })
+            format!(
+                "{} **Free to hunt**\n-# Vigor doubles your next {wins} win{}",
+                e("hunt"),
+                if wins == 1 { "" } else { "s" }
+            )
         } else {
-            format!("{} **Free to hunt**\n-# Vigor builds back while you're away", e("hunt"))
+            format!(
+                "{} **Free to hunt**\n-# Vigor builds back while you're away",
+                e("hunt")
+            )
         };
         s.text(line);
     }
     if let Some(ch) = quests::chapter(p.saga) {
         if chapter_done(p) {
-            s.section(format!("{} **{}** is ready\n-# The next part of your saga", e("saga"), ch.title), Btn::new(ids.go("saga"), "Read").emoji("saga").then_primary(!primary_used));
+            s.section(
+                format!(
+                    "{} **{}** is ready\n-# The next part of your saga",
+                    e("saga"),
+                    ch.title
+                ),
+                Btn::new(ids.go("saga"), "Read")
+                    .emoji("saga")
+                    .then_primary(!primary_used),
+            );
             primary_used = true;
         } else {
             let next = ch
                 .goals
                 .iter()
                 .enumerate()
-                .find(|(i, goal)| goal_now(p, goal, p.saga_progress.get(*i).copied().unwrap_or(0)) < goal.target())
+                .find(|(i, goal)| {
+                    goal_now(p, goal, p.saga_progress.get(*i).copied().unwrap_or(0)) < goal.target()
+                })
                 .map(|(i, goal)| {
                     let have = goal_now(p, goal, p.saga_progress.get(i).copied().unwrap_or(0));
-                    if goal.target() > 1 && !matches!(goal, quests::Goal::Level(_)) { format!("{} · {have} / {}", goal.describe(), goal.target()) } else { goal.describe() }
+                    if goal.target() > 1 && !matches!(goal, quests::Goal::Level(_)) {
+                        format!("{} · {have} / {}", goal.describe(), goal.target())
+                    } else {
+                        goal.describe()
+                    }
                 })
                 .unwrap_or_default();
             s.text(format!("{} **{}**\n-# {next}", e("saga"), ch.title));
         }
     }
-    let ready = todays_bounties(p).iter().enumerate().filter(|(i, b)| !p.bounty[*i].1 && p.bounty[*i].0 >= b.goal.target()).count();
+    let ready = todays_bounties(p)
+        .iter()
+        .enumerate()
+        .filter(|(i, b)| !p.bounty[*i].1 && p.bounty[*i].0 >= b.goal.target())
+        .count();
     if ready > 0 {
-        s.text(format!("-# {} {ready} bount{} ready to claim", e("bounty"), if ready == 1 { "y" } else { "ies" }));
+        s.text(format!(
+            "-# {} {ready} bount{} ready to claim",
+            e("bounty"),
+            if ready == 1 { "y" } else { "ies" }
+        ));
     }
     s.gap();
     s.text(format!(
@@ -270,7 +429,10 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
     ));
     let m = &w.modules;
     let hunt = Btn::new(ids.go("hunt"), "Hunt").emoji("hunt");
-    let mut row1 = vec![if primary_used { hunt } else { hunt.primary() }, Btn::new(ids.go("exp"), "Expedition").emoji("expedition")];
+    let mut row1 = vec![
+        if primary_used { hunt } else { hunt.primary() },
+        Btn::new(ids.go("exp"), "Expedition").emoji("expedition"),
+    ];
     if m.labyrinth {
         row1.push(Btn::new(ids.go("lab"), "Labyrinth").emoji("labyrinth"));
     }
@@ -281,9 +443,21 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         row1.push(Btn::new(ids.go("map"), "Map").emoji("map"));
     }
     s.buttons(row1);
-    let mut row2 = vec![Btn::new(ids.go("hero"), "Hero").emoji(p.main().id()), Btn::new(ids.go("skagi"), "Skagi").emoji("temple")];
+    let mut row2 = vec![
+        Btn::new(ids.go("hero"), "Hero").emoji(p.main().id()),
+        Btn::new(ids.go("skagi"), "Skagi").emoji("temple"),
+    ];
     if m.guilds {
-        row2.push(Btn::new(ids.go("guild"), p.clan.as_ref().map(|c| format!("[{}]", c.tag)).unwrap_or_else(|| "Guild".into())).emoji("guild"));
+        row2.push(
+            Btn::new(
+                ids.go("guild"),
+                p.clan
+                    .as_ref()
+                    .map(|c| format!("[{}]", c.tag))
+                    .unwrap_or_else(|| "Guild".into()),
+            )
+            .emoji("guild"),
+        );
     }
     if m.dungeons && !m.map {
         row2.push(Btn::new(ids.go("dungeons"), "Dungeons").emoji("dungeon"));
@@ -304,10 +478,23 @@ pub fn thousands(n: i64) -> String {
     if n < 0 { format!("-{out}") } else { out }
 }
 
-fn goals(p: &Player, w: &World, givers: &[(u64, String, i64)], lab: &[(u64, String, i64)]) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+fn goals(
+    p: &Player,
+    w: &World,
+    givers: &[(u64, String, i64)],
+    lab: &[(u64, String, i64)],
+) -> Screen {
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
-    title(&mut s, "goals", "Goals", "Midgard · offerings reset on Monday");
+    title(
+        &mut s,
+        "goals",
+        "Goals",
+        "Midgard · offerings reset on Monday",
+    );
     s.text("-# Realm boss");
     let power = p.power();
     let ready = power >= data::BOSS_POWER;
@@ -317,7 +504,10 @@ fn goals(p: &Player, w: &World, givers: &[(u64, String, i64)], lab: &[(u64, Stri
         data::BOSS_NAME,
         data::BOSS_POWER,
         if p.boss_won {
-            format!("{} Beaten. Heroic expeditions and your lesser vow are open.", e("check"))
+            format!(
+                "{} Beaten. Heroic expeditions and your lesser vow are open.",
+                e("check")
+            )
         } else if ready {
             format!("You have **{power}**. You're ready.")
         } else {
@@ -326,17 +516,30 @@ fn goals(p: &Player, w: &World, givers: &[(u64, String, i64)], lab: &[(u64, Stri
     );
     for f in data::FACTS {
         if p.facts.iter().any(|k| k == f) {
-            boss.push_str(&format!("\n-# {} {}", e("check"), data::fact_text(f, w.week)));
+            boss.push_str(&format!(
+                "\n-# {} {}",
+                e("check"),
+                data::fact_text(f, w.week)
+            ));
         }
     }
     let unknown = data::FACTS.len() - p.facts.len();
     if unknown > 0 {
-        boss.push_str(&format!("\n-# {} {unknown} more unknown · expeditions to the Barrow Fields scout the most", e("unknown")));
+        boss.push_str(&format!(
+            "\n-# {} {unknown} more unknown · expeditions to the Barrow Fields scout the most",
+            e("unknown")
+        ));
     }
     s.text(boss);
     s.gap();
     s.text("-# Server offering");
-    let lead = data::GODS[w.offerings.iter().enumerate().max_by_key(|(_, t)| **t).map(|(i, _)| i).unwrap_or(0)];
+    let lead = data::GODS[w
+        .offerings
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, t)| **t)
+        .map(|(i, _)| i)
+        .unwrap_or(0)];
     let (bname, bdesc) = lead.blessing();
     s.text(format!(
         "{} **{} of {} tribute this week** ({}%)\n-# At 100%, everyone gets the blessing of the god given the most: {} is ahead with {bname}, {bdesc}.",
@@ -348,15 +551,38 @@ fn goals(p: &Player, w: &World, givers: &[(u64, String, i64)], lab: &[(u64, Stri
     ));
     if let Some(b) = w.blessing {
         let (n, d) = b.blessing();
-        s.text(format!("-# {} Active now: {n}, {d}, from last week", e("vigor")));
+        s.text(format!(
+            "-# {} Active now: {n}, {d}, from last week",
+            e("vigor")
+        ));
     }
     if let Some(pos) = givers.iter().position(|(u, ..)| *u == p.user) {
-        s.text(format!("-# You gave {} this week, {} in the server", thousands(givers[pos].2), ordinal(pos + 1)));
+        s.text(format!(
+            "-# You gave {} this week, {} in the server",
+            thousands(givers[pos].2),
+            ordinal(pos + 1)
+        ));
     }
     s.gap();
     if !lab.is_empty() {
-        let list: Vec<String> = lab.iter().take(3).enumerate().map(|(i, (u, n, f))| format!("{}. {}{} · floor {f}", i + 1, if n.is_empty() { "Someone" } else { n }, if *u == p.user { " (you)" } else { "" })).collect();
-        s.text(format!("-# {} Deepest in the Labyrinth this week: {}", e("labyrinth"), list.join("  ·  ")));
+        let list: Vec<String> = lab
+            .iter()
+            .take(3)
+            .enumerate()
+            .map(|(i, (u, n, f))| {
+                format!(
+                    "{}. {}{} · floor {f}",
+                    i + 1,
+                    if n.is_empty() { "Someone" } else { n },
+                    if *u == p.user { " (you)" } else { "" }
+                )
+            })
+            .collect();
+        s.text(format!(
+            "-# {} Deepest in the Labyrinth this week: {}",
+            e("labyrinth"),
+            list.join("  ·  ")
+        ));
         s.gap();
     }
     s.text(format!(
@@ -370,7 +596,17 @@ fn goals(p: &Player, w: &World, givers: &[(u64, String, i64)], lab: &[(u64, Stri
     ));
     s.buttons(vec![
         back(&ids),
-        Btn::new(ids.act("boss", "start", ""), if p.boss_won { "Fight again" } else { "Fight the Barrow King" }).emoji("boss").danger().disabled(p.fight.is_some()),
+        Btn::new(
+            ids.act("boss", "start", ""),
+            if p.boss_won {
+                "Fight again"
+            } else {
+                "Fight the Barrow King"
+            },
+        )
+        .emoji("boss")
+        .danger()
+        .disabled(p.fight.is_some()),
         Btn::new(ids.go("exp"), "Expedition").emoji("expedition"),
         Btn::new(ids.go("temple"), "Temple").emoji("temple"),
     ]);
@@ -390,7 +626,13 @@ fn ordinal(n: usize) -> String {
 
 /// The plan picked in the menus, carried in the custom ids: `region.danger.hours.supply`.
 fn plan_key(p: &Plan) -> String {
-    format!("{}.{}.{}.{}", p.region, p.danger.id(), p.hours, p.supply.as_deref().unwrap_or("none"))
+    format!(
+        "{}.{}.{}.{}",
+        p.region,
+        p.danger.id(),
+        p.hours,
+        p.supply.as_deref().unwrap_or("none")
+    )
 }
 
 fn parse_plan(s: &str) -> Option<Plan> {
@@ -398,15 +640,32 @@ fn parse_plan(s: &str) -> Option<Plan> {
     let region = data::region(it.next()?)?.id.to_owned();
     let danger = Danger::from_id(it.next()?)?;
     let hours: u32 = it.next()?.parse().ok()?;
-    let supply = it.next().filter(|s| *s != "none" && data::EXPEDITION_SUPPLIES.contains(s)).map(str::to_owned);
-    data::HOURS.contains(&hours).then_some(Plan { region, danger, hours, supply })
+    let supply = it
+        .next()
+        .filter(|s| *s != "none" && data::EXPEDITION_SUPPLIES.contains(s))
+        .map(str::to_owned);
+    data::HOURS.contains(&hours).then_some(Plan {
+        region,
+        danger,
+        hours,
+        supply,
+    })
 }
 
 /// A sensible plan to start from: the best region you can handle on Normal.
 fn default_plan(p: &Player) -> Plan {
     let power = p.power();
-    let region = data::REGIONS.iter().rev().find(|r| power >= r.power).unwrap_or(&data::REGIONS[0]);
-    Plan { region: region.id.into(), danger: Danger::Normal, hours: 4, supply: (p.have("rations") > 0).then(|| "rations".into()) }
+    let region = data::REGIONS
+        .iter()
+        .rev()
+        .find(|r| power >= r.power)
+        .unwrap_or(&data::REGIONS[0]);
+    Plan {
+        region: region.id.into(),
+        danger: Danger::Normal,
+        hours: 4,
+        supply: (p.have("rations") > 0).then(|| "rations".into()),
+    }
 }
 
 fn danger_open(p: &Player, d: Danger) -> bool {
@@ -414,7 +673,10 @@ fn danger_open(p: &Player, d: Danger) -> bool {
 }
 
 fn expedition_plan(p: &Player, w: &World, plan: &Plan) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     title(&mut s, "expedition", "Plan an expedition", "Midgard");
     let key = plan_key(plan);
@@ -427,7 +689,11 @@ fn expedition_plan(p: &Player, w: &World, plan: &Plan) -> Screen {
             .map(|r| {
                 Opt::new(r.name, r.id)
                     .emoji(r.id)
-                    .desc(format!("{} · needs {} Power on Normal", r.blurb.split('.').nth(1).map(str::trim).unwrap_or(r.blurb), r.power))
+                    .desc(format!(
+                        "{} · needs {} Power on Normal",
+                        r.blurb.split('.').nth(1).map(str::trim).unwrap_or(r.blurb),
+                        r.power
+                    ))
                     .default(r.id == plan.region)
             })
             .collect(),
@@ -439,45 +705,111 @@ fn expedition_plan(p: &Player, w: &World, plan: &Plan) -> Screen {
             .iter()
             .filter(|d| danger_open(p, **d))
             .map(|d| {
-                let pl = Plan { danger: *d, ..plan.clone() };
-                Opt::new(format!("{} · ×{} loot", d.name(), d.loot()), d.id()).emoji(if *d == Danger::Normal { "check" } else { "warn" }).desc(format!("Needs {} Power here", pl.needs())).default(*d == plan.danger)
+                let pl = Plan {
+                    danger: *d,
+                    ..plan.clone()
+                };
+                Opt::new(format!("{} · ×{} loot", d.name(), d.loot()), d.id())
+                    .emoji(if *d == Danger::Normal {
+                        "check"
+                    } else {
+                        "warn"
+                    })
+                    .desc(format!("Needs {} Power here", pl.needs()))
+                    .default(*d == plan.danger)
             })
             .collect(),
     );
     s.inner_select(
         format!("rpg:{}:exp:set:hours|{key}:0", p.user),
         "Length",
-        data::HOURS.iter().map(|h| Opt::new(format!("{h} hour{}", if *h == 1 { "" } else { "s" }), h.to_string()).emoji("clock").default(*h == plan.hours)).collect(),
+        data::HOURS
+            .iter()
+            .map(|h| {
+                Opt::new(
+                    format!("{h} hour{}", if *h == 1 { "" } else { "s" }),
+                    h.to_string(),
+                )
+                .emoji("clock")
+                .default(*h == plan.hours)
+            })
+            .collect(),
     );
     let mut supplies = vec![Opt::new("No supplies", "none").default(plan.supply.is_none())];
     for id in data::EXPEDITION_SUPPLIES {
         let n = p.have(id);
         if n > 0 {
             let it = data::item(id).unwrap();
-            supplies.push(Opt::new(format!("{} ({n})", capital(it.name)), id).emoji(it.emoji).desc(it.used_for).default(plan.supply.as_deref() == Some(id)));
+            supplies.push(
+                Opt::new(format!("{} ({n})", capital(it.name)), id)
+                    .emoji(it.emoji)
+                    .desc(it.used_for)
+                    .default(plan.supply.as_deref() == Some(id)),
+            );
         }
     }
-    s.inner_select(format!("rpg:{}:exp:set:supply|{key}:0", p.user), "Supplies", supplies);
+    s.inner_select(
+        format!("rpg:{}:exp:set:supply|{key}:0", p.user),
+        "Supplies",
+        supplies,
+    );
     let f = expedition::forecast(plan, power, p.scouting(), w.expedition_rates());
     let mut fc = String::from("-# Forecast\n");
-    fc.push_str(&format!("{} About {}\n", e("pack"), f.items.iter().filter(|(_, n)| *n > 0).map(|(id, n)| data::count(id, *n)).collect::<Vec<_>>().join(", ")));
+    fc.push_str(&format!(
+        "{} About {}\n",
+        e("pack"),
+        f.items
+            .iter()
+            .filter(|(_, n)| *n > 0)
+            .map(|(id, n)| data::count(id, *n))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
     fc.push_str(&format!("{} {} gold · {} XP\n", e("gold"), f.gold, f.xp));
     let risk = if f.ratio >= 1.4 {
-        format!("{} Low risk: {} Power clears this with room to spare", e("check"), plan.effective(power))
+        format!(
+            "{} Low risk: {} Power clears this with room to spare",
+            e("check"),
+            plan.effective(power)
+        )
     } else if f.ratio >= 1.0 {
-        format!("{} Some risk: {} Power is just enough", e("warn"), plan.effective(power))
+        format!(
+            "{} Some risk: {} Power is just enough",
+            e("warn"),
+            plan.effective(power)
+        )
     } else {
-        format!("{} Too dangerous: needs {}, you have {}. You'd come back early and hurt.", e("warn"), plan.needs(), plan.effective(power))
+        format!(
+            "{} Too dangerous: needs {}, you have {}. You'd come back early and hurt.",
+            e("warn"),
+            plan.needs(),
+            plan.effective(power)
+        )
     };
     fc.push_str(&risk);
     if !p.boss_won && p.facts.len() < data::FACTS.len() {
-        fc.push_str(&format!("\n{} {}% chance to learn something about the Barrow King", e("intel"), (f.intel_chance * 100.0).round()));
+        fc.push_str(&format!(
+            "\n{} {}% chance to learn something about the Barrow King",
+            e("intel"),
+            (f.intel_chance * 100.0).round()
+        ));
     }
-    fc.push_str(&format!("\n{} +{} tribute to {}'s altar", e("offering"), f.tribute, p.main().name()));
+    fc.push_str(&format!(
+        "\n{} +{} tribute to {}'s altar",
+        e("offering"),
+        f.tribute,
+        p.main().name()
+    ));
     s.text(fc);
     s.buttons(vec![
         back(&ids),
-        Btn::new(ids.act("exp", "go", &key), format!("Send out · {}h", plan.hours)).emoji("expedition").primary().disabled(p.expedition.is_some()),
+        Btn::new(
+            ids.act("exp", "go", &key),
+            format!("Send out · {}h", plan.hours),
+        )
+        .emoji("expedition")
+        .primary()
+        .disabled(p.expedition.is_some()),
     ]);
     s
 }
@@ -491,23 +823,51 @@ fn capital(s: &str) -> String {
 }
 
 fn expedition_out(p: &Player, w: &World, x: &Expedition) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
-    title(&mut s, "expedition", &format!("{} · {}", x.plan.region().name, x.plan.danger.name()), &format!("{}h expedition", x.plan.hours));
+    title(
+        &mut s,
+        "expedition",
+        &format!("{} · {}", x.plan.region().name, x.plan.danger.name()),
+        &format!("{}h expedition", x.plan.hours),
+    );
     let done = p.now >= x.ends_at;
     let f = expedition::forecast(&x.plan, x.power, x.scouting, w.expedition_rates());
     if done {
         s.text(format!("{} **Back and waiting for you.**", e("check")));
     } else {
-        s.text(format!("{} Back in **{}**", e("clock"), dur(x.ends_at - p.now)));
+        s.text(format!(
+            "{} Back in **{}**",
+            e("clock"),
+            dur(x.ends_at - p.now)
+        ));
     }
-    s.text(format!("-# Expected: {}", f.items.iter().filter(|(_, n)| *n > 0).map(|(id, n)| data::count(id, *n)).collect::<Vec<_>>().join(", ")));
+    s.text(format!(
+        "-# Expected: {}",
+        f.items
+            .iter()
+            .filter(|(_, n)| *n > 0)
+            .map(|(id, n)| data::count(id, *n))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
     s.text("-# While it runs you can hunt, forge and give at the temple.".to_string());
     let mut b = vec![back(&ids)];
     if done {
-        b.push(Btn::new(ids.act("exp", "collect", ""), "Collect").emoji("expedition").primary());
+        b.push(
+            Btn::new(ids.act("exp", "collect", ""), "Collect")
+                .emoji("expedition")
+                .primary(),
+        );
     } else {
-        b.push(Btn::new(ids.go("hunt"), "Hunt meanwhile").emoji("hunt").primary());
+        b.push(
+            Btn::new(ids.go("hunt"), "Hunt meanwhile")
+                .emoji("hunt")
+                .primary(),
+        );
         b.push(Btn::new(ids.go("exp"), "Refresh"));
     }
     s.buttons(b);
@@ -515,30 +875,60 @@ fn expedition_out(p: &Player, w: &World, x: &Expedition) -> Screen {
 }
 
 fn expedition_report(p: &Player, r: &Report, levels: u32) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
-    let region = data::region(&r.region).map(|x| x.name).unwrap_or("the wilds");
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
+    let region = data::region(&r.region)
+        .map(|x| x.name)
+        .unwrap_or("the wilds");
     let mut s = Screen::default();
-    title(&mut s, "expedition", &format!("Back from {region}"), &format!("{} · {}h", capital(&r.danger), r.hours));
-    let story: Vec<String> = r.story.iter().map(|(h, l)| format!("-# **{h}**  {l}")).collect();
+    title(
+        &mut s,
+        "expedition",
+        &format!("Back from {region}"),
+        &format!("{} · {}h", capital(&r.danger), r.hours),
+    );
+    let story: Vec<String> = r
+        .story
+        .iter()
+        .map(|(h, l)| format!("-# **{h}**  {l}"))
+        .collect();
     s.text(story.join("\n"));
     s.gap();
     s.text("-# Brought back");
     let mut lines = vec![items_line(&r.items)];
-    lines.push(format!("{} {} gold  ·  {} XP  ·  +{} tribute", e("gold"), r.gold, r.xp, r.tribute));
+    lines.push(format!(
+        "{} {} gold  ·  {} XP  ·  +{} tribute",
+        e("gold"),
+        r.gold,
+        r.xp,
+        r.tribute
+    ));
     if let Some(f) = &r.intel {
-        lines.push(format!("{} **New intel:** {}", e("intel"), data::fact_text(f, p.week())));
+        lines.push(format!(
+            "{} **New intel:** {}",
+            e("intel"),
+            data::fact_text(f, p.week())
+        ));
     }
     if levels > 0 {
         lines.push(format!("{} **Level {}!**", e("power"), p.level));
     }
     if r.wounded {
-        lines.push(format!("{} You came back hurt: rest, or drink a potion before a fight.", e("hp")));
+        lines.push(format!(
+            "{} You came back hurt: rest, or drink a potion before a fight.",
+            e("hp")
+        ));
     }
     s.text(lines.join("\n"));
     let again = r.region.clone() + "." + &r.danger + "." + &r.hours.to_string();
     s.buttons(vec![
         back(&ids),
-        Btn::new(ids.act("exp", "again", &again), "Send again").emoji("expedition").primary().disabled(p.expedition.is_some()),
+        Btn::new(ids.act("exp", "again", &again), "Send again")
+            .emoji("expedition")
+            .primary()
+            .disabled(p.expedition.is_some()),
         Btn::new(ids.go("exp"), "Plan new"),
         Btn::new(ids.go("hunt"), "Hunt").emoji("hunt"),
     ]);
@@ -546,20 +936,45 @@ fn expedition_report(p: &Player, r: &Report, levels: u32) -> Screen {
 }
 
 fn hunt_pick(p: &Player, region: Option<&str>) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     let power = p.power();
-    let pick = region.and_then(data::region).unwrap_or_else(|| data::REGIONS.iter().rev().find(|r| power as f64 >= r.power as f64 * 1.3).unwrap_or(&data::REGIONS[0]));
-    title(&mut s, "hunt", "Hunt", "Fight one foe at a time, turn by turn");
+    let pick = region.and_then(data::region).unwrap_or_else(|| {
+        data::REGIONS
+            .iter()
+            .rev()
+            .find(|r| power as f64 >= r.power as f64 * 1.3)
+            .unwrap_or(&data::REGIONS[0])
+    });
+    title(
+        &mut s,
+        "hunt",
+        "Hunt",
+        "Fight one foe at a time, turn by turn",
+    );
     let wins = (p.vigor() / data::VIGOR_PER_WIN as f64).floor() as i64;
     let (hp, max) = (p.hp(), p.max_hp());
     s.text(format!(
         "{} {hp} / {max} HP{}\n{} Vigor {:.0}%: {}",
         e("hp"),
-        if hp < max { format!(" · full in {}", dur(p.minutes_to_full() * 60_000)) } else { String::new() },
+        if hp < max {
+            format!(" · full in {}", dur(p.minutes_to_full() * 60_000))
+        } else {
+            String::new()
+        },
         e("vigor"),
         p.vigor(),
-        if wins > 0 { format!("your next {wins} win{} pay double", if wins == 1 { "" } else { "s" }) } else { "builds back while you're away".into() }
+        if wins > 0 {
+            format!(
+                "your next {wins} win{} pay double",
+                if wins == 1 { "" } else { "s" }
+            )
+        } else {
+            "builds back while you're away".into()
+        }
     ));
     s.inner_select(
         format!("rpg:{}:hunt:pick::0", p.user),
@@ -568,20 +983,59 @@ fn hunt_pick(p: &Player, region: Option<&str>) -> Screen {
             .iter()
             .map(|r| {
                 let (xp, gold) = data::hunt_reward(r);
-                Opt::new(r.name, r.id).emoji(r.id).desc(format!("Comfortable at {}+ Power · {xp} XP, {gold} gold a win", (r.power as f64 * 1.3) as i64)).default(r.id == pick.id)
+                Opt::new(r.name, r.id)
+                    .emoji(r.id)
+                    .desc(format!(
+                        "Comfortable at {}+ Power · {xp} XP, {gold} gold a win",
+                        (r.power as f64 * 1.3) as i64
+                    ))
+                    .default(r.id == pick.id)
             })
             .collect(),
     );
     encounter_block(&mut s, p, &ids);
-    let mons: Vec<String> = pick.monsters.iter().filter_map(|m| data::monster(m)).map(|m| m.name.to_owned()).collect();
-    s.text(format!("-# {}: {}. Wins drop {}.", pick.name, mons.join(", "), pick.drops.iter().map(|(id, _)| data::item(id).map(|i| i.plural).unwrap_or(id)).collect::<Vec<_>>().join(", ")));
-    let mut b = vec![back(&ids), Btn::new(ids.act("hunt", "start", pick.id), "Start hunting").emoji("hunt").primary().disabled(hp * 10 < max * 3)];
+    let mons: Vec<String> = pick
+        .monsters
+        .iter()
+        .filter_map(|m| data::monster(m))
+        .map(|m| m.name.to_owned())
+        .collect();
+    s.text(format!(
+        "-# {}: {}. Wins drop {}.",
+        pick.name,
+        mons.join(", "),
+        pick.drops
+            .iter()
+            .map(|(id, _)| data::item(id).map(|i| i.plural).unwrap_or(id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    let mut b = vec![
+        back(&ids),
+        Btn::new(ids.act("hunt", "start", pick.id), "Start hunting")
+            .emoji("hunt")
+            .primary()
+            .disabled(hp * 10 < max * 3),
+    ];
     if hp < max && p.have("potion") > 0 {
-        b.push(Btn::new(ids.act("hunt", "drink", ""), format!("Potion · {}", p.have("potion"))).emoji("potion"));
+        b.push(
+            Btn::new(
+                ids.act("hunt", "drink", ""),
+                format!("Potion · {}", p.have("potion")),
+            )
+            .emoji("potion"),
+        );
     }
     if hp < max {
         let cost = inn_cost(p);
-        b.push(Btn::new(ids.act("hunt", "inn", ""), format!("Rest at the inn · {cost} gold")).emoji("hp").disabled(p.gold < cost));
+        b.push(
+            Btn::new(
+                ids.act("hunt", "inn", ""),
+                format!("Rest at the inn · {cost} gold"),
+            )
+            .emoji("hp")
+            .disabled(p.gold < cost),
+        );
     }
     s.buttons(b);
     s
@@ -592,7 +1046,10 @@ fn inn_cost(p: &Player) -> i64 {
 }
 
 fn pips(n: i32) -> String {
-    (0..crate::engine::combat::MAX_STAMINA).map(|i| if i < n { e("pip") } else { e("pipoff") }).collect::<Vec<_>>().join("")
+    (0..crate::engine::combat::MAX_STAMINA)
+        .map(|i| if i < n { e("pip") } else { e("pipoff") })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn move_name(m: Move) -> &'static str {
@@ -619,12 +1076,19 @@ fn skill_emoji(s: Skill) -> &'static str {
 }
 
 fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let boss = f.kind == crate::engine::combat::Kind::Boss;
     let lab = f.kind == crate::engine::combat::Kind::Lab;
     let dungeon = f.kind == crate::engine::combat::Kind::Dungeon;
     let shared = f.kind == crate::engine::combat::Kind::Shared;
-    let shared_kind = if f.region.starts_with("raid") { "raid" } else { "titan" };
+    let shared_kind = if f.region.starts_with("raid") {
+        "raid"
+    } else {
+        "titan"
+    };
     let screen = if boss {
         "boss"
     } else if lab {
@@ -640,15 +1104,53 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
     let meta = if boss {
         format!("Phase {} · turn {}", f.foe.phase, f.turn)
     } else if lab {
-        format!("The Labyrinth · floor {} · turn {}", p.run.as_ref().map(|r| r.floor).unwrap_or(0), f.turn)
+        format!(
+            "The Labyrinth · floor {} · turn {}",
+            p.run.as_ref().map(|r| r.floor).unwrap_or(0),
+            f.turn
+        )
     } else if dungeon {
-        format!("{} · turn {}", p.delve.as_ref().map(|d| d.dungeon().name).unwrap_or("A dungeon"), f.turn)
+        format!(
+            "{} · turn {}",
+            p.delve
+                .as_ref()
+                .map(|d| d.dungeon().name)
+                .unwrap_or("A dungeon"),
+            f.turn
+        )
     } else if shared {
-        format!("{} · turn {} of {} · you've dealt {}", if shared_kind == "raid" { "Guild raid" } else { "Titan" }, f.turn.min(data::SHARED_TURNS), data::SHARED_TURNS, thousands(f.dealt()))
+        format!(
+            "{} · turn {} of {} · you've dealt {}",
+            if shared_kind == "raid" {
+                "Guild raid"
+            } else {
+                "Titan"
+            },
+            f.turn.min(data::SHARED_TURNS),
+            data::SHARED_TURNS,
+            thousands(f.dealt())
+        )
     } else {
-        format!("{} · turn {}", data::region(&f.region).map(|r| r.name).unwrap_or(""), f.turn)
+        format!(
+            "{} · turn {}",
+            data::region(&f.region).map(|r| r.name).unwrap_or(""),
+            f.turn
+        )
     };
-    title(&mut s, if boss || shared { "boss" } else if lab { "labyrinth" } else if dungeon { "dungeon" } else { "hunt" }, &f.foe.name, &meta);
+    title(
+        &mut s,
+        if boss || shared {
+            "boss"
+        } else if lab {
+            "labyrinth"
+        } else if dungeon {
+            "dungeon"
+        } else {
+            "hunt"
+        },
+        &f.foe.name,
+        &meta,
+    );
     if !p.tutorial_has(Tut::Hunt) && f.end.is_none() && f.turn <= 3 {
         s.text(format!(
             "-# {} **How fights work:** each turn you act, then the foe does what it showed. A warning means a big hit is coming: **Guard** it. Strike costs 1 stamina; you get 1 back each turn, 2 when you guard.",
@@ -675,23 +1177,52 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
     if f.end.is_none() {
         let (t, scouted) = f.telegraph();
         let warn = matches!(f.intent(), Move::Heavy | Move::Roar);
-        foe.push_str(&format!("\n{} {t}{}", if warn { e("warn") } else { e("clock") }, if scouted { "  ·  scouted" } else { "" }));
+        foe.push_str(&format!(
+            "\n{} {t}{}",
+            if warn { e("warn") } else { e("clock") },
+            if scouted { "  ·  scouted" } else { "" }
+        ));
         let up = f.upcoming();
         if !up.is_empty() {
-            foe.push_str(&format!("\n-# {} Then: {}", e("owl"), up.iter().map(|m| move_name(*m)).collect::<Vec<_>>().join(", then ")));
+            foe.push_str(&format!(
+                "\n-# {} Then: {}",
+                e("owl"),
+                up.iter()
+                    .map(|m| move_name(*m))
+                    .collect::<Vec<_>>()
+                    .join(", then ")
+            ));
         }
     }
     s.text(foe);
-    let mut you = format!("{} **{}** / {} HP\n{} {} stamina", e("hp"), f.hp, f.max_hp, pips(f.stamina), f.stamina);
+    let mut you = format!(
+        "{} **{}** / {} HP\n{} {} stamina",
+        e("hp"),
+        f.hp,
+        f.max_hp,
+        pips(f.stamina),
+        f.stamina
+    );
     if let Some((el, n)) = f.coat {
-        you.push_str(&format!("  ·  {} oil on your next {n} hit{}", el.id(), if n == 1 { "" } else { "s" }));
+        you.push_str(&format!(
+            "  ·  {} oil on your next {n} hit{}",
+            el.id(),
+            if n == 1 { "" } else { "s" }
+        ));
     }
     if f.hero.main == God::Thor && f.charge > 0 {
         you.push_str(&format!("  ·  Mjolnir charged ×{}", f.charge));
     }
     s.text(you);
     if !f.log.is_empty() {
-        s.text(format!("-# Last turn\n{}", f.log.iter().map(|l| format!("-# {l}")).collect::<Vec<_>>().join("\n")));
+        s.text(format!(
+            "-# Last turn\n{}",
+            f.log
+                .iter()
+                .map(|l| format!("-# {l}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
     }
     if let Some(r) = result {
         s.gap();
@@ -700,17 +1231,51 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
     if f.end.is_some() {
         encounter_block(&mut s, p, &ids);
         if boss {
-            s.buttons(vec![back(&ids), Btn::new(ids.go("goals"), "Goals").emoji("goals")]);
+            s.buttons(vec![
+                back(&ids),
+                Btn::new(ids.go("goals"), "Goals").emoji("goals"),
+            ]);
         } else if lab {
             let on = p.run.is_some();
-            s.buttons(vec![back(&ids), Btn::new(ids.go("lab"), if on { "Choose a door" } else { "The Labyrinth" }).emoji("labyrinth").primary()]);
+            s.buttons(vec![
+                back(&ids),
+                Btn::new(
+                    ids.go("lab"),
+                    if on { "Choose a door" } else { "The Labyrinth" },
+                )
+                .emoji("labyrinth")
+                .primary(),
+            ]);
         } else if dungeon {
             let on = p.delve.is_some();
-            s.buttons(vec![back(&ids), Btn::new(ids.go(if on { "dungeon" } else { "dungeons" }), if on { "Onward" } else { "Dungeons" }).emoji("dungeon").primary()]);
+            s.buttons(vec![
+                back(&ids),
+                Btn::new(
+                    ids.go(if on { "dungeon" } else { "dungeons" }),
+                    if on { "Onward" } else { "Dungeons" },
+                )
+                .emoji("dungeon")
+                .primary(),
+            ]);
         } else if shared {
-            s.buttons(vec![back(&ids), Btn::new(ids.go(shared_kind), if shared_kind == "raid" { "The raid" } else { "The Titan" }).emoji("boss").primary()]);
+            s.buttons(vec![
+                back(&ids),
+                Btn::new(
+                    ids.go(shared_kind),
+                    if shared_kind == "raid" {
+                        "The raid"
+                    } else {
+                        "The Titan"
+                    },
+                )
+                .emoji("boss")
+                .primary(),
+            ]);
         } else {
-            let again = Btn::new(ids.act("hunt", "start", &f.region), "Hunt again").emoji("hunt").primary().disabled(p.hp() * 10 < p.max_hp() * 3);
+            let again = Btn::new(ids.act("hunt", "start", &f.region), "Hunt again")
+                .emoji("hunt")
+                .primary()
+                .disabled(p.hp() * 10 < p.max_hp() * 3);
             s.buttons(vec![back(&ids), again]);
         }
         return s;
@@ -718,26 +1283,55 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
     let potions = p.have("potion");
     let oils = (p.have("fireoil"), p.have("frostoil"));
     let act = |a: &str| ids.act(screen, "act", a);
-    let mut row1 = vec![Btn::new(act("strike"), "Strike · 1").emoji("hunt").primary().disabled(f.blocked(Action::Strike, potions, oils).is_some())];
+    let mut row1 = vec![
+        Btn::new(act("strike"), "Strike · 1")
+            .emoji("hunt")
+            .primary()
+            .disabled(f.blocked(Action::Strike, potions, oils).is_some()),
+    ];
     for sk in f.hero.skills() {
         let blocked = f.blocked(Action::Skill(SkillId::of(sk)), potions, oils);
         let cd = f.cooldown(sk);
-        let label = if cd > 0 { format!("{} · in {cd}", sk.name()) } else { format!("{} · {}", sk.name(), sk.stamina()) };
-        row1.push(Btn::new(act(sk.id()), label).emoji(skill_emoji(sk)).disabled(blocked.is_some()));
+        let label = if cd > 0 {
+            format!("{} · in {cd}", sk.name())
+        } else {
+            format!("{} · {}", sk.name(), sk.stamina())
+        };
+        row1.push(
+            Btn::new(act(sk.id()), label)
+                .emoji(skill_emoji(sk))
+                .disabled(blocked.is_some()),
+        );
     }
     row1.push(Btn::new(act("guard"), "Guard").emoji("guard"));
     let mut row2 = Vec::new();
     if row1.len() > 5 {
         row2.push(row1.pop().unwrap());
     }
-    row2.insert(0, Btn::new(act("potion"), format!("Potion · {potions}")).emoji("potion").disabled(potions < 1));
+    row2.insert(
+        0,
+        Btn::new(act("potion"), format!("Potion · {potions}"))
+            .emoji("potion")
+            .disabled(potions < 1),
+    );
     if oils.0 > 0 {
         row2.push(Btn::new(act("fireoil"), format!("Fire oil · {}", oils.0)).emoji("fireoil"));
     }
     if oils.1 > 0 {
         row2.push(Btn::new(act("frostoil"), format!("Frost oil · {}", oils.1)).emoji("frostoil"));
     }
-    row2.push(Btn::new(ids.act(screen, "leave", ""), if boss { "Retreat" } else if lab || dungeon { "Flee" } else if shared { "Break off" } else { "Leave" }));
+    row2.push(Btn::new(
+        ids.act(screen, "leave", ""),
+        if boss {
+            "Retreat"
+        } else if lab || dungeon {
+            "Flee"
+        } else if shared {
+            "Break off"
+        } else {
+            "Leave"
+        },
+    ));
     s.buttons(row1);
     s.buttons(row2);
     // Locked skills, so players know what's coming.
@@ -746,7 +1340,11 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
         let mut out = Vec::new();
         let [_, second] = f.hero.main.skills();
         if !have.contains(&second) {
-            out.push(format!("{} at bond 2 with {}", second.name(), f.hero.main.name()));
+            out.push(format!(
+                "{} at bond 2 with {}",
+                second.name(),
+                f.hero.main.name()
+            ));
         }
         if f.hero.lesser.is_none() {
             out.push("a merged skill with your lesser vow, after the Barrow King".into());
@@ -754,27 +1352,64 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
         out
     };
     if !locked.is_empty() {
-        s.text(format!("-# {} Still to unlock: {}", e("lock"), locked.join("; ")));
+        s.text(format!(
+            "-# {} Still to unlock: {}",
+            e("lock"),
+            locked.join("; ")
+        ));
     }
     s
 }
 
 fn forge(p: &Player) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
-    title(&mut s, "forge", "Forge", &format!("Gear up to level {}", p.level));
-    let mats: Vec<String> = data::ITEMS.iter().filter(|i| i.kind == Kind::Material && p.have(i.id) > 0).map(|i| format!("{} {}", p.have(i.id), i.plural)).collect();
-    s.text(format!("-# You have {} · {} gold", if mats.is_empty() { "no materials yet".into() } else { mats.join(" · ") }, thousands(p.gold)));
+    title(
+        &mut s,
+        "forge",
+        "Forge",
+        &format!("Gear up to level {}", p.level),
+    );
+    let mats: Vec<String> = data::ITEMS
+        .iter()
+        .filter(|i| i.kind == Kind::Material && p.have(i.id) > 0)
+        .map(|i| format!("{} {}", p.have(i.id), i.plural))
+        .collect();
+    s.text(format!(
+        "-# You have {} · {} gold",
+        if mats.is_empty() {
+            "no materials yet".into()
+        } else {
+            mats.join(" · ")
+        },
+        thousands(p.gold)
+    ));
     s.text("-# Gear");
     // Per slot: the next piece that beats what you wear.
     let mut shown = 0;
     for slot in data::SLOTS {
         let worn = p.equipped(slot).map(|g| g.power()).unwrap_or(0);
-        let next = data::GEAR.iter().filter(|g| g.slot == slot && g.power > worn && (!g.after_boss || p.boss_won)).min_by_key(|g| g.level);
+        let next = data::GEAR
+            .iter()
+            .filter(|g| g.slot == slot && g.power > worn && (!g.after_boss || p.boss_won))
+            .min_by_key(|g| g.level);
         let Some(g) = next else { continue };
         shown += 1;
-        let cost = g.cost.iter().map(|(id, n)| data::count(id, *n)).collect::<Vec<_>>().join(", ");
-        let missing: Vec<String> = g.cost.iter().filter(|(id, n)| p.have(id) < *n).map(|(id, n)| data::count(id, n - p.have(id))).collect();
+        let cost = g
+            .cost
+            .iter()
+            .map(|(id, n)| data::count(id, *n))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let missing: Vec<String> = g
+            .cost
+            .iter()
+            .filter(|(id, n)| p.have(id) < *n)
+            .map(|(id, n)| data::count(id, n - p.have(id)))
+            .collect();
         let why = if g.level > p.level {
             format!("{} level {}", e("lock"), g.level)
         } else if !missing.is_empty() || p.gold < g.gold {
@@ -786,14 +1421,27 @@ fn forge(p: &Player) -> Screen {
         } else {
             format!("{} ready", e("check"))
         };
-        let can = g.level <= p.level && p.gold >= g.gold && g.cost.iter().all(|(id, n)| p.have(id) >= *n);
+        let can =
+            g.level <= p.level && p.gold >= g.gold && g.cost.iter().all(|(id, n)| p.have(id) >= *n);
         s.section(
-            format!("{} **{}**  +{} Power\n-# {cost}, {} gold · {why}", e(slot_emoji(slot)), g.name, g.power - worn, g.gold),
-            Btn::new(ids.act("forge", "gear", g.id), "Forge").emoji("forge").disabled(!can).then_primary(can),
+            format!(
+                "{} **{}**  +{} Power\n-# {cost}, {} gold · {why}",
+                e(slot_emoji(slot)),
+                g.name,
+                g.power - worn,
+                g.gold
+            ),
+            Btn::new(ids.act("forge", "gear", g.id), "Forge")
+                .emoji("forge")
+                .disabled(!can)
+                .then_primary(can),
         );
     }
     if shown == 0 {
-        s.text(format!("{} You wear the best gear Midgard has until the Barrow King falls.", e("check")));
+        s.text(format!(
+            "{} You wear the best gear Midgard has until the Barrow King falls.",
+            e("check")
+        ));
     }
     let ups: Vec<Opt> = data::SLOTS
         .iter()
@@ -801,12 +1449,23 @@ fn forge(p: &Player) -> Screen {
         .filter(|g| g.upgrade < data::MAX_UPGRADE)
         .map(|g| {
             let (gold, mat, n) = data::upgrade_cost(g.gear, g.upgrade);
-            Opt::new(format!("{} → +{}", g.label(), g.upgrade + 1), g.id.to_string())
-                .emoji(slot_emoji(g.gear.slot))
-                .desc(format!("+{} Power · {gold} gold, {}", data::gear_power(g.gear, g.upgrade + 1) - g.power(), data::count(mat, n)))
+            Opt::new(
+                format!("{} → +{}", g.label(), g.upgrade + 1),
+                g.id.to_string(),
+            )
+            .emoji(slot_emoji(g.gear.slot))
+            .desc(format!(
+                "+{} Power · {gold} gold, {}",
+                data::gear_power(g.gear, g.upgrade + 1) - g.power(),
+                data::count(mat, n)
+            ))
         })
         .collect();
-    s.inner_select(ids.act("forge", "upgrade", ""), "Upgrade what you wear (up to +3 in Midgard)…", ups);
+    s.inner_select(
+        ids.act("forge", "upgrade", ""),
+        "Upgrade what you wear (up to +3 in Midgard)…",
+        ups,
+    );
     let odds = data::rarity_odds("forge");
     s.text(format!("-# Forged gear comes out Common {}% · Fine {}% · Rare {}% · Epic {}%. Each step adds a trait.", odds[0], odds[1], odds[2], odds[3]));
     let refine: Vec<Opt> = p
@@ -817,12 +1476,33 @@ fn forge(p: &Player) -> Screen {
         .map(|g| {
             let to = data::Rarity::from_index(g.rarity.index() + 1);
             let (t, gold) = data::refine_cost(to, p.level);
-            Opt::new(format!("{} → {}{}", g.label(), to.name(), if g.equipped { " (worn)" } else { "" }), g.id.to_string()).emoji(to.emoji()).desc(format!("Adds a trait · {} and {gold} gold", data::count("thread", t)))
+            Opt::new(
+                format!(
+                    "{} → {}{}",
+                    g.label(),
+                    to.name(),
+                    if g.equipped { " (worn)" } else { "" }
+                ),
+                g.id.to_string(),
+            )
+            .emoji(to.emoji())
+            .desc(format!(
+                "Adds a trait · {} and {gold} gold",
+                data::count("thread", t)
+            ))
         })
         .collect();
     if p.have("thread") > 0 {
-        s.text(format!("-# {} {} for refining and reforging", e("thread"), data::count("thread", p.have("thread"))));
-        s.inner_select(ids.act("forge", "refine", ""), "Refine: raise a piece's rarity…", refine);
+        s.text(format!(
+            "-# {} {} for refining and reforging",
+            e("thread"),
+            data::count("thread", p.have("thread"))
+        ));
+        s.inner_select(
+            ids.act("forge", "refine", ""),
+            "Refine: raise a piece's rarity…",
+            refine,
+        );
         let reforge: Vec<Opt> = p
             .gear
             .iter()
@@ -830,10 +1510,23 @@ fn forge(p: &Player) -> Screen {
             .take(25)
             .map(|g| {
                 let (t, gold) = data::reforge_cost(g.rarity, p.level);
-                Opt::new(format!("{}{}", g.label(), if g.equipped { " (worn)" } else { "" }), g.id.to_string()).emoji(g.rarity.emoji()).desc(format!("New traits · {} and {gold} gold · now: {}", data::count("thread", t), crate::ui::truncate(&g.traits_text(), 50)))
+                Opt::new(
+                    format!("{}{}", g.label(), if g.equipped { " (worn)" } else { "" }),
+                    g.id.to_string(),
+                )
+                .emoji(g.rarity.emoji())
+                .desc(format!(
+                    "New traits · {} and {gold} gold · now: {}",
+                    data::count("thread", t),
+                    crate::ui::truncate(&g.traits_text(), 50)
+                ))
             })
             .collect();
-        s.inner_select(ids.act("forge", "reforge", ""), "Reforge: new traits on a piece…", reforge);
+        s.inner_select(
+            ids.act("forge", "reforge", ""),
+            "Reforge: new traits on a piece…",
+            reforge,
+        );
     } else {
         s.text(format!("-# {} Loose threads from the Labyrinth refine gear to a higher rarity and reforge its traits.", e("thread")));
     }
@@ -842,15 +1535,37 @@ fn forge(p: &Player) -> Screen {
         .iter()
         .map(|r| {
             let it = data::item(r.makes).unwrap();
-            let cost = r.cost.iter().map(|(id, n)| data::count(id, *n)).collect::<Vec<_>>().join(", ");
+            let cost = r
+                .cost
+                .iter()
+                .map(|(id, n)| data::count(id, *n))
+                .collect::<Vec<_>>()
+                .join(", ");
             let can = p.gold >= r.gold && r.cost.iter().all(|(id, n)| p.have(id) >= *n);
-            Opt::new(format!("{} ×{}{}", capital(it.plural), r.qty, if can { "" } else { " (can't afford)" }), r.id)
-                .emoji(it.emoji)
-                .desc(format!("{} · {cost}, {} gold · have {}", it.used_for, r.gold, p.have(r.makes)))
+            Opt::new(
+                format!(
+                    "{} ×{}{}",
+                    capital(it.plural),
+                    r.qty,
+                    if can { "" } else { " (can't afford)" }
+                ),
+                r.id,
+            )
+            .emoji(it.emoji)
+            .desc(format!(
+                "{} · {cost}, {} gold · have {}",
+                it.used_for,
+                r.gold,
+                p.have(r.makes)
+            ))
         })
         .collect();
     s.inner_select(ids.act("forge", "make", ""), "Make supplies…", opts);
-    s.buttons(vec![back(&ids), Btn::new(ids.go("skagi"), "Skagi").emoji("temple"), Btn::new(ids.go("pack"), "Pack").emoji("pack")]);
+    s.buttons(vec![
+        back(&ids),
+        Btn::new(ids.go("skagi"), "Skagi").emoji("temple"),
+        Btn::new(ids.go("pack"), "Pack").emoji("pack"),
+    ]);
     s
 }
 
@@ -872,28 +1587,64 @@ fn slot_emoji(s: Slot) -> &'static str {
 }
 
 fn pack(p: &Player) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     let gear_power = p.power() - data::level_power(p.level);
-    title(&mut s, "pack", "Pack", &format!("Level {} gives {} Power, gear {}", p.level, data::level_power(p.level), gear_power));
+    title(
+        &mut s,
+        "pack",
+        "Pack",
+        &format!(
+            "Level {} gives {} Power, gear {}",
+            p.level,
+            data::level_power(p.level),
+            gear_power
+        ),
+    );
     s.text("-# Wearing");
     let mut wear = Vec::new();
     for slot in data::SLOTS {
         match p.equipped(slot) {
             Some(g) => {
-                wear.push(format!("{} **{}** · {}  ·  +{} Power{}", e(slot_emoji(slot)), g.label(), rarity_tag(g.rarity), g.power(), if g.gear.scouting > 0 { format!(", +{}% scouting", g.gear.scouting) } else { String::new() }));
+                wear.push(format!(
+                    "{} **{}** · {}  ·  +{} Power{}",
+                    e(slot_emoji(slot)),
+                    g.label(),
+                    rarity_tag(g.rarity),
+                    g.power(),
+                    if g.gear.scouting > 0 {
+                        format!(", +{}% scouting", g.gear.scouting)
+                    } else {
+                        String::new()
+                    }
+                ));
                 if !g.traits.is_empty() {
                     wear.push(format!("-# {}", g.traits_text()));
                 }
             }
-            None => wear.push(format!("{} {}: nothing yet", e(slot_emoji(slot)), slot.name())),
+            None => wear.push(format!(
+                "{} {}: nothing yet",
+                e(slot_emoji(slot)),
+                slot.name()
+            )),
         }
     }
     s.text(wear.join("\n"));
     let mats: Vec<String> = data::ITEMS
         .iter()
         .filter(|i| i.kind == Kind::Material && p.have(i.id) > 0)
-        .map(|i| format!("{} {}  ·  -# for {}", e(i.emoji), data::count(i.id, p.have(i.id)), i.used_for).replace("  ·  -# ", "  ·  "))
+        .map(|i| {
+            format!(
+                "{} {}  ·  -# for {}",
+                e(i.emoji),
+                data::count(i.id, p.have(i.id)),
+                i.used_for
+            )
+            .replace("  ·  -# ", "  ·  ")
+        })
         .collect();
     if !mats.is_empty() {
         s.text("-# Materials");
@@ -901,7 +1652,9 @@ fn pack(p: &Player) -> Screen {
     }
     let sup: Vec<String> = data::ITEMS
         .iter()
-        .filter(|i| matches!(i.kind, Kind::Supply | Kind::Combat | Kind::Trophy) && p.have(i.id) > 0)
+        .filter(|i| {
+            matches!(i.kind, Kind::Supply | Kind::Combat | Kind::Trophy) && p.have(i.id) > 0
+        })
         .map(|i| format!("{} {}", e(i.emoji), data::count(i.id, p.have(i.id))))
         .collect();
     if !sup.is_empty() {
@@ -916,21 +1669,59 @@ fn pack(p: &Player) -> Screen {
         .map(|g| {
             let worn = p.equipped(g.gear.slot).map(|x| x.power()).unwrap_or(0);
             let diff = g.power() - worn;
-            Opt::new(format!("{} {}", g.rarity.name(), g.label()), g.id.to_string()).emoji(g.rarity.emoji()).desc(crate::ui::truncate(&format!("{} · {}{} vs worn · {}", g.gear.slot.name(), if diff >= 0 { "+" } else { "" }, diff, if g.traits.is_empty() { "no traits".into() } else { g.traits_text() }), 100))
+            Opt::new(
+                format!("{} {}", g.rarity.name(), g.label()),
+                g.id.to_string(),
+            )
+            .emoji(g.rarity.emoji())
+            .desc(crate::ui::truncate(
+                &format!(
+                    "{} · {}{} vs worn · {}",
+                    g.gear.slot.name(),
+                    if diff >= 0 { "+" } else { "" },
+                    diff,
+                    if g.traits.is_empty() {
+                        "no traits".into()
+                    } else {
+                        g.traits_text()
+                    }
+                ),
+                100,
+            ))
         })
         .collect();
     if !spare.is_empty() {
-        s.inner_select(ids.act("pack", "equip", ""), "Wear something else…", spare.clone());
-        s.inner_select(ids.act("pack", "salvage", ""), "Salvage for gold, half the materials, and threads from Fine or better…", spare);
+        s.inner_select(
+            ids.act("pack", "equip", ""),
+            "Wear something else…",
+            spare.clone(),
+        );
+        s.inner_select(
+            ids.act("pack", "salvage", ""),
+            "Salvage for gold, half the materials, and threads from Fine or better…",
+            spare,
+        );
     }
-    s.buttons(vec![back(&ids), Btn::new(ids.go("hero"), "Hero").emoji(p.main().id()), Btn::new(ids.go("forge"), "Forge").emoji("forge")]);
+    s.buttons(vec![
+        back(&ids),
+        Btn::new(ids.go("hero"), "Hero").emoji(p.main().id()),
+        Btn::new(ids.go("forge"), "Forge").emoji("forge"),
+    ]);
     s
 }
 
 fn temple(p: &Player, w: &World, givers: &[(u64, String, i64)]) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
-    title(&mut s, "temple", "Temple of the Gods", "Resets every Monday");
+    title(
+        &mut s,
+        "temple",
+        "Temple of the Gods",
+        "Resets every Monday",
+    );
     s.text(format!(
         "**{} of {} tribute this week** ({}%)\n-# Every gift fills the server's offering and builds your bond with that god. At 100%, everyone gets the blessing of the god given the most.",
         thousands(w.total()),
@@ -944,64 +1735,161 @@ fn temple(p: &Player, w: &World, givers: &[(u64, String, i64)]) -> Screen {
     s.text("-# Altars · your bonds");
     for g in data::GODS {
         let bond = p.bond(g);
-        let mut line = format!("{} **{}** · bond {bond}{}", e(g.id()), g.name(), if p.patron == Some(g) { " · your patron" } else if p.lesser == Some(g) { " · lesser vow" } else { "" });
+        let mut line = format!(
+            "{} **{}** · bond {bond}{}",
+            e(g.id()),
+            g.name(),
+            if p.patron == Some(g) {
+                " · your patron"
+            } else if p.lesser == Some(g) {
+                " · lesser vow"
+            } else {
+                ""
+            }
+        );
         let next = progress::to_next_bond(p.tribute[g as usize], data::BOND_CAP);
         let unlock = if p.patron == Some(g) {
-            if bond >= 2 { format!("{} unlocked. Bond 2 is Midgard's cap.", g.skills()[1].name()) } else { format!("Bond 2 unlocks {}", g.skills()[1].name()) }
+            if bond >= 2 {
+                format!(
+                    "{} unlocked. Bond 2 is Midgard's cap.",
+                    g.skills()[1].name()
+                )
+            } else {
+                format!("Bond 2 unlocks {}", g.skills()[1].name())
+            }
         } else {
-            let pair = data::pair_skill(p.main(), g).map(|s| s.name()).unwrap_or("");
-            format!("As your lesser vow: {} and {pair}", g.lesser_passive().to_lowercase())
+            let pair = data::pair_skill(p.main(), g)
+                .map(|s| s.name())
+                .unwrap_or("");
+            format!(
+                "As your lesser vow: {} and {pair}",
+                g.lesser_passive().to_lowercase()
+            )
         };
         line.push_str(&format!("\n-# {unlock}"));
         if let Some(n) = next {
             line.push_str(&format!(" · {} tribute to bond {}", thousands(n), bond + 1));
         }
-        line.push_str(&format!(" · this week: {}", thousands(w.offerings[g as usize])));
+        line.push_str(&format!(
+            " · this week: {}",
+            thousands(w.offerings[g as usize])
+        ));
         let b = Btn::new(ids.go(&format!("give{}", g.id())), "Give").emoji("offering");
         s.section(line, if p.patron == Some(g) { b.primary() } else { b });
     }
     if !givers.is_empty() {
-        let list: Vec<String> = givers.iter().enumerate().map(|(i, (u, n, t))| format!("-# {}. {}{} · {}", i + 1, if n.is_empty() { "Someone" } else { n }, if *u == p.user { " (you)" } else { "" }, thousands(*t))).collect();
+        let list: Vec<String> = givers
+            .iter()
+            .enumerate()
+            .map(|(i, (u, n, t))| {
+                format!(
+                    "-# {}. {}{} · {}",
+                    i + 1,
+                    if n.is_empty() { "Someone" } else { n },
+                    if *u == p.user { " (you)" } else { "" },
+                    thousands(*t)
+                )
+            })
+            .collect();
         s.text(format!("-# Most generous this week\n{}", list.join("\n")));
     }
-    s.buttons(vec![back(&ids), Btn::new(ids.go("patron"), "Patron and skills").emoji(p.main().id())]);
+    s.buttons(vec![
+        back(&ids),
+        Btn::new(ids.go("patron"), "Patron and skills").emoji(p.main().id()),
+    ]);
     s
 }
 
 /// Spare materials: anything past 20 of each.
 fn spare_materials(p: &Player) -> Vec<(&'static str, i64, i64)> {
-    data::ITEMS.iter().filter(|i| i.kind == Kind::Material && p.have(i.id) > 20).map(|i| (i.id, p.have(i.id) - 20, (p.have(i.id) - 20) * i.tribute)).collect()
+    data::ITEMS
+        .iter()
+        .filter(|i| i.kind == Kind::Material && p.have(i.id) > 20)
+        .map(|i| (i.id, p.have(i.id) - 20, (p.have(i.id) - 20) * i.tribute))
+        .collect()
 }
 
 fn give(p: &Player, g: God) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
-    title(&mut s, g.id(), &format!("Give to {}", g.name()), &format!("Bond {}", p.bond(g)));
+    title(
+        &mut s,
+        g.id(),
+        &format!("Give to {}", g.name()),
+        &format!("Bond {}", p.bond(g)),
+    );
     let t = p.tribute[g as usize];
     s.text(match progress::to_next_bond(t, data::BOND_CAP) {
-        Some(n) => format!("You've given {} in all. **{}** more for bond {}.", thousands(t), thousands(n), p.bond(g) + 1),
-        None => format!("You've given {} in all. Bond {} is Midgard's cap: gifts still count for the server.", thousands(t), p.bond(g)),
+        Some(n) => format!(
+            "You've given {} in all. **{}** more for bond {}.",
+            thousands(t),
+            thousands(n),
+            p.bond(g) + 1
+        ),
+        None => format!(
+            "You've given {} in all. Bond {} is Midgard's cap: gifts still count for the server.",
+            thousands(t),
+            p.bond(g)
+        ),
     });
     let spare = spare_materials(p);
     let worth: i64 = spare.iter().map(|x| x.2).sum();
     s.text(format!(
         "-# Spare materials (past 20 of each): {}",
-        if spare.is_empty() { "none right now".into() } else { format!("{} · worth {worth} tribute", spare.iter().map(|(id, n, _)| data::count(id, *n)).collect::<Vec<_>>().join(", ")) }
+        if spare.is_empty() {
+            "none right now".into()
+        } else {
+            format!(
+                "{} · worth {worth} tribute",
+                spare
+                    .iter()
+                    .map(|(id, n, _)| data::count(id, *n))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
     ));
     s.buttons(vec![
         back_to(&ids, "temple", "Temple"),
-        Btn::new(ids.act("temple", "give", &format!("{}.gold100", g.id())), "100 gold").emoji("gold").disabled(p.gold < 100),
-        Btn::new(ids.act("temple", "give", &format!("{}.gold500", g.id())), "500 gold").emoji("gold").disabled(p.gold < 500),
-        Btn::new(ids.act("temple", "give", &format!("{}.spare", g.id())), "Spare materials").emoji("pack").primary().disabled(spare.is_empty()),
+        Btn::new(
+            ids.act("temple", "give", &format!("{}.gold100", g.id())),
+            "100 gold",
+        )
+        .emoji("gold")
+        .disabled(p.gold < 100),
+        Btn::new(
+            ids.act("temple", "give", &format!("{}.gold500", g.id())),
+            "500 gold",
+        )
+        .emoji("gold")
+        .disabled(p.gold < 500),
+        Btn::new(
+            ids.act("temple", "give", &format!("{}.spare", g.id())),
+            "Spare materials",
+        )
+        .emoji("pack")
+        .primary()
+        .disabled(spare.is_empty()),
     ]);
     s
 }
 
 fn patron_screen(p: &Player) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let main = p.main();
     let mut s = Screen::default();
-    title(&mut s, main.id(), &format!("Sworn to {}", main.name()), &format!("Bond {}", p.bond(main)));
+    title(
+        &mut s,
+        main.id(),
+        &format!("Sworn to {}", main.name()),
+        &format!("Bond {}", p.bond(main)),
+    );
     let hero = p.hero();
     let have = hero.skills();
     let mut lines = vec!["-# Skills".to_string()];
@@ -1012,8 +1900,17 @@ fn patron_screen(p: &Player) -> Screen {
         all.push(ps);
     }
     for sk in all {
-        let state = if have.contains(&sk) { format!("{} · {} stamina", e("check"), sk.stamina()) } else { format!("{} locked", e("lock")) };
-        lines.push(format!("{} **{}** {state}\n-# {}", e(skill_emoji(sk)), sk.name(), sk.describe(main)));
+        let state = if have.contains(&sk) {
+            format!("{} · {} stamina", e("check"), sk.stamina())
+        } else {
+            format!("{} locked", e("lock"))
+        };
+        lines.push(format!(
+            "{} **{}** {state}\n-# {}",
+            e(skill_emoji(sk)),
+            sk.name(),
+            sk.describe(main)
+        ));
     }
     if !have.contains(&main.skills()[1]) {
         lines.push(format!("-# {} {} unlocks at bond 2 with {}: give at the temple, and every expedition adds a little.", e("lock"), main.skills()[1].name(), main.name()));
@@ -1029,30 +1926,71 @@ fn patron_screen(p: &Player) -> Screen {
             let opts = data::GODS
                 .iter()
                 .filter(|g| **g != main)
-                .map(|g| Opt::new(g.name(), g.id()).emoji(g.id()).desc(format!("{} · {}", g.lesser_passive(), data::pair_skill(main, *g).map(|s| s.name()).unwrap_or(""))))
+                .map(|g| {
+                    Opt::new(g.name(), g.id()).emoji(g.id()).desc(format!(
+                        "{} · {}",
+                        g.lesser_passive(),
+                        data::pair_skill(main, *g).map(|s| s.name()).unwrap_or("")
+                    ))
+                })
                 .collect();
             s.inner_select(ids.act("patron", "vow", ""), "Take a lesser vow…", opts);
         }
         (true, Some(l)) => {
-            s.text(format!("-# Lesser vow\n{} **{}** · {}\n-# Bond {} with {}", e(l.id()), l.name(), l.lesser_passive(), p.bond(l), l.name()));
+            s.text(format!(
+                "-# Lesser vow\n{} **{}** · {}\n-# Bond {} with {}",
+                e(l.id()),
+                l.name(),
+                l.lesser_passive(),
+                p.bond(l),
+                l.name()
+            ));
         }
     }
     if !p.titles.is_empty() {
         s.gap();
-        s.text(format!("-# Title on your banner: **{}**", p.title.as_deref().unwrap_or("none")));
-        let opts = p.titles.iter().map(|t| Opt::new(t.clone(), t.clone()).emoji("elite").default(p.title.as_deref() == Some(t.as_str()))).collect();
+        s.text(format!(
+            "-# Title on your banner: **{}**",
+            p.title.as_deref().unwrap_or("none")
+        ));
+        let opts = p
+            .titles
+            .iter()
+            .map(|t| {
+                Opt::new(t.clone(), t.clone())
+                    .emoji("elite")
+                    .default(p.title.as_deref() == Some(t.as_str()))
+            })
+            .collect();
         s.inner_select(ids.act("patron", "title", ""), "Wear a title…", opts);
     }
     s.gap();
-    s.text(format!("-# Change patron for {} gold. Your bonds stay.", data::PATRON_CHANGE_GOLD));
-    let opts = data::GODS.iter().filter(|g| **g != main).map(|g| Opt::new(format!("Swear to {} instead", g.name()), g.id()).emoji(g.id()).desc(g.pitch())).collect();
+    s.text(format!(
+        "-# Change patron for {} gold. Your bonds stay.",
+        data::PATRON_CHANGE_GOLD
+    ));
+    let opts = data::GODS
+        .iter()
+        .filter(|g| **g != main)
+        .map(|g| {
+            Opt::new(format!("Swear to {} instead", g.name()), g.id())
+                .emoji(g.id())
+                .desc(g.pitch())
+        })
+        .collect();
     s.inner_select(ids.act("patron", "change", ""), "Change patron…", opts);
-    s.buttons(vec![back(&ids), Btn::new(ids.go("temple"), "Temple").emoji("temple")]);
+    s.buttons(vec![
+        back(&ids),
+        Btn::new(ids.go("temple"), "Temple").emoji("temple"),
+    ]);
     s
 }
 
 fn help(p: &Player) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     title(&mut s, "help", "How to play", "The short version");
     s.text(format!(
@@ -1088,7 +2026,10 @@ fn help(p: &Player) -> Screen {
 // ---------------------------------------------------------------------------------------------
 
 pub(crate) fn seed(p: &Player, salt: u64) -> u64 {
-    (p.now as u64).wrapping_mul(6364136223846793005) ^ p.user.rotate_left(17) ^ (p.version as u64).wrapping_mul(0x9E37) ^ salt
+    (p.now as u64).wrapping_mul(6364136223846793005)
+        ^ p.user.rotate_left(17)
+        ^ (p.version as u64).wrapping_mul(0x9E37)
+        ^ salt
 }
 
 /// Start an expedition from a plan.
@@ -1109,7 +2050,14 @@ fn send_out(g: &mut Game, plan: Plan) -> Result<Option<String>> {
     }
     let now = g.p.now;
     let length = plan.hours as i64 * 3_600_000 / store::speed(g.p.guild);
-    let e = Expedition { power: g.p.power(), scouting: g.p.scouting(), started_at: now, ends_at: now + length, seed: seed(&g.p, 11), plan };
+    let e = Expedition {
+        power: g.p.power(),
+        scouting: g.p.scouting(),
+        started_at: now,
+        ends_at: now + length,
+        seed: seed(&g.p, 11),
+        plan,
+    };
     g.start_expedition(e)?;
     tutorial_done(g, Tut::Expedition)?;
     g.bump()?;
@@ -1117,13 +2065,27 @@ fn send_out(g: &mut Game, plan: Plan) -> Result<Option<String>> {
 }
 
 fn collect(g: &mut Game, w: &World) -> Result<Option<(Report, u32)>> {
-    let Some(x) = g.p.expedition.clone() else { return Ok(None) };
+    let Some(x) = g.p.expedition.clone() else {
+        return Ok(None);
+    };
     if g.p.now < x.ends_at {
         return Ok(None);
     }
     let pity = g.pity(&x.plan.region)?;
-    let facts = if g.p.boss_won { data::FACTS.iter().map(|s| s.to_string()).collect() } else { g.p.facts.clone() };
-    let r = expedition::run(&x.plan, x.power, x.scouting, &facts, pity, w.expedition_rates(), x.seed);
+    let facts = if g.p.boss_won {
+        data::FACTS.iter().map(|s| s.to_string()).collect()
+    } else {
+        g.p.facts.clone()
+    };
+    let r = expedition::run(
+        &x.plan,
+        x.power,
+        x.scouting,
+        &facts,
+        pity,
+        w.expedition_rates(),
+        x.seed,
+    );
     for (id, n) in &r.items {
         g.item(id, *n, "expedition")?;
     }
@@ -1141,7 +2103,12 @@ fn collect(g: &mut Game, w: &World) -> Result<Option<(Report, u32)>> {
     }
     g.end_expedition()?;
     g.set_report(Some(r.clone()))?;
-    count_event(g, quests::Event::Expedition { region: &x.plan.region })?;
+    count_event(
+        g,
+        quests::Event::Expedition {
+            region: &x.plan.region,
+        },
+    )?;
     tutorial_done(g, Tut::Collect)?;
     g.bump()?;
     Ok(Some((r, levels)))
@@ -1159,8 +2126,14 @@ fn parse_action(a: &str) -> Option<Action> {
 }
 
 /// Play a turn, pay for what the fight used, and settle the end.
-fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Option<String>, Option<String>)> {
-    let Some(mut f) = g.p.fight.clone() else { return Ok((Some("That fight is over.".into()), None, None)) };
+fn fight_turn(
+    g: &mut Game,
+    w: &World,
+    a: Action,
+) -> Result<(Option<String>, Option<String>, Option<String>)> {
+    let Some(mut f) = g.p.fight.clone() else {
+        return Ok((Some("That fight is over.".into()), None, None));
+    };
     let potions = g.p.have("potion");
     let oils = (g.p.have("fireoil"), g.p.have("frostoil"));
     if let Err(why) = f.act(a, potions, oils) {
@@ -1205,7 +2178,10 @@ fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Opt
         }
         Some(End::Lost) => {
             g.set_hp(1)?;
-            result = Some(format!("{} **You fell.** You wake at camp with 1 HP. Rest or drink a potion, then try again.", e("hp")));
+            result = Some(format!(
+                "{} **You fell.** You wake at camp with 1 HP. Rest or drink a potion, then try again.",
+                e("hp")
+            ));
             g.save_fight(None)?;
             g.p.fight = Some(f);
         }
@@ -1215,10 +2191,16 @@ fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Opt
             g.p.fight = Some(f);
         }
         Some(End::Won) => {
-            let breath = if f.kind == crate::engine::combat::Kind::Hunt { (f.max_hp as f64 * data::WIN_HEAL) as i64 } else { 0 };
+            let breath = if f.kind == crate::engine::combat::Kind::Hunt {
+                (f.max_hp as f64 * data::WIN_HEAL) as i64
+            } else {
+                0
+            };
             g.set_hp(f.hp + breath)?;
             match f.kind {
-                crate::engine::combat::Kind::Lab | crate::engine::combat::Kind::Dungeon | crate::engine::combat::Kind::Shared => {}
+                crate::engine::combat::Kind::Lab
+                | crate::engine::combat::Kind::Dungeon
+                | crate::engine::combat::Kind::Shared => {}
                 crate::engine::combat::Kind::Hunt => {
                     let r = data::region(&f.region).unwrap_or(&data::REGIONS[0]);
                     let (xp, gold) = data::hunt_reward(r);
@@ -1244,10 +2226,21 @@ fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Opt
                         let first = g.record_kill(&f.foe.id, f.turn)?;
                         if first && let Some(t) = data::elite_title(&f.foe.id) {
                             g.add_title(t)?;
-                            elite_line = format!("\n{} **{}** is yours to wear: you beat {} for the first time.", e("elite"), t, f.foe.name);
+                            elite_line = format!(
+                                "\n{} **{}** is yours to wear: you beat {} for the first time.",
+                                e("elite"),
+                                t,
+                                f.foe.name
+                            );
                         }
                         if first {
-                            announce = Some(format!("{} **{}** brought down **{}** in {}.", e("elite"), g.p.name, f.foe.name, r.name));
+                            announce = Some(format!(
+                                "{} **{}** brought down **{}** in {}.",
+                                e("elite"),
+                                g.p.name,
+                                f.foe.name,
+                                r.name
+                            ));
                         }
                     }
                     for (id, n) in &drops {
@@ -1255,21 +2248,49 @@ fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Opt
                     }
                     g.gold(gold, "hunt")?;
                     let levels = g.xp(xp)?;
-                    count_event(g, quests::Event::Win { region: r.id, monster: &f.foe.id })?;
+                    count_event(
+                        g,
+                        quests::Event::Win {
+                            region: r.id,
+                            monster: &f.foe.id,
+                        },
+                    )?;
                     tutorial_done(g, Tut::Hunt)?;
                     // Now and then the foe was carrying something.
                     let gear_drop = if elite || rng.chance(0.03) {
-                        let piece = crate::engine::loot::drop_piece(g.p.level, g.p.boss_won, &mut rng);
-                        let (rarity, traits) = crate::engine::loot::roll(piece, if elite { "elite" } else { "hunt" }, &mut rng);
+                        let piece =
+                            crate::engine::loot::drop_piece(g.p.level, g.p.boss_won, &mut rng);
+                        let (rarity, traits) = crate::engine::loot::roll(
+                            piece,
+                            if elite { "elite" } else { "hunt" },
+                            &mut rng,
+                        );
                         let worn = g.p.equipped(piece.slot).map(|x| x.power()).unwrap_or(0);
-                        let power = data::gear_power(piece, 0) + data::gear_power(piece, 0) * rarity.power_pct() / 100;
+                        let power = data::gear_power(piece, 0)
+                            + data::gear_power(piece, 0) * rarity.power_pct() / 100;
                         let wear = power > worn && piece.level <= g.p.level;
-                        if wear || g.p.gear.iter().filter(|x| !x.equipped).count() < data::PACK_GEAR {
+                        if wear || g.p.gear.iter().filter(|x| !x.equipped).count() < data::PACK_GEAR
+                        {
                             g.add_piece(piece, rarity, traits, wear, "hunt")?;
-                            format!("\n{} It dropped **{} {}**{}", e(rarity.emoji()), rarity.name(), piece.name, if wear { ": you're wearing it." } else { ": it's in your pack." })
+                            format!(
+                                "\n{} It dropped **{} {}**{}",
+                                e(rarity.emoji()),
+                                rarity.name(),
+                                piece.name,
+                                if wear {
+                                    ": you're wearing it."
+                                } else {
+                                    ": it's in your pack."
+                                }
+                            )
                         } else {
                             g.item("thread", 1 + rarity.index(), "salvaged: pack full")?;
-                            format!("\n{} It dropped a {} {}; your pack is full, so you salvaged it.", e(rarity.emoji()), rarity.name(), piece.name)
+                            format!(
+                                "\n{} It dropped a {} {}; your pack is full, so you salvaged it.",
+                                e(rarity.emoji()),
+                                rarity.name(),
+                                piece.name
+                            )
                         }
                     } else {
                         String::new()
@@ -1280,8 +2301,16 @@ fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Opt
                         e("check"),
                         f.foe.name,
                         items_line(&drops),
-                        if double { format!("\n-# {} Doubled by Vigor", e("vigor")) } else { String::new() },
-                        if levels > 0 { format!("\n{} **Level {}!**", e("power"), g.p.level) } else { String::new() },
+                        if double {
+                            format!("\n-# {} Doubled by Vigor", e("vigor"))
+                        } else {
+                            String::new()
+                        },
+                        if levels > 0 {
+                            format!("\n{} **Level {}!**", e("power"), g.p.level)
+                        } else {
+                            String::new()
+                        },
                         elite_line,
                         (data::WIN_HEAL * 100.0) as i64
                     ));
@@ -1299,26 +2328,45 @@ fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Opt
                     if rewarded {
                         let shards = if first { 3 } else { 1 };
                         let mut rng = crate::engine::Rng::new(seed(&g.p, 83));
-                        let piece = crate::engine::loot::drop_piece(data::LEVEL_CAP, true, &mut rng);
+                        let piece =
+                            crate::engine::loot::drop_piece(data::LEVEL_CAP, true, &mut rng);
                         let (rarity, traits) = crate::engine::loot::roll(piece, "boss", &mut rng);
                         g.add_piece(piece, rarity, traits, false, "the Barrow King")?;
                         g.item("shard", shards, "the Barrow King")?;
                         g.gold(if first { 500 } else { 200 }, "the Barrow King")?;
                         g.xp(if first { 1500 } else { 400 })?;
-                        result = Some(format!(
-                            "{} **The Barrow King falls!** +{} crown shard{} · +{} gold{}",
-                            e("shard"),
-                            shards,
-                            if shards == 1 { "" } else { "s" },
-                            if first { 500 } else { 200 },
-                            if first { "\nHeroic expeditions and your lesser vow are open. The forge has new gear." } else { "" }
-                        ) + &format!("\n{} It dropped **{} {}**: it's in your pack.", e(rarity.emoji()), rarity.name(), piece.name
-                        ));
+                        result = Some(
+                            format!(
+                                "{} **The Barrow King falls!** +{} crown shard{} · +{} gold{}",
+                                e("shard"),
+                                shards,
+                                if shards == 1 { "" } else { "s" },
+                                if first { 500 } else { 200 },
+                                if first {
+                                    "\nHeroic expeditions and your lesser vow are open. The forge has new gear."
+                                } else {
+                                    ""
+                                }
+                            ) + &format!(
+                                "\n{} It dropped **{} {}**: it's in your pack.",
+                                e(rarity.emoji()),
+                                rarity.name(),
+                                piece.name
+                            ),
+                        );
                     } else {
-                        result = Some(format!("{} **The Barrow King falls again.** Its reward comes back on Monday.", e("shard")));
+                        result = Some(format!(
+                            "{} **The Barrow King falls again.** Its reward comes back on Monday.",
+                            e("shard")
+                        ));
                     }
                     if first {
-                        announce = Some(format!("{} **{}** has defeated **The Barrow King** in {} turns.", e("shard"), g.p.name, f.turn));
+                        announce = Some(format!(
+                            "{} **{}** has defeated **The Barrow King** in {} turns.",
+                            e("shard"),
+                            g.p.name,
+                            f.turn
+                        ));
                     }
                 }
             }
@@ -1330,10 +2378,21 @@ fn fight_turn(g: &mut Game, w: &World, a: Action) -> Result<(Option<String>, Opt
 }
 
 /// Run one click. `values` are a menu's picked values.
-pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: Rates) -> Result<Outcome> {
+pub fn handle(
+    ctx: &Ctx,
+    g: &mut Game,
+    route: &Route,
+    values: &[String],
+    rates: Rates,
+) -> Result<Outcome> {
     let w = World::load(g, rates)?;
-    let stale = !route.action.is_empty() && route.version >= 0 && route.version != g.p.version && !matches!(route.action.as_str(), "set" | "pick" | "nav");
-    let note_stale = Some("That button was from before your last move. Here's where things are now.".to_string());
+    let stale = !route.action.is_empty()
+        && route.version >= 0
+        && route.version != g.p.version
+        && !matches!(route.action.as_str(), "set" | "pick" | "nav");
+    let note_stale = Some(
+        "That button was from before your last move. Here's where things are now.".to_string(),
+    );
     let value = values.first().cloned().unwrap_or_default();
     let mut announce = None;
     let mut urgent = false;
@@ -1348,9 +2407,19 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                 let (field, key) = route.arg.split_once('|').unwrap_or(("", ""));
                 let mut plan = parse_plan(key).unwrap_or_else(|| default_plan(&g.p));
                 match field {
-                    "region" => plan.region = data::region(&value).map(|r| r.id.to_owned()).unwrap_or(plan.region),
+                    "region" => {
+                        plan.region = data::region(&value)
+                            .map(|r| r.id.to_owned())
+                            .unwrap_or(plan.region)
+                    }
                     "danger" => plan.danger = Danger::from_id(&value).unwrap_or(plan.danger),
-                    "hours" => plan.hours = value.parse().ok().filter(|h| data::HOURS.contains(h)).unwrap_or(plan.hours),
+                    "hours" => {
+                        plan.hours = value
+                            .parse()
+                            .ok()
+                            .filter(|h| data::HOURS.contains(h))
+                            .unwrap_or(plan.hours)
+                    }
                     "supply" => plan.supply = (value != "none").then_some(value.clone()),
                     _ => {}
                 }
@@ -1362,8 +2431,12 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                 view(ctx, g, &w, "exp", None)?
             }
             ("exp", "again") => {
-                let mut plan = parse_plan(&format!("{}.none", route.arg)).unwrap_or_else(|| default_plan(&g.p));
-                plan.supply = data::EXPEDITION_SUPPLIES.iter().find(|s| g.p.have(s) > 0 && **s == "rations").map(|s| s.to_string());
+                let mut plan = parse_plan(&format!("{}.none", route.arg))
+                    .unwrap_or_else(|| default_plan(&g.p));
+                plan.supply = data::EXPEDITION_SUPPLIES
+                    .iter()
+                    .find(|s| g.p.have(s) > 0 && **s == "rations")
+                    .map(|s| s.to_string());
                 note = send_out(g, plan)?;
                 view(ctx, g, &w, "exp", None)?
             }
@@ -1409,7 +2482,11 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                     g.item("potion", -1, "drank a potion")?;
                     g.set_hp(hp + heal)?;
                     g.bump()?;
-                    note = Some(format!("You drank a potion: {} / {} HP.", g.p.hp(), g.p.max_hp()));
+                    note = Some(format!(
+                        "You drank a potion: {} / {} HP.",
+                        g.p.hp(),
+                        g.p.max_hp()
+                    ));
                 }
                 hunt_pick(&g.p, None)
             }
@@ -1417,13 +2494,18 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                 if g.p.fight.is_some() {
                     note = Some("Finish the fight you're in first.".into());
                 } else if g.p.hp() * 10 < g.p.max_hp() * 3 {
-                    note = Some(format!("You're too hurt to hunt ({} / {} HP). Rest a little or drink a potion.", g.p.hp(), g.p.max_hp()));
+                    note = Some(format!(
+                        "You're too hurt to hunt ({} / {} HP). Rest a little or drink a potion.",
+                        g.p.hp(),
+                        g.p.max_hp()
+                    ));
                 } else {
                     let r = data::region(&route.arg).unwrap_or(&data::REGIONS[0]);
                     if g.p.event.is_some() {
                         g.set_event(None)?;
                     }
-                    let f = Fight::hunt_with(g.p.hero(), g.p.hp(), r, seed(&g.p, 5), w.modules.elites);
+                    let f =
+                        Fight::hunt_with(g.p.hero(), g.p.hp(), r, seed(&g.p, 5), w.modules.elites);
                     g.save_fight(Some(f))?;
                     g.bump()?;
                 }
@@ -1433,26 +2515,39 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                 if g.p.fight.is_some() {
                     note = Some("Finish the fight you're in first.".into());
                 } else if g.p.hp() < g.p.max_hp() / 2 {
-                    note = Some(format!("You're hurt ({} / {} HP). Rest or drink a potion before facing the King.", g.p.hp(), g.p.max_hp()));
+                    note = Some(format!(
+                        "You're hurt ({} / {} HP). Rest or drink a potion before facing the King.",
+                        g.p.hp(),
+                        g.p.max_hp()
+                    ));
                 } else {
-                    let f = Fight::boss(g.p.hero(), g.p.hp(), w.week, g.p.facts.clone(), seed(&g.p, 7)).with_ally(quests::ally(&g.p.saga_choices));
+                    let f = Fight::boss(
+                        g.p.hero(),
+                        g.p.hp(),
+                        w.week,
+                        g.p.facts.clone(),
+                        seed(&g.p, 7),
+                    )
+                    .with_ally(quests::ally(&g.p.saga_choices));
                     g.save_fight(Some(f))?;
                     g.bump()?;
                 }
                 view(ctx, g, &w, "boss", None)?
             }
-            ("hunt" | "boss" | "lab" | "dungeon" | "titan" | "raid", "act") => match parse_action(&route.arg) {
-                Some(a) => {
-                    let (n, result, ann) = fight_turn(g, &w, a)?;
-                    note = n;
-                    announce = ann;
-                    match &g.p.fight {
-                        Some(f) => fight_screen(&g.p, &f.clone(), result),
-                        None => view(ctx, g, &w, &route.screen, None)?,
+            ("hunt" | "boss" | "lab" | "dungeon" | "titan" | "raid", "act") => {
+                match parse_action(&route.arg) {
+                    Some(a) => {
+                        let (n, result, ann) = fight_turn(g, &w, a)?;
+                        note = n;
+                        announce = ann;
+                        match &g.p.fight {
+                            Some(f) => fight_screen(&g.p, &f.clone(), result),
+                            None => view(ctx, g, &w, &route.screen, None)?,
+                        }
                     }
+                    None => view(ctx, g, &w, &route.screen, None)?,
                 }
-                None => view(ctx, g, &w, &route.screen, None)?,
-            },
+            }
             ("hunt" | "boss" | "lab" | "dungeon" | "titan" | "raid", "leave") => {
                 let mut to = "hub";
                 if let Some(f) = g.p.fight.clone() {
@@ -1473,7 +2568,11 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                             count_event(g, quests::Event::Shared)?;
                             announce = ann;
                             urgent = true;
-                            to = if route.screen == "raid" { "raid" } else { "titan" };
+                            to = if route.screen == "raid" {
+                                "raid"
+                            } else {
+                                "titan"
+                            };
                             note = Some(said);
                         }
                         _ => {}
@@ -1481,8 +2580,13 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                     g.bump()?;
                     if note.is_none() {
                         note = Some(match f.kind {
-                            crate::engine::combat::Kind::Boss => "You retreat. The King's wounds will heal; yours too.".into(),
-                            crate::engine::combat::Kind::Lab | crate::engine::combat::Kind::Dungeon => "You back out and pull the door shut.".into(),
+                            crate::engine::combat::Kind::Boss => {
+                                "You retreat. The King's wounds will heal; yours too.".into()
+                            }
+                            crate::engine::combat::Kind::Lab
+                            | crate::engine::combat::Kind::Dungeon => {
+                                "You back out and pull the door shut.".into()
+                            }
                             _ => "You slip away from the fight.".into(),
                         });
                     }
@@ -1490,7 +2594,11 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                 view(ctx, g, &w, to, None)?
             }
             ("guild", "create") => {
-                note = crate::guild::found(g, values.first().map(String::as_str).unwrap_or(""), values.get(1).map(String::as_str).unwrap_or(""))?;
+                note = crate::guild::found(
+                    g,
+                    values.first().map(String::as_str).unwrap_or(""),
+                    values.get(1).map(String::as_str).unwrap_or(""),
+                )?;
                 crate::guild::screen(g)?
             }
             ("guild", "join") => {
@@ -1588,24 +2696,40 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
             }
             ("forge", "gear") => {
                 match data::gear(&route.arg) {
-                    Some(gear) if gear.level <= g.p.level && (!gear.after_boss || g.p.boss_won) && g.can_pay(gear.cost, gear.gold) => {
+                    Some(gear)
+                        if gear.level <= g.p.level
+                            && (!gear.after_boss || g.p.boss_won)
+                            && g.can_pay(gear.cost, gear.gold) =>
+                    {
                         g.pay(gear.cost, gear.gold, "forged gear")?;
                         let mut rng = crate::engine::Rng::new(seed(&g.p, 71));
                         let (rarity, traits) = crate::engine::loot::roll(gear, "forge", &mut rng);
-                        let power = data::gear_power(gear, 0) + data::gear_power(gear, 0) * rarity.power_pct() / 100;
+                        let power = data::gear_power(gear, 0)
+                            + data::gear_power(gear, 0) * rarity.power_pct() / 100;
                         let worn = g.p.equipped(gear.slot).map(|x| x.power()).unwrap_or(0);
                         let wear = power > worn;
                         g.add_piece(gear, rarity, traits.clone(), wear, "forged")?;
                         count_event(g, quests::Event::Forged)?;
                         tutorial_done(g, Tut::Forge)?;
                         g.bump()?;
-                        let t: Vec<String> = traits.iter().map(|(t, v)| format!("{} ({})", t.name(), t.describe(*v))).collect();
+                        let t: Vec<String> = traits
+                            .iter()
+                            .map(|(t, v)| format!("{} ({})", t.name(), t.describe(*v)))
+                            .collect();
                         note = Some(format!(
                             "It came out **{}**: {}{}.{}",
                             rarity.name(),
                             gear.name,
-                            if t.is_empty() { String::new() } else { format!(", {}", t.join(", ")) },
-                            if wear { " You're wearing it." } else { " It's in your pack." }
+                            if t.is_empty() {
+                                String::new()
+                            } else {
+                                format!(", {}", t.join(", "))
+                            },
+                            if wear {
+                                " You're wearing it."
+                            } else {
+                                " It's in your pack."
+                            }
                         ));
                     }
                     _ => note = Some("You can't forge that yet.".into()),
@@ -1623,7 +2747,10 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                             g.bump()?;
                             note = Some(format!("{} is now +{}.", row.gear.name, row.upgrade + 1));
                         } else {
-                            note = Some(format!("Upgrading needs {gold} gold and {}.", data::count(mat, n)));
+                            note = Some(format!(
+                                "Upgrading needs {gold} gold and {}.",
+                                data::count(mat, n)
+                            ));
                         }
                     }
                     _ => note = Some("That can't be upgraded further in Midgard.".into()),
@@ -1640,7 +2767,17 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                         g.bump()?;
                         note = Some(format!("Made {}.", data::count(r.makes, r.qty)));
                     }
-                    Some(r) => note = Some(format!("You need {} and {} gold.", r.cost.iter().map(|(id, n)| data::count(id, *n)).collect::<Vec<_>>().join(", "), r.gold)),
+                    Some(r) => {
+                        note = Some(format!(
+                            "You need {} and {} gold.",
+                            r.cost
+                                .iter()
+                                .map(|(id, n)| data::count(id, *n))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            r.gold
+                        ))
+                    }
                     None => {}
                 }
                 forge(&g.p)
@@ -1712,7 +2849,11 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                 if let Some(god) = God::from_id(&value).filter(|x| Some(*x) != g.p.patron)
                     && g.p.boss_won
                 {
-                    let cost = if g.p.lesser.is_some() { data::PATRON_CHANGE_GOLD } else { 0 };
+                    let cost = if g.p.lesser.is_some() {
+                        data::PATRON_CHANGE_GOLD
+                    } else {
+                        0
+                    };
                     if g.p.gold >= cost {
                         g.gold(-cost, "lesser vow")?;
                         g.set_lesser(Some(god))?;
@@ -1727,7 +2868,10 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
                     if g.p.fight.is_some() {
                         note = Some("Not in the middle of a fight.".into());
                     } else if g.p.gold < data::PATRON_CHANGE_GOLD {
-                        note = Some(format!("Changing patron costs {} gold.", data::PATRON_CHANGE_GOLD));
+                        note = Some(format!(
+                            "Changing patron costs {} gold.",
+                            data::PATRON_CHANGE_GOLD
+                        ));
                     } else {
                         g.gold(-data::PATRON_CHANGE_GOLD, "changed patron")?;
                         if g.p.lesser == Some(god) {
@@ -1746,30 +2890,51 @@ pub fn handle(ctx: &Ctx, g: &mut Game, route: &Route, values: &[String], rates: 
     if announce.as_deref().is_some_and(|a| a.contains("falls!")) {
         urgent = true;
     }
-    Ok(Outcome { screen: screen.note(note), announce, urgent })
+    Ok(Outcome {
+        screen: screen.note(note),
+        announce,
+        urgent,
+    })
 }
 
 /// Show a screen without changing anything.
-pub fn view(ctx: &Ctx, g: &mut Game, w: &World, screen: &str, _arg: Option<&str>) -> Result<Screen> {
+pub fn view(
+    ctx: &Ctx,
+    g: &mut Game,
+    w: &World,
+    screen: &str,
+    _arg: Option<&str>,
+) -> Result<Screen> {
     let p = &g.p;
     Ok(match screen {
-        "goals" => goals(p, w, &store::top_givers(&g.tx, p.guild, w.week, 50)?, &crate::labyrinth::board(g, 3)?),
+        "goals" => goals(
+            p,
+            w,
+            &store::top_givers(&g.tx, p.guild, w.week, 50)?,
+            &crate::labyrinth::board(g, 3)?,
+        ),
         "exp" => match &p.expedition {
             Some(x) => expedition_out(p, w, &x.clone()),
             None => expedition_plan(p, w, &default_plan(p)),
         },
         "guild" if w.modules.guilds => crate::guild::screen(g)?,
         "titan" if w.modules.titans => match &p.fight {
-            Some(f) if f.kind == crate::engine::combat::Kind::Shared => fight_screen(p, &f.clone(), None),
+            Some(f) if f.kind == crate::engine::combat::Kind::Shared => {
+                fight_screen(p, &f.clone(), None)
+            }
             _ => crate::shared::screen(g, "titan")?,
         },
         "raid" if w.modules.raids => match &p.fight {
-            Some(f) if f.kind == crate::engine::combat::Kind::Shared => fight_screen(p, &f.clone(), None),
+            Some(f) if f.kind == crate::engine::combat::Kind::Shared => {
+                fight_screen(p, &f.clone(), None)
+            }
             _ => crate::shared::screen(g, "raid")?,
         },
         "dungeons" if w.modules.dungeons => crate::dungeons::list_screen(g)?,
         "dungeon" if w.modules.dungeons => match (&p.fight, &p.delve) {
-            (Some(f), _) if f.kind == crate::engine::combat::Kind::Dungeon => fight_screen(p, &f.clone(), None),
+            (Some(f), _) if f.kind == crate::engine::combat::Kind::Dungeon => {
+                fight_screen(p, &f.clone(), None)
+            }
             (_, Some(d)) => crate::dungeons::delve_screen(p, &d.clone()),
             _ => crate::dungeons::list_screen(g)?,
         },
@@ -1778,14 +2943,21 @@ pub fn view(ctx: &Ctx, g: &mut Game, w: &World, screen: &str, _arg: Option<&str>
         "market" if w.modules.market => crate::market::screen(g)?,
         x if x.starts_with("region_") => region_screen(g, w, &x[7..])?,
         "lab" => match &p.fight {
-            Some(f) if f.kind == crate::engine::combat::Kind::Lab => fight_screen(p, &f.clone(), None),
+            Some(f) if f.kind == crate::engine::combat::Kind::Lab => {
+                fight_screen(p, &f.clone(), None)
+            }
             _ => crate::labyrinth::screen(p, &crate::labyrinth::board(g, 5)?),
         },
         "hero" => hero(p),
         "skagi" => skagi(p, w),
         "hunt" | "boss" => match &p.fight {
             Some(f) => fight_screen(p, &f.clone(), None),
-            None if screen == "boss" => goals(p, w, &store::top_givers(&g.tx, p.guild, w.week, 50)?, &crate::labyrinth::board(g, 3)?),
+            None if screen == "boss" => goals(
+                p,
+                w,
+                &store::top_givers(&g.tx, p.guild, w.week, 50)?,
+                &crate::labyrinth::board(g, 3)?,
+            ),
             None => hunt_pick(p, None),
         },
         "forge" => forge(p),
@@ -1810,15 +2982,32 @@ pub fn overview(ctx: &Ctx, g: &mut Game, rates: Rates) -> Result<Screen> {
 
 /// Clicks per screen, for the dashboard: (action label, count) is kept by the caller.
 pub fn label(route: &Route) -> String {
-    if route.action.is_empty() { route.screen.clone() } else { format!("{}:{}", route.screen, route.action) }
+    if route.action.is_empty() {
+        route.screen.clone()
+    } else {
+        format!("{}:{}", route.screen, route.action)
+    }
 }
 
 /// Delete a player's character entirely (dashboard tool).
 pub fn reset_player(db: &bot_core::Db, guild: u64, user: u64) -> Result<()> {
     let mut c = db.lock();
     let tx = c.transaction()?;
-    for t in ["rpg_players", "rpg_items", "rpg_gear", "rpg_bonds", "rpg_expeditions", "rpg_fights", "rpg_intel", "rpg_pity", "rpg_kills"] {
-        tx.execute(&format!("DELETE FROM {t} WHERE guild_id = ?1 AND user_id = ?2"), params![guild as i64, user as i64])?;
+    for t in [
+        "rpg_players",
+        "rpg_items",
+        "rpg_gear",
+        "rpg_bonds",
+        "rpg_expeditions",
+        "rpg_fights",
+        "rpg_intel",
+        "rpg_pity",
+        "rpg_kills",
+    ] {
+        tx.execute(
+            &format!("DELETE FROM {t} WHERE guild_id = ?1 AND user_id = ?2"),
+            params![guild as i64, user as i64],
+        )?;
     }
     tx.commit()?;
     Ok(())
@@ -1835,7 +3024,11 @@ pub fn now() -> i64 {
 /// Where a player hunts comfortably: the strongest region they clear with room to spare.
 pub fn comfortable(p: &Player, level: u32) -> &'static data::Region {
     let power = data::level_power(level) + (p.power() - data::level_power(p.level));
-    data::REGIONS.iter().rev().find(|r| power as f64 >= r.power as f64 * 1.3).unwrap_or(&data::REGIONS[0])
+    data::REGIONS
+        .iter()
+        .rev()
+        .find(|r| power as f64 >= r.power as f64 * 1.3)
+        .unwrap_or(&data::REGIONS[0])
 }
 
 pub fn todays_bounties(p: &Player) -> Vec<quests::Bounty> {
@@ -1887,8 +3080,12 @@ fn goal_now(p: &Player, goal: &quests::Goal, counter: i64) -> i64 {
 
 /// Whether the current chapter's goals are all met.
 pub fn chapter_done(p: &Player) -> bool {
-    let Some(ch) = quests::chapter(p.saga) else { return false };
-    ch.goals.iter().enumerate().all(|(i, goal)| goal_now(p, goal, p.saga_progress.get(i).copied().unwrap_or(0)) >= goal.target())
+    let Some(ch) = quests::chapter(p.saga) else {
+        return false;
+    };
+    ch.goals.iter().enumerate().all(|(i, goal)| {
+        goal_now(p, goal, p.saga_progress.get(i).copied().unwrap_or(0)) >= goal.target()
+    })
 }
 
 fn reward_line(r: &quests::Reward, patron: God) -> String {
@@ -1903,7 +3100,12 @@ fn reward_line(r: &quests::Reward, patron: God) -> String {
         parts.push(format!("{} {}", e(id), data::count(id, *n)));
     }
     if r.tribute > 0 {
-        parts.push(format!("{} +{} tribute to {}", e("offering"), r.tribute, patron.name()));
+        parts.push(format!(
+            "{} +{} tribute to {}",
+            e("offering"),
+            r.tribute,
+            patron.name()
+        ));
     }
     if let Some(t) = r.title {
         parts.push(format!("the title **{t}**"));
@@ -1926,14 +3128,22 @@ fn give_reward(g: &mut Game, r: &quests::Reward, why: &str) -> Result<()> {
 }
 
 fn saga_screen(p: &Player) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     let Some(ch) = quests::chapter(p.saga) else {
         title(&mut s, "saga", "The Loom", "Between the worlds");
         s.text("The Norns are weaving the next saga. Its thread leads beyond Midgard, and it arrives with the next realm.");
         let picked: Vec<String> = quests::CHAPTERS
             .iter()
-            .filter_map(|c| p.saga_choices.get(c.id).and_then(|id| c.choices.iter().find(|x| x.id == id)).map(|x| format!("-# {} · {}", c.title, x.label)))
+            .filter_map(|c| {
+                p.saga_choices
+                    .get(c.id)
+                    .and_then(|id| c.choices.iter().find(|x| x.id == id))
+                    .map(|x| format!("-# {} · {}", c.title, x.label))
+            })
             .collect();
         if !picked.is_empty() {
             s.text(format!("-# Your choices in Midgard\n{}", picked.join("\n")));
@@ -1941,7 +3151,17 @@ fn saga_screen(p: &Player) -> Screen {
         s.buttons(vec![back(&ids)]);
         return s;
     };
-    title(&mut s, "saga", ch.title, &format!("{} · chapter {} of {}", ch.place, p.saga + 1, quests::CHAPTERS.len()));
+    title(
+        &mut s,
+        "saga",
+        ch.title,
+        &format!(
+            "{} · chapter {} of {}",
+            ch.place,
+            p.saga + 1,
+            quests::CHAPTERS.len()
+        ),
+    );
     s.text(ch.text);
     if let Some(line) = quests::patron_line(ch, p.main()) {
         s.text(format!("-# {} {line}", e(p.main().id())));
@@ -1954,8 +3174,16 @@ fn saga_screen(p: &Player) -> Screen {
             .map(|(i, goal)| {
                 let have = goal_now(p, goal, p.saga_progress.get(i).copied().unwrap_or(0));
                 let done = have >= goal.target();
-                let count = if goal.target() > 1 && !matches!(goal, quests::Goal::Level(_)) { format!("  ·  {have} / {}", goal.target()) } else { String::new() };
-                format!("{} {}{count}", if done { e("check") } else { e("goals") }, goal.describe())
+                let count = if goal.target() > 1 && !matches!(goal, quests::Goal::Level(_)) {
+                    format!("  ·  {have} / {}", goal.target())
+                } else {
+                    String::new()
+                };
+                format!(
+                    "{} {}{count}",
+                    if done { e("check") } else { e("goals") },
+                    goal.describe()
+                )
             })
             .collect();
         s.gap();
@@ -1971,9 +3199,23 @@ fn saga_screen(p: &Player) -> Screen {
         }
         for c in ch.choices {
             let extra = reward_line(&c.reward, p.main());
-            let line = format!("**{}**\n-# {}{}", c.label, c.hint, if extra.is_empty() { String::new() } else { format!(" · {extra}") });
+            let line = format!(
+                "**{}**\n-# {}{}",
+                c.label,
+                c.hint,
+                if extra.is_empty() {
+                    String::new()
+                } else {
+                    format!(" · {extra}")
+                }
+            );
             if done {
-                s.section(line, Btn::new(ids.act("saga", "claim", c.id), "Choose").emoji("saga").primary());
+                s.section(
+                    line,
+                    Btn::new(ids.act("saga", "claim", c.id), "Choose")
+                        .emoji("saga")
+                        .primary(),
+                );
             } else {
                 s.text(line);
             }
@@ -1985,14 +3227,21 @@ fn saga_screen(p: &Player) -> Screen {
     }
     let mut b = vec![back(&ids)];
     if ch.choices.is_empty() {
-        b.push(Btn::new(ids.act("saga", "claim", ""), ch.claim).emoji("saga").primary().disabled(!done));
+        b.push(
+            Btn::new(ids.act("saga", "claim", ""), ch.claim)
+                .emoji("saga")
+                .primary()
+                .disabled(!done),
+        );
     }
     s.buttons(b);
     s
 }
 
 fn claim_chapter(g: &mut Game, choice: &str) -> Result<Option<String>> {
-    let Some(ch) = quests::chapter(g.p.saga) else { return Ok(None) };
+    let Some(ch) = quests::chapter(g.p.saga) else {
+        return Ok(None);
+    };
     if !chapter_done(&g.p) {
         return Ok(Some("That chapter isn't finished yet.".into()));
     }
@@ -2005,7 +3254,11 @@ fn claim_chapter(g: &mut Game, choice: &str) -> Result<Option<String>> {
         }
     };
     give_reward(g, &ch.reward, &format!("saga: {}", ch.title))?;
-    let mut said = format!("**{}** done. {}", ch.title, reward_line(&ch.reward, g.p.main()));
+    let mut said = format!(
+        "**{}** done. {}",
+        ch.title,
+        reward_line(&ch.reward, g.p.main())
+    );
     if let Some(c) = picked {
         give_reward(g, &c.reward, &format!("saga: {}", ch.title))?;
         g.p.saga_choices.insert(ch.id.to_owned(), c.id.to_owned());
@@ -2020,9 +3273,17 @@ fn claim_chapter(g: &mut Game, choice: &str) -> Result<Option<String>> {
 }
 
 fn bounties_screen(p: &Player) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
-    title(&mut s, "bounty", "Bounties", "Three new ones every day at midnight UTC");
+    title(
+        &mut s,
+        "bounty",
+        "Bounties",
+        "Three new ones every day at midnight UTC",
+    );
     let bs = todays_bounties(p);
     for (i, b) in bs.iter().enumerate() {
         let (have, claimed) = p.bounty[i];
@@ -2031,7 +3292,11 @@ fn bounties_screen(p: &Player) -> Screen {
             "{} **{}**{}\n-# {} {} gold · {} XP",
             if claimed { e("check") } else { e("bounty") },
             b.goal.describe(),
-            if target > 1 { format!("  ·  {} / {target}", have.min(target)) } else { String::new() },
+            if target > 1 {
+                format!("  ·  {} / {target}", have.min(target))
+            } else {
+                String::new()
+            },
             e("gold"),
             b.gold,
             b.xp
@@ -2039,18 +3304,33 @@ fn bounties_screen(p: &Player) -> Screen {
         if claimed {
             s.text(line);
         } else {
-            s.section(line, Btn::new(ids.act("bounties", "claim", &i.to_string()), "Claim").emoji("bounty").disabled(have < target).then_primary(have >= target));
+            s.section(
+                line,
+                Btn::new(ids.act("bounties", "claim", &i.to_string()), "Claim")
+                    .emoji("bounty")
+                    .disabled(have < target)
+                    .then_primary(have >= target),
+            );
         }
     }
     let all = p.bounty.iter().all(|b| b.1);
-    s.text(if all { format!("-# {} All three done today. Back tomorrow.", e("check")) } else { "-# Finish all three for 2 healing potions on top.".into() });
-    s.buttons(vec![back(&ids), Btn::new(ids.go("hunt"), "Hunt").emoji("hunt")]);
+    s.text(if all {
+        format!("-# {} All three done today. Back tomorrow.", e("check"))
+    } else {
+        "-# Finish all three for 2 healing potions on top.".into()
+    });
+    s.buttons(vec![
+        back(&ids),
+        Btn::new(ids.go("hunt"), "Hunt").emoji("hunt"),
+    ]);
     s
 }
 
 fn claim_bounty(g: &mut Game, idx: usize) -> Result<Option<String>> {
     let bs = todays_bounties(&g.p);
-    let Some(b) = bs.get(idx) else { return Ok(None) };
+    let Some(b) = bs.get(idx) else {
+        return Ok(None);
+    };
     let (have, claimed) = g.p.bounty[idx];
     if claimed || have < b.goal.target() {
         return Ok(None);
@@ -2079,33 +3359,90 @@ pub struct Encounter {
 }
 
 pub const ENCOUNTERS: &[Encounter] = &[
-    Encounter { id: "merchant", title: "A wandering merchant", text: "She has more potions than she can carry, and a long road ahead." },
-    Encounter { id: "shrine", title: "An old shrine", text: "Moss over a carving of your patron. Someone left flowers here, not long ago." },
-    Encounter { id: "traveller", title: "A lost traveller", text: "He's limping, far from the road, and very glad to see you." },
-    Encounter { id: "cache", title: "A cache under the roots", text: "Someone buried a chest here and never came back. The roots have grown through the lid." },
+    Encounter {
+        id: "merchant",
+        title: "A wandering merchant",
+        text: "She has more potions than she can carry, and a long road ahead.",
+    },
+    Encounter {
+        id: "shrine",
+        title: "An old shrine",
+        text: "Moss over a carving of your patron. Someone left flowers here, not long ago.",
+    },
+    Encounter {
+        id: "traveller",
+        title: "A lost traveller",
+        text: "He's limping, far from the road, and very glad to see you.",
+    },
+    Encounter {
+        id: "cache",
+        title: "A cache under the roots",
+        text: "Someone buried a chest here and never came back. The roots have grown through the lid.",
+    },
 ];
 
 /// The two options of an encounter: (id, label, emoji).
 fn encounter_options(p: &Player, id: &str) -> [(&'static str, String, &'static str); 2] {
     let lvl = p.level as i64;
     match id {
-        "merchant" => [("buy", format!("Buy 2 potions · {} gold", 20 + 2 * lvl), "potion"), ("leave", "Move on".into(), "expedition")],
-        "shrine" => [("offer", format!("Leave {} gold: +20 Vigor", 10 + 3 * lvl), "vigor"), ("pray", "Pray: heal 40%".into(), "hp")],
-        "traveller" => [("walk", format!("Walk him back: +{} XP", 40 + 15 * lvl), "power"), ("purse", format!("Take his thanks: +{} gold", 15 + 6 * lvl), "gold")],
-        _ => [("dig", "Dig it out: it'll hurt".into(), "pack"), ("leave", "Leave it".into(), "expedition")],
+        "merchant" => [
+            (
+                "buy",
+                format!("Buy 2 potions · {} gold", 20 + 2 * lvl),
+                "potion",
+            ),
+            ("leave", "Move on".into(), "expedition"),
+        ],
+        "shrine" => [
+            (
+                "offer",
+                format!("Leave {} gold: +20 Vigor", 10 + 3 * lvl),
+                "vigor",
+            ),
+            ("pray", "Pray: heal 40%".into(), "hp"),
+        ],
+        "traveller" => [
+            (
+                "walk",
+                format!("Walk him back: +{} XP", 40 + 15 * lvl),
+                "power",
+            ),
+            (
+                "purse",
+                format!("Take his thanks: +{} gold", 15 + 6 * lvl),
+                "gold",
+            ),
+        ],
+        _ => [
+            ("dig", "Dig it out: it'll hurt".into(), "pack"),
+            ("leave", "Leave it".into(), "expedition"),
+        ],
     }
 }
 
 fn encounter_block(s: &mut Screen, p: &Player, ids: &Ids) {
-    let Some(ev) = p.event.as_deref().and_then(|id| ENCOUNTERS.iter().find(|x| x.id == id)) else { return };
+    let Some(ev) = p
+        .event
+        .as_deref()
+        .and_then(|id| ENCOUNTERS.iter().find(|x| x.id == id))
+    else {
+        return;
+    };
     s.gap();
     s.text(format!("{} **{}**\n{}", e("event"), ev.title, ev.text));
     let [a, b] = encounter_options(p, ev.id);
-    s.buttons(vec![Btn::new(ids.act("hunt", "event", a.0), a.1).emoji(a.2).primary(), Btn::new(ids.act("hunt", "event", b.0), b.1).emoji(b.2)]);
+    s.buttons(vec![
+        Btn::new(ids.act("hunt", "event", a.0), a.1)
+            .emoji(a.2)
+            .primary(),
+        Btn::new(ids.act("hunt", "event", b.0), b.1).emoji(b.2),
+    ]);
 }
 
 fn resolve_encounter(g: &mut Game, choice: &str) -> Result<Option<String>> {
-    let Some(ev) = g.p.event.clone() else { return Ok(None) };
+    let Some(ev) = g.p.event.clone() else {
+        return Ok(None);
+    };
     let lvl = g.p.level as i64;
     g.set_event(None)?;
     let said = match (ev.as_str(), choice) {
@@ -2124,7 +3461,8 @@ fn resolve_encounter(g: &mut Game, choice: &str) -> Result<Option<String>> {
             if g.p.gold >= cost {
                 g.gold(-cost, "shrine")?;
                 g.vigor(20.0)?;
-                "The flowers stir. You feel rested in a way sleep doesn't give you: +20 Vigor.".into()
+                "The flowers stir. You feel rested in a way sleep doesn't give you: +20 Vigor."
+                    .into()
             } else {
                 "Your purse is too light. You leave a bow instead.".into()
             }
@@ -2150,7 +3488,10 @@ fn resolve_encounter(g: &mut Game, choice: &str) -> Result<Option<String>> {
             let (mat, _) = *rng.pick(region.drops);
             g.item(mat, 3, "a buried cache")?;
             g.gold(20 + 5 * lvl, "a buried cache")?;
-            let mut found = format!("You tear your hands on the roots. Inside: {}, and some old coins.", data::count(mat, 3));
+            let mut found = format!(
+                "You tear your hands on the roots. Inside: {}, and some old coins.",
+                data::count(mat, 3)
+            );
             if rng.chance(0.35) {
                 g.item(region.rare.0, 1, "a buried cache")?;
                 found.push_str(&format!(" And {}.", data::count(region.rare.0, 1)));
@@ -2181,10 +3522,26 @@ pub enum Tut {
 
 impl Tut {
     pub const ALL: i64 = 127;
-    const ORDER: [Tut; 7] = [Tut::Welcome, Tut::Expedition, Tut::Hunt, Tut::Collect, Tut::Forge, Tut::Saga, Tut::Labyrinth];
+    const ORDER: [Tut; 7] = [
+        Tut::Welcome,
+        Tut::Expedition,
+        Tut::Hunt,
+        Tut::Collect,
+        Tut::Forge,
+        Tut::Saga,
+        Tut::Labyrinth,
+    ];
 
     /// (what, why, how, screen to open, button)
-    fn text(self) -> (&'static str, &'static str, &'static str, &'static str, &'static str) {
+    fn text(
+        self,
+    ) -> (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+    ) {
         match self {
             Tut::Welcome => (
                 "How this works",
@@ -2267,45 +3624,76 @@ fn tutorial_block(s: &mut Screen, p: &Player, ids: &Ids) {
     if p.tutorial >= Tut::ALL {
         return;
     }
-    let Some(step) = Tut::ORDER.into_iter().find(|t| !p.tutorial_has(*t)) else { return };
+    let Some(step) = Tut::ORDER.into_iter().find(|t| !p.tutorial_has(*t)) else {
+        return;
+    };
     let done = Tut::ORDER.iter().filter(|t| p.tutorial_has(**t)).count();
     let (what, why, how, screen, button) = step.text();
     let head = format!("-# Getting started · {} of {}", done, Tut::ORDER.len() - 1);
     if matches!(step, Tut::Welcome) {
         s.text(format!("{head}\n### {} {what}\n{why}", e("help")));
-        s.section(format!("-# {how} Rather find your own way? Skip it from Help."), Btn::new(ids.act("tut", "ok", ""), button).emoji("check").primary());
+        s.section(
+            format!("-# {how} Rather find your own way? Skip it from Help."),
+            Btn::new(ids.act("tut", "ok", ""), button)
+                .emoji("check")
+                .primary(),
+        );
     } else {
-        s.section(format!("{head}\n{} **{what}**\n{why}\n-# How: {how}", e("help")), Btn::new(ids.go(screen), button).emoji("help"));
+        s.section(
+            format!("{head}\n{} **{what}**\n{why}\n-# How: {how}", e("help")),
+            Btn::new(ids.go(screen), button).emoji("help"),
+        );
     }
 }
 
 /// Raise a piece's rarity (adds a trait) or reforge its traits, with loose threads.
 fn refine(g: &mut Game, gear_id: i64, reforge: bool) -> Result<Option<String>> {
-    let Some(row) = g.p.gear.iter().find(|x| x.id == gear_id).cloned() else { return Ok(None) };
+    let Some(row) = g.p.gear.iter().find(|x| x.id == gear_id).cloned() else {
+        return Ok(None);
+    };
     let mut rng = crate::engine::Rng::new(seed(&g.p, 97));
     if reforge {
         if row.rarity == data::Rarity::Common {
-            return Ok(Some("Common gear has no traits to reforge. Refine it first.".into()));
+            return Ok(Some(
+                "Common gear has no traits to reforge. Refine it first.".into(),
+            ));
         }
         let (threads, gold) = data::reforge_cost(row.rarity, g.p.level);
         if g.p.have("thread") < threads || g.p.gold < gold {
-            return Ok(Some(format!("Reforging needs {} and {gold} gold.", data::count("thread", threads))));
+            return Ok(Some(format!(
+                "Reforging needs {} and {gold} gold.",
+                data::count("thread", threads)
+            )));
         }
         g.item("thread", -threads, "reforged")?;
         g.gold(-gold, "reforged")?;
-        let traits = crate::engine::loot::roll_traits(row.gear, row.rarity.index() as usize, &mut rng);
+        let traits =
+            crate::engine::loot::roll_traits(row.gear, row.rarity.index() as usize, &mut rng);
         g.set_piece(gear_id, row.rarity, traits.clone())?;
         g.bump()?;
-        let t: Vec<String> = traits.iter().map(|(t, v)| format!("{} ({})", t.name(), t.describe(*v))).collect();
-        return Ok(Some(format!("Reforged the {}: {}.", row.gear.name, t.join(", "))));
+        let t: Vec<String> = traits
+            .iter()
+            .map(|(t, v)| format!("{} ({})", t.name(), t.describe(*v)))
+            .collect();
+        return Ok(Some(format!(
+            "Reforged the {}: {}.",
+            row.gear.name,
+            t.join(", ")
+        )));
     }
     if row.rarity == data::Rarity::Epic {
-        return Ok(Some("That's as fine as Midgard's forge can make it.".into()));
+        return Ok(Some(
+            "That's as fine as Midgard's forge can make it.".into(),
+        ));
     }
     let to = data::Rarity::from_index(row.rarity.index() + 1);
     let (threads, gold) = data::refine_cost(to, g.p.level);
     if g.p.have("thread") < threads || g.p.gold < gold {
-        return Ok(Some(format!("Refining to {} needs {} and {gold} gold.", to.name(), data::count("thread", threads))));
+        return Ok(Some(format!(
+            "Refining to {} needs {} and {gold} gold.",
+            to.name(),
+            data::count("thread", threads)
+        )));
     }
     g.item("thread", -threads, "refined")?;
     g.gold(-gold, "refined")?;
@@ -2318,7 +3706,15 @@ fn refine(g: &mut Game, gear_id: i64, reforge: bool) -> Result<Option<String>> {
     }
     g.set_piece(gear_id, to, traits)?;
     g.bump()?;
-    Ok(Some(format!("The {} is now **{}**{}.", row.gear.name, to.name(), extra.first().map(|(t, v)| format!(", and {} ({})", t.name(), t.describe(*v))).unwrap_or_default())))
+    Ok(Some(format!(
+        "The {} is now **{}**{}.",
+        row.gear.name,
+        to.name(),
+        extra
+            .first()
+            .map(|(t, v)| format!(", and {} ({})", t.name(), t.describe(*v)))
+            .unwrap_or_default()
+    )))
 }
 
 fn rarity_tag(r: data::Rarity) -> String {
@@ -2326,16 +3722,51 @@ fn rarity_tag(r: data::Rarity) -> String {
 }
 
 fn hero(p: &Player) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
-    title(&mut s, p.main().id(), &p.name, &format!("{}Level {} · sworn to {}", p.title.as_deref().map(|t| format!("{t} · ")).unwrap_or_default(), p.level, p.main().name()));
+    title(
+        &mut s,
+        p.main().id(),
+        &p.name,
+        &format!(
+            "{}Level {} · sworn to {}",
+            p.title
+                .as_deref()
+                .map(|t| format!("{t} · "))
+                .unwrap_or_default(),
+            p.level,
+            p.main().name()
+        ),
+    );
     let (max, atk) = p.hero().stats();
     let m = p.mods();
     let gear = p.power() - data::level_power(p.level);
     let mut lines = vec![
-        format!("{} **{} Power**: {} from level {}, {} from gear", e("power"), p.power(), data::level_power(p.level), p.level, gear),
-        format!("{} {} HP  ·  {} attack  ·  {}% critical hits", e("hp"), max, atk, 10 + (m.crit * 100.0).round() as i64),
-        format!("{} {} / {} XP to level {}", e("saga"), thousands(p.xp), thousands(p.xp_needed()), p.level + 1),
+        format!(
+            "{} **{} Power**: {} from level {}, {} from gear",
+            e("power"),
+            p.power(),
+            data::level_power(p.level),
+            p.level,
+            gear
+        ),
+        format!(
+            "{} {} HP  ·  {} attack  ·  {}% critical hits",
+            e("hp"),
+            max,
+            atk,
+            10 + (m.crit * 100.0).round() as i64
+        ),
+        format!(
+            "{} {} / {} XP to level {}",
+            e("saga"),
+            thousands(p.xp),
+            thousands(p.xp_needed()),
+            p.level + 1
+        ),
     ];
     let mut extras = Vec::new();
     if m.damage > 0.0 {
@@ -2362,12 +3793,22 @@ fn hero(p: &Player) -> Screen {
     for slot in data::SLOTS {
         match p.equipped(slot) {
             Some(g) => {
-                wear.push(format!("{} **{}** · {} · +{} Power", e(slot_emoji(slot)), g.label(), rarity_tag(g.rarity), g.power()));
+                wear.push(format!(
+                    "{} **{}** · {} · +{} Power",
+                    e(slot_emoji(slot)),
+                    g.label(),
+                    rarity_tag(g.rarity),
+                    g.power()
+                ));
                 if !g.traits.is_empty() {
                     wear.push(format!("-# {}", g.traits_text()));
                 }
             }
-            None => wear.push(format!("{} {}: nothing yet", e(slot_emoji(slot)), slot.name())),
+            None => wear.push(format!(
+                "{} {}: nothing yet",
+                e(slot_emoji(slot)),
+                slot.name()
+            )),
         }
     }
     s.text(wear.join("\n"));
@@ -2381,41 +3822,109 @@ fn hero(p: &Player) -> Screen {
 }
 
 fn skagi(p: &Player, w: &World) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     title(&mut s, "temple", "Skagi", "The village on the Grey Shore");
     // The forge: what's ready to make.
     let ready = data::GEAR.iter().filter(|g| {
-        g.level <= p.level && (!g.after_boss || p.boss_won) && p.gold >= g.gold && g.cost.iter().all(|(id, n)| p.have(id) >= *n) && p.equipped(g.slot).map(|x| x.power()).unwrap_or(0) < data::gear_power(g, 0)
+        g.level <= p.level
+            && (!g.after_boss || p.boss_won)
+            && p.gold >= g.gold
+            && g.cost.iter().all(|(id, n)| p.have(id) >= *n)
+            && p.equipped(g.slot).map(|x| x.power()).unwrap_or(0) < data::gear_power(g, 0)
     });
     let n = ready.count();
     s.section(
-        format!("{} **Forge**\n-# {}{}", e("forge"), if n > 0 { format!("{n} upgrade{} ready to forge", if n == 1 { "" } else { "s" }) } else { "Gear, supplies, and refining with loose threads".into() }, if p.have("thread") > 0 { format!(" · {} loose threads", p.have("thread")) } else { String::new() }),
-        Btn::new(ids.go("forge"), "Forge").emoji("forge").then_primary(n > 0),
+        format!(
+            "{} **Forge**\n-# {}{}",
+            e("forge"),
+            if n > 0 {
+                format!(
+                    "{n} upgrade{} ready to forge",
+                    if n == 1 { "" } else { "s" }
+                )
+            } else {
+                "Gear, supplies, and refining with loose threads".into()
+            },
+            if p.have("thread") > 0 {
+                format!(" · {} loose threads", p.have("thread"))
+            } else {
+                String::new()
+            }
+        ),
+        Btn::new(ids.go("forge"), "Forge")
+            .emoji("forge")
+            .then_primary(n > 0),
     );
     if w.modules.market {
         s.section(format!("{} **Market**\n-# Three pieces of gear picked for you, and supplies. New stock every day.", e("market")), Btn::new(ids.go("market"), "Market").emoji("market"));
     }
     if w.modules.quests {
-        let ready = quests::SIDE.iter().filter(|q| side_step(p, q).is_some_and(|(st, pr)| pr >= q.steps[st].goal.target())).count();
-        let open = quests::SIDE.iter().filter(|q| side_step(p, q).is_some()).count();
+        let ready = quests::SIDE
+            .iter()
+            .filter(|q| side_step(p, q).is_some_and(|(st, pr)| pr >= q.steps[st].goal.target()))
+            .count();
+        let open = quests::SIDE
+            .iter()
+            .filter(|q| side_step(p, q).is_some())
+            .count();
         s.section(
-            format!("{} **Townsfolk**\n-# {open} side quest{} open{}", e("quest"), if open == 1 { "" } else { "s" }, if ready > 0 { format!(" · {ready} ready to hand in") } else { String::new() }),
-            Btn::new(ids.go("quests"), "Quests").emoji("quest").then_primary(ready > 0),
+            format!(
+                "{} **Townsfolk**\n-# {open} side quest{} open{}",
+                e("quest"),
+                if open == 1 { "" } else { "s" },
+                if ready > 0 {
+                    format!(" · {ready} ready to hand in")
+                } else {
+                    String::new()
+                }
+            ),
+            Btn::new(ids.go("quests"), "Quests")
+                .emoji("quest")
+                .then_primary(ready > 0),
         );
     }
-    s.section(format!("{} **Temple**\n-# This week's offering {}% · altars and bonds", e("temple"), w.pct()), Btn::new(ids.go("temple"), "Temple").emoji("temple"));
+    s.section(
+        format!(
+            "{} **Temple**\n-# This week's offering {}% · altars and bonds",
+            e("temple"),
+            w.pct()
+        ),
+        Btn::new(ids.go("temple"), "Temple").emoji("temple"),
+    );
     let bs = todays_bounties(p);
     let done = p.bounty.iter().filter(|b| b.1).count();
-    let claim = bs.iter().enumerate().filter(|(i, b)| !p.bounty[*i].1 && p.bounty[*i].0 >= b.goal.target()).count();
+    let claim = bs
+        .iter()
+        .enumerate()
+        .filter(|(i, b)| !p.bounty[*i].1 && p.bounty[*i].0 >= b.goal.target())
+        .count();
     if w.modules.bounties {
-    s.section(
-        format!("{} **Bounty board**\n-# {done} of 3 done today{}", e("bounty"), if claim > 0 { format!(" · {claim} ready to claim") } else { String::new() }),
-        Btn::new(ids.go("bounties"), "Bounties").emoji("bounty").then_primary(claim > 0),
-    );
+        s.section(
+            format!(
+                "{} **Bounty board**\n-# {done} of 3 done today{}",
+                e("bounty"),
+                if claim > 0 {
+                    format!(" · {claim} ready to claim")
+                } else {
+                    String::new()
+                }
+            ),
+            Btn::new(ids.go("bounties"), "Bounties")
+                .emoji("bounty")
+                .then_primary(claim > 0),
+        );
     }
     s.section(
-        format!("{} **Goals**\n-# The Barrow King needs {} Power, you have {}", e("goals"), data::BOSS_POWER, p.power()),
+        format!(
+            "{} **Goals**\n-# The Barrow King needs {} Power, you have {}",
+            e("goals"),
+            data::BOSS_POWER,
+            p.power()
+        ),
         Btn::new(ids.go("goals"), "Goals").emoji("goals"),
     );
     s.buttons(vec![back(&ids)]);
@@ -2430,7 +3939,9 @@ fn start_raid(g: &mut Game) -> Result<Option<String>> {
     if !store::modules(g.p.guild).raids {
         return Ok(None);
     }
-    let Some(m) = g.p.clan.clone() else { return Ok(None) };
+    let Some(m) = g.p.clan.clone() else {
+        return Ok(None);
+    };
     if !m.leader {
         return Ok(Some("Only the guild's leader starts a raid.".into()));
     }
@@ -2440,17 +3951,36 @@ fn start_raid(g: &mut Game) -> Result<Option<String>> {
         return Ok(Some("A raid is already on.".into()));
     }
     if m.treasury < data::RAID_COST {
-        return Ok(Some(format!("Starting a raid takes {} from the treasury.", thousands(data::RAID_COST))));
+        return Ok(Some(format!(
+            "Starting a raid takes {} from the treasury.",
+            thousands(data::RAID_COST)
+        )));
     }
     let members = crate::guild::members(&g.tx, g.p.guild, m.id, g.p.week())?;
     let avg: i64 = members.iter().map(|x| x.level).sum::<i64>() / members.len().max(1) as i64;
     let power = (60 + avg * 16).max(120);
     let hp = data::RAID_HP_PER_MEMBER * (members.len() as i64).max(3);
-    g.tx.execute("UPDATE rpg_clans SET treasury = treasury - ?2 WHERE id = ?1", bot_core::rusqlite::params![m.id, data::RAID_COST])?;
-    crate::shared::spawn(&g.tx, g.p.guild, "raid", m.id, data::RAID_BOSS, power, hp, data::RAID_HOURS)?;
+    g.tx.execute(
+        "UPDATE rpg_clans SET treasury = treasury - ?2 WHERE id = ?1",
+        bot_core::rusqlite::params![m.id, data::RAID_COST],
+    )?;
+    crate::shared::spawn(
+        &g.tx,
+        g.p.guild,
+        "raid",
+        m.id,
+        data::RAID_BOSS,
+        power,
+        hp,
+        data::RAID_HOURS,
+    )?;
     g.p.clan = crate::guild::membership(&g.tx, g.p.guild, g.p.user)?;
     g.bump()?;
-    Ok(Some(format!("Fafnir stirs. Your guild has {} hours, {} attempts each a day.", data::RAID_HOURS, data::RAID_ATTEMPTS)))
+    Ok(Some(format!(
+        "Fafnir stirs. Your guild has {} hours, {} attempts each a day.",
+        data::RAID_HOURS,
+        data::RAID_ATTEMPTS
+    )))
 }
 
 /// A side quest's current step, if the line is open and not finished.
@@ -2458,7 +3988,12 @@ fn side_step(p: &Player, q: &quests::SideQuest) -> Option<(usize, i64)> {
     if p.level < q.level {
         return None;
     }
-    let (step, progress) = p.side.iter().find(|x| x.0 == q.id).map(|x| (x.1, x.2)).unwrap_or((0, 0));
+    let (step, progress) = p
+        .side
+        .iter()
+        .find(|x| x.0 == q.id)
+        .map(|x| (x.1, x.2))
+        .unwrap_or((0, 0));
     (step < q.steps.len()).then_some((step, progress))
 }
 
@@ -2467,7 +4002,9 @@ fn count_side(g: &mut Game, ev: quests::Event) -> Result<()> {
         return Ok(());
     }
     for q in quests::SIDE {
-        let Some((step, progress)) = side_step(&g.p, q) else { continue };
+        let Some((step, progress)) = side_step(&g.p, q) else {
+            continue;
+        };
         let goal = q.steps[step].goal;
         let n = goal.counts(ev);
         if n > 0 && progress < goal.target() {
@@ -2478,8 +4015,12 @@ fn count_side(g: &mut Game, ev: quests::Event) -> Result<()> {
 }
 
 fn claim_side(g: &mut Game, id: &str) -> Result<Option<String>> {
-    let Some(q) = quests::side(id) else { return Ok(None) };
-    let Some((step, progress)) = side_step(&g.p, q) else { return Ok(None) };
+    let Some(q) = quests::side(id) else {
+        return Ok(None);
+    };
+    let Some((step, progress)) = side_step(&g.p, q) else {
+        return Ok(None);
+    };
     let st = q.steps[step];
     if progress < st.goal.target() {
         return Ok(Some("Not done yet.".into()));
@@ -2491,23 +4032,49 @@ fn claim_side(g: &mut Game, id: &str) -> Result<Option<String>> {
     Ok(Some(format!(
         "{} {}{}",
         reward_line(&st.reward, g.p.main()),
-        if done { format!("\n**{}** is done. {} thanks you.", q.title, q.npc.split(',').next().unwrap_or(q.npc)) } else { String::new() },
+        if done {
+            format!(
+                "\n**{}** is done. {} thanks you.",
+                q.title,
+                q.npc.split(',').next().unwrap_or(q.npc)
+            )
+        } else {
+            String::new()
+        },
         ""
     )))
 }
 
 fn side_screen(p: &Player) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
-    title(&mut s, "quest", "Skagi's townsfolk", "Side quests: no choices, just good work and good pay");
+    title(
+        &mut s,
+        "quest",
+        "Skagi's townsfolk",
+        "Side quests: no choices, just good work and good pay",
+    );
     let mut any = false;
     for q in quests::SIDE {
         if p.level < q.level {
-            s.text(format!("-# {} {}: opens at level {}", e("lock"), q.npc, q.level));
+            s.text(format!(
+                "-# {} {}: opens at level {}",
+                e("lock"),
+                q.npc,
+                q.level
+            ));
             continue;
         }
         let Some((step, progress)) = side_step(p, q) else {
-            s.text(format!("-# {} **{}** · {} · done", e("check"), q.title, q.npc));
+            s.text(format!(
+                "-# {} **{}** · {} · done",
+                e("check"),
+                q.title,
+                q.npc
+            ));
             continue;
         };
         any = true;
@@ -2522,15 +4089,28 @@ fn side_screen(p: &Player) -> Screen {
             q.steps.len(),
             st.text,
             st.goal.describe(),
-            if target > 1 { format!(" · {} / {target}", progress.min(target)) } else { String::new() },
+            if target > 1 {
+                format!(" · {} / {target}", progress.min(target))
+            } else {
+                String::new()
+            },
             reward_line(&st.reward, p.main())
         );
-        s.section(line, Btn::new(ids.act("quests", "claim", q.id), "Claim").emoji("quest").disabled(progress < target).then_primary(progress >= target));
+        s.section(
+            line,
+            Btn::new(ids.act("quests", "claim", q.id), "Claim")
+                .emoji("quest")
+                .disabled(progress < target)
+                .then_primary(progress >= target),
+        );
     }
     if !any {
         s.text("Nobody needs you right now. Come back as you grow.");
     }
-    s.buttons(vec![back(&ids), Btn::new(ids.go("skagi"), "Skagi").emoji("temple")]);
+    s.buttons(vec![
+        back(&ids),
+        Btn::new(ids.go("skagi"), "Skagi").emoji("temple"),
+    ]);
     s
 }
 
@@ -2543,14 +4123,27 @@ fn map_spec(g: &Game) -> Result<crate::map::Spec> {
             open |= 1 << i;
         }
     }
-    let expedition = p.expedition.as_ref().and_then(|x| data::REGIONS.iter().position(|r| r.id == x.plan.region)).map(|i| i as u8 + 1).unwrap_or(0);
-    let titan = store::modules(p.guild).titans && crate::shared::active(&g.tx, p.guild, "titan", 0)?.is_some_and(|t| !t.over(p.now));
-    Ok(crate::map::Spec { open, expedition, titan })
+    let expedition = p
+        .expedition
+        .as_ref()
+        .and_then(|x| data::REGIONS.iter().position(|r| r.id == x.plan.region))
+        .map(|i| i as u8 + 1)
+        .unwrap_or(0);
+    let titan = store::modules(p.guild).titans
+        && crate::shared::active(&g.tx, p.guild, "titan", 0)?.is_some_and(|t| !t.over(p.now));
+    Ok(crate::map::Spec {
+        open,
+        expedition,
+        titan,
+    })
 }
 
 fn map_screen(ctx: &Ctx, g: &Game, w: &World) -> Result<Screen> {
     let p = &g.p;
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     let spec = map_spec(g)?;
     s.banner = Some(spec.url(ctx));
@@ -2558,11 +4151,24 @@ fn map_screen(ctx: &Ctx, g: &Game, w: &World) -> Result<Screen> {
     for r in data::REGIONS {
         let open = p.power() >= r.power || r.id == "shore";
         s.section(
-            format!("{} **{}**\n-# {}{}", e(r.id), r.name, r.blurb, if open { String::new() } else { format!(" · {} needs {} Power", e("lock"), r.power) }),
+            format!(
+                "{} **{}**\n-# {}{}",
+                e(r.id),
+                r.name,
+                r.blurb,
+                if open {
+                    String::new()
+                } else {
+                    format!(" · {} needs {} Power", e("lock"), r.power)
+                }
+            ),
             Btn::new(ids.go(&format!("region_{}", r.id)), "Go").emoji(r.id),
         );
     }
-    let mut row = vec![back(&ids), Btn::new(ids.go("skagi"), "Skagi").emoji("temple")];
+    let mut row = vec![
+        back(&ids),
+        Btn::new(ids.go("skagi"), "Skagi").emoji("temple"),
+    ];
     if w.modules.labyrinth {
         row.push(Btn::new(ids.go("lab"), "Labyrinth").emoji("labyrinth"));
     }
@@ -2570,7 +4176,11 @@ fn map_screen(ctx: &Ctx, g: &Game, w: &World) -> Result<Screen> {
         row.push(Btn::new(ids.go("dungeons"), "Dungeons").emoji("dungeon"));
     }
     if spec.titan {
-        row.push(Btn::new(ids.go("titan"), "The Titan").emoji("boss").danger());
+        row.push(
+            Btn::new(ids.go("titan"), "The Titan")
+                .emoji("boss")
+                .danger(),
+        );
     }
     s.buttons(row);
     Ok(s)
@@ -2578,40 +4188,104 @@ fn map_screen(ctx: &Ctx, g: &Game, w: &World) -> Result<Screen> {
 
 fn region_screen(g: &Game, w: &World, id: &str) -> Result<Screen> {
     let p = &g.p;
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
-    let Some(r) = data::region(id) else { return Ok(hub_fallback(p)) };
-    title(&mut s, r.id, r.name, &format!("Needs {} Power on Normal · {} on Hard", r.power, r.power * 2));
+    let Some(r) = data::region(id) else {
+        return Ok(hub_fallback(p));
+    };
+    title(
+        &mut s,
+        r.id,
+        r.name,
+        &format!(
+            "Needs {} Power on Normal · {} on Hard",
+            r.power,
+            r.power * 2
+        ),
+    );
     s.text(r.blurb);
-    let mons: Vec<&str> = r.monsters.iter().filter_map(|m| data::monster(m)).map(|m| m.name).collect();
+    let mons: Vec<&str> = r
+        .monsters
+        .iter()
+        .filter_map(|m| data::monster(m))
+        .map(|m| m.name)
+        .collect();
     let mut lines = vec![
         format!("{} **Foes:** {}", e("hunt"), mons.join(", ")),
-        format!("{} **Drops:** {}, and now and then {}", e("pack"), r.drops.iter().map(|(i, _)| data::item(i).map(|x| x.plural).unwrap_or(i)).collect::<Vec<_>>().join(", "), data::item(r.rare.0).map(|x| x.name).unwrap_or("")),
+        format!(
+            "{} **Drops:** {}, and now and then {}",
+            e("pack"),
+            r.drops
+                .iter()
+                .map(|(i, _)| data::item(i).map(|x| x.plural).unwrap_or(i))
+                .collect::<Vec<_>>()
+                .join(", "),
+            data::item(r.rare.0).map(|x| x.name).unwrap_or("")
+        ),
     ];
     if w.modules.elites
         && let Some(el) = data::elite(r.id)
     {
-        lines.push(format!("{} **Elite:** {} walks here, rarely", e("elite"), el.name));
+        lines.push(format!(
+            "{} **Elite:** {} walks here, rarely",
+            e("elite"),
+            el.name
+        ));
     }
     if r.intel > 0.05 {
-        lines.push(format!("{} Expeditions here scout the Barrow King", e("intel")));
+        lines.push(format!(
+            "{} Expeditions here scout the Barrow King",
+            e("intel")
+        ));
     }
     s.text(lines.join("\n"));
-    let mut b = vec![Btn::new(ids.go("map"), "← Map"), Btn::new(ids.act("hunt", "start", r.id), "Hunt here").emoji("hunt").primary().disabled(p.fight.is_some() || p.hp() * 10 < p.max_hp() * 3)];
-    b.push(Btn::new(ids.act("exp", "plan", r.id), "Expedition here").emoji("expedition").disabled(p.expedition.is_some()));
+    let mut b = vec![
+        Btn::new(ids.go("map"), "← Map"),
+        Btn::new(ids.act("hunt", "start", r.id), "Hunt here")
+            .emoji("hunt")
+            .primary()
+            .disabled(p.fight.is_some() || p.hp() * 10 < p.max_hp() * 3),
+    ];
+    b.push(
+        Btn::new(ids.act("exp", "plan", r.id), "Expedition here")
+            .emoji("expedition")
+            .disabled(p.expedition.is_some()),
+    );
     if w.modules.dungeons
         && let Some(d) = data::DUNGEONS.iter().find(|d| d.region == r.id)
     {
         let today = crate::dungeons::clears_today(g, d.id)?;
-        s.text(format!("{} **{}** · {}\n-# Opens at level {} · fights at {} Power{}", e("dungeon"), d.name, d.blurb, d.level, d.power, if today == 0 { " · chest waiting today" } else { " · cleared today" }));
-        b.push(Btn::new(ids.act("dungeon", "enter", d.id), "Enter the dungeon").emoji("dungeon").disabled(p.level < d.level || p.delve.is_some() || p.fight.is_some()));
+        s.text(format!(
+            "{} **{}** · {}\n-# Opens at level {} · fights at {} Power{}",
+            e("dungeon"),
+            d.name,
+            d.blurb,
+            d.level,
+            d.power,
+            if today == 0 {
+                " · chest waiting today"
+            } else {
+                " · cleared today"
+            }
+        ));
+        b.push(
+            Btn::new(ids.act("dungeon", "enter", d.id), "Enter the dungeon")
+                .emoji("dungeon")
+                .disabled(p.level < d.level || p.delve.is_some() || p.fight.is_some()),
+        );
     }
     s.buttons(b);
     Ok(s)
 }
 
 fn hub_fallback(p: &Player) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     s.text("That place isn't on the map.");
     s.buttons(vec![back(&ids)]);

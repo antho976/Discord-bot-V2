@@ -15,11 +15,20 @@ use crate::data::{self, God};
 #[derive(Debug, Clone, Copy)]
 pub enum Goal {
     /// Win hunts (in a region, against a monster).
-    Wins { region: Option<&'static str>, monster: Option<&'static str>, n: u32 },
+    Wins {
+        region: Option<&'static str>,
+        monster: Option<&'static str>,
+        n: u32,
+    },
     /// Collect expeditions (from a region).
-    Expeditions { region: Option<&'static str>, n: u32 },
+    Expeditions {
+        region: Option<&'static str>,
+        n: u32,
+    },
     /// Forge gear or make supplies.
-    Forge { n: u32 },
+    Forge {
+        n: u32,
+    },
     /// Know this many facts about the realm boss.
     Facts(u32),
     Level(u32),
@@ -37,7 +46,16 @@ pub enum Goal {
 impl Goal {
     /// Goals counted from what happens (the rest are read from the player).
     pub fn counted(&self) -> bool {
-        matches!(self, Goal::Wins { .. } | Goal::Expeditions { .. } | Goal::Forge { .. } | Goal::Give(_) | Goal::Floor(_) | Goal::Dungeon(_) | Goal::Shared(_))
+        matches!(
+            self,
+            Goal::Wins { .. }
+                | Goal::Expeditions { .. }
+                | Goal::Forge { .. }
+                | Goal::Give(_)
+                | Goal::Floor(_)
+                | Goal::Dungeon(_)
+                | Goal::Shared(_)
+        )
     }
     pub fn target(&self) -> i64 {
         match self {
@@ -49,27 +67,79 @@ impl Goal {
         }
     }
     pub fn describe(&self) -> String {
-        let region = |r: &Option<&str>| r.and_then(data::region).map(|r| format!(" in {}", r.name)).unwrap_or_default();
+        let region = |r: &Option<&str>| {
+            r.and_then(data::region)
+                .map(|r| format!(" in {}", r.name))
+                .unwrap_or_default()
+        };
         match self {
-            Goal::Wins { monster: Some(m), n, .. } => format!("Defeat {n} {}", data::monster(m).map(|m| plural(m.name)).unwrap_or_default()),
-            Goal::Wins { region: r, n, .. } => format!("Win {n} hunt{}{}", if *n == 1 { "" } else { "s" }, region(r)),
-            Goal::Expeditions { region: Some(r), n } => format!("Come back from {} expedition{} to {}", if *n == 1 { "an".to_string() } else { n.to_string() }, if *n == 1 { "" } else { "s" }, data::region(r).map(|x| x.name).unwrap_or("")),
-            Goal::Expeditions { n, .. } => format!("Come back from {} expedition{}", if *n == 1 { "an".to_string() } else { n.to_string() }, if *n == 1 { "" } else { "s" }),
-            Goal::Forge { n } => format!("Make {} thing{} at the forge", if *n == 1 { "one".to_string() } else { n.to_string() }, if *n == 1 { "" } else { "s" }),
+            Goal::Wins {
+                monster: Some(m),
+                n,
+                ..
+            } => format!(
+                "Defeat {n} {}",
+                data::monster(m).map(|m| plural(m.name)).unwrap_or_default()
+            ),
+            Goal::Wins { region: r, n, .. } => format!(
+                "Win {n} hunt{}{}",
+                if *n == 1 { "" } else { "s" },
+                region(r)
+            ),
+            Goal::Expeditions { region: Some(r), n } => format!(
+                "Come back from {} expedition{} to {}",
+                if *n == 1 {
+                    "an".to_string()
+                } else {
+                    n.to_string()
+                },
+                if *n == 1 { "" } else { "s" },
+                data::region(r).map(|x| x.name).unwrap_or("")
+            ),
+            Goal::Expeditions { n, .. } => format!(
+                "Come back from {} expedition{}",
+                if *n == 1 {
+                    "an".to_string()
+                } else {
+                    n.to_string()
+                },
+                if *n == 1 { "" } else { "s" }
+            ),
+            Goal::Forge { n } => format!(
+                "Make {} thing{} at the forge",
+                if *n == 1 {
+                    "one".to_string()
+                } else {
+                    n.to_string()
+                },
+                if *n == 1 { "" } else { "s" }
+            ),
             Goal::Facts(n) => format!("Learn {n} things about the Barrow King"),
             Goal::Level(n) => format!("Reach level {n}"),
             Goal::Boss => "Defeat the Barrow King".into(),
             Goal::Give(n) => format!("Give {n} tribute at the temple"),
             Goal::Floor(n) => format!("Clear floor {n} of the Labyrinth"),
-            Goal::Dungeon(Some(d)) => format!("Clear {}", data::dungeon(d).map(|x| x.name).unwrap_or("a dungeon")),
+            Goal::Dungeon(Some(d)) => format!(
+                "Clear {}",
+                data::dungeon(d).map(|x| x.name).unwrap_or("a dungeon")
+            ),
             Goal::Dungeon(None) => "Clear a dungeon".into(),
-            Goal::Shared(n) => format!("Make {n} attempt{} on a Titan or a guild raid", if *n == 1 { "" } else { "s" }),
+            Goal::Shared(n) => format!(
+                "Make {n} attempt{} on a Titan or a guild raid",
+                if *n == 1 { "" } else { "s" }
+            ),
         }
     }
 }
 
 fn plural(name: &str) -> String {
-    if name.ends_with('y') && !name.ends_with("ey") { format!("{}ies", &name[..name.len() - 1]) } else if name.ends_with('s') { name.into() } else { format!("{name}s") }
+    if name.ends_with('y') && !name.ends_with("ey") {
+        format!("{}ies", &name[..name.len() - 1])
+    } else if name.ends_with('s') {
+        name.into()
+    } else {
+        format!("{name}s")
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -107,7 +177,13 @@ pub struct Chapter {
     pub claim: &'static str,
 }
 
-pub const NO: Reward = Reward { gold: 0, xp: 0, items: &[], tribute: 0, title: None };
+pub const NO: Reward = Reward {
+    gold: 0,
+    xp: 0,
+    items: &[],
+    tribute: 0,
+    title: None,
+};
 
 /// The Loom's opening, Midgard's saga, and the Loom again. Later realms append theirs.
 pub const CHAPTERS: &[Chapter] = &[
@@ -123,7 +199,10 @@ pub const CHAPTERS: &[Chapter] = &[
         ]),
         goals: &[],
         choices: &[],
-        reward: Reward { items: &[("potion", 2)], ..NO },
+        reward: Reward {
+            items: &[("potion", 2)],
+            ..NO
+        },
         claim: "Touch the Loom",
     },
     Chapter {
@@ -132,9 +211,17 @@ pub const CHAPTERS: &[Chapter] = &[
         place: "Grey Shore, Midgard",
         text: "You wake on the Grey Shore, centuries ago, in a life that isn't yours. A fisherman's widow drags you out of the surf.\n\n\"The nixies sing louder every night since the King under the mound woke,\" she says. \"Make yourself useful.\"",
         patron: None,
-        goals: &[Goal::Wins { region: Some("shore"), monster: None, n: 3 }],
+        goals: &[Goal::Wins {
+            region: Some("shore"),
+            monster: None,
+            n: 3,
+        }],
         choices: &[],
-        reward: Reward { gold: 120, xp: 150, ..NO },
+        reward: Reward {
+            gold: 120,
+            xp: 150,
+            ..NO
+        },
         claim: "Walk to the village",
     },
     Chapter {
@@ -145,7 +232,11 @@ pub const CHAPTERS: &[Chapter] = &[
         patron: None,
         goals: &[Goal::Expeditions { region: None, n: 1 }],
         choices: &[],
-        reward: Reward { xp: 120, items: &[("rations", 3)], ..NO },
+        reward: Reward {
+            xp: 120,
+            items: &[("rations", 3)],
+            ..NO
+        },
         claim: "Bring it to the longhouse",
     },
     Chapter {
@@ -154,21 +245,33 @@ pub const CHAPTERS: &[Chapter] = &[
         place: "Grey Shore",
         text: "One nixie sings a name over and over: *Hrolf. Hrolf. Hrolf.* The others go quiet when she does.\n\nShe's the one leading them.",
         patron: None,
-        goals: &[Goal::Wins { region: None, monster: Some("nixie"), n: 2 }],
+        goals: &[Goal::Wins {
+            region: None,
+            monster: Some("nixie"),
+            n: 2,
+        }],
         choices: &[
             Choice {
                 id: "spare",
                 label: "Spare her",
                 hint: "Sea amber, and she'll remember you",
                 after: "You lower your weapon. She sinks back into the grey water, and when the tide goes out there's amber on the rocks where she sat.",
-                reward: Reward { items: &[("amber", 4)], title: Some("Friend of Nixies"), ..NO },
+                reward: Reward {
+                    items: &[("amber", 4)],
+                    title: Some("Friend of Nixies"),
+                    ..NO
+                },
             },
             Choice {
                 id: "silence",
                 label: "Silence her",
                 hint: "Her hoard of drowned men's gold",
                 after: "The shore goes quiet. In her nest under the rocks: a drowned man's purse, and the rings of a dozen more.",
-                reward: Reward { gold: 220, title: Some("Siren-silencer"), ..NO },
+                reward: Reward {
+                    gold: 220,
+                    title: Some("Siren-silencer"),
+                    ..NO
+                },
             },
         ],
         reward: Reward { xp: 200, ..NO },
@@ -182,7 +285,11 @@ pub const CHAPTERS: &[Chapter] = &[
         patron: None,
         goals: &[Goal::Forge { n: 1 }],
         choices: &[],
-        reward: Reward { gold: 150, xp: 150, ..NO },
+        reward: Reward {
+            gold: 150,
+            xp: 150,
+            ..NO
+        },
         claim: "Show the jarl",
     },
     Chapter {
@@ -195,9 +302,16 @@ pub const CHAPTERS: &[Chapter] = &[
             "\"Watch where they lead you,\" Athena says. \"Animals run from what's wrong.\"",
             "\"They're running from the dead,\" Hades says. \"Follow them.\"",
         ]),
-        goals: &[Goal::Expeditions { region: Some("wolfwood"), n: 1 }],
+        goals: &[Goal::Expeditions {
+            region: Some("wolfwood"),
+            n: 1,
+        }],
         choices: &[],
-        reward: Reward { xp: 250, items: &[("pelt", 3)], ..NO },
+        reward: Reward {
+            xp: 250,
+            items: &[("pelt", 3)],
+            ..NO
+        },
         claim: "Follow the tracks",
     },
     Chapter {
@@ -206,21 +320,33 @@ pub const CHAPTERS: &[Chapter] = &[
         place: "Deep Wolfwood",
         text: "Something huge is killing the jarl's hunting wolves. When you find her, she's standing over a draugr she has torn apart, and she's bleeding.\n\nShe's been fighting the dead on her own.",
         patron: None,
-        goals: &[Goal::Wins { region: Some("wolfwood"), monster: None, n: 4 }],
+        goals: &[Goal::Wins {
+            region: Some("wolfwood"),
+            monster: None,
+            n: 4,
+        }],
         choices: &[
             Choice {
                 id: "hunt",
                 label: "Take her fangs",
                 hint: "Wolf fangs for the forge",
                 after: "It's a hard fight and a sad one. Her fangs are long as daggers.",
-                reward: Reward { items: &[("fang", 3)], title: Some("Wolf-bane"), ..NO },
+                reward: Reward {
+                    items: &[("fang", 3)],
+                    title: Some("Wolf-bane"),
+                    ..NO
+                },
             },
             Choice {
                 id: "offer",
                 label: "Leave her an offering",
                 hint: "Your patron notices",
                 after: "You leave her meat and back away. She eats, and watches you go. Somewhere above, your patron smiles.",
-                reward: Reward { tribute: 300, title: Some("Wolf-friend"), ..NO },
+                reward: Reward {
+                    tribute: 300,
+                    title: Some("Wolf-friend"),
+                    ..NO
+                },
             },
         ],
         reward: Reward { xp: 300, ..NO },
@@ -234,7 +360,11 @@ pub const CHAPTERS: &[Chapter] = &[
         patron: None,
         goals: &[Goal::Facts(2)],
         choices: &[],
-        reward: Reward { xp: 300, items: &[("potion", 2)], ..NO },
+        reward: Reward {
+            xp: 300,
+            items: &[("potion", 2)],
+            ..NO
+        },
         claim: "Tell Sigrun",
     },
     Chapter {
@@ -243,9 +373,18 @@ pub const CHAPTERS: &[Chapter] = &[
         place: "Barrow Fields",
         text: "At night the mounds open and Hrolf's warriors walk out, still in their mail. They're carrying something back inside each time.\n\nThinning their numbers now will make the King's hall emptier later.",
         patron: None,
-        goals: &[Goal::Wins { region: None, monster: Some("draugr"), n: 3 }],
+        goals: &[Goal::Wins {
+            region: None,
+            monster: Some("draugr"),
+            n: 3,
+        }],
         choices: &[],
-        reward: Reward { gold: 200, xp: 350, items: &[("frost", 1)], ..NO },
+        reward: Reward {
+            gold: 200,
+            xp: 350,
+            items: &[("frost", 1)],
+            ..NO
+        },
         claim: "Back to Skagi",
     },
     Chapter {
@@ -293,7 +432,11 @@ pub const CHAPTERS: &[Chapter] = &[
         patron: None,
         goals: &[Goal::Boss],
         choices: &[],
-        reward: Reward { gold: 300, title: Some("Mound-breaker"), ..NO },
+        reward: Reward {
+            gold: 300,
+            title: Some("Mound-breaker"),
+            ..NO
+        },
         claim: "Take the thread",
     },
     Chapter {
@@ -308,7 +451,11 @@ pub const CHAPTERS: &[Chapter] = &[
         ]),
         goals: &[],
         choices: &[],
-        reward: Reward { xp: 500, title: Some("Thread-finder"), ..NO },
+        reward: Reward {
+            xp: 500,
+            title: Some("Thread-finder"),
+            ..NO
+        },
         claim: "Wait for the next thread",
     },
 ];
@@ -330,8 +477,13 @@ pub fn goal_progress(goal: &Goal, counter: i64, level: u32, facts: usize, boss: 
 /// Something that happened, for the saga and the bounties to count.
 #[derive(Debug, Clone, Copy)]
 pub enum Event<'a> {
-    Win { region: &'a str, monster: &'a str },
-    Expedition { region: &'a str },
+    Win {
+        region: &'a str,
+        monster: &'a str,
+    },
+    Expedition {
+        region: &'a str,
+    },
     Forged,
     Gave(i64),
     /// A Labyrinth floor cleared.
@@ -346,10 +498,18 @@ impl Goal {
     /// How much this event moves the goal.
     pub fn counts(&self, ev: Event) -> i64 {
         match (self, ev) {
-            (Goal::Wins { region, monster, .. }, Event::Win { region: r, monster: m }) => {
-                i64::from(region.is_none_or(|x| x == r) && monster.is_none_or(|x| x == m))
+            (
+                Goal::Wins {
+                    region, monster, ..
+                },
+                Event::Win {
+                    region: r,
+                    monster: m,
+                },
+            ) => i64::from(region.is_none_or(|x| x == r) && monster.is_none_or(|x| x == m)),
+            (Goal::Expeditions { region, .. }, Event::Expedition { region: r }) => {
+                i64::from(region.is_none_or(|x| x == r))
             }
-            (Goal::Expeditions { region, .. }, Event::Expedition { region: r }) => i64::from(region.is_none_or(|x| x == r)),
             (Goal::Forge { .. }, Event::Forged) => 1,
             (Goal::Give(_), Event::Gave(n)) => n,
             (Goal::Floor(f), Event::Floor(at)) => i64::from(at >= *f),
@@ -381,11 +541,26 @@ pub fn bounties(user: u64, day: i64, level: u32, region: &'static data::Region) 
     let mut r = crate::engine::Rng::new(mix(user, day as u64));
     let monster = *r.pick(region.monsters);
     let pool = [
-        Goal::Wins { region: None, monster: None, n: 5 },
-        Goal::Wins { region: Some(region.id), monster: None, n: 4 },
-        Goal::Wins { region: None, monster: Some(monster), n: 2 },
+        Goal::Wins {
+            region: None,
+            monster: None,
+            n: 5,
+        },
+        Goal::Wins {
+            region: Some(region.id),
+            monster: None,
+            n: 4,
+        },
+        Goal::Wins {
+            region: None,
+            monster: Some(monster),
+            n: 2,
+        },
         Goal::Expeditions { region: None, n: 1 },
-        Goal::Expeditions { region: Some(region.id), n: 1 },
+        Goal::Expeditions {
+            region: Some(region.id),
+            n: 1,
+        },
         Goal::Forge { n: 1 },
         Goal::Give(200 + 20 * level as i64),
         Goal::Floor(3 + level / 3),
@@ -401,7 +576,11 @@ pub fn bounties(user: u64, day: i64, level: u32, region: &'static data::Region) 
     }
     picked
         .into_iter()
-        .map(|i| Bounty { goal: pool[i], gold: 30 + 8 * level as i64, xp: 60 + 25 * level as i64 })
+        .map(|i| Bounty {
+            goal: pool[i],
+            gold: 30 + 8 * level as i64,
+            xp: 60 + 25 * level as i64,
+        })
         .collect()
 }
 
@@ -427,7 +606,15 @@ mod tests {
     /// (gold 1:1, items at their altar value, tribute as itself).
     #[test]
     fn choices_are_sidegrades() {
-        let worth = |r: &Reward| r.gold + r.tribute + r.items.iter().map(|(id, n)| data::item(id).map(|i| i.tribute.max(10)).unwrap_or(10) * n).sum::<i64>() * 4;
+        let worth = |r: &Reward| {
+            r.gold
+                + r.tribute
+                + r.items
+                    .iter()
+                    .map(|(id, n)| data::item(id).map(|i| i.tribute.max(10)).unwrap_or(10) * n)
+                    .sum::<i64>()
+                    * 4
+        };
         for ch in CHAPTERS {
             if ch.choices.len() < 2 || ch.id == "volva" {
                 continue;
@@ -441,8 +628,16 @@ mod tests {
     /// Only some chapters end in a choice, and choices aren't back to back.
     #[test]
     fn choices_are_spaced_out() {
-        let with: Vec<usize> = CHAPTERS.iter().enumerate().filter(|(_, c)| !c.choices.is_empty()).map(|(i, _)| i).collect();
-        assert!(with.len() * 3 <= CHAPTERS.len(), "too many choices: {with:?}");
+        let with: Vec<usize> = CHAPTERS
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !c.choices.is_empty())
+            .map(|(i, _)| i)
+            .collect();
+        assert!(
+            with.len() * 3 <= CHAPTERS.len(),
+            "too many choices: {with:?}"
+        );
         for w in with.windows(2) {
             assert!(w[1] - w[0] >= 2, "choices back to back at {w:?}");
         }
@@ -455,7 +650,8 @@ mod tests {
         let b = bounties(1, 100, 5, r);
         assert_eq!(format!("{a:?}"), format!("{b:?}"));
         assert_eq!(a.len(), 3);
-        let kinds: std::collections::HashSet<_> = a.iter().map(|x| std::mem::discriminant(&x.goal)).collect();
+        let kinds: std::collections::HashSet<_> =
+            a.iter().map(|x| std::mem::discriminant(&x.goal)).collect();
         assert_eq!(kinds.len(), 3);
     }
 
@@ -463,9 +659,20 @@ mod tests {
     fn goals_reference_real_things() {
         for ch in CHAPTERS {
             for g in ch.goals {
-                if let Goal::Wins { region, monster, .. } = g {
-                    assert!(region.is_none_or(|r| data::region(r).is_some()), "{}", ch.id);
-                    assert!(monster.is_none_or(|m| data::monster(m).is_some()), "{}", ch.id);
+                if let Goal::Wins {
+                    region, monster, ..
+                } = g
+                {
+                    assert!(
+                        region.is_none_or(|r| data::region(r).is_some()),
+                        "{}",
+                        ch.id
+                    );
+                    assert!(
+                        monster.is_none_or(|m| data::monster(m).is_some()),
+                        "{}",
+                        ch.id
+                    );
                 }
                 assert!(!g.describe().is_empty());
             }
@@ -477,7 +684,6 @@ mod tests {
         }
     }
 }
-
 
 // ---- side quests: Skagi's townsfolk ----
 
@@ -504,9 +710,45 @@ pub const SIDE: &[SideQuest] = &[
         title: "Nets for Skagi",
         level: 1,
         steps: &[
-            SideStep { text: "\"The nets come back torn every morning. Something in the shallows.\"", goal: Goal::Wins { region: Some("shore"), monster: None, n: 4 }, reward: Reward { gold: 60, xp: 80, ..NO } },
-            SideStep { text: "\"Bring me herring and herbs from the shore. The village eats tonight.\"", goal: Goal::Expeditions { region: Some("shore"), n: 1 }, reward: Reward { xp: 120, items: &[("potion", 2)], ..NO } },
-            SideStep { text: "\"It's the serpents. Young ones, but they grow.\"", goal: Goal::Wins { region: None, monster: Some("serpent"), n: 3 }, reward: Reward { gold: 150, xp: 200, title: Some("Net-mender"), ..NO } },
+            SideStep {
+                text: "\"The nets come back torn every morning. Something in the shallows.\"",
+                goal: Goal::Wins {
+                    region: Some("shore"),
+                    monster: None,
+                    n: 4,
+                },
+                reward: Reward {
+                    gold: 60,
+                    xp: 80,
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"Bring me herring and herbs from the shore. The village eats tonight.\"",
+                goal: Goal::Expeditions {
+                    region: Some("shore"),
+                    n: 1,
+                },
+                reward: Reward {
+                    xp: 120,
+                    items: &[("potion", 2)],
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"It's the serpents. Young ones, but they grow.\"",
+                goal: Goal::Wins {
+                    region: None,
+                    monster: Some("serpent"),
+                    n: 3,
+                },
+                reward: Reward {
+                    gold: 150,
+                    xp: 200,
+                    title: Some("Net-mender"),
+                    ..NO
+                },
+            },
         ],
     },
     SideQuest {
@@ -515,9 +757,38 @@ pub const SIDE: &[SideQuest] = &[
         title: "Shield Drills",
         level: 3,
         steps: &[
-            SideStep { text: "\"Show me you can keep your feet. Ten fights, any ground.\"", goal: Goal::Wins { region: None, monster: None, n: 10 }, reward: Reward { gold: 100, xp: 200, ..NO } },
-            SideStep { text: "\"The Drowned Hall. Go in, come out. That's the drill.\"", goal: Goal::Dungeon(Some("drowned")), reward: Reward { xp: 300, items: &[("thread", 1)], ..NO } },
-            SideStep { text: "\"Now the deep. Fifth floor of the Labyrinth, past the horned thing.\"", goal: Goal::Floor(5), reward: Reward { gold: 250, xp: 400, title: Some("Shield-sworn"), ..NO } },
+            SideStep {
+                text: "\"Show me you can keep your feet. Ten fights, any ground.\"",
+                goal: Goal::Wins {
+                    region: None,
+                    monster: None,
+                    n: 10,
+                },
+                reward: Reward {
+                    gold: 100,
+                    xp: 200,
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"The Drowned Hall. Go in, come out. That's the drill.\"",
+                goal: Goal::Dungeon(Some("drowned")),
+                reward: Reward {
+                    xp: 300,
+                    items: &[("thread", 1)],
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"Now the deep. Fifth floor of the Labyrinth, past the horned thing.\"",
+                goal: Goal::Floor(5),
+                reward: Reward {
+                    gold: 250,
+                    xp: 400,
+                    title: Some("Shield-sworn"),
+                    ..NO
+                },
+            },
         ],
     },
     SideQuest {
@@ -526,9 +797,37 @@ pub const SIDE: &[SideQuest] = &[
         title: "Iron for the Wall",
         level: 5,
         steps: &[
-            SideStep { text: "\"Skagi needs a wall. Start with the forge: two things, anything.\"", goal: Goal::Forge { n: 2 }, reward: Reward { gold: 120, xp: 200, ..NO } },
-            SideStep { text: "\"The gods watch walls go up. Give at the temple, and they'll watch ours.\"", goal: Goal::Give(400), reward: Reward { xp: 300, tribute: 200, ..NO } },
-            SideStep { text: "\"Wolfwood timber for the gate. Bring it back yourself.\"", goal: Goal::Expeditions { region: Some("wolfwood"), n: 2 }, reward: Reward { gold: 300, xp: 400, title: Some("Wall-builder"), ..NO } },
+            SideStep {
+                text: "\"Skagi needs a wall. Start with the forge: two things, anything.\"",
+                goal: Goal::Forge { n: 2 },
+                reward: Reward {
+                    gold: 120,
+                    xp: 200,
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"The gods watch walls go up. Give at the temple, and they'll watch ours.\"",
+                goal: Goal::Give(400),
+                reward: Reward {
+                    xp: 300,
+                    tribute: 200,
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"Wolfwood timber for the gate. Bring it back yourself.\"",
+                goal: Goal::Expeditions {
+                    region: Some("wolfwood"),
+                    n: 2,
+                },
+                reward: Reward {
+                    gold: 300,
+                    xp: 400,
+                    title: Some("Wall-builder"),
+                    ..NO
+                },
+            },
         ],
     },
     SideQuest {
@@ -537,9 +836,42 @@ pub const SIDE: &[SideQuest] = &[
         title: "The Old Beasts",
         level: 8,
         steps: &[
-            SideStep { text: "\"Wolfwood's gone wrong. Thin the pack before the big ones come.\"", goal: Goal::Wins { region: Some("wolfwood"), monster: None, n: 8 }, reward: Reward { gold: 150, xp: 300, ..NO } },
-            SideStep { text: "\"Under the oldest pine there's a den. Fenrir's blood. Clear it.\"", goal: Goal::Dungeon(Some("den")), reward: Reward { xp: 500, items: &[("fang", 3)], ..NO } },
-            SideStep { text: "\"Old Grimtooth. He's taken three of my dogs. Bring him down, if you ever meet him.\"", goal: Goal::Wins { region: None, monster: Some("grimtooth"), n: 1 }, reward: Reward { gold: 500, xp: 600, title: Some("Hakon's Heir"), ..NO } },
+            SideStep {
+                text: "\"Wolfwood's gone wrong. Thin the pack before the big ones come.\"",
+                goal: Goal::Wins {
+                    region: Some("wolfwood"),
+                    monster: None,
+                    n: 8,
+                },
+                reward: Reward {
+                    gold: 150,
+                    xp: 300,
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"Under the oldest pine there's a den. Fenrir's blood. Clear it.\"",
+                goal: Goal::Dungeon(Some("den")),
+                reward: Reward {
+                    xp: 500,
+                    items: &[("fang", 3)],
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"Old Grimtooth. He's taken three of my dogs. Bring him down, if you ever meet him.\"",
+                goal: Goal::Wins {
+                    region: None,
+                    monster: Some("grimtooth"),
+                    n: 1,
+                },
+                reward: Reward {
+                    gold: 500,
+                    xp: 600,
+                    title: Some("Hakon's Heir"),
+                    ..NO
+                },
+            },
         ],
     },
     SideQuest {
@@ -548,9 +880,34 @@ pub const SIDE: &[SideQuest] = &[
         title: "Songs Worth Singing",
         level: 10,
         steps: &[
-            SideStep { text: "\"Nobody sings about safe people. Go and fight something enormous.\"", goal: Goal::Shared(2), reward: Reward { gold: 200, xp: 400, ..NO } },
-            SideStep { text: "\"Better. Now something deep. The eighth floor, at least.\"", goal: Goal::Floor(8), reward: Reward { xp: 600, items: &[("thread", 2)], ..NO } },
-            SideStep { text: "\"And the gods must hear it. A real offering this time.\"", goal: Goal::Give(1500), reward: Reward { gold: 400, xp: 800, title: Some("Sung of in Skagi"), ..NO } },
+            SideStep {
+                text: "\"Nobody sings about safe people. Go and fight something enormous.\"",
+                goal: Goal::Shared(2),
+                reward: Reward {
+                    gold: 200,
+                    xp: 400,
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"Better. Now something deep. The eighth floor, at least.\"",
+                goal: Goal::Floor(8),
+                reward: Reward {
+                    xp: 600,
+                    items: &[("thread", 2)],
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"And the gods must hear it. A real offering this time.\"",
+                goal: Goal::Give(1500),
+                reward: Reward {
+                    gold: 400,
+                    xp: 800,
+                    title: Some("Sung of in Skagi"),
+                    ..NO
+                },
+            },
         ],
     },
     SideQuest {
@@ -559,9 +916,34 @@ pub const SIDE: &[SideQuest] = &[
         title: "Echoes Below",
         level: 14,
         steps: &[
-            SideStep { text: "\"The Labyrinth hums. Go down and listen. The tenth floor.\"", goal: Goal::Floor(10), reward: Reward { gold: 300, xp: 800, ..NO } },
-            SideStep { text: "\"Hrolf hid something with his treasure. Clear his treasury.\"", goal: Goal::Dungeon(Some("treasury")), reward: Reward { xp: 900, items: &[("thread", 3)], ..NO } },
-            SideStep { text: "\"Now the twelfth. Someone walked down there before you, and left a trail of apple seeds.\"", goal: Goal::Floor(12), reward: Reward { gold: 600, xp: 1200, title: Some("Who Listens Below"), ..NO } },
+            SideStep {
+                text: "\"The Labyrinth hums. Go down and listen. The tenth floor.\"",
+                goal: Goal::Floor(10),
+                reward: Reward {
+                    gold: 300,
+                    xp: 800,
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"Hrolf hid something with his treasure. Clear his treasury.\"",
+                goal: Goal::Dungeon(Some("treasury")),
+                reward: Reward {
+                    xp: 900,
+                    items: &[("thread", 3)],
+                    ..NO
+                },
+            },
+            SideStep {
+                text: "\"Now the twelfth. Someone walked down there before you, and left a trail of apple seeds.\"",
+                goal: Goal::Floor(12),
+                reward: Reward {
+                    gold: 600,
+                    xp: 1200,
+                    title: Some("Who Listens Below"),
+                    ..NO
+                },
+            },
         ],
     },
 ];

@@ -5,8 +5,9 @@
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_model::channel::message::EmojiReactionType;
 use bot_core::twilight_model::channel::message::component::{
-    ActionRow, Button, ButtonStyle, Component, Container, MediaGallery, MediaGalleryItem, Section, SelectMenu, SelectMenuOption,
-    SelectMenuType, Separator, SeparatorSpacingSize, TextDisplay, UnfurledMediaItem,
+    ActionRow, Button, ButtonStyle, Component, Container, MediaGallery, MediaGalleryItem, Section,
+    SelectMenu, SelectMenuOption, SelectMenuType, Separator, SeparatorSpacingSize, TextDisplay,
+    UnfurledMediaItem,
 };
 use bot_core::twilight_model::id::Id;
 
@@ -34,7 +35,13 @@ pub struct Btn {
 
 impl Btn {
     pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
-        Self { id: id.into(), label: label.into(), emoji: None, style: Style::Secondary, disabled: false }
+        Self {
+            id: id.into(),
+            label: label.into(),
+            emoji: None,
+            style: Style::Secondary,
+            disabled: false,
+        }
     }
     pub fn emoji(mut self, e: &'static str) -> Self {
         self.emoji = Some(e);
@@ -69,7 +76,13 @@ pub struct Opt {
 
 impl Opt {
     pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
-        Self { label: label.into(), value: value.into(), desc: None, emoji: None, default: false }
+        Self {
+            label: label.into(),
+            value: value.into(),
+            desc: None,
+            emoji: None,
+            default: false,
+        }
     }
     pub fn desc(mut self, d: impl Into<String>) -> Self {
         self.desc = Some(d.into());
@@ -94,13 +107,21 @@ pub enum Block {
     /// A little space.
     Gap,
     /// A select menu inside the panel.
-    Select { id: String, placeholder: String, options: Vec<Opt> },
+    Select {
+        id: String,
+        placeholder: String,
+        options: Vec<Opt>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum Row {
     Buttons(Vec<Btn>),
-    Select { id: String, placeholder: String, options: Vec<Opt> },
+    Select {
+        id: String,
+        placeholder: String,
+        options: Vec<Opt>,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -130,22 +151,41 @@ impl Screen {
         }
         self
     }
-    pub fn select(&mut self, id: impl Into<String>, placeholder: impl Into<String>, options: Vec<Opt>) -> &mut Self {
+    pub fn select(
+        &mut self,
+        id: impl Into<String>,
+        placeholder: impl Into<String>,
+        options: Vec<Opt>,
+    ) -> &mut Self {
         if !options.is_empty() {
-            self.rows.push(Row::Select { id: id.into(), placeholder: placeholder.into(), options: options.into_iter().take(25).collect() });
+            self.rows.push(Row::Select {
+                id: id.into(),
+                placeholder: placeholder.into(),
+                options: options.into_iter().take(25).collect(),
+            });
         }
         self
     }
-    pub fn inner_select(&mut self, id: impl Into<String>, placeholder: impl Into<String>, options: Vec<Opt>) -> &mut Self {
+    pub fn inner_select(
+        &mut self,
+        id: impl Into<String>,
+        placeholder: impl Into<String>,
+        options: Vec<Opt>,
+    ) -> &mut Self {
         if !options.is_empty() {
-            self.blocks.push(Block::Select { id: id.into(), placeholder: placeholder.into(), options: options.into_iter().take(25).collect() });
+            self.blocks.push(Block::Select {
+                id: id.into(),
+                placeholder: placeholder.into(),
+                options: options.into_iter().take(25).collect(),
+            });
         }
         self
     }
     /// Put a notice at the very top of the panel.
     pub fn note(mut self, n: Option<String>) -> Self {
         if let Some(n) = n {
-            self.blocks.insert(0, Block::Text(format!("{} {n}", emoji::get("warn"))));
+            self.blocks
+                .insert(0, Block::Text(format!("{} {n}", emoji::get("warn"))));
         }
         self
     }
@@ -162,7 +202,14 @@ impl Screen {
             while !seen.insert(id.clone()) {
                 n += 1;
                 let parts: Vec<&str> = base.split(':').collect();
-                *id = if parts.len() == 6 { format!("{}:{}:{}:{}:{}{}:{}", parts[0], parts[1], parts[2], parts[3], parts[4], n, parts[5]) } else { format!("{base}~{n}") };
+                *id = if parts.len() == 6 {
+                    format!(
+                        "{}:{}:{}:{}:{}{}:{}",
+                        parts[0], parts[1], parts[2], parts[3], parts[4], n, parts[5]
+                    )
+                } else {
+                    format!("{base}~{n}")
+                };
             }
         };
         for b in &mut s.blocks {
@@ -188,14 +235,21 @@ impl Screen {
         if let Some(url) = &this.banner {
             inner.push(Component::MediaGallery(MediaGallery {
                 id: None,
-                items: vec![MediaGalleryItem { media: media(url), description: None, spoiler: None }],
+                items: vec![MediaGalleryItem {
+                    media: media(url),
+                    description: None,
+                    spoiler: None,
+                }],
             }));
         }
         // Neighbouring text blocks are joined into one display: fewer components.
         let mut text = String::new();
         let flush = |text: &mut String, inner: &mut Vec<Component>| {
             if !text.is_empty() {
-                inner.push(Component::TextDisplay(TextDisplay { id: None, content: std::mem::take(text) }));
+                inner.push(Component::TextDisplay(TextDisplay {
+                    id: None,
+                    content: std::mem::take(text),
+                }));
             }
         };
         for b in &this.blocks {
@@ -210,26 +264,49 @@ impl Screen {
                     flush(&mut text, &mut inner);
                     inner.push(Component::Section(Section {
                         id: None,
-                        components: vec![Component::TextDisplay(TextDisplay { id: None, content: t.clone() })],
+                        components: vec![Component::TextDisplay(TextDisplay {
+                            id: None,
+                            content: t.clone(),
+                        })],
                         accessory: Box::new(button(btn)),
                     }));
                 }
                 Block::Gap => {
                     flush(&mut text, &mut inner);
-                    inner.push(Component::Separator(Separator { id: None, divider: Some(false), spacing: Some(SeparatorSpacingSize::Small) }));
+                    inner.push(Component::Separator(Separator {
+                        id: None,
+                        divider: Some(false),
+                        spacing: Some(SeparatorSpacingSize::Small),
+                    }));
                 }
-                Block::Select { id, placeholder, options } => {
+                Block::Select {
+                    id,
+                    placeholder,
+                    options,
+                } => {
                     flush(&mut text, &mut inner);
                     inner.push(select(id, placeholder, options));
                 }
             }
         }
         flush(&mut text, &mut inner);
-        let mut out = vec![Component::Container(Container { id: None, accent_color: Some(Some(ACCENT)), spoiler: None, components: inner })];
+        let mut out = vec![Component::Container(Container {
+            id: None,
+            accent_color: Some(Some(ACCENT)),
+            spoiler: None,
+            components: inner,
+        })];
         for r in &this.rows {
             match r {
-                Row::Buttons(bs) => out.push(Component::ActionRow(ActionRow { id: None, components: bs.iter().map(button).collect() })),
-                Row::Select { id, placeholder, options } => out.push(select(id, placeholder, options)),
+                Row::Buttons(bs) => out.push(Component::ActionRow(ActionRow {
+                    id: None,
+                    components: bs.iter().map(button).collect(),
+                })),
+                Row::Select {
+                    id,
+                    placeholder,
+                    options,
+                } => out.push(select(id, placeholder, options)),
             }
         }
         out
@@ -262,13 +339,25 @@ impl Screen {
 }
 
 fn media(url: &str) -> UnfurledMediaItem {
-    UnfurledMediaItem { url: url.to_owned(), proxy_url: None, height: None, width: None, content_type: None }
+    UnfurledMediaItem {
+        url: url.to_owned(),
+        proxy_url: None,
+        height: None,
+        width: None,
+        content_type: None,
+    }
 }
 
 fn emoji_type(name: &str) -> Option<EmojiReactionType> {
     match emoji::custom(name) {
-        Some((id, n)) => Some(EmojiReactionType::Custom { animated: false, id: Id::new(id), name: Some(n) }),
-        None => Some(EmojiReactionType::Unicode { name: emoji::unicode(name).to_owned() }),
+        Some((id, n)) => Some(EmojiReactionType::Custom {
+            animated: false,
+            id: Id::new(id),
+            name: Some(n),
+        }),
+        None => Some(EmojiReactionType::Unicode {
+            name: emoji::unicode(name).to_owned(),
+        }),
     }
 }
 
@@ -321,7 +410,11 @@ fn select(id: &str, placeholder: &str, options: &[Opt]) -> Component {
 }
 
 pub fn truncate(s: &str, n: usize) -> String {
-    if s.chars().count() <= n { s.to_owned() } else { s.chars().take(n - 1).collect::<String>() + "…" }
+    if s.chars().count() <= n {
+        s.to_owned()
+    } else {
+        s.chars().take(n - 1).collect::<String>() + "…"
+    }
 }
 
 fn btn_html(b: &Btn) -> Markup {
@@ -358,7 +451,10 @@ pub fn md(t: &str) -> Markup {
 }
 
 fn inline(s: &str) -> Markup {
-    let esc = s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let esc = s
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
     // Custom emojis were escaped above: put them back as images.
     let mut out = String::new();
     let mut rest = esc.as_str();

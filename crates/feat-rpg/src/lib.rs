@@ -7,16 +7,16 @@
 
 pub mod banner;
 pub mod data;
+pub mod dungeons;
 pub mod emoji;
 pub mod engine;
 pub mod game;
 pub mod guild;
-pub mod dungeons;
+pub mod labyrinth;
 pub mod map;
 pub mod market;
-pub mod shared;
-pub mod labyrinth;
 pub mod quests;
+pub mod shared;
 pub mod store;
 pub mod ui;
 mod web;
@@ -32,10 +32,14 @@ use bot_core::twilight_model::application::command::{Command, CommandType};
 use bot_core::twilight_model::application::interaction::Interaction;
 use bot_core::twilight_model::channel::message::{AllowedMentions, MessageFlags};
 use bot_core::twilight_model::guild::Permissions;
-use bot_core::twilight_model::http::interaction::{InteractionResponse, InteractionResponseData, InteractionResponseType};
+use bot_core::twilight_model::http::interaction::{
+    InteractionResponse, InteractionResponseData, InteractionResponseType,
+};
 use bot_core::twilight_model::id::Id;
 use bot_core::twilight_util::builder::command::CommandBuilder;
-use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, tracing};
+use bot_core::{
+    Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, now_ms, tracing,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::expedition::Rates;
@@ -70,13 +74,29 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { channel: None, test_only: true, tester_role: None, xp_rate: 100, loot_rate: 100, gold_rate: 100, announce: true, speed: 1, modules: store::Modules::default(), titan_every_hours: 72, titan_hours: 48 }
+        Self {
+            channel: None,
+            test_only: true,
+            tester_role: None,
+            xp_rate: 100,
+            loot_rate: 100,
+            gold_rate: 100,
+            announce: true,
+            speed: 1,
+            modules: store::Modules::default(),
+            titan_every_hours: 72,
+            titan_hours: 48,
+        }
     }
 }
 
 impl Settings {
     pub fn rates(&self) -> Rates {
-        Rates { xp: self.xp_rate.clamp(10, 1000), loot: self.loot_rate.clamp(10, 1000), gold: self.gold_rate.clamp(10, 1000) }
+        Rates {
+            xp: self.xp_rate.clamp(10, 1000),
+            loot: self.loot_rate.clamp(10, 1000),
+            gold: self.gold_rate.clamp(10, 1000),
+        }
     }
 }
 
@@ -147,8 +167,13 @@ fn display_name(i: &Interaction) -> String {
     if let Some(n) = i.member.as_ref().and_then(|m| m.nick.clone()) {
         return n;
     }
-    let u = i.member.as_ref().and_then(|m| m.user.as_ref()).or(i.user.as_ref());
-    u.map(|u| u.global_name.clone().unwrap_or_else(|| u.name.clone())).unwrap_or_else(|| "Adventurer".into())
+    let u = i
+        .member
+        .as_ref()
+        .and_then(|m| m.user.as_ref())
+        .or(i.user.as_ref());
+    u.map(|u| u.global_name.clone().unwrap_or_else(|| u.name.clone()))
+        .unwrap_or_else(|| "Adventurer".into())
 }
 
 /// Whether this member may play while the closed test is on.
@@ -157,7 +182,9 @@ fn may_play(s: &Settings, i: &Interaction) -> bool {
         return true;
     }
     let m = i.member.as_ref();
-    if m.and_then(|m| m.permissions).is_some_and(|p| p.intersects(Permissions::MANAGE_GUILD | Permissions::ADMINISTRATOR)) {
+    if m.and_then(|m| m.permissions)
+        .is_some_and(|p| p.intersects(Permissions::MANAGE_GUILD | Permissions::ADMINISTRATOR))
+    {
         return true;
     }
     match s.tester_role {
@@ -173,7 +200,16 @@ async fn send(ctx: &Ctx, i: &Interaction, kind: InteractionResponseType, s: &Scr
         allowed_mentions: Some(AllowedMentions::default()),
         ..Default::default()
     };
-    ctx.interaction().create_response(i.id, &i.token, &InteractionResponse { kind, data: Some(data) }).await?;
+    ctx.interaction()
+        .create_response(
+            i.id,
+            &i.token,
+            &InteractionResponse {
+                kind,
+                data: Some(data),
+            },
+        )
+        .await?;
     Ok(())
 }
 
@@ -185,7 +221,12 @@ impl Feature for Rpg {
             name: "RPG",
             description: "A Greek and Norse myth RPG: patrons, expeditions, turn-based fights, the forge and a weekly server offering.",
             group: Group::Community,
-            nav: vec![NavItem { label: "RPG", path: "rpg", icon: Icon::Star, about: "The RPG's test, its players, its economy and how fast its buttons answer." }],
+            nav: vec![NavItem {
+                label: "RPG",
+                path: "rpg",
+                icon: Icon::Star,
+                about: "The RPG's test, its players, its economy and how fast its buttons answer.",
+            }],
         }
     }
 
@@ -215,7 +256,8 @@ impl Feature for Rpg {
                     out.push((Some(id), text));
                 }
                 if shared::titan_due(c, guild, s.titan_every_hours).unwrap_or(false)
-                    && let Ok(Some(text)) = shared::rise_titan(c, guild, s.titan_hours.clamp(1, 168))
+                    && let Ok(Some(text)) =
+                        shared::rise_titan(c, guild, s.titan_hours.clamp(1, 168))
                 {
                     out.push((None, text));
                 }
@@ -248,30 +290,55 @@ impl Feature for Rpg {
 
     async fn on_command(&self, ctx: &Ctx, call: &CommandCall) -> Result<()> {
         let i = &call.interaction;
-        let Some(guild) = call.guild_id() else { return Ok(()) };
+        let Some(guild) = call.guild_id() else {
+            return Ok(());
+        };
         let s = ctx.settings::<Settings>(guild, KEY)?;
         store::set_speed(guild, s.speed);
         store::set_modules(guild, s.modules);
         if !may_play(&s, i) {
-            return ctx.reply(i, Reply::text("The RPG is in a closed test for now. It opens to everyone soon.").ephemeral()).await;
+            return ctx
+                .reply(
+                    i,
+                    Reply::text("The RPG is in a closed test for now. It opens to everyone soon.")
+                        .ephemeral(),
+                )
+                .await;
         }
         if let (Some(ch), Some(here)) = (s.channel, call.channel_id())
             && ch != here
         {
-            return ctx.reply(i, Reply::text(format!("Play in <#{ch}>: use `/rpg` there.")).ephemeral()).await;
+            return ctx
+                .reply(
+                    i,
+                    Reply::text(format!("Play in <#{ch}>: use `/rpg` there.")).ephemeral(),
+                )
+                .await;
         }
         let user = call.user_id();
         let name = display_name(i);
         let started = Instant::now();
-        let screen = match store::run(&ctx.db, guild, user, Some(&name), |g| game::overview(ctx, g, s.rates()))? {
+        let screen = match store::run(&ctx.db, guild, user, Some(&name), |g| {
+            game::overview(ctx, g, s.rates())
+        })? {
             Some(sc) => sc,
             None => game::patron_choice(user, &name),
         };
         let work = started.elapsed().as_micros() as i64;
         let previous = store::get(&ctx.db, guild, user)?.and_then(|p| p.hub);
         let t = Instant::now();
-        send(ctx, i, InteractionResponseType::ChannelMessageWithSource, &screen).await?;
-        self.record(Click { at: now_ms(), work_us: work, reply_ms: t.elapsed().as_millis() as i64 });
+        send(
+            ctx,
+            i,
+            InteractionResponseType::ChannelMessageWithSource,
+            &screen,
+        )
+        .await?;
+        self.record(Click {
+            at: now_ms(),
+            work_us: work,
+            reply_ms: t.elapsed().as_millis() as i64,
+        });
         // Keep one hub per player: remember this one, remove the last.
         if let Ok(resp) = ctx.interaction().response(&i.token).await
             && let Ok(msg) = resp.model().await
@@ -289,34 +356,65 @@ impl Feature for Rpg {
 
     async fn on_component(&self, ctx: &Ctx, call: &ComponentCall) -> Result<()> {
         let i = &call.interaction;
-        let Some(guild) = call.guild_id() else { return Ok(()) };
-        let Some(route) = Route::parse(&call.data.custom_id) else { return Ok(()) };
+        let Some(guild) = call.guild_id() else {
+            return Ok(());
+        };
+        let Some(route) = Route::parse(&call.data.custom_id) else {
+            return Ok(());
+        };
         let user = call.user_id();
         if route.owner != user {
-            return ctx.reply(i, Reply::text(format!("This is <@{}>'s adventure. Use `/rpg` to start yours.", route.owner)).ephemeral()).await;
+            return ctx
+                .reply(
+                    i,
+                    Reply::text(format!(
+                        "This is <@{}>'s adventure. Use `/rpg` to start yours.",
+                        route.owner
+                    ))
+                    .ephemeral(),
+                )
+                .await;
         }
         let s = ctx.settings::<Settings>(guild, KEY)?;
         store::set_speed(guild, s.speed);
         store::set_modules(guild, s.modules);
         if !may_play(&s, i) {
-            return ctx.reply(i, Reply::text("The RPG is in a closed test for now.").ephemeral()).await;
+            return ctx
+                .reply(
+                    i,
+                    Reply::text("The RPG is in a closed test for now.").ephemeral(),
+                )
+                .await;
         }
         let name = display_name(i);
         // Founding a guild asks for its name in a form first.
         if route.screen == "guild" && route.action == "new" {
             let id = format!("rpg:{user}:guild:create::{}", route.version.max(0));
             return ctx
-                .modal(i, &id, "Found a guild", &[("name", "Guild name", false, true, None), ("tag", "Tag: 2 to 4 letters, like SKG", false, true, None)])
+                .modal(
+                    i,
+                    &id,
+                    "Found a guild",
+                    &[
+                        ("name", "Guild name", false, true, None),
+                        ("tag", "Tag: 2 to 4 letters, like SKG", false, true, None),
+                    ],
+                )
                 .await;
         }
         let started = Instant::now();
         // A new player swearing to a patron: make the character first.
-        if route.screen == "patron" && route.action == "swear" && store::get(&ctx.db, guild, user)?.is_none()
-            && let Some(god) = data::God::from_id(&route.arg) {
-                store::create(&ctx.db, guild, user, &name, god)?;
-            }
+        if route.screen == "patron"
+            && route.action == "swear"
+            && store::get(&ctx.db, guild, user)?.is_none()
+            && let Some(god) = data::God::from_id(&route.arg)
+        {
+            store::create(&ctx.db, guild, user, &name, god)?;
+        }
         let rates = s.rates();
-        let out = store::run(&ctx.db, guild, user, Some(&name), |g| game::handle(ctx, g, &route, &call.data.values, rates))?;
+        let out = store::run(&ctx.db, guild, user, Some(&name), |g| {
+            game::handle(ctx, g, &route, &call.data.values, rates)
+        })?;
         let work = started.elapsed().as_micros() as i64;
         let Some(out) = out else {
             let screen = game::patron_choice(user, &name);
@@ -324,7 +422,11 @@ impl Feature for Rpg {
         };
         let t = Instant::now();
         send(ctx, i, InteractionResponseType::UpdateMessage, &out.screen).await?;
-        self.record(Click { at: now_ms(), work_us: work, reply_ms: t.elapsed().as_millis() as i64 });
+        self.record(Click {
+            at: now_ms(),
+            work_us: work,
+            reply_ms: t.elapsed().as_millis() as i64,
+        });
         if let Some(text) = out.announce
             && s.announce
             && (out.urgent || may_post(guild, now_ms()))
@@ -337,8 +439,12 @@ impl Feature for Rpg {
 
     async fn on_modal(&self, ctx: &Ctx, call: &ModalCall) -> Result<()> {
         let i = &call.interaction;
-        let Some(guild) = i.guild_id.map(|g| g.get()) else { return Ok(()) };
-        let Some(mut route) = Route::parse(&call.data.custom_id) else { return Ok(()) };
+        let Some(guild) = i.guild_id.map(|g| g.get()) else {
+            return Ok(());
+        };
+        let Some(mut route) = Route::parse(&call.data.custom_id) else {
+            return Ok(());
+        };
         let user = i.author_id().map(|u| u.get()).unwrap_or_default();
         if route.owner != user {
             return Ok(());
@@ -347,9 +453,14 @@ impl Feature for Rpg {
         store::set_modules(guild, s.modules);
         // A form's answer isn't a stale button: run it at the current version.
         route.version = -1;
-        let values = vec![call.value("name").unwrap_or_default(), call.value("tag").unwrap_or_default()];
+        let values = vec![
+            call.value("name").unwrap_or_default(),
+            call.value("tag").unwrap_or_default(),
+        ];
         let name = display_name(i);
-        let out = store::run(&ctx.db, guild, user, Some(&name), |g| game::handle(ctx, g, &route, &values, s.rates()))?;
+        let out = store::run(&ctx.db, guild, user, Some(&name), |g| {
+            game::handle(ctx, g, &route, &values, s.rates())
+        })?;
         if let Some(out) = out {
             send(ctx, i, InteractionResponseType::UpdateMessage, &out.screen).await?;
         }

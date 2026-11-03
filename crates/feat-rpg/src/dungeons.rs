@@ -56,7 +56,10 @@ pub fn clears_today(g: &Game, id: &str) -> Result<i64> {
 
 pub fn list_screen(g: &Game) -> Result<Screen> {
     let p = &g.p;
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     title(&mut s, "dungeon", "Dungeons", "One in each region");
     s.text("Four rooms and a boss, in order. The first clear each day opens the boss's chest: gear (Fine or better), loose threads and gold.");
@@ -72,21 +75,50 @@ pub fn list_screen(g: &Game) -> Result<Screen> {
             format!("{} cleared today", e("check"))
         };
         s.section(
-            format!("{} **{}** · {region}\n-# {} Fights at {} Power. {status}", e("dungeon"), d.name, d.blurb, d.power),
-            Btn::new(ids.act("dungeon", "enter", d.id), "Enter").emoji("dungeon").disabled(!open || p.delve.is_some() || p.fight.is_some()),
+            format!(
+                "{} **{}** · {region}\n-# {} Fights at {} Power. {status}",
+                e("dungeon"),
+                d.name,
+                d.blurb,
+                d.power
+            ),
+            Btn::new(ids.act("dungeon", "enter", d.id), "Enter")
+                .emoji("dungeon")
+                .disabled(!open || p.delve.is_some() || p.fight.is_some()),
         );
     }
-    s.buttons(vec![back(&ids), Btn::new(ids.go("map"), "Map").emoji("map")]);
+    s.buttons(vec![
+        back(&ids),
+        Btn::new(ids.go("map"), "Map").emoji("map"),
+    ]);
     Ok(s)
 }
 
 pub fn delve_screen(p: &Player, d: &Delve) -> Screen {
-    let ids = Ids { owner: p.user, version: p.version };
+    let ids = Ids {
+        owner: p.user,
+        version: p.version,
+    };
     let mut s = Screen::default();
     let dg = d.dungeon();
-    title(&mut s, "dungeon", dg.name, &format!("Room {} of {} · then the boss", (d.room + 1).min(dg.rooms.len() + 1), dg.rooms.len()));
+    title(
+        &mut s,
+        "dungeon",
+        dg.name,
+        &format!(
+            "Room {} of {} · then the boss",
+            (d.room + 1).min(dg.rooms.len() + 1),
+            dg.rooms.len()
+        ),
+    );
     if !d.log.is_empty() {
-        s.text(d.log.iter().map(|l| format!("-# {l}")).collect::<Vec<_>>().join("\n"));
+        s.text(
+            d.log
+                .iter()
+                .map(|l| format!("-# {l}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
     }
     let mut haul = Vec::new();
     if d.gold > 0 {
@@ -96,17 +128,40 @@ pub fn delve_screen(p: &Player, d: &Delve) -> Screen {
     if !items.is_empty() {
         haul.push(items_line(&items));
     }
-    s.text(format!("{} {} / {} HP\n{} Carrying: {}", e("hp"), p.hp(), p.max_hp(), e("pack"), if haul.is_empty() { "nothing yet".into() } else { haul.join("  ·  ") }));
+    s.text(format!(
+        "{} {} / {} HP\n{} Carrying: {}",
+        e("hp"),
+        p.hp(),
+        p.max_hp(),
+        e("pack"),
+        if haul.is_empty() {
+            "nothing yet".into()
+        } else {
+            haul.join("  ·  ")
+        }
+    ));
     let next = if d.at_boss() {
         let boss = data::monster(dg.boss).map(|m| m.name).unwrap_or("The boss");
         format!("{} **{boss}** waits in the last room.", e("elite"))
     } else {
-        let m = data::monster(dg.rooms[d.room]).map(|m| m.name).unwrap_or("Something");
+        let m = data::monster(dg.rooms[d.room])
+            .map(|m| m.name)
+            .unwrap_or("Something");
         format!("{} Next room: **{m}**", e("hunt"))
     };
     s.text(next);
     s.buttons(vec![
-        Btn::new(ids.act("dungeon", "next", ""), if d.at_boss() { "Face the boss" } else { "Next room" }).emoji(if d.at_boss() { "elite" } else { "hunt" }).then_danger(d.at_boss()).disabled(p.fight.is_some()),
+        Btn::new(
+            ids.act("dungeon", "next", ""),
+            if d.at_boss() {
+                "Face the boss"
+            } else {
+                "Next room"
+            },
+        )
+        .emoji(if d.at_boss() { "elite" } else { "hunt" })
+        .then_danger(d.at_boss())
+        .disabled(p.fight.is_some()),
         Btn::new(ids.act("dungeon", "out", ""), "Leave with what you carry").emoji("pack"),
     ]);
     s
@@ -122,7 +177,9 @@ impl ThenDanger for Btn {
 }
 
 pub fn enter(g: &mut Game, id: &str) -> Result<Option<String>> {
-    let Some(dg) = data::dungeon(id) else { return Ok(None) };
+    let Some(dg) = data::dungeon(id) else {
+        return Ok(None);
+    };
     if g.p.delve.is_some() || g.p.fight.is_some() {
         return Ok(Some("Finish what you're doing first.".into()));
     }
@@ -132,18 +189,32 @@ pub fn enter(g: &mut Game, id: &str) -> Result<Option<String>> {
     if g.p.hp() * 10 < g.p.max_hp() * 6 {
         return Ok(Some("Go in with at least 60% HP.".into()));
     }
-    g.save_delve(Some(Delve { dungeon: id.into(), room: 0, fighting: false, gold: 0, xp: 0, items: BTreeMap::new(), log: vec![format!("You step into {}.", dg.name)] }))?;
+    g.save_delve(Some(Delve {
+        dungeon: id.into(),
+        room: 0,
+        fighting: false,
+        gold: 0,
+        xp: 0,
+        items: BTreeMap::new(),
+        log: vec![format!("You step into {}.", dg.name)],
+    }))?;
     g.bump()?;
     Ok(None)
 }
 
 pub fn next(g: &mut Game) -> Result<Option<String>> {
-    let Some(mut d) = g.p.delve.clone() else { return Ok(None) };
+    let Some(mut d) = g.p.delve.clone() else {
+        return Ok(None);
+    };
     if g.p.fight.is_some() {
         return Ok(None);
     }
     let dg = d.dungeon();
-    let (monster, mult) = if d.at_boss() { (data::monster(dg.boss), 1.0) } else { (data::monster(dg.rooms[d.room]), 1.0) };
+    let (monster, mult) = if d.at_boss() {
+        (data::monster(dg.boss), 1.0)
+    } else {
+        (data::monster(dg.rooms[d.room]), 1.0)
+    };
     let Some(m) = monster else { return Ok(None) };
     let f = Fight::room(g.p.hero(), g.p.hp(), m, dg.power, mult, seed(&g.p, 151));
     d.fighting = true;
@@ -156,7 +227,9 @@ pub fn next(g: &mut Game) -> Result<Option<String>> {
 
 /// A room or the boss ended.
 pub fn fight_over(g: &mut Game, f: &Fight, won: bool) -> Result<(String, Option<String>)> {
-    let Some(mut d) = g.p.delve.clone() else { return Ok((String::new(), None)) };
+    let Some(mut d) = g.p.delve.clone() else {
+        return Ok((String::new(), None));
+    };
     d.fighting = false;
     let dg = d.dungeon();
     if !won {
@@ -168,7 +241,14 @@ pub fn fight_over(g: &mut Game, f: &Fight, won: bool) -> Result<(String, Option<
         }
         g.save_delve(None)?;
         g.set_hp(1)?;
-        return Ok((format!("{} **You fall in {}.** You crawl out with half of what you carried.", e("hp"), dg.name), None));
+        return Ok((
+            format!(
+                "{} **You fall in {}.** You crawl out with half of what you carried.",
+                e("hp"),
+                dg.name
+            ),
+            None,
+        ));
     }
     let mut r = Rng::new(seed(&g.p, 163));
     let region = data::region(dg.region).unwrap_or(&data::REGIONS[0]);
@@ -181,7 +261,12 @@ pub fn fight_over(g: &mut Game, f: &Fight, won: bool) -> Result<(String, Option<
         d.room += 1;
         let (hp, max) = (f.hp, f.max_hp);
         g.set_hp(hp + max / 10)?;
-        let said = format!("{} **{} falls.** +{gold} gold, {}.", e("check"), f.foe.name, data::count(mat, 2));
+        let said = format!(
+            "{} **{} falls.** +{gold} gold, {}.",
+            e("check"),
+            f.foe.name,
+            data::count(mat, 2)
+        );
         d.log = vec![said.clone()];
         g.save_delve(Some(d))?;
         return Ok((said, None));
@@ -198,7 +283,12 @@ pub fn fight_over(g: &mut Game, f: &Fight, won: bool) -> Result<(String, Option<
     for (id, n) in &d.items {
         g.item(id, *n, dg.name)?;
     }
-    let mut said = format!("{} **{} falls.** You carry out {} gold and your materials.", e("elite"), f.foe.name, d.gold);
+    let mut said = format!(
+        "{} **{} falls.** You carry out {} gold and your materials.",
+        e("elite"),
+        f.foe.name,
+        d.gold
+    );
     if first {
         let gold = 100 + 12 * dg.level as i64;
         g.gold(gold, "dungeon chest")?;
@@ -211,7 +301,8 @@ pub fn fight_over(g: &mut Game, f: &Fight, won: bool) -> Result<(String, Option<
             traits = loot::roll_traits(piece, 1, &mut r);
         }
         let worn = g.p.equipped(piece.slot).map(|x| x.power()).unwrap_or(0);
-        let power = data::gear_power(piece, 0) + data::gear_power(piece, 0) * rarity.power_pct() / 100;
+        let power =
+            data::gear_power(piece, 0) + data::gear_power(piece, 0) * rarity.power_pct() / 100;
         let wear = power > worn && piece.level <= g.p.level;
         g.add_piece(piece, rarity, traits, wear, "dungeon chest")?;
         said.push_str(&format!(
@@ -221,7 +312,11 @@ pub fn fight_over(g: &mut Game, f: &Fight, won: bool) -> Result<(String, Option<
             data::count(region.rare.0, 2),
             rarity.name(),
             piece.name,
-            if wear { ": you're wearing it." } else { ": it's in your pack." }
+            if wear {
+                ": you're wearing it."
+            } else {
+                ": it's in your pack."
+            }
         ));
     } else {
         said.push_str("\n-# The chest is empty until tomorrow.");
@@ -242,7 +337,9 @@ pub fn fled(g: &mut Game) -> Result<()> {
 }
 
 pub fn leave(g: &mut Game) -> Result<Option<String>> {
-    let Some(d) = g.p.delve.clone() else { return Ok(None) };
+    let Some(d) = g.p.delve.clone() else {
+        return Ok(None);
+    };
     if g.p.fight.is_some() {
         return Ok(Some("Finish or flee the fight first.".into()));
     }
@@ -253,5 +350,9 @@ pub fn leave(g: &mut Game) -> Result<Option<String>> {
     }
     g.save_delve(None)?;
     g.bump()?;
-    Ok(Some(format!("You leave {} with {} gold and your materials. The boss's chest stays shut.", d.dungeon().name, d.gold)))
+    Ok(Some(format!(
+        "You leave {} with {} gold and your materials. The boss's chest stays shut.",
+        d.dungeon().name,
+        d.gold
+    )))
 }

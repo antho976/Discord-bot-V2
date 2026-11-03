@@ -3,7 +3,9 @@
 //! `cargo run -p feat-rpg --example sim`.
 
 /// The three patrons at launch. Their order is their index everywhere (bonds, pairs).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum God {
     Thor,
     Athena,
@@ -171,17 +173,29 @@ impl Skill {
     /// What it does, for the main god `main`.
     pub fn describe(self, main: God) -> &'static str {
         match (self, main) {
-            (Skill::Mjolnir, _) => "A big hit, stronger for every Strike before it. The hammer comes back after a turn.",
-            (Skill::Thunderclap, _) => "A heavy hit that stuns a foe winding up, cancelling its attack.",
+            (Skill::Mjolnir, _) => {
+                "A big hit, stronger for every Strike before it. The hammer comes back after a turn."
+            }
+            (Skill::Thunderclap, _) => {
+                "A heavy hit that stuns a foe winding up, cancelling its attack."
+            }
             (Skill::SpearCounter, _) => "Guard, and strike back if you're hit.",
-            (Skill::OwlSight, _) => "See the foe's next two moves, and your next hit lands 50% harder.",
+            (Skill::OwlSight, _) => {
+                "See the foe's next two moves, and your next hit lands 50% harder."
+            }
             (Skill::SoulRend, _) => "A hit that heals you for 60% of the damage.",
             (Skill::CerberusBite, _) => "Wounds that bleed for three turns.",
-            (Skill::AegisStorm, God::Athena) => "Block the next hit completely and throw it back as lightning.",
+            (Skill::AegisStorm, God::Athena) => {
+                "Block the next hit completely and throw it back as lightning."
+            }
             (Skill::AegisStorm, _) => "A shield bash, and the next hit can't touch you.",
-            (Skill::GraveThunder, God::Hades) => "A hit and a curse: the foe takes 60% more damage for three turns.",
+            (Skill::GraveThunder, God::Hades) => {
+                "A hit and a curse: the foe takes 60% more damage for three turns."
+            }
             (Skill::GraveThunder, _) => "Lightning that heals you for a third of the damage.",
-            (Skill::Judgement, God::Hades) => "A drain that heals you and shields you for the damage.",
+            (Skill::Judgement, God::Hades) => {
+                "A drain that heals you and shields you for the damage."
+            }
             (Skill::Judgement, _) => "Guard, and heal for three turns.",
         }
     }
@@ -213,22 +227,150 @@ pub struct Item {
 }
 
 pub const ITEMS: &[Item] = &[
-    Item { id: "iron", name: "iron", plural: "iron", kind: Kind::Material, tribute: 4, used_for: "weapons and mail", emoji: "iron" },
-    Item { id: "yew", name: "yew", plural: "yew", kind: Kind::Material, tribute: 3, used_for: "hafts and bows", emoji: "yew" },
-    Item { id: "pelt", name: "wolf pelt", plural: "wolf pelts", kind: Kind::Material, tribute: 5, used_for: "armour and bait", emoji: "pelt" },
-    Item { id: "herbs", name: "herb", plural: "herbs", kind: Kind::Material, tribute: 2, used_for: "potions, oils and tonics", emoji: "herbs" },
-    Item { id: "fish", name: "herring", plural: "herring", kind: Kind::Material, tribute: 2, used_for: "rations and potions", emoji: "fish" },
-    Item { id: "amber", name: "sea amber", plural: "sea amber", kind: Kind::Material, tribute: 14, used_for: "charms and fire oil", emoji: "amber" },
-    Item { id: "fang", name: "wolf fang", plural: "wolf fangs", kind: Kind::Material, tribute: 14, used_for: "better weapons and charms", emoji: "fang" },
-    Item { id: "frost", name: "frost hide", plural: "frost hides", kind: Kind::Material, tribute: 16, used_for: "the best armour, frost oil and tonics", emoji: "frost" },
-    Item { id: "rations", name: "trail ration", plural: "trail rations", kind: Kind::Supply, tribute: 0, used_for: "+20% Power on an expedition", emoji: "rations" },
-    Item { id: "tonic", name: "frost tonic", plural: "frost tonics", kind: Kind::Supply, tribute: 0, used_for: "+40% Power in the Barrow Fields", emoji: "tonic" },
-    Item { id: "bait", name: "hunter's bait", plural: "hunter's bait", kind: Kind::Supply, tribute: 0, used_for: "more rare drops on an expedition", emoji: "bait" },
-    Item { id: "potion", name: "healing potion", plural: "healing potions", kind: Kind::Combat, tribute: 0, used_for: "heals 40% in a fight", emoji: "potion" },
-    Item { id: "fireoil", name: "fire oil", plural: "fire oil", kind: Kind::Combat, tribute: 0, used_for: "fire on your next 3 hits", emoji: "fireoil" },
-    Item { id: "frostoil", name: "frost oil", plural: "frost oil", kind: Kind::Combat, tribute: 0, used_for: "frost on your next 3 hits", emoji: "frostoil" },
-    Item { id: "thread", name: "loose thread", plural: "loose threads", kind: Kind::Trophy, tribute: 25, used_for: "refining and reforging gear at the forge", emoji: "thread" },
-    Item { id: "shard", name: "crown shard", plural: "crown shards", kind: Kind::Trophy, tribute: 60, used_for: "the Barrow King's gear", emoji: "shard" },
+    Item {
+        id: "iron",
+        name: "iron",
+        plural: "iron",
+        kind: Kind::Material,
+        tribute: 4,
+        used_for: "weapons and mail",
+        emoji: "iron",
+    },
+    Item {
+        id: "yew",
+        name: "yew",
+        plural: "yew",
+        kind: Kind::Material,
+        tribute: 3,
+        used_for: "hafts and bows",
+        emoji: "yew",
+    },
+    Item {
+        id: "pelt",
+        name: "wolf pelt",
+        plural: "wolf pelts",
+        kind: Kind::Material,
+        tribute: 5,
+        used_for: "armour and bait",
+        emoji: "pelt",
+    },
+    Item {
+        id: "herbs",
+        name: "herb",
+        plural: "herbs",
+        kind: Kind::Material,
+        tribute: 2,
+        used_for: "potions, oils and tonics",
+        emoji: "herbs",
+    },
+    Item {
+        id: "fish",
+        name: "herring",
+        plural: "herring",
+        kind: Kind::Material,
+        tribute: 2,
+        used_for: "rations and potions",
+        emoji: "fish",
+    },
+    Item {
+        id: "amber",
+        name: "sea amber",
+        plural: "sea amber",
+        kind: Kind::Material,
+        tribute: 14,
+        used_for: "charms and fire oil",
+        emoji: "amber",
+    },
+    Item {
+        id: "fang",
+        name: "wolf fang",
+        plural: "wolf fangs",
+        kind: Kind::Material,
+        tribute: 14,
+        used_for: "better weapons and charms",
+        emoji: "fang",
+    },
+    Item {
+        id: "frost",
+        name: "frost hide",
+        plural: "frost hides",
+        kind: Kind::Material,
+        tribute: 16,
+        used_for: "the best armour, frost oil and tonics",
+        emoji: "frost",
+    },
+    Item {
+        id: "rations",
+        name: "trail ration",
+        plural: "trail rations",
+        kind: Kind::Supply,
+        tribute: 0,
+        used_for: "+20% Power on an expedition",
+        emoji: "rations",
+    },
+    Item {
+        id: "tonic",
+        name: "frost tonic",
+        plural: "frost tonics",
+        kind: Kind::Supply,
+        tribute: 0,
+        used_for: "+40% Power in the Barrow Fields",
+        emoji: "tonic",
+    },
+    Item {
+        id: "bait",
+        name: "hunter's bait",
+        plural: "hunter's bait",
+        kind: Kind::Supply,
+        tribute: 0,
+        used_for: "more rare drops on an expedition",
+        emoji: "bait",
+    },
+    Item {
+        id: "potion",
+        name: "healing potion",
+        plural: "healing potions",
+        kind: Kind::Combat,
+        tribute: 0,
+        used_for: "heals 40% in a fight",
+        emoji: "potion",
+    },
+    Item {
+        id: "fireoil",
+        name: "fire oil",
+        plural: "fire oil",
+        kind: Kind::Combat,
+        tribute: 0,
+        used_for: "fire on your next 3 hits",
+        emoji: "fireoil",
+    },
+    Item {
+        id: "frostoil",
+        name: "frost oil",
+        plural: "frost oil",
+        kind: Kind::Combat,
+        tribute: 0,
+        used_for: "frost on your next 3 hits",
+        emoji: "frostoil",
+    },
+    Item {
+        id: "thread",
+        name: "loose thread",
+        plural: "loose threads",
+        kind: Kind::Trophy,
+        tribute: 25,
+        used_for: "refining and reforging gear at the forge",
+        emoji: "thread",
+    },
+    Item {
+        id: "shard",
+        name: "crown shard",
+        plural: "crown shards",
+        kind: Kind::Trophy,
+        tribute: 60,
+        used_for: "the Barrow King's gear",
+        emoji: "shard",
+    },
 ];
 
 pub fn item(id: &str) -> Option<&'static Item> {
@@ -253,12 +395,48 @@ pub struct Recipe {
 }
 
 pub const SUPPLY_RECIPES: &[Recipe] = &[
-    Recipe { id: "rations", makes: "rations", qty: 2, cost: &[("fish", 3), ("herbs", 1)], gold: 10 },
-    Recipe { id: "tonic", makes: "tonic", qty: 1, cost: &[("herbs", 2), ("frost", 1)], gold: 15 },
-    Recipe { id: "bait", makes: "bait", qty: 1, cost: &[("pelt", 1), ("fish", 2)], gold: 10 },
-    Recipe { id: "potion", makes: "potion", qty: 2, cost: &[("herbs", 3), ("fish", 1)], gold: 20 },
-    Recipe { id: "fireoil", makes: "fireoil", qty: 1, cost: &[("herbs", 2), ("amber", 1)], gold: 20 },
-    Recipe { id: "frostoil", makes: "frostoil", qty: 1, cost: &[("herbs", 2), ("frost", 1)], gold: 20 },
+    Recipe {
+        id: "rations",
+        makes: "rations",
+        qty: 2,
+        cost: &[("fish", 3), ("herbs", 1)],
+        gold: 10,
+    },
+    Recipe {
+        id: "tonic",
+        makes: "tonic",
+        qty: 1,
+        cost: &[("herbs", 2), ("frost", 1)],
+        gold: 15,
+    },
+    Recipe {
+        id: "bait",
+        makes: "bait",
+        qty: 1,
+        cost: &[("pelt", 1), ("fish", 2)],
+        gold: 10,
+    },
+    Recipe {
+        id: "potion",
+        makes: "potion",
+        qty: 2,
+        cost: &[("herbs", 3), ("fish", 1)],
+        gold: 20,
+    },
+    Recipe {
+        id: "fireoil",
+        makes: "fireoil",
+        qty: 1,
+        cost: &[("herbs", 2), ("amber", 1)],
+        gold: 20,
+    },
+    Recipe {
+        id: "frostoil",
+        makes: "frostoil",
+        qty: 1,
+        cost: &[("herbs", 2), ("frost", 1)],
+        gold: 20,
+    },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -306,18 +484,138 @@ pub struct Gear {
 }
 
 pub const GEAR: &[Gear] = &[
-    Gear { id: "handaxe", name: "Iron Hand-axe", slot: Slot::Weapon, level: 1, power: 20, scouting: 0, cost: &[("iron", 5), ("yew", 2)], gold: 25, after_boss: false },
-    Gear { id: "warhammer", name: "Yew-hafted Warhammer", slot: Slot::Weapon, level: 6, power: 45, scouting: 0, cost: &[("iron", 12), ("yew", 6), ("fang", 1)], gold: 120, after_boss: false },
-    Gear { id: "barrowblade", name: "Barrow-steel Blade", slot: Slot::Weapon, level: 12, power: 80, scouting: 0, cost: &[("iron", 22), ("frost", 3), ("fang", 3)], gold: 320, after_boss: false },
-    Gear { id: "crownbreaker", name: "Crown-breaker", slot: Slot::Weapon, level: 20, power: 120, scouting: 0, cost: &[("iron", 30), ("shard", 2), ("fang", 4)], gold: 600, after_boss: true },
-    Gear { id: "vest", name: "Wolf-hide Vest", slot: Slot::Armour, level: 1, power: 15, scouting: 0, cost: &[("pelt", 3)], gold: 20, after_boss: false },
-    Gear { id: "mail", name: "Iron Mail", slot: Slot::Armour, level: 8, power: 40, scouting: 0, cost: &[("iron", 14), ("pelt", 4)], gold: 150, after_boss: false },
-    Gear { id: "mantle", name: "Frost-hide Mantle", slot: Slot::Armour, level: 14, power: 70, scouting: 0, cost: &[("frost", 5), ("pelt", 8), ("iron", 6)], gold: 360, after_boss: false },
-    Gear { id: "kingsmantle", name: "Barrow King's Mantle", slot: Slot::Armour, level: 20, power: 100, scouting: 0, cost: &[("shard", 2), ("frost", 6), ("pelt", 10)], gold: 600, after_boss: true },
-    Gear { id: "ambercharm", name: "Amber Charm", slot: Slot::Charm, level: 3, power: 10, scouting: 5, cost: &[("amber", 2)], gold: 20, after_boss: false },
-    Gear { id: "fangnecklace", name: "Fang Necklace", slot: Slot::Charm, level: 10, power: 30, scouting: 5, cost: &[("fang", 4), ("amber", 2)], gold: 160, after_boss: false },
-    Gear { id: "ravencharm", name: "Raven Charm", slot: Slot::Charm, level: 16, power: 50, scouting: 10, cost: &[("amber", 3), ("fang", 3), ("frost", 2)], gold: 300, after_boss: false },
-    Gear { id: "crownshard", name: "Crown Shard Circlet", slot: Slot::Charm, level: 20, power: 70, scouting: 10, cost: &[("shard", 3), ("amber", 4)], gold: 600, after_boss: true },
+    Gear {
+        id: "handaxe",
+        name: "Iron Hand-axe",
+        slot: Slot::Weapon,
+        level: 1,
+        power: 20,
+        scouting: 0,
+        cost: &[("iron", 5), ("yew", 2)],
+        gold: 25,
+        after_boss: false,
+    },
+    Gear {
+        id: "warhammer",
+        name: "Yew-hafted Warhammer",
+        slot: Slot::Weapon,
+        level: 6,
+        power: 45,
+        scouting: 0,
+        cost: &[("iron", 12), ("yew", 6), ("fang", 1)],
+        gold: 120,
+        after_boss: false,
+    },
+    Gear {
+        id: "barrowblade",
+        name: "Barrow-steel Blade",
+        slot: Slot::Weapon,
+        level: 12,
+        power: 80,
+        scouting: 0,
+        cost: &[("iron", 22), ("frost", 3), ("fang", 3)],
+        gold: 320,
+        after_boss: false,
+    },
+    Gear {
+        id: "crownbreaker",
+        name: "Crown-breaker",
+        slot: Slot::Weapon,
+        level: 20,
+        power: 120,
+        scouting: 0,
+        cost: &[("iron", 30), ("shard", 2), ("fang", 4)],
+        gold: 600,
+        after_boss: true,
+    },
+    Gear {
+        id: "vest",
+        name: "Wolf-hide Vest",
+        slot: Slot::Armour,
+        level: 1,
+        power: 15,
+        scouting: 0,
+        cost: &[("pelt", 3)],
+        gold: 20,
+        after_boss: false,
+    },
+    Gear {
+        id: "mail",
+        name: "Iron Mail",
+        slot: Slot::Armour,
+        level: 8,
+        power: 40,
+        scouting: 0,
+        cost: &[("iron", 14), ("pelt", 4)],
+        gold: 150,
+        after_boss: false,
+    },
+    Gear {
+        id: "mantle",
+        name: "Frost-hide Mantle",
+        slot: Slot::Armour,
+        level: 14,
+        power: 70,
+        scouting: 0,
+        cost: &[("frost", 5), ("pelt", 8), ("iron", 6)],
+        gold: 360,
+        after_boss: false,
+    },
+    Gear {
+        id: "kingsmantle",
+        name: "Barrow King's Mantle",
+        slot: Slot::Armour,
+        level: 20,
+        power: 100,
+        scouting: 0,
+        cost: &[("shard", 2), ("frost", 6), ("pelt", 10)],
+        gold: 600,
+        after_boss: true,
+    },
+    Gear {
+        id: "ambercharm",
+        name: "Amber Charm",
+        slot: Slot::Charm,
+        level: 3,
+        power: 10,
+        scouting: 5,
+        cost: &[("amber", 2)],
+        gold: 20,
+        after_boss: false,
+    },
+    Gear {
+        id: "fangnecklace",
+        name: "Fang Necklace",
+        slot: Slot::Charm,
+        level: 10,
+        power: 30,
+        scouting: 5,
+        cost: &[("fang", 4), ("amber", 2)],
+        gold: 160,
+        after_boss: false,
+    },
+    Gear {
+        id: "ravencharm",
+        name: "Raven Charm",
+        slot: Slot::Charm,
+        level: 16,
+        power: 50,
+        scouting: 10,
+        cost: &[("amber", 3), ("fang", 3), ("frost", 2)],
+        gold: 300,
+        after_boss: false,
+    },
+    Gear {
+        id: "crownshard",
+        name: "Crown Shard Circlet",
+        slot: Slot::Charm,
+        level: 20,
+        power: 70,
+        scouting: 10,
+        cost: &[("shard", 3), ("amber", 4)],
+        gold: 600,
+        after_boss: true,
+    },
 ];
 
 pub fn gear(id: &str) -> Option<&'static Gear> {
@@ -486,32 +784,267 @@ pub struct Monster {
 }
 
 pub const MONSTERS: &[Monster] = &[
-    Monster { id: "nixie", name: "Nixie", hp: 1.6, atk: 0.20, pattern: &[Move::Hit, Move::Brace, Move::Hit, Move::Heavy], windup: "starts a drowning song", weak: Some("fire"), elite: false },
-    Monster { id: "harpy", name: "Harpy", hp: 1.3, atk: 0.24, pattern: &[Move::Hit, Move::Hit, Move::Heavy], windup: "climbs high to dive", weak: None, elite: false },
-    Monster { id: "wolf", name: "Grey Wolf", hp: 1.4, atk: 0.22, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "crouches to pounce", weak: Some("fire"), elite: false },
-    Monster { id: "satyr", name: "Satyr Raider", hp: 1.7, atk: 0.20, pattern: &[Move::Hit, Move::Brace, Move::Heavy], windup: "lowers its horns", weak: None, elite: false },
-    Monster { id: "draugr", name: "Draugr Warrior", hp: 1.6, atk: 0.21, pattern: &[Move::Hit, Move::Hit, Move::Heavy, Move::Brace], windup: "raises its axe", weak: Some("fire"), elite: false },
-    Monster { id: "wight", name: "Barrow Wight", hp: 1.4, atk: 0.23, pattern: &[Move::Hit, Move::Roar, Move::Heavy], windup: "draws in a grave-cold breath", weak: Some("frost"), elite: false },
-    Monster { id: "drowned", name: "Drowned Sailor", hp: 1.5, atk: 0.22, pattern: &[Move::Hit, Move::Hit, Move::Brace, Move::Heavy], windup: "lifts a barnacled anchor", weak: Some("fire"), elite: false },
-    Monster { id: "serpent", name: "Sea Serpent", hp: 1.4, atk: 0.24, pattern: &[Move::Hit, Move::Roar, Move::Heavy], windup: "rears back to strike", weak: Some("frost"), elite: false },
-    Monster { id: "centaur", name: "Centaur Scout", hp: 1.3, atk: 0.25, pattern: &[Move::Hit, Move::Hit, Move::Heavy], windup: "draws a long arrow", weak: None, elite: false },
-    Monster { id: "troll", name: "Wood Troll", hp: 2.0, atk: 0.20, pattern: &[Move::Brace, Move::Hit, Move::Hit, Move::Heavy], windup: "lifts a whole tree trunk", weak: Some("fire"), elite: false },
-    Monster { id: "hound", name: "Grave Hound", hp: 1.3, atk: 0.24, pattern: &[Move::Hit, Move::Hit, Move::Roar, Move::Heavy], windup: "bares its rotten teeth", weak: Some("fire"), elite: false },
-    Monster { id: "shade", name: "Barrow Shade", hp: 1.5, atk: 0.22, pattern: &[Move::Hit, Move::Brace, Move::Heavy], windup: "goes still and cold", weak: Some("frost"), elite: false },
+    Monster {
+        id: "nixie",
+        name: "Nixie",
+        hp: 1.6,
+        atk: 0.20,
+        pattern: &[Move::Hit, Move::Brace, Move::Hit, Move::Heavy],
+        windup: "starts a drowning song",
+        weak: Some("fire"),
+        elite: false,
+    },
+    Monster {
+        id: "harpy",
+        name: "Harpy",
+        hp: 1.3,
+        atk: 0.24,
+        pattern: &[Move::Hit, Move::Hit, Move::Heavy],
+        windup: "climbs high to dive",
+        weak: None,
+        elite: false,
+    },
+    Monster {
+        id: "wolf",
+        name: "Grey Wolf",
+        hp: 1.4,
+        atk: 0.22,
+        pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy],
+        windup: "crouches to pounce",
+        weak: Some("fire"),
+        elite: false,
+    },
+    Monster {
+        id: "satyr",
+        name: "Satyr Raider",
+        hp: 1.7,
+        atk: 0.20,
+        pattern: &[Move::Hit, Move::Brace, Move::Heavy],
+        windup: "lowers its horns",
+        weak: None,
+        elite: false,
+    },
+    Monster {
+        id: "draugr",
+        name: "Draugr Warrior",
+        hp: 1.6,
+        atk: 0.21,
+        pattern: &[Move::Hit, Move::Hit, Move::Heavy, Move::Brace],
+        windup: "raises its axe",
+        weak: Some("fire"),
+        elite: false,
+    },
+    Monster {
+        id: "wight",
+        name: "Barrow Wight",
+        hp: 1.4,
+        atk: 0.23,
+        pattern: &[Move::Hit, Move::Roar, Move::Heavy],
+        windup: "draws in a grave-cold breath",
+        weak: Some("frost"),
+        elite: false,
+    },
+    Monster {
+        id: "drowned",
+        name: "Drowned Sailor",
+        hp: 1.5,
+        atk: 0.22,
+        pattern: &[Move::Hit, Move::Hit, Move::Brace, Move::Heavy],
+        windup: "lifts a barnacled anchor",
+        weak: Some("fire"),
+        elite: false,
+    },
+    Monster {
+        id: "serpent",
+        name: "Sea Serpent",
+        hp: 1.4,
+        atk: 0.24,
+        pattern: &[Move::Hit, Move::Roar, Move::Heavy],
+        windup: "rears back to strike",
+        weak: Some("frost"),
+        elite: false,
+    },
+    Monster {
+        id: "centaur",
+        name: "Centaur Scout",
+        hp: 1.3,
+        atk: 0.25,
+        pattern: &[Move::Hit, Move::Hit, Move::Heavy],
+        windup: "draws a long arrow",
+        weak: None,
+        elite: false,
+    },
+    Monster {
+        id: "troll",
+        name: "Wood Troll",
+        hp: 2.0,
+        atk: 0.20,
+        pattern: &[Move::Brace, Move::Hit, Move::Hit, Move::Heavy],
+        windup: "lifts a whole tree trunk",
+        weak: Some("fire"),
+        elite: false,
+    },
+    Monster {
+        id: "hound",
+        name: "Grave Hound",
+        hp: 1.3,
+        atk: 0.24,
+        pattern: &[Move::Hit, Move::Hit, Move::Roar, Move::Heavy],
+        windup: "bares its rotten teeth",
+        weak: Some("fire"),
+        elite: false,
+    },
+    Monster {
+        id: "shade",
+        name: "Barrow Shade",
+        hp: 1.5,
+        atk: 0.22,
+        pattern: &[Move::Hit, Move::Brace, Move::Heavy],
+        windup: "goes still and cold",
+        weak: Some("frost"),
+        elite: false,
+    },
     // Elites: one per region, rare.
     // Titans and the guild raid boss: shared bosses.
-    Monster { id: "jormungandr", name: "Spawn of Jormungandr", hp: 2.0, atk: 0.24, pattern: &[Move::Hit, Move::Roar, Move::Heavy, Move::Hit, Move::Brace, Move::Heavy], windup: "coils, and the ground tilts", weak: Some("frost"), elite: true },
-    Monster { id: "typhon", name: "Shade of Typhon", hp: 2.0, atk: 0.25, pattern: &[Move::Hit, Move::Heavy, Move::Hit, Move::Roar, Move::Heavy], windup: "breathes in a storm", weak: Some("frost"), elite: true },
-    Monster { id: "hrimthurs", name: "Hrimthurs the Frost Giant", hp: 2.2, atk: 0.23, pattern: &[Move::Brace, Move::Hit, Move::Heavy, Move::Hit, Move::Roar], windup: "raises a fist of ice", weak: Some("fire"), elite: true },
-    Monster { id: "fafnir", name: "Fafnir the Hoard-Wyrm", hp: 2.2, atk: 0.25, pattern: &[Move::Hit, Move::Roar, Move::Heavy, Move::Hit, Move::Heavy, Move::Brace], windup: "swells with poison", weak: Some("frost"), elite: true },
+    Monster {
+        id: "jormungandr",
+        name: "Spawn of Jormungandr",
+        hp: 2.0,
+        atk: 0.24,
+        pattern: &[
+            Move::Hit,
+            Move::Roar,
+            Move::Heavy,
+            Move::Hit,
+            Move::Brace,
+            Move::Heavy,
+        ],
+        windup: "coils, and the ground tilts",
+        weak: Some("frost"),
+        elite: true,
+    },
+    Monster {
+        id: "typhon",
+        name: "Shade of Typhon",
+        hp: 2.0,
+        atk: 0.25,
+        pattern: &[Move::Hit, Move::Heavy, Move::Hit, Move::Roar, Move::Heavy],
+        windup: "breathes in a storm",
+        weak: Some("frost"),
+        elite: true,
+    },
+    Monster {
+        id: "hrimthurs",
+        name: "Hrimthurs the Frost Giant",
+        hp: 2.2,
+        atk: 0.23,
+        pattern: &[Move::Brace, Move::Hit, Move::Heavy, Move::Hit, Move::Roar],
+        windup: "raises a fist of ice",
+        weak: Some("fire"),
+        elite: true,
+    },
+    Monster {
+        id: "fafnir",
+        name: "Fafnir the Hoard-Wyrm",
+        hp: 2.2,
+        atk: 0.25,
+        pattern: &[
+            Move::Hit,
+            Move::Roar,
+            Move::Heavy,
+            Move::Hit,
+            Move::Heavy,
+            Move::Brace,
+        ],
+        windup: "swells with poison",
+        weak: Some("frost"),
+        elite: true,
+    },
     // Dungeon bosses.
-    Monster { id: "handmaiden", name: "Ran's Handmaiden", hp: 2.6, atk: 0.24, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy, Move::Brace], windup: "pulls the tide back with both hands", weak: Some("fire"), elite: true },
-    Monster { id: "whelp", name: "Fenrir's Whelp", hp: 2.4, atk: 0.27, pattern: &[Move::Hit, Move::Hit, Move::Heavy, Move::Roar, Move::Heavy], windup: "bares teeth the size of daggers", weak: Some("fire"), elite: true },
-    Monster { id: "warden", name: "The Treasury Warden", hp: 2.8, atk: 0.25, pattern: &[Move::Brace, Move::Hit, Move::Heavy, Move::Hit, Move::Roar, Move::Heavy], windup: "lifts a chest-lid like a shield, then swings it", weak: Some("frost"), elite: true },
-    Monster { id: "minotaur", name: "The Minotaur", hp: 1.7 * 1.8, atk: 0.22 * 1.2, pattern: &[Move::Hit, Move::Heavy, Move::Roar, Move::Hit, Move::Brace, Move::Heavy], windup: "lowers its horns and paws the stone", weak: Some("frost"), elite: true },
-    Monster { id: "siren", name: "The Siren of the Skerries", hp: 1.6 * ELITE_HP, atk: 0.20 * ELITE_ATK, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "takes a breath that pulls at your ears", weak: Some("fire"), elite: true },
-    Monster { id: "grimtooth", name: "Old Grimtooth", hp: 1.4 * ELITE_HP, atk: 0.22 * ELITE_ATK, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "crouches, every scar on him tight", weak: Some("fire"), elite: true },
-    Monster { id: "champion", name: "Hrolf's Champion", hp: 1.6 * ELITE_HP, atk: 0.21 * ELITE_ATK, pattern: &[Move::Hit, Move::Brace, Move::Hit, Move::Heavy], windup: "raises a sword as long as you are", weak: Some("frost"), elite: true },
+    Monster {
+        id: "handmaiden",
+        name: "Ran's Handmaiden",
+        hp: 2.6,
+        atk: 0.24,
+        pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy, Move::Brace],
+        windup: "pulls the tide back with both hands",
+        weak: Some("fire"),
+        elite: true,
+    },
+    Monster {
+        id: "whelp",
+        name: "Fenrir's Whelp",
+        hp: 2.4,
+        atk: 0.27,
+        pattern: &[Move::Hit, Move::Hit, Move::Heavy, Move::Roar, Move::Heavy],
+        windup: "bares teeth the size of daggers",
+        weak: Some("fire"),
+        elite: true,
+    },
+    Monster {
+        id: "warden",
+        name: "The Treasury Warden",
+        hp: 2.8,
+        atk: 0.25,
+        pattern: &[
+            Move::Brace,
+            Move::Hit,
+            Move::Heavy,
+            Move::Hit,
+            Move::Roar,
+            Move::Heavy,
+        ],
+        windup: "lifts a chest-lid like a shield, then swings it",
+        weak: Some("frost"),
+        elite: true,
+    },
+    Monster {
+        id: "minotaur",
+        name: "The Minotaur",
+        hp: 1.7 * 1.8,
+        atk: 0.22 * 1.2,
+        pattern: &[
+            Move::Hit,
+            Move::Heavy,
+            Move::Roar,
+            Move::Hit,
+            Move::Brace,
+            Move::Heavy,
+        ],
+        windup: "lowers its horns and paws the stone",
+        weak: Some("frost"),
+        elite: true,
+    },
+    Monster {
+        id: "siren",
+        name: "The Siren of the Skerries",
+        hp: 1.6 * ELITE_HP,
+        atk: 0.20 * ELITE_ATK,
+        pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy],
+        windup: "takes a breath that pulls at your ears",
+        weak: Some("fire"),
+        elite: true,
+    },
+    Monster {
+        id: "grimtooth",
+        name: "Old Grimtooth",
+        hp: 1.4 * ELITE_HP,
+        atk: 0.22 * ELITE_ATK,
+        pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy],
+        windup: "crouches, every scar on him tight",
+        weak: Some("fire"),
+        elite: true,
+    },
+    Monster {
+        id: "champion",
+        name: "Hrolf's Champion",
+        hp: 1.6 * ELITE_HP,
+        atk: 0.21 * ELITE_ATK,
+        pattern: &[Move::Hit, Move::Brace, Move::Hit, Move::Heavy],
+        windup: "raises a sword as long as you are",
+        weak: Some("frost"),
+        elite: true,
+    },
 ];
 
 /// Elites' HP and attack against the regular monster of their region.
@@ -551,7 +1084,15 @@ pub const BOSS_HP: i64 = 1600;
 pub const BOSS_ATK: i64 = 47;
 /// Phase 1 and phase 2 (below half HP) move loops.
 pub const BOSS_P1: &[Move] = &[Move::Hit, Move::Hit, Move::Heavy, Move::Hit, Move::Roar];
-pub const BOSS_P2: &[Move] = &[Move::Hit, Move::Heavy, Move::Hit, Move::Brace, Move::Hit, Move::Heavy, Move::Roar];
+pub const BOSS_P2: &[Move] = &[
+    Move::Hit,
+    Move::Heavy,
+    Move::Hit,
+    Move::Brace,
+    Move::Hit,
+    Move::Heavy,
+    Move::Roar,
+];
 /// Phase 2 hits this much harder.
 pub const BOSS_P2_ATK: f64 = 1.3;
 
@@ -560,7 +1101,14 @@ pub const FACTS: [&str; 4] = ["weakness", "slam", "phase", "roar"];
 
 pub fn fact_text(fact: &str, week: i64) -> String {
     match fact {
-        "weakness" => format!("{} hurts it most this week", if boss_weakness(week) == "fire" { "Fire" } else { "Frost" }),
+        "weakness" => format!(
+            "{} hurts it most this week",
+            if boss_weakness(week) == "fire" {
+                "Fire"
+            } else {
+                "Frost"
+            }
+        ),
         "slam" => "It lifts the barrow stone a turn before it slams".into(),
         "phase" => "Below half health it hits harder and slams more often".into(),
         "roar" => "Its roar drains 2 stamina unless you guard".into(),
@@ -570,7 +1118,11 @@ pub fn fact_text(fact: &str, week: i64) -> String {
 
 /// The boss changes one trait every week: its weakness alternates.
 pub fn boss_weakness(week: i64) -> &'static str {
-    if week.rem_euclid(2) == 0 { "fire" } else { "frost" }
+    if week.rem_euclid(2) == 0 {
+        "fire"
+    } else {
+        "frost"
+    }
 }
 
 // ---- progression ----
@@ -595,7 +1147,10 @@ pub fn level_power(level: u32) -> i64 {
 /// Combat stats from Power and the patron: (max HP, attack).
 pub fn stats(power: i64, main: God) -> (i64, i64) {
     let (hp, atk, _) = main.body();
-    (((60.0 + power as f64 * 1.2) * hp).round() as i64, ((4.0 + power as f64 * 0.11) * atk).round() as i64)
+    (
+        ((60.0 + power as f64 * 1.2) * hp).round() as i64,
+        ((4.0 + power as f64 * 0.11) * atk).round() as i64,
+    )
 }
 
 /// HP regained per minute out of fights, as a share of max HP.
@@ -636,17 +1191,27 @@ mod tests {
     #[test]
     fn every_item_has_a_use_and_a_source() {
         for i in ITEMS {
-            let used = GEAR.iter().any(|g| g.cost.iter().any(|(id, _)| *id == i.id))
-                || SUPPLY_RECIPES.iter().any(|r| r.cost.iter().any(|(id, _)| *id == i.id))
+            let used = GEAR
+                .iter()
+                .any(|g| g.cost.iter().any(|(id, _)| *id == i.id))
+                || SUPPLY_RECIPES
+                    .iter()
+                    .any(|r| r.cost.iter().any(|(id, _)| *id == i.id))
                 || matches!(i.kind, Kind::Supply | Kind::Combat)
                 || i.id == "thread";
             assert!(used, "{} has no use", i.id);
-            let source = REGIONS.iter().any(|r| r.drops.iter().any(|(id, _)| *id == i.id) || r.rare.0 == i.id)
+            let source = REGIONS
+                .iter()
+                .any(|r| r.drops.iter().any(|(id, _)| *id == i.id) || r.rare.0 == i.id)
                 || i.id == "thread"
                 || SUPPLY_RECIPES.iter().any(|r| r.makes == i.id)
                 || i.kind == Kind::Trophy;
             assert!(source, "{} can't be found or made", i.id);
-            assert!(i.kind != Kind::Material || i.tribute > 0, "{} can't be offered", i.id);
+            assert!(
+                i.kind != Kind::Material || i.tribute > 0,
+                "{} can't be offered",
+                i.id
+            );
         }
         for g in GEAR {
             for (id, _) in g.cost {
@@ -679,7 +1244,9 @@ mod tests {
 // ---- gear quality and traits ----
 
 /// How good a piece came out. Each step adds a trait and a little Power.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum Rarity {
     Common,
     Fine,
@@ -745,7 +1312,18 @@ pub enum Trait {
     Frost,
 }
 
-pub const TRAITS: [Trait; 10] = [Trait::Fierce, Trait::Sturdy, Trait::Vampiric, Trait::Keen, Trait::Steady, Trait::Warding, Trait::Lucky, Trait::Seeing, Trait::Flame, Trait::Frost];
+pub const TRAITS: [Trait; 10] = [
+    Trait::Fierce,
+    Trait::Sturdy,
+    Trait::Vampiric,
+    Trait::Keen,
+    Trait::Steady,
+    Trait::Warding,
+    Trait::Lucky,
+    Trait::Seeing,
+    Trait::Flame,
+    Trait::Frost,
+];
 
 impl Trait {
     pub fn name(self) -> &'static str {
@@ -873,7 +1451,6 @@ pub fn floor_region(floor: u32) -> &'static Region {
 pub const LAB_WIN_HEAL: f64 = 0.08;
 /// Share of the haul you keep when you fall.
 pub const LAB_KEEP_ON_DEATH: f64 = 0.5;
-
 
 // ---- shared bosses: Titans (the whole server) and guild raids ----
 

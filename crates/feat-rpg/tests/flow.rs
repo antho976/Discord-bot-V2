@@ -28,7 +28,11 @@ fn check(s: &Screen) {
         match c {
             Component::Container(x) => x.components.iter().for_each(|c| walk(c, n, text, ids)),
             Component::ActionRow(x) => {
-                assert!(x.components.len() <= 5, "a row has {} items", x.components.len());
+                assert!(
+                    x.components.len() <= 5,
+                    "a row has {} items",
+                    x.components.len()
+                );
                 x.components.iter().for_each(|c| walk(c, n, text, ids));
             }
             Component::Section(x) => {
@@ -44,11 +48,20 @@ fn check(s: &Screen) {
                 ids.push(id);
             }
             Component::SelectMenu(m) => {
-                assert!(m.custom_id.len() <= 100, "custom id too long: {}", m.custom_id);
+                assert!(
+                    m.custom_id.len() <= 100,
+                    "custom id too long: {}",
+                    m.custom_id
+                );
                 let opts = m.options.as_ref().unwrap();
                 assert!(!opts.is_empty() && opts.len() <= 25);
                 let values: HashSet<&str> = opts.iter().map(|o| o.value.as_str()).collect();
-                assert_eq!(values.len(), opts.len(), "duplicate option values in {}", m.custom_id);
+                assert_eq!(
+                    values.len(),
+                    opts.len(),
+                    "duplicate option values in {}",
+                    m.custom_id
+                );
                 assert!(opts.iter().filter(|o| o.default).count() <= 1);
                 ids.push(m.custom_id.clone());
             }
@@ -75,10 +88,27 @@ fn click(ctx: &Ctx, screen: &str, action: &str, arg: &str, values: &[&str]) -> S
     click_at(ctx, screen, action, arg, values, version)
 }
 
-fn click_at(ctx: &Ctx, screen: &str, action: &str, arg: &str, values: &[&str], version: i64) -> Screen {
-    let route = Route { owner: U, screen: screen.into(), action: action.into(), arg: arg.into(), version };
+fn click_at(
+    ctx: &Ctx,
+    screen: &str,
+    action: &str,
+    arg: &str,
+    values: &[&str],
+    version: i64,
+) -> Screen {
+    let route = Route {
+        owner: U,
+        screen: screen.into(),
+        action: action.into(),
+        arg: arg.into(),
+        version,
+    };
     let values: Vec<String> = values.iter().map(|v| v.to_string()).collect();
-    let out = store::run(&ctx.db, G, U, Some("Antho"), |g| game::handle(ctx, g, &route, &values, Rates::default())).unwrap().unwrap();
+    let out = store::run(&ctx.db, G, U, Some("Antho"), |g| {
+        game::handle(ctx, g, &route, &values, Rates::default())
+    })
+    .unwrap()
+    .unwrap();
     check(&out.screen);
     out.screen
 }
@@ -103,12 +133,47 @@ fn a_new_player_plays_through_midgard() {
     store::create(&ctx.db, G, U, "Antho", God::Thor).unwrap();
 
     // Every screen draws within Discord's limits from the start.
-    for s in ["hub", "goals", "exp", "hunt", "boss", "forge", "pack", "temple", "givethor", "giveathena", "givehades", "patron", "help", "saga", "bounties", "lab", "hero", "skagi", "guild", "titan", "raid", "dungeons", "dungeon", "map", "region_shore", "region_barrow", "quests", "market"] {
+    for s in [
+        "hub",
+        "goals",
+        "exp",
+        "hunt",
+        "boss",
+        "forge",
+        "pack",
+        "temple",
+        "givethor",
+        "giveathena",
+        "givehades",
+        "patron",
+        "help",
+        "saga",
+        "bounties",
+        "lab",
+        "hero",
+        "skagi",
+        "guild",
+        "titan",
+        "raid",
+        "dungeons",
+        "dungeon",
+        "map",
+        "region_shore",
+        "region_barrow",
+        "quests",
+        "market",
+    ] {
         click(&ctx, s, "", "", &[]);
     }
 
     // Plan with the menus, then send out.
-    let s = click(&ctx, "exp", "set", "region|shore.normal.4.rations", &["wolfwood"]);
+    let s = click(
+        &ctx,
+        "exp",
+        "set",
+        "region|shore.normal.4.rations",
+        &["wolfwood"],
+    );
     assert!(text_of(&s).contains("Forecast"));
     let before = store::get(&ctx.db, G, U).unwrap().unwrap();
     click(&ctx, "exp", "go", "shore.normal.1.rations", &[]);
@@ -117,22 +182,40 @@ fn a_new_player_plays_through_midgard() {
     assert_eq!(p.have("rations"), before.have("rations") - 1);
 
     // The same button again, from before the send: refused, nothing doubles.
-    let s = click_at(&ctx, "exp", "go", "shore.normal.1.rations", &[], before.version);
+    let s = click_at(
+        &ctx,
+        "exp",
+        "go",
+        "shore.normal.1.rations",
+        &[],
+        before.version,
+    );
     assert!(text_of(&s).contains("before your last move"));
 
     // Not back yet: collect does nothing.
     click(&ctx, "exp", "collect", "", &[]);
-    assert!(store::get(&ctx.db, G, U).unwrap().unwrap().expedition.is_some());
+    assert!(
+        store::get(&ctx.db, G, U)
+            .unwrap()
+            .unwrap()
+            .expedition
+            .is_some()
+    );
 
     // Back: collect pays out once.
-    ctx.db.with(|c| c.execute("UPDATE rpg_expeditions SET ends_at = 0", [])).unwrap();
+    ctx.db
+        .with(|c| c.execute("UPDATE rpg_expeditions SET ends_at = 0", []))
+        .unwrap();
     let gold_before = store::get(&ctx.db, G, U).unwrap().unwrap().gold;
     let s = click(&ctx, "exp", "collect", "", &[]);
     assert!(text_of(&s).contains("Brought back"));
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
     assert!(p.expedition.is_none());
     assert!(p.gold > gold_before);
-    assert!(p.tribute[God::Thor as usize] > 0, "expedition tribute goes to the patron's altar");
+    assert!(
+        p.tribute[God::Thor as usize] > 0,
+        "expedition tribute goes to the patron's altar"
+    );
     let gold_after = p.gold;
     click(&ctx, "exp", "collect", "", &[]);
     assert_eq!(store::get(&ctx.db, G, U).unwrap().unwrap().gold, gold_after);
@@ -142,10 +225,17 @@ fn a_new_player_plays_through_midgard() {
     for _ in 0..80 {
         let p = store::get(&ctx.db, G, U).unwrap().unwrap();
         let Some(f) = p.fight else { break };
-        let a = if matches!(f.intent(), data::Move::Heavy | data::Move::Roar) || f.stamina < 1 { "guard" } else { "strike" };
+        let a = if matches!(f.intent(), data::Move::Heavy | data::Move::Roar) || f.stamina < 1 {
+            "guard"
+        } else {
+            "strike"
+        };
         click(&ctx, "hunt", "act", a, &[]);
     }
-    assert!(store::get(&ctx.db, G, U).unwrap().unwrap().fight.is_none(), "the hunt never ended");
+    assert!(
+        store::get(&ctx.db, G, U).unwrap().unwrap().fight.is_none(),
+        "the hunt never ended"
+    );
 
     // Hurt: too hurt to hunt, a potion fixes it.
     store::run(&ctx.db, G, U, None, |g| g.set_hp(1)).unwrap();
@@ -160,25 +250,54 @@ fn a_new_player_plays_through_midgard() {
     }
 
     // Forge supplies from materials.
-    grant(&ctx, &[("herbs", 40), ("fish", 30), ("iron", 50), ("yew", 30), ("amber", 4)], 2000);
+    grant(
+        &ctx,
+        &[
+            ("herbs", 40),
+            ("fish", 30),
+            ("iron", 50),
+            ("yew", 30),
+            ("amber", 4),
+        ],
+        2000,
+    );
     let potions = store::get(&ctx.db, G, U).unwrap().unwrap().have("potion");
     click(&ctx, "forge", "make", "", &["potion"]);
-    assert_eq!(store::get(&ctx.db, G, U).unwrap().unwrap().have("potion"), potions + 2);
+    assert_eq!(
+        store::get(&ctx.db, G, U).unwrap().unwrap().have("potion"),
+        potions + 2
+    );
     // A piece of gear and an upgrade.
     click(&ctx, "forge", "gear", "ambercharm", &[]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
     let charm = p.equipped(data::Slot::Charm).expect("the charm is worn").id;
     click(&ctx, "forge", "upgrade", "", &[&charm.to_string()]);
-    assert_eq!(store::get(&ctx.db, G, U).unwrap().unwrap().equipped(data::Slot::Charm).unwrap().upgrade, 1);
+    assert_eq!(
+        store::get(&ctx.db, G, U)
+            .unwrap()
+            .unwrap()
+            .equipped(data::Slot::Charm)
+            .unwrap()
+            .upgrade,
+        1
+    );
 
     // Give spare materials and gold at Athena's altar.
     click(&ctx, "temple", "give", "athena.spare", &[]);
     click(&ctx, "temple", "give", "athena.gold100", &[]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
     assert!(p.tribute[God::Athena as usize] > 100);
-    let o = ctx.db.with(|c| Ok(store::offerings(c, G, store::week_now()).unwrap())).unwrap();
+    let o = ctx
+        .db
+        .with(|c| Ok(store::offerings(c, G, store::week_now()).unwrap()))
+        .unwrap();
     assert_eq!(o[God::Athena as usize], p.tribute[God::Athena as usize]);
-    assert!(p.items.iter().filter(|(id, _)| data::item(id).is_some_and(|i| i.kind == data::Kind::Material)).all(|(_, n)| *n <= 20));
+    assert!(
+        p.items
+            .iter()
+            .filter(|(id, _)| data::item(id).is_some_and(|i| i.kind == data::Kind::Material))
+            .all(|(_, n)| *n <= 20)
+    );
 
     // Face the boss far too early: it's a real fight that can be lost or fled.
     store::run(&ctx.db, G, U, None, |g| g.set_hp(9999)).unwrap();
@@ -189,9 +308,25 @@ fn a_new_player_plays_through_midgard() {
     assert!(store::get(&ctx.db, G, U).unwrap().unwrap().fight.is_none());
 
     // The ledger saw every movement and nothing went below zero.
-    let neg: i64 = ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM rpg_items WHERE qty < 0", [], |r| r.get(0))).unwrap();
+    let neg: i64 = ctx
+        .db
+        .with(|c| {
+            c.query_row("SELECT COUNT(*) FROM rpg_items WHERE qty < 0", [], |r| {
+                r.get(0)
+            })
+        })
+        .unwrap();
     assert_eq!(neg, 0);
-    let ledger: i64 = ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM rpg_ledger WHERE guild_id = ?1", params![G as i64], |r| r.get(0))).unwrap();
+    let ledger: i64 = ctx
+        .db
+        .with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM rpg_ledger WHERE guild_id = ?1",
+                params![G as i64],
+                |r| r.get(0),
+            )
+        })
+        .unwrap();
     assert!(ledger > 20);
 }
 
@@ -224,7 +359,11 @@ fn beating_the_boss_opens_heroic_and_the_lesser_vow() {
         for _ in 0..200 {
             let p = store::get(&ctx.db, G, U).unwrap().unwrap();
             let Some(ref f) = p.fight else { break };
-            let a = feat_rpg::engine::combat::autoplay(f, p.have("potion"), (p.have("fireoil"), p.have("frostoil")));
+            let a = feat_rpg::engine::combat::autoplay(
+                f,
+                p.have("potion"),
+                (p.have("fireoil"), p.have("frostoil")),
+            );
             let arg = match a {
                 feat_rpg::engine::combat::Action::Strike => "strike".to_string(),
                 feat_rpg::engine::combat::Action::Guard => "guard".into(),
@@ -240,10 +379,19 @@ fn beating_the_boss_opens_heroic_and_the_lesser_vow() {
         store::run(&ctx.db, G, U, None, |g| g.item("potion", 3, "test")).unwrap();
     }
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
-    assert!(p.boss_won, "a full-power Athena never beat the boss in six tries");
+    assert!(
+        p.boss_won,
+        "a full-power Athena never beat the boss in six tries"
+    );
     assert_eq!(p.have("shard"), 3);
     // Heroic is offered now, and a lesser vow can be taken.
-    let s = click(&ctx, "exp", "set", "danger|barrow.normal.4.none", &["heroic"]);
+    let s = click(
+        &ctx,
+        "exp",
+        "set",
+        "danger|barrow.normal.4.none",
+        &["heroic"],
+    );
     assert!(text_of(&s).contains("Heroic"));
     click(&ctx, "patron", "vow", "", &["thor"]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
@@ -256,7 +404,11 @@ fn hunt_until_done(ctx: &Ctx, region: &str) {
     for _ in 0..80 {
         let p = store::get(&ctx.db, G, U).unwrap().unwrap();
         let Some(f) = p.fight else { break };
-        let a = if matches!(f.intent(), data::Move::Heavy | data::Move::Roar) || f.stamina < 1 { "guard" } else { "strike" };
+        let a = if matches!(f.intent(), data::Move::Heavy | data::Move::Roar) || f.stamina < 1 {
+            "guard"
+        } else {
+            "strike"
+        };
         click(ctx, "hunt", "act", a, &[]);
     }
     store::run(&ctx.db, G, U, None, |g| {
@@ -285,17 +437,32 @@ fn the_saga_bounties_and_encounters() {
     let s = click(&ctx, "saga", "claim", "", &[]);
     assert!(text_of(&s).contains("isn't finished"));
     for _ in 0..12 {
-        if store::get(&ctx.db, G, U).unwrap().unwrap().saga_progress.first().copied().unwrap_or(0) >= 3 {
+        if store::get(&ctx.db, G, U)
+            .unwrap()
+            .unwrap()
+            .saga_progress
+            .first()
+            .copied()
+            .unwrap_or(0)
+            >= 3
+        {
             break;
         }
         hunt_until_done(&ctx, "shore");
     }
-    assert!(game::chapter_done(&store::get(&ctx.db, G, U).unwrap().unwrap()));
+    assert!(game::chapter_done(
+        &store::get(&ctx.db, G, U).unwrap().unwrap()
+    ));
     // Hunt wins counted toward today's bounties too, where one asks for wins.
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
     let bs = game::todays_bounties(&p);
     for (i, b) in bs.iter().enumerate() {
-        if let feat_rpg::quests::Goal::Wins { region: None, monster: None, .. } = b.goal {
+        if let feat_rpg::quests::Goal::Wins {
+            region: None,
+            monster: None,
+            ..
+        } = b.goal
+        {
             assert!(p.bounty[i].0 >= 3, "wins weren't counted for bounty {i}");
         }
     }
@@ -352,7 +519,8 @@ fn the_saga_bounties_and_encounters() {
 
     // The völva's ally joins the boss fight.
     store::run(&ctx.db, G, U, None, |g| {
-        g.p.saga_choices.insert("volva".into(), "shieldmaiden".into());
+        g.p.saga_choices
+            .insert("volva".into(), "shieldmaiden".into());
         g.save_saga()?;
         let max = g.p.max_hp();
         g.set_hp(max)
@@ -362,7 +530,6 @@ fn the_saga_bounties_and_encounters() {
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
     assert_eq!(p.fight.unwrap().ally.as_deref(), Some("shieldmaiden"));
 }
-
 
 #[test]
 fn the_labyrinth_gear_and_the_tutorial() {
@@ -409,7 +576,14 @@ fn the_labyrinth_gear_and_the_tutorial() {
             click(&ctx, "lab", "act", &arg, &[]);
         } else {
             // Prefer shrines when hurt, else the first door.
-            let i = if p.hp() * 2 < p.max_hp() { run.doors.iter().position(|d| format!("{d:?}") == "Shrine").unwrap_or(0) } else { 0 };
+            let i = if p.hp() * 2 < p.max_hp() {
+                run.doors
+                    .iter()
+                    .position(|d| format!("{d:?}") == "Shrine")
+                    .unwrap_or(0)
+            } else {
+                0
+            };
             let id = format!("{:?}", run.doors[i]).to_lowercase();
             click(&ctx, "lab", "door", &format!("{i}.{id}"), &[]);
         }
@@ -423,10 +597,20 @@ fn the_labyrinth_gear_and_the_tutorial() {
         assert!(p.run.is_none());
         assert!(p.gold > before);
     }
-    let best: i64 = ctx.db.with(|c| c.query_row("SELECT COALESCE(MAX(best), 0) FROM rpg_lab", [], |r| r.get(0))).unwrap();
+    let best: i64 = ctx
+        .db
+        .with(|c| {
+            c.query_row("SELECT COALESCE(MAX(best), 0) FROM rpg_lab", [], |r| {
+                r.get(0)
+            })
+        })
+        .unwrap();
     assert!(best >= 5, "a full-power hero only reached floor {best}");
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
-    assert!(p.have("thread") >= 3, "the guardian should have left threads");
+    assert!(
+        p.have("thread") >= 3,
+        "the guardian should have left threads"
+    );
 
     // Refine a worn piece with threads, then reforge it.
     store::run(&ctx.db, G, U, None, |g| {
@@ -435,7 +619,12 @@ fn the_labyrinth_gear_and_the_tutorial() {
     })
     .unwrap();
     // The run may have dropped better gear; refine whichever worn piece can still go up.
-    let piece = data::SLOTS.iter().filter_map(|sl| p.equipped(*sl)).find(|g| g.rarity != data::Rarity::Epic).unwrap().clone();
+    let piece = data::SLOTS
+        .iter()
+        .filter_map(|sl| p.equipped(*sl))
+        .find(|g| g.rarity != data::Rarity::Epic)
+        .unwrap()
+        .clone();
     click(&ctx, "forge", "refine", "", &[&piece.id.to_string()]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
     let after = p.gear.iter().find(|g| g.id == piece.id).unwrap();
@@ -445,17 +634,34 @@ fn the_labyrinth_gear_and_the_tutorial() {
     click(&ctx, "forge", "reforge", "", &[&piece.id.to_string()]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
     assert!(p.have("thread") < threads);
-    assert_eq!(p.gear.iter().find(|g| g.id == piece.id).unwrap().traits.len(), after.traits.len());
+    assert_eq!(
+        p.gear
+            .iter()
+            .find(|g| g.id == piece.id)
+            .unwrap()
+            .traits
+            .len(),
+        after.traits.len()
+    );
     // Traits reach fights.
-    assert!(p.hero().mods.damage > 0.0 || p.hero().mods.crit > 0.0 || p.hero().mods.steal > 0.0 || p.hero().mods.fire > 0.0 || p.hero().mods.frost > 0.0);
+    assert!(
+        p.hero().mods.damage > 0.0
+            || p.hero().mods.crit > 0.0
+            || p.hero().mods.steal > 0.0
+            || p.hero().mods.fire > 0.0
+            || p.hero().mods.frost > 0.0
+    );
 }
-
 
 fn play_fight(ctx: &Ctx, screen: &str) {
     for _ in 0..200 {
         let p = store::get(&ctx.db, G, U).unwrap().unwrap();
         let Some(ref f) = p.fight else { break };
-        let a = feat_rpg::engine::combat::autoplay(f, p.have("potion"), (p.have("fireoil"), p.have("frostoil")));
+        let a = feat_rpg::engine::combat::autoplay(
+            f,
+            p.have("potion"),
+            (p.have("fireoil"), p.have("frostoil")),
+        );
         let arg = match a {
             feat_rpg::engine::combat::Action::Strike => "strike".to_string(),
             feat_rpg::engine::combat::Action::Guard => "guard".into(),
@@ -507,7 +713,15 @@ fn guilds_raids_and_titans() {
     // A second player joins.
     store::create(&ctx.db, G, 21, "Mira", God::Athena).unwrap();
     store::run(&ctx.db, G, 21, None, |g| feat_rpg::guild::join(g, clan.id)).unwrap();
-    assert_eq!(store::get(&ctx.db, G, 21).unwrap().unwrap().clan.unwrap().id, clan.id);
+    assert_eq!(
+        store::get(&ctx.db, G, 21)
+            .unwrap()
+            .unwrap()
+            .clan
+            .unwrap()
+            .id,
+        clan.id
+    );
     // Hunting earns guild XP and counts toward the weekly challenge.
     hunt_until_done(&ctx, "shore");
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
@@ -518,16 +732,37 @@ fn guilds_raids_and_titans() {
         click(&ctx, "guild", "give", "1000", &[]);
     }
     click(&ctx, "guild", "buy", "", &["mead"]);
-    assert!(store::get(&ctx.db, G, U).unwrap().unwrap().clan.unwrap().has("mead"));
+    assert!(
+        store::get(&ctx.db, G, U)
+            .unwrap()
+            .unwrap()
+            .clan
+            .unwrap()
+            .has("mead")
+    );
     click(&ctx, "guild", "raid", "", &[]);
-    let raid = ctx.db.with(|c| Ok(feat_rpg::shared::active(c, G, "raid", clan.id).unwrap())).unwrap().expect("raid started");
+    let raid = ctx
+        .db
+        .with(|c| Ok(feat_rpg::shared::active(c, G, "raid", clan.id).unwrap()))
+        .unwrap()
+        .expect("raid started");
     heal(&ctx);
     click(&ctx, "raid", "fight", "", &[]);
     play_fight(&ctx, "raid");
-    let after = ctx.db.with(|c| Ok(feat_rpg::shared::by_id(c, raid.id).unwrap().unwrap())).unwrap();
+    let after = ctx
+        .db
+        .with(|c| Ok(feat_rpg::shared::by_id(c, raid.id).unwrap().unwrap()))
+        .unwrap();
     assert!(after.hp < raid.hp, "the attempt dealt no damage");
     // Fell it by hand and claim.
-    ctx.db.with(|c| c.execute("UPDATE rpg_shared SET hp = 0, killed_at = 1 WHERE id = ?1", bot_core::rusqlite::params![raid.id])).unwrap();
+    ctx.db
+        .with(|c| {
+            c.execute(
+                "UPDATE rpg_shared SET hp = 0, killed_at = 1 WHERE id = ?1",
+                bot_core::rusqlite::params![raid.id],
+            )
+        })
+        .unwrap();
     let shards_before = store::get(&ctx.db, G, U).unwrap().unwrap().gear.len();
     click(&ctx, "raid", "claim", "", &[]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
@@ -535,12 +770,24 @@ fn guilds_raids_and_titans() {
     assert!(p.titles.iter().any(|t| t == "Wyrmbane"));
     // Claiming twice gives nothing more.
     click(&ctx, "raid", "claim", "", &[]);
-    assert_eq!(store::get(&ctx.db, G, U).unwrap().unwrap().gear.len(), shards_before + 1);
+    assert_eq!(
+        store::get(&ctx.db, G, U).unwrap().unwrap().gear.len(),
+        shards_before + 1
+    );
 
     // A Titan rises, takes damage from an attempt, and attempts are limited per day.
-    let text = ctx.db.with(|c| Ok(feat_rpg::shared::rise_titan(c, G, 48).unwrap())).unwrap();
+    let text = ctx
+        .db
+        .with(|c| Ok(feat_rpg::shared::rise_titan(c, G, 48).unwrap()))
+        .unwrap();
     assert!(text.is_some());
-    assert!(ctx.db.with(|c| Ok(feat_rpg::shared::rise_titan(c, G, 48).unwrap())).unwrap().is_none(), "two Titans at once");
+    assert!(
+        ctx.db
+            .with(|c| Ok(feat_rpg::shared::rise_titan(c, G, 48).unwrap()))
+            .unwrap()
+            .is_none(),
+        "two Titans at once"
+    );
     for _ in 0..data::TITAN_ATTEMPTS {
         heal(&ctx);
         click(&ctx, "titan", "fight", "", &[]);
@@ -549,7 +796,10 @@ fn guilds_raids_and_titans() {
     heal(&ctx);
     let s = click(&ctx, "titan", "fight", "", &[]);
     assert!(text_of(&s).contains("today's attempts"), "{}", text_of(&s));
-    let t = ctx.db.with(|c| Ok(feat_rpg::shared::active(c, G, "titan", 0).unwrap().unwrap())).unwrap();
+    let t = ctx
+        .db
+        .with(|c| Ok(feat_rpg::shared::active(c, G, "titan", 0).unwrap().unwrap()))
+        .unwrap();
     assert!(t.hp < t.max_hp);
 
     // Leaving the guild as leader hands it on.
@@ -590,10 +840,16 @@ fn dungeons_quests_market_and_switches() {
         play_fight(&ctx, "dungeon");
     }
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
-    assert_eq!(p.side.iter().find(|x| x.0 == "drills").map(|x| x.2), Some(1));
+    assert_eq!(
+        p.side.iter().find(|x| x.0 == "drills").map(|x| x.2),
+        Some(1)
+    );
     click(&ctx, "quests", "claim", "drills", &[]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
-    assert_eq!(p.side.iter().find(|x| x.0 == "drills").map(|x| x.1), Some(2));
+    assert_eq!(
+        p.side.iter().find(|x| x.0 == "drills").map(|x| x.1),
+        Some(2)
+    );
 
     // The market sells a piece once a day, and supplies up to a limit.
     let gold = p.gold;
@@ -605,11 +861,27 @@ fn dungeons_quests_market_and_switches() {
     for _ in 0..8 {
         click(&ctx, "market", "supply", "", &["thread"]);
     }
-    let bought: i64 = ctx.db.with(|c| c.query_row("SELECT COUNT(*) FROM rpg_bought WHERE slot LIKE 'thread%'", [], |r| r.get(0))).unwrap();
+    let bought: i64 = ctx
+        .db
+        .with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM rpg_bought WHERE slot LIKE 'thread%'",
+                [],
+                |r| r.get(0),
+            )
+        })
+        .unwrap();
     assert_eq!(bought, 2);
 
     // Switching a system off hides it.
-    store::set_modules(G, store::Modules { labyrinth: false, guilds: false, ..Default::default() });
+    store::set_modules(
+        G,
+        store::Modules {
+            labyrinth: false,
+            guilds: false,
+            ..Default::default()
+        },
+    );
     let s = click(&ctx, "hub", "", "", &[]);
     let rows = format!("{:?}", s.rows);
     assert!(!rows.contains("Labyrinth") && !rows.contains("\"Guild\""));
