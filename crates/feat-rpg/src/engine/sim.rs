@@ -250,6 +250,7 @@ impl P {
             t += 1 + turns / 4;
             self.hp = f.hp.max(1);
             if f.end == Some(End::Won) {
+                self.hp = (self.hp + (max as f64 * data::WIN_HEAL) as i64).min(max);
                 let (xp, gold) = data::hunt_reward(region);
                 let double = if self.vigor >= data::VIGOR_PER_WIN as f64 { 2 } else { 1 };
                 if double == 2 {

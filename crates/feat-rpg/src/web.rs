@@ -24,6 +24,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/rpg/settings", post(save))
         .route("/g/{guild}/rpg/player/{user}/reset", post(reset))
         .route("/g/{guild}/rpg/player/{user}/grant", post(grant))
+        .route("/g/{guild}/rpg/player/{user}/tool", post(tool))
 }
 
 #[derive(Deserialize)]
@@ -107,6 +108,7 @@ const CSS: &str = r#"
 async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<Q>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::View)?;
     let s = ctx.settings::<Settings>(guild, KEY)?;
+    store::set_speed(guild, s.speed);
     let view = q.view.as_deref().unwrap_or("test");
     let tabs = ui::tabs(
         &[("Test", page.path("rpg")), ("Players", page.path("rpg?view=players")), ("Economy", page.path("rpg?view=economy")), ("Screens", page.path("rpg?view=screens")), ("Settings", page.path("rpg?view=settings"))],
@@ -122,6 +124,7 @@ async fn page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(
         "players" => players_view(&ctx, &page, guild)?,
         "economy" => economy_view(&ctx, guild)?,
         "screens" => screens_view(&ctx, &page, guild, q.player, q.screen.as_deref())?,
+        "player" => player_view(&ctx, &page, guild, q.player)?,
         "settings" => settings_view(&ctx, &page, guild, &s),
         _ => test_view(&ctx, &page, guild, &s)?,
     };
@@ -205,7 +208,7 @@ fn players_view(ctx: &Ctx, page: &Page, guild: u64) -> Result<Markup> {
                     tbody {
                         @for r in &rows {
                             tr {
-                                td { a href=(page.path(&format!("rpg?view=screens&player={}", r.user))) { (r.name) } }
+                                td { a href=(page.path(&format!("rpg?view=player&player={}", r.user))) { (r.name) } }
                                 td { (r.patron.map(|g| g.name()).unwrap_or("None yet")) }
                                 td.num { (r.level) }
                                 td.num { (r.power) }
@@ -279,8 +282,8 @@ fn screens_view(ctx: &Ctx, page: &Page, guild: u64, player: Option<u64>, focus: 
     let rows = players(ctx, guild)?;
     let pick = player.or_else(|| rows.first().map(|r| r.user));
     let s = ctx.settings::<Settings>(guild, KEY)?;
-    let names = ["hub", "goals", "exp", "hunt", "forge", "pack", "temple", "patron", "help"];
-    let labels = ["Overview", "Goals", "Expedition", "Hunt or fight", "Forge", "Pack", "Temple", "Patron", "How to play"];
+    let names = ["hub", "saga", "bounties", "goals", "exp", "hunt", "forge", "pack", "temple", "patron", "help"];
+    let labels = ["Overview", "Saga", "Bounties", "Goals", "Expedition", "Hunt or fight", "Forge", "Pack", "Temple", "Patron", "How to play"];
     let mut shots: Vec<(String, Markup)> = Vec::new();
     if let Some(u) = pick {
         let only: Vec<usize> = match focus {
@@ -327,6 +330,8 @@ fn settings_view(ctx: &Ctx, page: &Page, guild: u64, s: &Settings) -> Markup {
             (ui::field_number("xp_rate", "XP rate", Some("100% is the designed pace."), s.xp_rate, 10, 1000, Some("%")))
             (ui::field_number("loot_rate", "Loot rate", Some("Materials from expeditions."), s.loot_rate, 10, 1000, Some("%")))
             (ui::field_number("gold_rate", "Gold rate", Some("Gold from expeditions and hunts."), s.gold_rate, 10, 1000, Some("%")))
+            (ui::field_select("speed", "Test speed", Some("Expeditions, healing and Vigor run this many times faster, for testing. A 4-hour expedition takes 4 minutes at ×60. Set it back to ×1 before opening to everyone."),
+                &[("1".into(), "×1, real time".into()), ("10".into(), "×10".into()), ("60".into(), "×60".into()), ("240".into(), "×240".into())], &s.speed.to_string()))
         }))
     })
 }
@@ -341,9 +346,121 @@ async fn save(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     s.xp_rate = form.int_in("xp_rate", 10, 1000, 100);
     s.loot_rate = form.int_in("loot_rate", 10, 1000, 100);
     s.gold_rate = form.int_in("gold_rate", 10, 1000, 100);
+    s.speed = form.int_in("speed", 1, 600, 1);
+    store::set_speed(guild, s.speed);
     ctx.save_settings(guild, KEY, &s)?;
     ctx.audit(&page.user, Some(guild), KEY, "Changed RPG settings");
     Ok(saved(&page.path("rpg?view=settings")))
+}
+
+fn player_view(ctx: &Ctx, page: &Page, guild: u64, player: Option<u64>) -> Result<Markup> {
+    let Some(u) = player else { return Ok(ui::empty(Icon::Star, "Pick a player", "Open a player from the Players tab.")) };
+    let Some(p) = store::get(&ctx.db, guild, u)? else { return Ok(ui::empty(Icon::Star, "No such player", "They may have been reset.")) };
+    let tool = page.path(&format!("rpg/player/{u}/tool"));
+    let items: Vec<(String, String)> = data::ITEMS.iter().map(|i| (i.id.to_string(), i.plural.to_string())).collect();
+    let chapters: Vec<(String, String)> = crate::quests::CHAPTERS.iter().enumerate().map(|(i, c)| (i.to_string(), format!("{}. {}", i + 1, c.title))).collect();
+    let form = |action: &str, label: &str, fields: Markup| html! {
+        form.inline method="post" action=(tool) {
+            input type="hidden" name="action" value=(action);
+            (fields)
+            button.btn.small type="submit" disabled[!page.can_edit()] { (label) }
+        }
+    };
+    Ok(html! {
+        (ui::readings(&[
+            ("level", p.level.to_string()),
+            ("Power", p.power().to_string()),
+            ("gold", thousands(p.gold)),
+            ("saga chapter", format!("{} of {}", (p.saga + 1).min(crate::quests::CHAPTERS.len()), crate::quests::CHAPTERS.len())),
+        ]))
+        (ui::section(&format!("{} · tools", p.name), Some("For testing. Every change is logged in the dashboard's activity log."), html! {
+            div.card {
+                div.row { div.row-text { label { "Level" } p.help { "Sets the level; gear stays." } } div.row-control {
+                    (form("level", "Set level", html! { input type="number" name="level" value=(p.level) min="1" max=(data::LEVEL_CAP) style="width:80px" aria-label="Level"; }))
+                } }
+                div.row { div.row-text { label { "Give items" } } div.row-control {
+                    (form("item", "Give", html! {
+                        (ui::select("item", &items, "potion"))
+                        input type="number" name="qty" value="5" min="1" max="999" style="width:80px" aria-label="How many";
+                    }))
+                } }
+                div.row { div.row-text { label { "Expedition" } p.help { "Bring their expedition back now." } } div.row-control {
+                    (form("finish", "Finish now", html! {}))
+                } }
+                div.row { div.row-text { label { "Ready for the boss" } p.help { "Level cap, the best Midgard gear at +3, all four facts, three potions and full health." } } div.row-control {
+                    (form("boss", "Make boss-ready", html! {}))
+                } }
+                div.row { div.row-text { label { "Saga" } p.help { "Jump to a chapter (its goals start from zero)." } } div.row-control {
+                    (form("chapter", "Go to chapter", html! { (ui::select("chapter", &chapters, &p.saga.to_string())) }))
+                } }
+                div.row { div.row-text { label { "Health" } } div.row-control { (form("heal", "Heal fully", html! {})) } }
+            }
+        }))
+        p { a href=(page.path(&format!("rpg?view=screens&player={u}"))) { "See their screens →" } }
+    })
+}
+
+async fn tool(State(ctx): State<Ctx>, user: User, Path((guild, player)): Path<(u64, u64)>, form: FormData) -> WebResult {
+    let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let action = form.string("action");
+    let mut what = String::new();
+    store::run(&ctx.db, guild, player, None, |g| {
+        match action.as_str() {
+            "level" => {
+                let lvl = form.int_in("level", 1, data::LEVEL_CAP as i64, 1) as u32;
+                g.tx.execute("UPDATE rpg_players SET level = ?3, xp = 0 WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, player as i64, lvl as i64])?;
+                what = format!("set level to {lvl}");
+            }
+            "item" => {
+                let id = form.string("item");
+                let n = form.int_in("qty", 1, 999, 1);
+                if data::item(&id).is_some() {
+                    g.item(&id, n, "given from the dashboard")?;
+                    what = format!("gave {}", data::count(&id, n));
+                }
+            }
+            "finish" => {
+                g.tx.execute("UPDATE rpg_expeditions SET ends_at = 0 WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, player as i64])?;
+                what = "finished their expedition".into();
+            }
+            "boss" => {
+                g.tx.execute("UPDATE rpg_players SET level = ?3, xp = 0 WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, player as i64, data::LEVEL_CAP as i64])?;
+                g.p.level = data::LEVEL_CAP;
+                for id in ["barrowblade", "mantle", "ravencharm"] {
+                    let row = g.add_gear(data::gear(id).unwrap(), true)?;
+                    for _ in 0..data::MAX_UPGRADE {
+                        g.upgrade(row)?;
+                    }
+                }
+                for f in data::FACTS {
+                    g.learn(f)?;
+                }
+                g.item("potion", 3, "given from the dashboard")?;
+                let max = g.p.max_hp();
+                g.set_hp(max)?;
+                what = "made them boss-ready".into();
+            }
+            "chapter" => {
+                let ch = form.int_in("chapter", 0, crate::quests::CHAPTERS.len() as i64 - 1, 0) as usize;
+                g.p.saga = ch;
+                g.p.saga_progress = Vec::new();
+                g.save_saga()?;
+                what = format!("moved their saga to chapter {}", ch + 1);
+            }
+            "heal" => {
+                let max = g.p.max_hp();
+                g.set_hp(max)?;
+                what = "healed them".into();
+            }
+            _ => {}
+        }
+        g.bump()
+    })?;
+    if !what.is_empty() {
+        let name = store::get(&ctx.db, guild, player)?.map(|p| p.name).unwrap_or_default();
+        ctx.audit(&page.user, Some(guild), KEY, format!("RPG test tools: {what} for {name}"));
+    }
+    Ok(Redirect::to(&page.path(&format!("rpg?view=player&player={player}"))).into_response())
 }
 
 async fn reset(State(ctx): State<Ctx>, user: User, Path((guild, player)): Path<(u64, u64)>) -> WebResult {
@@ -392,6 +509,11 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
         g.tribute(God::Athena, 400)?;
         g.learn("slam")?;
         g.learn("weakness")?;
+        g.p.saga = 5;
+        g.p.saga_choices.insert("singer".into(), "spare".into());
+        g.save_saga()?;
+        g.add_title("Friend of Nixies")?;
+        g.set_event(Some("merchant"))?;
         let now = g.p.now;
         g.start_expedition(store::Expedition { plan: plan("barrow", data::Danger::Hard, 4), power: g.p.power(), scouting: 5, started_at: now - 3_600_000 * 3, ends_at: now + 4_320_000, seed: 3 })?;
         g.vigor(20.0)?;
@@ -411,8 +533,14 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
         for f in data::FACTS {
             g.learn(f)?;
         }
+        g.p.saga = 10;
+        g.p.saga_choices.insert("singer".into(), "silence".into());
+        g.p.saga_choices.insert("wolfmother".into(), "hunt".into());
+        g.p.saga_choices.insert("volva".into(), "jarlsmen".into());
+        g.save_saga()?;
+        g.add_title("Wolf-bane")?;
         let w = g.p.week();
-        let mut f = crate::engine::combat::Fight::boss(g.p.hero(), g.p.max_hp(), w, g.p.facts.clone(), 9);
+        let mut f = crate::engine::combat::Fight::boss(g.p.hero(), g.p.max_hp(), w, g.p.facts.clone(), 9).with_ally(Some("jarlsmen"));
         for a in [crate::engine::combat::Action::Strike, crate::engine::combat::Action::Strike] {
             let _ = f.act(a, 2, (1, 0));
         }
@@ -432,6 +560,15 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
         g.boss_won(31)?;
         g.item("shard", 3, "seed")?;
         g.set_lesser(Some(God::Athena))?;
+        g.p.saga = crate::quests::CHAPTERS.len();
+        g.p.saga_choices.insert("singer".into(), "spare".into());
+        g.p.saga_choices.insert("wolfmother".into(), "offer".into());
+        g.p.saga_choices.insert("volva".into(), "shieldmaiden".into());
+        g.save_saga()?;
+        for t in ["Friend of Nixies", "Wolf-friend", "Mound-breaker", "Thread-finder", "Grimtooth's Bane"] {
+            g.add_title(t)?;
+        }
+        g.set_title(Some("Mound-breaker"))?;
         Ok(())
     })?;
     let _ = progress::week(now_ms());

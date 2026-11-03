@@ -29,6 +29,8 @@ pub struct Spec {
     pub power: i64,
     /// XP towards the next level, in tenths (0 to 10).
     pub xp10: u32,
+    /// A title the player wears, or empty.
+    pub title: String,
 }
 
 fn sign(secret: &str, body: &str) -> String {
@@ -41,7 +43,7 @@ fn sign(secret: &str, body: &str) -> String {
 
 impl Spec {
     fn body(&self) -> String {
-        format!("{}.{}.{}.{}.{}", self.patron.id(), self.level, self.power, self.xp10, hex::encode(self.name.as_bytes()))
+        format!("{}.{}.{}.{}.{}.{}", self.patron.id(), self.level, self.power, self.xp10, hex::encode(self.name.as_bytes()), hex::encode(self.title.as_bytes()))
     }
 
     /// The banner's address, signed so nobody can make the bot draw other words.
@@ -62,7 +64,8 @@ impl Spec {
         let power = p.next()?.parse().ok()?;
         let xp10 = p.next()?.parse().ok()?;
         let name = String::from_utf8(hex::decode(p.next()?).ok()?).ok()?;
-        Some(Spec { patron, name, level, power, xp10 })
+        let title = String::from_utf8(hex::decode(p.next().unwrap_or("")).ok()?).ok()?;
+        Some(Spec { patron, name, level, power, xp10, title })
     }
 }
 
@@ -112,7 +115,7 @@ pub fn svg(s: &Spec) -> String {
     let (top, bottom, ridges, glow) = palette(s.patron);
     let esc = bot_render::escape;
     let name = esc(&crate::ui::truncate(&s.name, 22));
-    let eyebrow = format!("MIDGARD · SWORN TO {}", s.patron.name().to_uppercase());
+    let eyebrow = if s.title.is_empty() { format!("MIDGARD · SWORN TO {}", s.patron.name().to_uppercase()) } else { format!("MIDGARD · {}", esc(&crate::ui::truncate(&s.title, 28)).to_uppercase()) };
     let xp_w = 400 * s.xp10.min(10) / 10;
     let accent = match s.patron {
         God::Thor => "#9CC2FF",
@@ -174,7 +177,7 @@ mod tests {
     #[test]
     fn every_patron_banner_draws() {
         for g in crate::data::GODS {
-            let s = Spec { patron: g, name: "Antho & <friends>".into(), level: 14, power: 312, xp10: 6 };
+            let s = Spec { patron: g, name: "Antho & <friends>".into(), level: 14, power: 312, xp10: 6, title: "Wolf-friend".into() };
             let png = bot_render::png(&svg(&s)).unwrap();
             assert!(png.len() > 1000);
         }

@@ -13,7 +13,25 @@ use crate::engine::combat::Fight;
 use crate::engine::expedition::{Plan, Report};
 use crate::engine::{Hero, progress};
 
-pub const MIGRATIONS: &[Migration] = &[Migration {
+pub const MIGRATIONS: &[Migration] = &[MIGRATION_001, Migration {
+    name: "002_saga",
+    sql: "
+        ALTER TABLE rpg_players ADD COLUMN title TEXT;
+        ALTER TABLE rpg_players ADD COLUMN event TEXT;
+        ALTER TABLE rpg_players ADD COLUMN saga INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE rpg_players ADD COLUMN saga_progress TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE rpg_players ADD COLUMN saga_choices TEXT NOT NULL DEFAULT '{}';
+        CREATE TABLE rpg_titles (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, title TEXT NOT NULL, at INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, user_id, title));
+        CREATE TABLE rpg_bounties (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, day INTEGER NOT NULL, idx INTEGER NOT NULL,
+            progress INTEGER NOT NULL DEFAULT 0, claimed INTEGER NOT NULL DEFAULT 0, level INTEGER NOT NULL,
+            PRIMARY KEY (guild_id, user_id, day, idx));
+    ",
+}];
+
+const MIGRATION_001: Migration = Migration {
     name: "001_rpg",
     sql: "
         CREATE TABLE rpg_players (
@@ -71,7 +89,7 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, boss TEXT NOT NULL, at INTEGER NOT NULL, turns INTEGER NOT NULL,
             PRIMARY KEY (guild_id, user_id, boss));
     ",
-}];
+};
 
 #[derive(Debug, Clone)]
 pub struct GearRow {
@@ -130,6 +148,17 @@ pub struct Player {
     /// Boss facts known now (the weakness only for this week).
     pub facts: Vec<String>,
     pub now: i64,
+    pub title: Option<String>,
+    pub titles: Vec<String>,
+    /// A choice waiting after a hunt: a merchant, a shrine.
+    pub event: Option<String>,
+    pub saga: usize,
+    pub saga_progress: Vec<i64>,
+    pub saga_choices: BTreeMap<String, String>,
+    /// Today's bounties: (progress, claimed) by index.
+    pub bounty: [(i64, bool); 3],
+    /// The level today's bounties were set at, once they've been seen.
+    pub bounty_level: Option<u32>,
 }
 
 impl Player {
@@ -163,14 +192,22 @@ impl Player {
     pub fn max_hp(&self) -> i64 {
         self.hero().stats().0
     }
+    /// Game time since `at`, sped up by the server's test speed.
+    fn fast(&self, at: i64) -> i64 {
+        at + (self.now - at).max(0) * speed(self.guild)
+    }
     pub fn hp(&self) -> i64 {
         if self.hp_stored < 0 {
             return self.max_hp();
         }
-        progress::hp_now(self.hp_stored, self.hp_at, self.max_hp(), self.now)
+        progress::hp_now(self.hp_stored, self.hp_at, self.max_hp(), self.fast(self.hp_at))
     }
     pub fn vigor(&self) -> f64 {
-        progress::vigor(self.vigor_stored, self.vigor_at, self.now)
+        progress::vigor(self.vigor_stored, self.vigor_at, self.fast(self.vigor_at))
+    }
+    /// Real minutes until HP is full.
+    pub fn minutes_to_full(&self) -> i64 {
+        (progress::minutes_to_full(self.hp(), self.max_hp()) + speed(self.guild) - 1) / speed(self.guild)
     }
     pub fn week(&self) -> i64 {
         progress::week(self.now)
@@ -178,6 +215,20 @@ impl Player {
     pub fn xp_needed(&self) -> i64 {
         data::xp_to_next(self.level)
     }
+}
+
+fn speeds() -> &'static std::sync::RwLock<std::collections::HashMap<u64, i64>> {
+    static S: std::sync::OnceLock<std::sync::RwLock<std::collections::HashMap<u64, i64>>> = std::sync::OnceLock::new();
+    S.get_or_init(Default::default)
+}
+
+/// The test speed for a server: expeditions, healing and Vigor run this many times faster.
+pub fn set_speed(guild: u64, speed: i64) {
+    speeds().write().unwrap().insert(guild, speed.clamp(1, 600));
+}
+
+pub fn speed(guild: u64) -> i64 {
+    speeds().read().unwrap().get(&guild).copied().unwrap_or(1)
 }
 
 pub fn week_now() -> i64 {
@@ -188,7 +239,8 @@ fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player
     let row = c
         .query_row(
             "SELECT name, patron, lesser, level, xp, gold, hp, hp_at, vigor, vigor_at, version, boss_won,
-                    boss_reward_week, hub_channel, hub_message, report, created_at
+                    boss_reward_week, hub_channel, hub_message, report, created_at,
+                    title, event, saga, saga_progress, saga_choices
              FROM rpg_players WHERE guild_id = ?1 AND user_id = ?2",
             params![guild as i64, user as i64],
             |r| {
@@ -221,6 +273,14 @@ fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player
                     fight: None,
                     facts: Vec::new(),
                     now,
+                    title: r.get(17)?,
+                    titles: Vec::new(),
+                    event: r.get(18)?,
+                    saga: r.get::<_, i64>(19)? as usize,
+                    saga_progress: serde_json::from_str(&r.get::<_, String>(20)?).unwrap_or_default(),
+                    saga_choices: serde_json::from_str(&r.get::<_, String>(21)?).unwrap_or_default(),
+                    bounty: [(0, false); 3],
+                    bounty_level: None,
                 })
             },
         )
@@ -265,6 +325,16 @@ fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Option<Player
         }
     }
     p.facts.sort_by_key(|f| data::FACTS.iter().position(|x| x == f));
+    let mut st = c.prepare_cached("SELECT title FROM rpg_titles WHERE guild_id = ?1 AND user_id = ?2 ORDER BY at")?;
+    p.titles = st.query_map(params![g, u], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    let mut st = c.prepare_cached("SELECT idx, progress, claimed, level FROM rpg_bounties WHERE guild_id = ?1 AND user_id = ?2 AND day = ?3")?;
+    for row in st.query_map(params![g, u, crate::quests::day(now)], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)? != 0, r.get::<_, i64>(3)?)))? {
+        let (i, pr, cl, lvl) = row?;
+        if let Some(b) = p.bounty.get_mut(i as usize) {
+            *b = (pr, cl);
+        }
+        p.bounty_level = Some(lvl as u32);
+    }
     Ok(Some(p))
 }
 
@@ -543,6 +613,71 @@ impl Game<'_> {
             params![g, u, data::BOSS_ID, self.p.now, turns as i64],
         )?;
         Ok(first)
+    }
+
+    pub fn add_title(&mut self, title: &str) -> Result<bool> {
+        if self.p.titles.iter().any(|t| t == title) {
+            return Ok(false);
+        }
+        let (g, u) = self.ids();
+        self.tx.execute("INSERT OR IGNORE INTO rpg_titles (guild_id, user_id, title, at) VALUES (?1, ?2, ?3, ?4)", params![g, u, title, self.p.now])?;
+        self.p.titles.push(title.to_owned());
+        if self.p.title.is_none() {
+            self.set_title(Some(title))?;
+        }
+        Ok(true)
+    }
+
+    pub fn set_title(&mut self, title: Option<&str>) -> Result<()> {
+        let (g, u) = self.ids();
+        self.tx.execute("UPDATE rpg_players SET title = ?3 WHERE guild_id = ?1 AND user_id = ?2", params![g, u, title])?;
+        self.p.title = title.map(str::to_owned);
+        Ok(())
+    }
+
+    pub fn set_event(&mut self, event: Option<&str>) -> Result<()> {
+        let (g, u) = self.ids();
+        self.tx.execute("UPDATE rpg_players SET event = ?3 WHERE guild_id = ?1 AND user_id = ?2", params![g, u, event])?;
+        self.p.event = event.map(str::to_owned);
+        Ok(())
+    }
+
+    pub fn save_saga(&mut self) -> Result<()> {
+        let (g, u) = self.ids();
+        self.tx.execute(
+            "UPDATE rpg_players SET saga = ?3, saga_progress = ?4, saga_choices = ?5 WHERE guild_id = ?1 AND user_id = ?2",
+            params![g, u, self.p.saga as i64, serde_json::to_string(&self.p.saga_progress)?, serde_json::to_string(&self.p.saga_choices)?],
+        )?;
+        Ok(())
+    }
+
+    /// Store today's bounty state, fixing the day's level the first time.
+    pub fn save_bounty(&mut self, idx: usize) -> Result<()> {
+        let (g, u) = self.ids();
+        let level = *self.p.bounty_level.get_or_insert(self.p.level);
+        for i in 0..3 {
+            if i != idx {
+                self.tx.execute(
+                    "INSERT OR IGNORE INTO rpg_bounties (guild_id, user_id, day, idx, progress, claimed, level) VALUES (?1, ?2, ?3, ?4, 0, 0, ?5)",
+                    params![g, u, crate::quests::day(self.p.now), i as i64, level as i64],
+                )?;
+            }
+        }
+        let (pr, cl) = self.p.bounty[idx];
+        self.tx.execute(
+            "INSERT INTO rpg_bounties (guild_id, user_id, day, idx, progress, claimed, level) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT (guild_id, user_id, day, idx) DO UPDATE SET progress = excluded.progress, claimed = excluded.claimed",
+            params![g, u, crate::quests::day(self.p.now), idx as i64, pr, cl, level as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_kill(&mut self, id: &str, turns: u32) -> Result<bool> {
+        let (g, u) = self.ids();
+        Ok(self.tx.execute(
+            "INSERT OR IGNORE INTO rpg_kills (guild_id, user_id, boss, at, turns) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![g, u, id, self.p.now, turns as i64],
+        )? == 1)
     }
 
     /// Mark a state change, so buttons from before it are refused.

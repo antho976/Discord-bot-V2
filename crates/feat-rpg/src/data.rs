@@ -43,7 +43,7 @@ impl God {
         match self {
             God::Thor => "+6% damage",
             God::Athena => "Guarding restores 1 more stamina",
-            God::Hades => "Your hits heal you for 4% of the damage",
+            God::Hades => "Your hits heal you for 4% of the damage, on top of your patron's",
         }
     }
     /// The week's blessing when this god's altar got the most tribute.
@@ -57,7 +57,7 @@ impl God {
     /// Max HP, attack and how much a Guard stops.
     pub fn body(self) -> (f64, f64, f64) {
         match self {
-            God::Thor => (1.10, 0.98, 0.50),
+            God::Thor => (1.10, 1.0, 0.60),
             God::Athena => (1.05, 1.20, 0.70),
             God::Hades => (1.00, 0.98, 0.50),
         }
@@ -65,7 +65,7 @@ impl God {
     /// Part of every hit that heals the player.
     pub fn lifesteal(self) -> f64 {
         match self {
-            God::Hades => 0.08,
+            God::Hades => 0.20,
             _ => 0.0,
         }
     }
@@ -175,7 +175,7 @@ impl Skill {
             (Skill::Thunderclap, _) => "A heavy hit that stuns a foe winding up, cancelling its attack.",
             (Skill::SpearCounter, _) => "Guard, and strike back if you're hit.",
             (Skill::OwlSight, _) => "See the foe's next two moves, and your next hit lands 50% harder.",
-            (Skill::SoulRend, _) => "A hit that heals you for half the damage.",
+            (Skill::SoulRend, _) => "A hit that heals you for 60% of the damage.",
             (Skill::CerberusBite, _) => "Wounds that bleed for three turns.",
             (Skill::AegisStorm, God::Athena) => "Block the next hit completely and throw it back as lightning.",
             (Skill::AegisStorm, _) => "A shield bash, and the next hit can't touch you.",
@@ -415,7 +415,7 @@ pub const REGIONS: &[Region] = &[
         intel: 0.03,
         gold: 14.0,
         xp: 40.0,
-        monsters: &["nixie", "harpy"],
+        monsters: &["nixie", "harpy", "drowned", "serpent"],
     },
     Region {
         id: "wolfwood",
@@ -427,7 +427,7 @@ pub const REGIONS: &[Region] = &[
         intel: 0.03,
         gold: 20.0,
         xp: 60.0,
-        monsters: &["wolf", "satyr"],
+        monsters: &["wolf", "satyr", "centaur", "troll"],
     },
     Region {
         id: "barrow",
@@ -439,7 +439,7 @@ pub const REGIONS: &[Region] = &[
         intel: 0.09,
         gold: 28.0,
         xp: 80.0,
-        monsters: &["draugr", "wight"],
+        monsters: &["draugr", "wight", "hound", "shade"],
     },
 ];
 
@@ -480,16 +480,54 @@ pub struct Monster {
     /// What it says when winding up its Heavy.
     pub windup: &'static str,
     pub weak: Option<&'static str>,
+    /// A rare named foe: tougher, richer, announced when beaten.
+    pub elite: bool,
 }
 
 pub const MONSTERS: &[Monster] = &[
-    Monster { id: "nixie", name: "Nixie", hp: 1.6, atk: 0.20, pattern: &[Move::Hit, Move::Brace, Move::Hit, Move::Heavy], windup: "starts a drowning song", weak: Some("fire") },
-    Monster { id: "harpy", name: "Harpy", hp: 1.3, atk: 0.24, pattern: &[Move::Hit, Move::Hit, Move::Heavy], windup: "climbs high to dive", weak: None },
-    Monster { id: "wolf", name: "Grey Wolf", hp: 1.4, atk: 0.22, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "crouches to pounce", weak: Some("fire") },
-    Monster { id: "satyr", name: "Satyr Raider", hp: 1.7, atk: 0.20, pattern: &[Move::Hit, Move::Brace, Move::Heavy], windup: "lowers its horns", weak: None },
-    Monster { id: "draugr", name: "Draugr Warrior", hp: 1.6, atk: 0.21, pattern: &[Move::Hit, Move::Hit, Move::Heavy, Move::Brace], windup: "raises its axe", weak: Some("fire") },
-    Monster { id: "wight", name: "Barrow Wight", hp: 1.4, atk: 0.23, pattern: &[Move::Hit, Move::Roar, Move::Heavy], windup: "draws in a grave-cold breath", weak: Some("frost") },
+    Monster { id: "nixie", name: "Nixie", hp: 1.6, atk: 0.20, pattern: &[Move::Hit, Move::Brace, Move::Hit, Move::Heavy], windup: "starts a drowning song", weak: Some("fire"), elite: false },
+    Monster { id: "harpy", name: "Harpy", hp: 1.3, atk: 0.24, pattern: &[Move::Hit, Move::Hit, Move::Heavy], windup: "climbs high to dive", weak: None, elite: false },
+    Monster { id: "wolf", name: "Grey Wolf", hp: 1.4, atk: 0.22, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "crouches to pounce", weak: Some("fire"), elite: false },
+    Monster { id: "satyr", name: "Satyr Raider", hp: 1.7, atk: 0.20, pattern: &[Move::Hit, Move::Brace, Move::Heavy], windup: "lowers its horns", weak: None, elite: false },
+    Monster { id: "draugr", name: "Draugr Warrior", hp: 1.6, atk: 0.21, pattern: &[Move::Hit, Move::Hit, Move::Heavy, Move::Brace], windup: "raises its axe", weak: Some("fire"), elite: false },
+    Monster { id: "wight", name: "Barrow Wight", hp: 1.4, atk: 0.23, pattern: &[Move::Hit, Move::Roar, Move::Heavy], windup: "draws in a grave-cold breath", weak: Some("frost"), elite: false },
+    Monster { id: "drowned", name: "Drowned Sailor", hp: 1.5, atk: 0.22, pattern: &[Move::Hit, Move::Hit, Move::Brace, Move::Heavy], windup: "lifts a barnacled anchor", weak: Some("fire"), elite: false },
+    Monster { id: "serpent", name: "Sea Serpent", hp: 1.4, atk: 0.24, pattern: &[Move::Hit, Move::Roar, Move::Heavy], windup: "rears back to strike", weak: Some("frost"), elite: false },
+    Monster { id: "centaur", name: "Centaur Scout", hp: 1.3, atk: 0.25, pattern: &[Move::Hit, Move::Hit, Move::Heavy], windup: "draws a long arrow", weak: None, elite: false },
+    Monster { id: "troll", name: "Wood Troll", hp: 2.0, atk: 0.20, pattern: &[Move::Brace, Move::Hit, Move::Hit, Move::Heavy], windup: "lifts a whole tree trunk", weak: Some("fire"), elite: false },
+    Monster { id: "hound", name: "Grave Hound", hp: 1.3, atk: 0.24, pattern: &[Move::Hit, Move::Hit, Move::Roar, Move::Heavy], windup: "bares its rotten teeth", weak: Some("fire"), elite: false },
+    Monster { id: "shade", name: "Barrow Shade", hp: 1.5, atk: 0.22, pattern: &[Move::Hit, Move::Brace, Move::Heavy], windup: "goes still and cold", weak: Some("frost"), elite: false },
+    // Elites: one per region, rare.
+    Monster { id: "siren", name: "The Siren of the Skerries", hp: 1.6 * ELITE_HP, atk: 0.20 * ELITE_ATK, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "takes a breath that pulls at your ears", weak: Some("fire"), elite: true },
+    Monster { id: "grimtooth", name: "Old Grimtooth", hp: 1.4 * ELITE_HP, atk: 0.22 * ELITE_ATK, pattern: &[Move::Hit, Move::Roar, Move::Hit, Move::Heavy], windup: "crouches, every scar on him tight", weak: Some("fire"), elite: true },
+    Monster { id: "champion", name: "Hrolf's Champion", hp: 1.6 * ELITE_HP, atk: 0.21 * ELITE_ATK, pattern: &[Move::Hit, Move::Brace, Move::Hit, Move::Heavy], windup: "raises a sword as long as you are", weak: Some("frost"), elite: true },
 ];
+
+/// Elites' HP and attack against the regular monster of their region.
+pub const ELITE_HP: f64 = 1.8;
+pub const ELITE_ATK: f64 = 1.2;
+/// Chance a hunt meets the region's elite.
+pub const ELITE_CHANCE: f64 = 0.06;
+
+/// The region's elite.
+pub fn elite(region: &str) -> Option<&'static Monster> {
+    let id = match region {
+        "shore" => "siren",
+        "wolfwood" => "grimtooth",
+        _ => "champion",
+    };
+    monster(id)
+}
+
+/// A title for beating an elite the first time.
+pub fn elite_title(id: &str) -> Option<&'static str> {
+    match id {
+        "siren" => Some("Siren-deaf"),
+        "grimtooth" => Some("Grimtooth's Bane"),
+        "champion" => Some("Champion-breaker"),
+        _ => None,
+    }
+}
 
 pub fn monster(id: &str) -> Option<&'static Monster> {
     MONSTERS.iter().find(|m| m.id == id)
@@ -550,7 +588,17 @@ pub fn stats(power: i64, main: God) -> (i64, i64) {
 }
 
 /// HP regained per minute out of fights, as a share of max HP.
-pub const REGEN_PER_MIN: f64 = 1.0 / 45.0;
+pub const REGEN_PER_MIN: f64 = 1.0 / 15.0;
+
+/// Hunt monsters' HP and attack, times the region's Power and the monster's own multiples.
+pub const HUNT_HP: f64 = 1.25;
+pub const HUNT_ATK: f64 = 0.75;
+/// Share of max HP a hunt win gives back: you catch your breath.
+pub const WIN_HEAL: f64 = 0.15;
+/// Lifesteal works at this share against the realm boss.
+pub const BOSS_LIFESTEAL: f64 = 0.4;
+/// Gold per level to rest at the inn and be at full HP at once.
+pub const INN_GOLD_PER_LEVEL: i64 = 6;
 
 /// Vigor gained per hour away from hunting, and spent per hunt won (both in percent).
 pub const VIGOR_PER_HOUR: f64 = 1.5;

@@ -250,3 +250,114 @@ fn beating_the_boss_opens_heroic_and_the_lesser_vow() {
     assert_eq!(p.lesser, Some(God::Thor));
     let _ = data::GODS;
 }
+
+fn hunt_until_done(ctx: &Ctx, region: &str) {
+    click(ctx, "hunt", "start", region, &[]);
+    for _ in 0..80 {
+        let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+        let Some(f) = p.fight else { break };
+        let a = if matches!(f.intent(), data::Move::Heavy | data::Move::Roar) || f.stamina < 1 { "guard" } else { "strike" };
+        click(ctx, "hunt", "act", a, &[]);
+    }
+    store::run(&ctx.db, G, U, None, |g| {
+        let max = g.p.max_hp();
+        g.set_hp(max)
+    })
+    .unwrap();
+}
+
+#[test]
+fn the_saga_bounties_and_encounters() {
+    let rt = bot_core::tokio::runtime::Runtime::new().unwrap();
+    let _e = rt.enter();
+    let ctx = ctx();
+    store::create(&ctx.db, G, U, "Antho", God::Hades).unwrap();
+
+    // The Loom has no goal: claim it straight away.
+    let s = click(&ctx, "saga", "", "", &[]);
+    assert!(text_of(&s).contains("The Loom"));
+    click(&ctx, "saga", "claim", "", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.saga, 1);
+    assert_eq!(p.have("potion"), 4);
+
+    // Chapter 2 wants three wins at the Grey Shore; claiming early is refused.
+    let s = click(&ctx, "saga", "claim", "", &[]);
+    assert!(text_of(&s).contains("isn't finished"));
+    for _ in 0..12 {
+        if store::get(&ctx.db, G, U).unwrap().unwrap().saga_progress.first().copied().unwrap_or(0) >= 3 {
+            break;
+        }
+        hunt_until_done(&ctx, "shore");
+    }
+    assert!(game::chapter_done(&store::get(&ctx.db, G, U).unwrap().unwrap()));
+    // Hunt wins counted toward today's bounties too, where one asks for wins.
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    let bs = game::todays_bounties(&p);
+    for (i, b) in bs.iter().enumerate() {
+        if let feat_rpg::quests::Goal::Wins { region: None, monster: None, .. } = b.goal {
+            assert!(p.bounty[i].0 >= 3, "wins weren't counted for bounty {i}");
+        }
+    }
+    let gold = p.gold;
+    click(&ctx, "saga", "claim", "", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.saga, 2);
+    assert!(p.gold >= gold + 120);
+
+    // A choice chapter: jump there, finish its goal, and choose.
+    store::run(&ctx.db, G, U, None, |g| {
+        g.p.saga = 3;
+        g.p.saga_progress = vec![2];
+        g.save_saga()
+    })
+    .unwrap();
+    let s = click(&ctx, "saga", "claim", "nonsense", &[]);
+    assert!(text_of(&s).contains("Choose one"));
+    click(&ctx, "saga", "claim", "spare", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.saga, 4);
+    assert_eq!(p.have("amber"), 4);
+    assert!(p.titles.iter().any(|t| t == "Friend of Nixies"));
+    assert_eq!(p.title.as_deref(), Some("Friend of Nixies"));
+
+    // An encounter waiting after a hunt resolves once.
+    store::run(&ctx.db, G, U, None, |g| g.set_event(Some("traveller"))).unwrap();
+    let xp = store::get(&ctx.db, G, U).unwrap().unwrap().xp;
+    let lvl = store::get(&ctx.db, G, U).unwrap().unwrap().level;
+    click(&ctx, "hunt", "event", "walk", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert!(p.event.is_none());
+    assert!(p.xp > xp || p.level > lvl);
+    click(&ctx, "hunt", "event", "walk", &[]);
+
+    // The inn heals for gold.
+    store::run(&ctx.db, G, U, None, |g| {
+        g.set_hp(5)?;
+        g.gold(500, "test")
+    })
+    .unwrap();
+    click(&ctx, "hunt", "inn", "", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.hp(), p.max_hp());
+
+    // Test speed: a 4-hour expedition at x60 is back in 4 minutes.
+    store::set_speed(G, 60);
+    click(&ctx, "exp", "go", "shore.normal.4.none", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    let x = p.expedition.unwrap();
+    assert_eq!(x.ends_at - x.started_at, 4 * 60_000);
+    store::set_speed(G, 1);
+
+    // The völva's ally joins the boss fight.
+    store::run(&ctx.db, G, U, None, |g| {
+        g.p.saga_choices.insert("volva".into(), "shieldmaiden".into());
+        g.save_saga()?;
+        let max = g.p.max_hp();
+        g.set_hp(max)
+    })
+    .unwrap();
+    click(&ctx, "boss", "start", "", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.fight.unwrap().ally.as_deref(), Some("shieldmaiden"));
+}
