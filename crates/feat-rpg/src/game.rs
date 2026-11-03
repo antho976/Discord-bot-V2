@@ -255,6 +255,7 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         }
         .url(ctx),
     );
+    s.accent = Some(banner::accent(p.main()));
     tutorial_block(&mut s, p, &ids);
     s.text("-# Right now");
     let mut primary_used = false;
