@@ -1575,22 +1575,22 @@ fn forge(p: &Player, order_done: bool) -> Screen {
         ups,
     );
     if p.have("thread") > 0 {
-        let refine: Vec<Opt> = p
+        // Both spend loose threads: one menu, refining first.
+        let mut opts: Vec<Opt> = p
             .gear
             .iter()
             .filter(|g| g.rarity != data::Rarity::Epic)
-            .take(25)
             .map(|g| {
                 let to = data::Rarity::from_index(g.rarity.index() + 1);
                 let (t, gold) = data::refine_cost(to, p.level);
                 Opt::new(
                     format!(
-                        "{} → {}{}",
+                        "Refine {} → {}{}",
                         g.label(),
                         to.name(),
                         if g.equipped { " (worn)" } else { "" }
                     ),
-                    g.id.to_string(),
+                    format!("r.{}", g.id),
                 )
                 .emoji(to.emoji())
                 .desc(format!(
@@ -1599,39 +1599,40 @@ fn forge(p: &Player, order_done: bool) -> Screen {
                 ))
             })
             .collect();
-        s.text(format!(
-            "-# {} {} for refining and reforging",
-            e("thread"),
-            data::count("thread", p.have("thread"))
-        ));
-        s.inner_select(
-            ids.act("forge", "refine", ""),
-            "Refine: raise a piece's rarity…",
-            refine,
+        opts.extend(
+            p.gear
+                .iter()
+                .filter(|g| g.rarity != data::Rarity::Common)
+                .map(|g| {
+                    let (t, gold) = data::reforge_cost(g.rarity, p.level);
+                    Opt::new(
+                        format!(
+                            "Reforge {}{}",
+                            g.label(),
+                            if g.equipped { " (worn)" } else { "" }
+                        ),
+                        format!("f.{}", g.id),
+                    )
+                    .emoji(g.rarity.emoji())
+                    .desc(crate::ui::truncate(
+                        &format!(
+                            "New traits · {} and {gold} gold · now: {}",
+                            data::count("thread", t),
+                            g.traits_text()
+                        ),
+                        100,
+                    ))
+                }),
         );
-        let reforge: Vec<Opt> = p
-            .gear
-            .iter()
-            .filter(|g| g.rarity != data::Rarity::Common)
-            .take(25)
-            .map(|g| {
-                let (t, gold) = data::reforge_cost(g.rarity, p.level);
-                Opt::new(
-                    format!("{}{}", g.label(), if g.equipped { " (worn)" } else { "" }),
-                    g.id.to_string(),
-                )
-                .emoji(g.rarity.emoji())
-                .desc(format!(
-                    "New traits · {} and {gold} gold · now: {}",
-                    data::count("thread", t),
-                    crate::ui::truncate(&g.traits_text(), 50)
-                ))
-            })
-            .collect();
+        // Worn pieces first: they're what you'd work on.
+        opts.sort_by_key(|o| !o.label.contains("(worn)"));
         s.inner_select(
-            ids.act("forge", "reforge", ""),
-            "Reforge: new traits on a piece…",
-            reforge,
+            ids.act("forge", "threads", ""),
+            format!(
+                "{}: refine or reforge…",
+                capital(&data::count("thread", p.have("thread")))
+            ),
+            opts.into_iter().take(25).collect(),
         );
     }
     let opts: Vec<Opt> = data::SUPPLY_RECIPES
@@ -3001,6 +3002,11 @@ pub fn handle(
                 g.set_tutorial(Tut::ALL)?;
                 g.bump()?;
                 view(ctx, g, &w, "hub", None)?
+            }
+            ("forge", "threads") => {
+                let (kind, id) = value.split_once('.').unwrap_or(("", ""));
+                note = refine(g, id.parse().unwrap_or(-1), kind == "f")?;
+                forge_view(g)?
             }
             ("forge", "refine") => {
                 note = refine(g, value.parse().unwrap_or(-1), false)?;

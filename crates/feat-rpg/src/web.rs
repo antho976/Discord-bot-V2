@@ -777,7 +777,7 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
         )?;
         g.item("thread", 4, "seed")?;
         g.smith(400)?;
-        g.set_tutorial(1 | 2 | 4)?;
+        g.set_tutorial(1 | 2 | 4 | 32)?;
         g.tribute(God::Thor, 1600)?;
         g.tribute(God::Athena, 400)?;
         g.learn("slam")?;
