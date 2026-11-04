@@ -126,7 +126,6 @@ after deploying:
 - Twitch EventSub. Twitch's follower total needs a user token, so follower stats stay empty.
 - The YouTube feed.
 - The relay pairing subprocess.
-- The Docker image. Docker wasn't available where this was built.
 
 ## Self-hosting (moving off Render)
 
