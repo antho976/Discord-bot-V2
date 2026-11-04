@@ -1676,6 +1676,7 @@ fn forge_piece(
     g: &mut Game,
     gear: &'static data::Gear,
     temper: Option<data::Trait>,
+    announce: &mut Option<String>,
 ) -> Result<Option<String>> {
     if let Some(l) = forge_lock(&g.p, gear) {
         return Ok(Some(format!("Not yet: {l}.")));
@@ -1717,6 +1718,14 @@ fn forge_piece(
     let wear = power > worn;
     g.add_piece(gear, rarity, traits.clone(), wear, "forged")?;
     let up = g.smith(data::smith_xp_forge(gear) * if temper.is_some() { 3 } else { 2 } / 2)?;
+    if rarity == data::Rarity::Epic {
+        *announce = Some(format!(
+            "{} **{}** forged an **Epic {}** at Skagi's forge.",
+            e("epic"),
+            g.p.name,
+            gear.name
+        ));
+    }
     count_event(g, quests::Event::Forged)?;
     tutorial_done(g, Tut::Forge)?;
     g.bump()?;
@@ -1746,9 +1755,12 @@ fn forge_piece(
 pub(crate) fn rank_line(up: Option<u32>) -> String {
     match up {
         Some(r) => format!(
-            "\n{} **Smith rank {r}!** {}",
+            "\n{} **Smith rank {r}!** {}{}",
             e("forge"),
-            capital(&data::smith_perk(r))
+            capital(&data::smith_perk(r)),
+            data::smith_title(r)
+                .map(|t| format!(". A new title to wear: **{t}**"))
+                .unwrap_or_default()
         ),
         None => String::new(),
     }
@@ -3000,7 +3012,7 @@ pub fn handle(
             }
             ("forge", "gear") => {
                 note = match data::gear(&route.arg) {
-                    Some(gear) => forge_piece(g, gear, None)?,
+                    Some(gear) => forge_piece(g, gear, None, &mut announce)?,
                     None => None,
                 };
                 forge_view(g)?
@@ -3017,7 +3029,7 @@ pub fn handle(
                     .and_then(|i| data::TRAITS.get(i))
                     .copied();
                 note = match (data::gear(id), t) {
-                    (Some(gear), Some(t)) => forge_piece(g, gear, Some(t))?,
+                    (Some(gear), Some(t)) => forge_piece(g, gear, Some(t), &mut announce)?,
                     _ => None,
                 };
                 forge_view(g)?

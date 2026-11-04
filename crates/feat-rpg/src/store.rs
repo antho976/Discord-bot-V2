@@ -943,6 +943,11 @@ impl Game<'_> {
         )?;
         self.p.smith_xp += xp;
         let after = data::smith_rank(self.p.smith_xp);
+        for r in before + 1..=after {
+            if let Some(t) = data::smith_title(r) {
+                self.add_title(t)?;
+            }
+        }
         Ok((after > before).then_some(after))
     }
 

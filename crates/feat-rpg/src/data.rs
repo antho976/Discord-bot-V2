@@ -811,6 +811,15 @@ pub fn smith_perk(rank: u32) -> String {
     parts.join(", ")
 }
 
+/// A title for reaching a smith rank.
+pub fn smith_title(rank: u32) -> Option<&'static str> {
+    match rank {
+        5 => Some("Smith of Skagi"),
+        10 => Some("Master of the Forge"),
+        _ => None,
+    }
+}
+
 /// Smith XP for each kind of work.
 pub fn smith_xp_forge(g: &Gear) -> i64 {
     20 + 6 * g.level as i64
