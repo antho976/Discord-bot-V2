@@ -1209,3 +1209,29 @@ fn the_forge_is_where_gear_comes_from() {
     let more: i64 = after.items.values().sum::<i64>() - before.items.values().sum::<i64>();
     assert!(more > 0);
 }
+
+#[test]
+fn the_saga_opens_expeditions_and_says_so() {
+    let rt = bot_core::tokio::runtime::Runtime::new().unwrap();
+    let _e = rt.enter();
+    let ctx = ctx();
+    store::create(&ctx.db, G, U, "Antho", God::Thor).unwrap();
+    // "Salt and Song" done (three wins on the shore): claiming it moves to "Iron and Bread",
+    // where the widow sends you out, so expeditions open before level 2.
+    store::run(&ctx.db, G, U, None, |g| {
+        g.p.saga = 1;
+        g.p.saga_progress = vec![3];
+        g.save_saga()
+    })
+    .unwrap();
+    let s = click(&ctx, "saga", "claim", "", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.saga, 2);
+    assert!(
+        text_of(&s).contains("Now open:** Expeditions"),
+        "{}",
+        text_of(&s)
+    );
+    assert!(feat_rpg::unlocks::open(&p, data::Feature::Expedition));
+    assert!(!feat_rpg::unlocks::open(&p, data::Feature::Forge));
+}

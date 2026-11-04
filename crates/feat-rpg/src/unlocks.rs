@@ -110,15 +110,23 @@ pub fn next_line(p: &Player, m: &Modules, among: &[Feature]) -> Option<String> {
 
 /// What opened between two levels, for the level-up line ("Now open: Dungeons").
 pub fn opened_line(p: &Player, m: &Modules, from: u32) -> String {
+    opened(p, m, from, p.saga)
+}
+
+/// What's open now that wasn't at `from_level` and saga chapter `from_saga`.
+pub fn opened(p: &Player, m: &Modules, from_level: u32, from_saga: usize) -> String {
+    let was = |u: &Unlock| {
+        from_level >= u.level
+            || u.chapter.is_some_and(|c| {
+                quests::CHAPTERS
+                    .iter()
+                    .position(|x| x.id == c)
+                    .is_some_and(|i| from_saga >= i)
+            })
+    };
     let names: Vec<&str> = data::UNLOCKS
         .iter()
-        .filter(|u| {
-            !u.why.is_empty()
-                && enabled(m, u.feature)
-                && u.level > from
-                && u.level <= p.level
-                && !u.chapter.is_some_and(|c| chapter_reached(p, c))
-        })
+        .filter(|u| !u.why.is_empty() && enabled(m, u.feature) && open(p, u.feature) && !was(u))
         .map(|u| u.name)
         .collect();
     if names.is_empty() {

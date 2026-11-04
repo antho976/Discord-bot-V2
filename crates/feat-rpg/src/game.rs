@@ -3121,11 +3121,7 @@ pub fn handle(
                     }
                     let up = g.smith(data::SMITH_XP_SALVAGE)?;
                     g.bump()?;
-                    note = Some(format!(
-                        "Salvaged the {}.{}",
-                        row.gear.name,
-                        rank_line(up)
-                    ));
+                    note = Some(format!("Salvaged the {}.{}", row.gear.name, rank_line(up)));
                 }
                 pack(&g.p)
             }
@@ -3442,6 +3438,17 @@ fn reward_line(r: &quests::Reward, patron: God) -> String {
     parts.join("  ·  ")
 }
 
+/// "Level 6!" and what opened, after a reward that may have levelled you.
+fn level_news(g: &Game, level: u32, saga: usize) -> String {
+    let m = store::modules(g.p.guild);
+    let mut out = String::new();
+    if g.p.level > level {
+        out.push_str(&format!("\n{} **Level {}!**", e("power"), g.p.level));
+    }
+    out.push_str(&crate::unlocks::opened(&g.p, &m, level, saga));
+    out
+}
+
 fn give_reward(g: &mut Game, r: &quests::Reward, why: &str) -> Result<()> {
     g.gold(r.gold, why)?;
     g.xp(r.xp)?;
@@ -3582,6 +3589,7 @@ fn claim_chapter(g: &mut Game, choice: &str) -> Result<Option<String>> {
             None => return Ok(Some("Choose one of the options.".into())),
         }
     };
+    let (level, saga) = (g.p.level, g.p.saga);
     give_reward(g, &ch.reward, &format!("saga: {}", ch.title))?;
     let mut said = format!(
         "**{}** done. {}",
@@ -3598,6 +3606,7 @@ fn claim_chapter(g: &mut Game, choice: &str) -> Result<Option<String>> {
     g.save_saga()?;
     tutorial_done(g, Tut::Saga)?;
     g.bump()?;
+    said.push_str(&level_news(g, level, saga));
     Ok(Some(said))
 }
 
@@ -3680,9 +3689,11 @@ fn claim_bounty(g: &mut Game, idx: usize) -> Result<Option<String>> {
     }
     g.p.bounty[idx].1 = true;
     g.save_bounty(idx)?;
+    let level = g.p.level;
     g.gold(b.gold, "bounty")?;
     g.xp(b.xp)?;
     let mut said = format!("Bounty claimed: {} gold, {} XP.", b.gold, b.xp);
+    said.push_str(&level_news(g, level, g.p.saga));
     if g.p.bounty.iter().all(|x| x.1) {
         g.item("potion", 2, "all three bounties")?;
         said.push_str(" All three done: 2 healing potions too.");
@@ -4610,7 +4621,9 @@ fn claim_side(g: &mut Game, id: &str) -> Result<Option<String>> {
     if progress < st.goal.target() {
         return Ok(Some("Not done yet.".into()));
     }
+    let level = g.p.level;
     give_reward(g, &st.reward, &format!("{}: {}", q.npc, q.title))?;
+    let news = level_news(g, level, g.p.saga);
     g.save_side(q.id, step + 1, 0)?;
     g.bump()?;
     let done = step + 1 >= q.steps.len();
@@ -4627,7 +4640,7 @@ fn claim_side(g: &mut Game, id: &str) -> Result<Option<String>> {
             // The next ask, in their own words.
             format!("\n*{}*", q.steps[step + 1].text)
         },
-        ""
+        news
     )))
 }
 
