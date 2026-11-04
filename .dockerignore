@@ -5,3 +5,6 @@ target
 .agents
 data
 *.db
+.env
+*.env
+.env.*

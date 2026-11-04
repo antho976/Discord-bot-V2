@@ -128,6 +128,87 @@ after deploying:
 - The relay pairing subprocess.
 - The Docker image. Docker wasn't available where this was built.
 
+## Self-hosting (moving off Render)
+
+The home server (`server1` on Tailscale) runs the same image with Docker Compose (`compose.yaml`),
+behind a Cloudflare Tunnel. No port is published: Docker-published ports bypass ufw, and the tunnel
+dials out. The server's shell is fish, so the commands below are fish.
+
+Never run Render and the server at the same time: two bots on one token answer every command twice
+and fight over the gateway.
+
+### Before the switch (nothing goes down)
+
+1. **Domain and tunnel.** Buy the domain on Cloudflare Registrar. In Cloudflare Zero Trust,
+   Networks, Tunnels, create a tunnel (Cloudflared) and copy its token. Add a public hostname,
+   e.g. `bot.<domain>`, with service type **HTTP** and URL `bot:3000`. WebSockets (for `/relay`)
+   pass through on their own.
+2. **Discord.** In the application's OAuth2 Redirects, add `https://bot.<domain>/auth/callback`.
+   Keep the Render one until Render is deleted.
+3. **On the server:**
+
+   ```fish
+   sudo apt install -y gh; and gh auth login
+   gh repo clone antho976/Discord-bot-V2 ~/apps/discord-bot
+   cd ~/apps/discord-bot
+   cp bot.env.example bot.env; chmod 600 bot.env   # fill in from Render's Environment tab
+   echo "TUNNEL_TOKEN=<token>" > .env; chmod 600 .env
+   docker compose build                             # a few minutes; do it now, not at the switch
+   ```
+
+   In `bot.env`, set `PUBLIC_URL=https://bot.<domain>`. Relay's address follows from it. Leave out
+   `DATABASE_URL`, `AUTH_SECRET` and anything Render sets itself (`RENDER_*`, `PORT`).
+4. **Render SSH.** Add your PC's public key in Render, Account Settings, SSH Public Keys. The
+   service's SSH address is on its page under **Connect, SSH** (`srv-…@ssh.virginia.render.com`).
+
+### The switch (a few minutes down)
+
+1. **Snapshot on Render.** In the service's **Shell** tab (the image has no `sqlite3`, so add it
+   for this session):
+
+   ```sh
+   apt-get update && apt-get install -y sqlite3
+   sqlite3 /data/bot-v2.db ".backup /tmp/bot-v2.db"
+   cd /data && tar -czf /tmp/data.tgz -C /tmp bot-v2.db -C /data relay $(ls bot.db 2>/dev/null)
+   ```
+
+   `.backup` copies the live database consistently. `relay` is Relay's room and cloud state;
+   `bot.db` is antho-s-bot's old database, if it's still there.
+2. **Copy it to the server**, from the PC:
+
+   ```fish
+   ssh srv-XXXX@ssh.virginia.render.com 'cat /tmp/data.tgz' > data.tgz
+   tar -tzf data.tgz                                # bot-v2.db and relay/ should be listed
+   scp data.tgz server1:apps/discord-bot/
+   ```
+
+3. **Suspend the Render service** (Settings, Suspend). Don't delete it: it's the fallback for a
+   week. Anything that happened between the snapshot and now (a few minutes of XP) is lost.
+4. **Start on the server:**
+
+   ```fish
+   cd ~/apps/discord-bot
+   mkdir -p data; and tar -xzf data.tgz -C data; and rm data.tgz
+   docker compose up -d
+   docker compose logs -f bot
+   ```
+
+5. **Check:** a slash command and a button in Discord; sign in at `https://bot.<domain>`; Stream
+   alerts shows the Twitch subscriptions as enabled (the bot subscribes again for the new address;
+   Twitch drops the old Render ones on its own); Tally and Avex reach Relay at
+   `wss://bot.<domain>/relay` (re-pair them if they still dial the Render address).
+
+### Going back
+
+`docker compose down` on the server, then resume the Render service. Render still has its disk
+from before the switch, so anything since then is only on the server (`~/apps/discord-bot/data`).
+
+### Updating
+
+```fish
+cd ~/apps/discord-bot; and git pull; and docker compose up -d --build
+```
+
 ## CI and deploys
 
 GitHub Actions (`.github/workflows/ci.yml`) runs clippy with warnings as errors, the tests and a

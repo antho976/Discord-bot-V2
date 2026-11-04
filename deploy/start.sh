@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # The container's entrypoint: the bot (Discord + dashboard, one Rust binary), Caddy on the public
 # port in front of it, and Relay's rendezvous and cloud engine beside them for Tally and Avex.
-# RELAY_PUBLIC_URL overrides Relay's public address; RELAY_PUBLIC_URL=off runs the bot alone.
+# RELAY_PUBLIC_URL overrides Relay's public address (by default wss://<Render host or PUBLIC_URL
+# host>/relay); RELAY_PUBLIC_URL=off runs the bot alone.
 #
-# If any process stops, everything stops and the container exits, so Render restarts the whole
-# service instead of leaving it half up.
+# If any process stops, everything stops and the container exits, so Render or Docker restarts the
+# whole service instead of leaving it half up.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -14,6 +15,11 @@ pids=()
 
 if [[ -z "${RELAY_PUBLIC_URL:-}" && -n "${RENDER_EXTERNAL_HOSTNAME:-}" ]]; then
   export RELAY_PUBLIC_URL="wss://${RENDER_EXTERNAL_HOSTNAME}/relay"
+fi
+# Self-hosted behind the Cloudflare Tunnel: Relay shares the dashboard's https address.
+if [[ -z "${RELAY_PUBLIC_URL:-}" && "${PUBLIC_URL:-}" == https://* ]]; then
+  host="${PUBLIC_URL#https://}"
+  export RELAY_PUBLIC_URL="wss://${host%%/*}/relay"
 fi
 if [[ "${RELAY_PUBLIC_URL:-}" == "off" ]] || ! command -v relay >/dev/null; then
   unset RELAY_PUBLIC_URL
