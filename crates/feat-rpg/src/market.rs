@@ -35,9 +35,18 @@ pub fn unit_price(item: &str) -> i64 {
 /// same material twice, never the Barrow King's shards.
 pub fn stock(user: u64, day: i64, level: u32, boss: bool) -> Vec<Lot> {
     let mut r = Rng::new(user.rotate_left(13) ^ (day as u64).wrapping_mul(0x9E37_79B9));
+    // The tiers just ahead: from your level to four past it.
+    let ahead: Vec<&'static Gear> = data::GEAR
+        .iter()
+        .filter(|g| g.level + 1 > level && g.level <= level + 4 && (!g.after_boss || boss))
+        .collect();
     let mut out: Vec<Lot> = Vec::new();
     for _ in 0..24 {
-        let g = loot::drop_piece(level, boss, &mut r);
+        let g = if ahead.is_empty() {
+            loot::drop_piece(level, boss, &mut r)
+        } else {
+            *r.pick(&ahead)
+        };
         let mats: Vec<(&str, i64)> = g
             .cost
             .iter()
