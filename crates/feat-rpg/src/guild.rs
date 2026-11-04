@@ -585,16 +585,20 @@ pub fn invite(g: &mut Game, user: u64) -> Result<Option<String>> {
     let Some(m) = g.p.clan.clone().filter(|m| m.leader) else {
         return Ok(None);
     };
-    let name: Option<String> =
+    let found: Option<(String, i64)> =
         g.tx.query_row(
-            "SELECT name FROM rpg_players WHERE guild_id = ?1 AND user_id = ?2",
+            "SELECT name, level FROM rpg_players WHERE guild_id = ?1 AND user_id = ?2",
             params![g.p.guild as i64, user as i64],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    let Some(name) = name else {
+    let Some((name, level)) = found else {
         return Ok(None);
     };
+    let opens = crate::data::unlock(crate::data::Feature::Guild).level;
+    if level < opens as i64 {
+        return Ok(Some(format!("{name} can join a guild from level {opens}.")));
+    }
     if in_a_guild(&g.tx, g.p.guild, user)? {
         return Ok(Some(format!("{name} is in a guild already.")));
     }

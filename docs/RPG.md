@@ -303,8 +303,12 @@ just opened, menus end with "Next: … at level N", and Help lists what's still 
 | 12 | Titans |
 
 A locked screen or button shows the overview with "X opens at level N". Anything already
-started stays usable (an expedition out, a run, a guild joined before this). Players from
-before this pass have every unlock marked as seen, so no news cards flood them.
+started stays usable (an expedition out, a run, a delve, a guild joined, townsfolk lines begun,
+today's bounty progress, a Titan's spoils). Players from before this pass have every unlock
+marked as seen, start at smith rank 4 (the +3 upgrades they had stay open), and all their gear
+counts as forged, since which pieces were found wasn't recorded. On the day this deploys,
+players under level 8 get a different set of bounties (the board now only asks for what's
+open), and progress already made on that day's board carries over by position.
 
 **The forge is where gear comes from.**
 

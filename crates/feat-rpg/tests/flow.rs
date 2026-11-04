@@ -1180,9 +1180,21 @@ fn the_forge_is_where_gear_comes_from() {
     let s = click(&ctx, "forge", "upgrade", "", &[&found.id.to_string()]);
     assert!(text_of(&s).contains("Found gear"), "{}", text_of(&s));
 
+    // Sigrun's order stays the same all day, whatever you level or learn meanwhile.
+    let ask = |ctx: &Ctx| {
+        store::run(&ctx.db, G, U, None, |g| {
+            Ok(format!("{:?}", feat_rpg::orders::today(g)?.ask))
+        })
+        .unwrap()
+    };
+    let first = ask(&ctx);
+    store::run(&ctx.db, G, U, None, |g| g.smith(2000).map(|_| ())).unwrap();
+    level_to(&ctx, U, 8);
+    assert_eq!(ask(&ctx), first);
+
     // Sigrun's order: hand it over once a day for gold and smithing.
     store::run(&ctx.db, G, U, None, |g| {
-        match feat_rpg::orders::today(&g.p).ask {
+        match feat_rpg::orders::today(g)?.ask {
             feat_rpg::orders::Ask::Supply(id, n) => g.item(id, n, "test"),
             feat_rpg::orders::Ask::Piece(gear) => g
                 .add_piece(gear, data::Rarity::Common, Vec::new(), false, "forged")

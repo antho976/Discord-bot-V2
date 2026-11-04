@@ -72,13 +72,15 @@ const MIGRATION_006: Migration = Migration {
 };
 
 /// The smith: forge rank, which unlocks have been seen, and whether a piece was forged by its
-/// owner (found gear takes fewer upgrades). Players from before this see every unlock as seen.
+/// owner (found gear takes fewer upgrades). Players from before this see every unlock as seen,
+/// start at smith rank 4 (so the +3 upgrades they could already make stay open), and their
+/// gear all counts as forged: which pieces were found wasn't recorded.
 const MIGRATION_007: Migration = Migration {
     name: "007_smith_and_unlocks",
     sql: "
         ALTER TABLE rpg_players ADD COLUMN smith_xp INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE rpg_players ADD COLUMN unlocks INTEGER NOT NULL DEFAULT 0;
-        UPDATE rpg_players SET unlocks = 1048575;
+        UPDATE rpg_players SET unlocks = 1048575, smith_xp = 320;
         ALTER TABLE rpg_gear ADD COLUMN forged INTEGER NOT NULL DEFAULT 1;
     ",
 };

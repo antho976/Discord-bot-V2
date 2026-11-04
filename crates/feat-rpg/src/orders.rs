@@ -3,7 +3,7 @@
 //! there's always a reason to light the forge even when you need nothing yourself.
 
 use bot_core::anyhow::Result;
-use bot_core::rusqlite::params;
+use bot_core::rusqlite::{OptionalExtension, params};
 
 use crate::data::{self, Gear};
 use crate::emoji::get as e;
@@ -71,32 +71,89 @@ fn spare<'a>(p: &'a Player, g: &Gear) -> Option<&'a crate::store::GearRow> {
         .min_by_key(|x| (x.rarity, x.upgrade))
 }
 
-/// Today's order for a player: the same all day, different between players.
-pub fn today(p: &Player) -> Order {
+/// Today's order for a player: picked the first time it's asked for and kept for the day, so
+/// ranking up or levelling mid-day doesn't change what Sigrun wants.
+pub fn today(g: &Game) -> Result<Order> {
+    let day = quests::day(g.p.now);
+    let kept: Option<String> = g
+        .tx
+        .query_row(
+            "SELECT slot FROM rpg_bought WHERE guild_id = ?1 AND user_id = ?2 AND day = ?3 AND slot LIKE 'ask:%'",
+            params![g.p.guild as i64, g.p.user as i64, day],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(o) = kept.as_deref().and_then(|k| decode(k, g.p.level)) {
+        return Ok(o);
+    }
+    let o = pick(&g.p);
+    g.tx.execute(
+        "INSERT OR IGNORE INTO rpg_bought (guild_id, user_id, day, slot) VALUES (?1, ?2, ?3, ?4)",
+        params![g.p.guild as i64, g.p.user as i64, day, encode(&o)],
+    )?;
+    Ok(o)
+}
+
+fn encode(o: &Order) -> String {
+    match o.ask {
+        Ask::Supply(id, n) => format!("ask:s:{id}:{n}"),
+        Ask::Piece(g) => format!("ask:p:{}", g.id),
+    }
+}
+
+fn decode(k: &str, level: u32) -> Option<Order> {
+    let mut parts = k.split(':').skip(1);
+    match (parts.next()?, parts.next()?) {
+        ("p", id) => data::gear(id).map(|g| piece_order(g, level)),
+        ("s", id) => {
+            let n: i64 = parts.next()?.parse().ok()?;
+            let id = data::item(id)?.id;
+            Some(supply_order(id, n, level))
+        }
+        _ => None,
+    }
+}
+
+fn piece_order(g: &'static Gear, level: u32) -> Order {
+    Order {
+        ask: Ask::Piece(g),
+        gold: g.gold * 3 / 2 + 10 * level as i64,
+        smith: data::smith_xp_forge(g) * 3 / 2,
+        threads: 1,
+    }
+}
+
+fn supply_order(id: &'static str, n: i64, level: u32) -> Order {
+    Order {
+        ask: Ask::Supply(id, n),
+        gold: 40 + 12 * level as i64,
+        smith: 30 + 4 * level as i64,
+        threads: 0,
+    }
+}
+
+/// A fresh pick from the day and the player.
+fn pick(p: &Player) -> Order {
     let day = quests::day(p.now);
     let mut r = Rng::new(p.user.rotate_left(7) ^ (day as u64).wrapping_mul(0xA24B_AED4_963E_E407));
-    let level = p.level as i64;
-    // A piece she can use: one you can forge now, a tier or two under your best.
+    // A piece she can use: one you can forge now, under what you wear in that slot (so making
+    // it doesn't put it on you), and not too far behind.
     let pieces: Vec<&'static Gear> = data::GEAR
         .iter()
         .filter(|g| {
+            let worn = p.equipped(g.slot).map(|x| x.gear.level).unwrap_or(0);
             !g.after_boss
-                && g.level <= p.level
+                && g.level < worn
                 && g.smith <= p.smith_rank()
                 && g.level + 8 >= p.level
                 && g.level > 1
         })
         .collect();
     if !pieces.is_empty() && r.chance(0.35) {
-        let g = *r.pick(&pieces);
-        return Order {
-            ask: Ask::Piece(g),
-            gold: g.gold * 3 / 2 + 10 * level,
-            smith: data::smith_xp_forge(g) * 3 / 2,
-            threads: 1,
-        };
+        let g = pieces[(r.next_u64() % pieces.len() as u64) as usize];
+        return piece_order(g, p.level);
     }
-    let supplies: &[(&str, i64)] = if p.level >= 10 {
+    let supplies: &[(&'static str, i64)] = if p.level >= 10 {
         &[
             ("potion", 4),
             ("rations", 4),
@@ -108,12 +165,7 @@ pub fn today(p: &Player) -> Order {
         &[("potion", 4), ("rations", 4), ("bait", 2)]
     };
     let (id, n) = *r.pick(supplies);
-    Order {
-        ask: Ask::Supply(id, n),
-        gold: 40 + 12 * level,
-        smith: 30 + 4 * level,
-        threads: 0,
-    }
+    supply_order(id, n, p.level)
 }
 
 pub fn done(g: &Game) -> Result<bool> {
@@ -131,7 +183,7 @@ pub fn fill(g: &mut Game) -> Result<Option<String>> {
             "Sigrun has what she needs today. Come back tomorrow.".into(),
         ));
     }
-    let o = today(&g.p);
+    let o = today(g)?;
     let (have, need) = o.have(&g.p);
     if have < need {
         return Ok(Some(format!("She asked for {}.", o.describe())));

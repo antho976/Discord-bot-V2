@@ -45,6 +45,8 @@ pub fn usable(p: &Player, f: Feature) -> bool {
             Feature::Labyrinth => p.run.is_some(),
             Feature::Dungeons => p.delve.is_some(),
             Feature::Guild => p.clan.is_some(),
+            Feature::Townsfolk => !p.side.is_empty(),
+            Feature::Bounties => p.bounty.iter().any(|b| b.0 > 0 || b.1),
             Feature::Titans => p
                 .fight
                 .as_ref()

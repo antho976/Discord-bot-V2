@@ -126,7 +126,10 @@ impl World {
                 }
                 _ => 0,
             },
-            guild_invites: if modules.guilds && g.p.clan.is_none() {
+            guild_invites: if modules.guilds
+                && g.p.clan.is_none()
+                && crate::unlocks::open(&g.p, data::Feature::Guild)
+            {
                 crate::guild::pending(&g.tx, g.p.guild, g.p.user, now)?
                     .iter()
                     .filter(|x| x.1 == "invite")
@@ -1414,10 +1417,11 @@ fn forge_lock(p: &Player, g: &data::Gear) -> Option<String> {
 }
 
 fn forge_view(g: &Game) -> Result<Screen> {
-    Ok(forge(&g.p, crate::orders::done(g)?))
+    let o = crate::orders::today(g)?;
+    Ok(forge(&g.p, o, crate::orders::done(g)?))
 }
 
-fn forge(p: &Player, order_done: bool) -> Screen {
+fn forge(p: &Player, o: crate::orders::Order, order_done: bool) -> Screen {
     let ids = Ids {
         owner: p.user,
         version: p.version,
@@ -1515,7 +1519,6 @@ fn forge(p: &Player, order_done: bool) -> Screen {
         ));
     }
     // Sigrun's order: the day's job for the forge.
-    let o = crate::orders::today(p);
     if order_done {
         s.text(format!(
             "-# {} Sigrun's order is done for today",
@@ -2654,8 +2657,16 @@ pub fn handle(
     let value = values.first().cloned().unwrap_or_default();
     let mut announce = None;
     let mut note: Option<String> = None;
-    let locked = crate::unlocks::for_screen(&route.screen)
-        .filter(|f| !crate::unlocks::usable(&g.p, *f))
+    // Navigating from a menu names the screen in the value instead of the route.
+    let target = if route.screen == "hub" && route.action == "nav" {
+        values.first().map(String::as_str).unwrap_or("hub")
+    } else {
+        route.screen.as_str()
+    };
+    // Spoils from a Titan fought before Titans had a level stay claimable.
+    let claiming = route.screen == "titan" && route.action == "claim";
+    let locked = crate::unlocks::for_screen(target)
+        .filter(|f| !claiming && !crate::unlocks::usable(&g.p, *f))
         .map(data::unlock);
     let screen = if let Some(u) = locked {
         note = Some(format!("{} opens at level {}.", u.name, u.level));
