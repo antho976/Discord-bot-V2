@@ -583,7 +583,7 @@ impl Fight {
                     }
                     Skill::SoulRend => {
                         let d = self.hit(1.6, true);
-                        let h = d * 6 / 10;
+                        let h = d * 45 / 100;
                         self.heal(h);
                         self.log
                             .push(format!("Soul Rend tore for {d} and healed you {h}."));

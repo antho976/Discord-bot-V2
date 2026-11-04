@@ -67,7 +67,7 @@ impl God {
     /// Part of every hit that heals the player.
     pub fn lifesteal(self) -> f64 {
         match self {
-            God::Hades => 0.20,
+            God::Hades => 0.15,
             _ => 0.0,
         }
     }
@@ -167,6 +167,7 @@ impl Skill {
             Skill::AegisStorm => 4,
             Skill::GraveThunder | Skill::Judgement => 3,
             Skill::OwlSight => 3,
+            Skill::SoulRend => 1,
             _ => 0,
         }
     }
@@ -183,7 +184,7 @@ impl Skill {
             (Skill::OwlSight, _) => {
                 "See the foe's next two moves, and your next hit lands 50% harder."
             }
-            (Skill::SoulRend, _) => "A hit that heals you for 60% of the damage.",
+            (Skill::SoulRend, _) => "A hit that heals you for 45% of the damage.",
             (Skill::CerberusBite, _) => "Wounds that bleed for three turns.",
             (Skill::AegisStorm, God::Athena) => {
                 "Block the next hit completely and throw it back as lightning."
