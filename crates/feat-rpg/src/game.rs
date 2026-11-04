@@ -3119,8 +3119,13 @@ pub fn handle(
                     if row.rarity.index() > 0 {
                         g.item("thread", row.rarity.index(), "salvaged")?;
                     }
+                    let up = g.smith(data::SMITH_XP_SALVAGE)?;
                     g.bump()?;
-                    note = Some(format!("Salvaged the {}.", row.gear.name));
+                    note = Some(format!(
+                        "Salvaged the {}.{}",
+                        row.gear.name,
+                        rank_line(up)
+                    ));
                 }
                 pack(&g.p)
             }

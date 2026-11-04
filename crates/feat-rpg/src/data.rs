@@ -823,6 +823,8 @@ pub fn smith_xp_refine(to: Rarity) -> i64 {
     20 * to.index()
 }
 pub const SMITH_XP_REFORGE: i64 = 10;
+/// Taking a piece apart teaches a little too.
+pub const SMITH_XP_SALVAGE: i64 = 5;
 
 /// The rare material that sets a trait when you temper a piece as you forge it.
 pub fn catalyst(t: Trait) -> &'static str {

@@ -278,3 +278,70 @@ Mechanics given more weight in the same pass:
 
 Still untested in Discord itself: the guild form (a modal), the Titan announcement, and the map
 image through the public address. The click-through tests cover each flow in the database.
+
+## Fifth pass: the forge, and things opening one at a time (2026-11-04)
+
+Owner: polish and improve, change the core, fix balancing, make the forge more important, and
+features should unlock slower, not all at once.
+
+**What opens when** (`src/unlocks.rs`, the table is `data::UNLOCKS`). A new player has hunts,
+their character and the saga. The rest opens by level, or sooner when the saga gets there, and
+the overview says so once ("New", with a button to take a look); the level-up line names what
+just opened, menus end with "Next: … at level N", and Help lists what's still to come.
+
+| Level | Opens |
+| --- | --- |
+| 2 (or saga chapter "Iron and Bread") | Expeditions and the map |
+| 3 (or chapter "The Jarl of Skagi") | The forge; encounters after hunts |
+| 4 | The bounty board (it only asks for what's open) |
+| 5 | The temple; elites |
+| 6 | Dungeons |
+| 7 | Skagi's townsfolk |
+| 8 | The Labyrinth |
+| 9 | The market |
+| 10 | Guilds |
+| 12 | Titans |
+
+A locked screen or button shows the overview with "X opens at level N". Anything already
+started stays usable (an expedition out, a run, a guild joined before this). Players from
+before this pass have every unlock marked as seen, so no news cards flood them.
+
+**The forge is where gear comes from.**
+
+- **Smith rank 1 to 10** from everything made at the forge (gear, tempering, supplies,
+  upgrades, refining, salvaging, Sigrun's order). Each rank improves the forge's rarity odds
+  (rank 1: 60% Common, 1% Epic; rank 10: 6% Common, 36% Rare, 10% Epic, better than any hunt
+  drop), raises how far your own work upgrades (+1 at rank 1, +5 at rank 8), and the better
+  recipes need a rank. The forge screen shows the rank and what the next one brings.
+- **Tempering:** forge a piece with a chosen trait by adding a rare material (wolf fang for
+  Fierce or Keen, sea amber for Flame, Lucky, Seeing or Warding, frost hide for Frost or
+  Sturdy, loose threads for Vampiric or Steady). The piece is at least Fine, and the chosen
+  trait rolls in the top half of its range.
+- **Upgrades** go to +5 at 7% each (was +3 at 10%); past +3 they take loose threads too.
+- **Found gear** (elites, dungeon chests, Labyrinth guardians, Titans, the boss) upgrades to
+  +2 only; the pack says "found". Ordinary hunts no longer drop gear; their rare-material
+  chance went from 6% to 9% instead.
+- **Eight new pieces** fill the gaps, so there's a next tier every three or four levels per
+  slot: Bearded Axe (4), Wolf-tooth Sax (10), Draugr-bane Greataxe (16); Studded Jerkin (4),
+  Scale Hauberk (11), Barrow-plate (17); Rune Stone (6), Seidr Bindrune (12). The forge shows
+  the next tier above what you wear in each slot.
+- **The market** sells three lots of materials a day for pieces you could forge soon, not
+  finished gear.
+- **Sigrun's order** (`src/orders.rs`): one job a day on the forge screen, supplies or a
+  spare piece you made, for gold, smithing and (for a piece) a loose thread.
+
+**Balance.**
+
+- The simulator now counts bounties, the saga and the townsfolk. Without them it said a
+  light player hit level 5 on day one; with them the old curve put a heavy player at level 12
+  on day one and the level cap on day three, which is why everything opened at once. New XP
+  curve `80 × level^1.6` (was `55 × level^1.4`); bounties pay `40 + 15×level` XP (was
+  `60 + 25×level`). Simulated: light player level 5 after day one, 8 on day three, 10 on day
+  five, boss on day 12 to 16; heavy player level 8 after day one, boss on day 6 or 7.
+- Hades hunted for free (0 to 3% HP a fight): lifesteal 20% → 15%, Soul Rend heals 45% (was
+  60%) with a one-turn cooldown. Wolfwood at level 8: Hades 13% HP a fight, Athena 23%, Thor
+  30%. Barrow King at 420 with intel: Thor 97%, Athena 85%, Hades 96%.
+- Judgement with Hades as main heals half the drain (it healed all of it and shielded it):
+  Hades+Athena at 340 Power won 94% of King fights, now 42%.
+
+Dashboard: a player's smith rank shows on the Players tab and can be set there.
