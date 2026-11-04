@@ -1414,7 +1414,11 @@ fn forge_lock(p: &Player, g: &data::Gear) -> Option<String> {
     (!why.is_empty()).then(|| format!("{} {}", e("lock"), why.join(" · ")))
 }
 
-fn forge(p: &Player) -> Screen {
+fn forge_view(g: &Game) -> Result<Screen> {
+    Ok(forge(&g.p, crate::orders::done(g)?))
+}
+
+fn forge(p: &Player, order_done: bool) -> Screen {
     let ids = Ids {
         owner: p.user,
         version: p.version,
@@ -1510,6 +1514,28 @@ fn forge(p: &Player) -> Screen {
             "{} You wear the best gear Midgard has until the Barrow King falls.",
             e("check")
         ));
+    }
+    // Sigrun's order: the day's job for the forge.
+    let o = crate::orders::today(p);
+    if order_done {
+        s.text(format!(
+            "-# {} Sigrun's order is done for today",
+            e("check")
+        ));
+    } else {
+        let (have, need) = o.have(p);
+        s.section(
+            format!(
+                "{} **Sigrun's order:** {}  ·  {}/{need}\n-# {}",
+                e(o.emoji()),
+                o.describe(),
+                have.min(need),
+                o.pays()
+            ),
+            Btn::new(ids.act("forge", "order", ""), "Hand over")
+                .emoji("check")
+                .disabled(have < need),
+        );
     }
     if !temper.is_empty() {
         s.inner_select(
@@ -1718,7 +1744,7 @@ fn forge_piece(
 }
 
 /// "Smith rank 4: upgrades to +3, ..." when a rank was just reached.
-fn rank_line(up: Option<u32>) -> String {
+pub(crate) fn rank_line(up: Option<u32>) -> String {
     match up {
         Some(r) => format!(
             "\n{} **Smith rank {r}!** {}",
@@ -2967,18 +2993,22 @@ pub fn handle(
             }
             ("forge", "refine") => {
                 note = refine(g, value.parse().unwrap_or(-1), false)?;
-                forge(&g.p)
+                forge_view(g)?
             }
             ("forge", "reforge") => {
                 note = refine(g, value.parse().unwrap_or(-1), true)?;
-                forge(&g.p)
+                forge_view(g)?
             }
             ("forge", "gear") => {
                 note = match data::gear(&route.arg) {
                     Some(gear) => forge_piece(g, gear, None)?,
                     None => None,
                 };
-                forge(&g.p)
+                forge_view(g)?
+            }
+            ("forge", "order") => {
+                note = crate::orders::fill(g)?;
+                forge_view(g)?
             }
             ("forge", "temper") => {
                 let (id, t) = value.split_once('.').unwrap_or(("", ""));
@@ -2991,7 +3021,7 @@ pub fn handle(
                     (Some(gear), Some(t)) => forge_piece(g, gear, Some(t))?,
                     _ => None,
                 };
-                forge(&g.p)
+                forge_view(g)?
             }
             ("forge", "upgrade") => {
                 let id: i64 = value.parse().unwrap_or(-1);
@@ -3037,7 +3067,7 @@ pub fn handle(
                     }
                     None => {}
                 }
-                forge(&g.p)
+                forge_view(g)?
             }
             ("forge", "make") => {
                 match data::SUPPLY_RECIPES.iter().find(|r| r.id == value) {
@@ -3067,7 +3097,7 @@ pub fn handle(
                     }
                     None => {}
                 }
-                forge(&g.p)
+                forge_view(g)?
             }
             ("pack", "equip") => {
                 let id: i64 = value.parse().unwrap_or(-1);
@@ -3255,7 +3285,7 @@ pub fn view(
             ),
             None => hunt_pick(p, None),
         },
-        "forge" => forge(p),
+        "forge" => forge_view(g)?,
         "pack" => pack(p),
         "temple" => temple(p, w, &store::top_givers(&g.tx, p.guild, w.week, 5)?),
         "givethor" => give(p, God::Thor),

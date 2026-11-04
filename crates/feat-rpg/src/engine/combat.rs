@@ -625,7 +625,7 @@ impl Fight {
                     }
                     Skill::Judgement if main == God::Hades => {
                         let d = self.hit(1.2, true);
-                        self.heal(d);
+                        self.heal(d / 2);
                         self.shield = d;
                         self.log.push(format!(
                             "Judgement drained {d}, healed you and shielded you for it."

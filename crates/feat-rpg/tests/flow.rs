@@ -1180,6 +1180,25 @@ fn the_forge_is_where_gear_comes_from() {
     let s = click(&ctx, "forge", "upgrade", "", &[&found.id.to_string()]);
     assert!(text_of(&s).contains("Found gear"), "{}", text_of(&s));
 
+    // Sigrun's order: hand it over once a day for gold and smithing.
+    store::run(&ctx.db, G, U, None, |g| {
+        match feat_rpg::orders::today(&g.p).ask {
+            feat_rpg::orders::Ask::Supply(id, n) => g.item(id, n, "test"),
+            feat_rpg::orders::Ask::Piece(gear) => g
+                .add_piece(gear, data::Rarity::Common, Vec::new(), false, "forged")
+                .map(|_| ()),
+        }
+    })
+    .unwrap();
+    let before = store::get(&ctx.db, G, U).unwrap().unwrap();
+    let s = click(&ctx, "forge", "order", "", &[]);
+    assert!(text_of(&s).contains("Sigrun weighs it"), "{}", text_of(&s));
+    let after = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert!(after.gold > before.gold && after.smith_xp > before.smith_xp);
+    let s = click(&ctx, "forge", "order", "", &[]);
+    assert!(text_of(&s).contains("Come back tomorrow"));
+    assert_eq!(store::get(&ctx.db, G, U).unwrap().unwrap().gold, after.gold);
+
     // The market sells materials, never finished gear.
     level_to(&ctx, U, 9);
     let before = store::get(&ctx.db, G, U).unwrap().unwrap();

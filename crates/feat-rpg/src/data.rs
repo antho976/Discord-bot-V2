@@ -194,7 +194,7 @@ impl Skill {
             }
             (Skill::GraveThunder, _) => "Lightning that heals you for a third of the damage.",
             (Skill::Judgement, God::Hades) => {
-                "A drain that heals you and shields you for the damage."
+                "A drain that heals you for half the damage and shields you for all of it."
             }
             (Skill::Judgement, _) => "Guard, and heal for three turns.",
         }
