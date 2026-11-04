@@ -141,12 +141,13 @@ pub fn spawn(
 
 /// The Power a Titan fights at: around the server's typical player, never trivial.
 pub fn titan_power(c: &Connection, guild: u64, since: i64) -> Result<i64> {
+    let open = data::unlock(data::Feature::Titans).level as i64;
     let avg: Option<f64> = c.query_row(
-        "SELECT AVG(level) FROM rpg_players WHERE guild_id = ?1 AND last_seen >= ?2",
-        params![guild as i64, since],
+        "SELECT AVG(level) FROM rpg_players WHERE guild_id = ?1 AND last_seen >= ?2 AND level >= ?3",
+        params![guild as i64, since, open],
         |r| r.get(0),
     )?;
-    let lvl = avg.unwrap_or(5.0);
+    let lvl = avg.unwrap_or(open as f64);
     Ok((60.0 + lvl * 14.0).max(100.0) as i64)
 }
 
@@ -159,9 +160,14 @@ pub fn rise_titan(c: &Connection, guild: u64, hours: i64) -> Result<Option<Strin
     }
     let now = bot_core::now_ms();
     let week_ago = now - 7 * 86_400_000;
+    // Only players who can fight it count: Titans open at a level.
     let players: i64 = c.query_row(
-        "SELECT COUNT(*) FROM rpg_players WHERE guild_id = ?1 AND last_seen >= ?2",
-        params![guild as i64, week_ago],
+        "SELECT COUNT(*) FROM rpg_players WHERE guild_id = ?1 AND last_seen >= ?2 AND level >= ?3",
+        params![
+            guild as i64,
+            week_ago,
+            data::unlock(data::Feature::Titans).level as i64
+        ],
         |r| r.get(0),
     )?;
     let n: i64 = c.query_row(
@@ -175,8 +181,9 @@ pub fn rise_titan(c: &Connection, guild: u64, hours: i64) -> Result<Option<Strin
     spawn(c, guild, "titan", 0, boss, power, hp, hours)?;
     let name = data::monster(boss).map(|m| m.name).unwrap_or("A Titan");
     Ok(Some(format!(
-        "{} **{name} rises over Midgard.** Everyone can fight it from `/rpg`: {} attempts a day for the next {hours} hours. When it falls, everyone who fought shares the spoils.",
+        "{} **{name} rises over Midgard.** Everyone level {} and up can fight it from `/rpg`: {} attempts a day for the next {hours} hours. When it falls, everyone who fought shares the spoils.",
         e("boss"),
+        data::unlock(data::Feature::Titans).level,
         data::TITAN_ATTEMPTS
     )))
 }
