@@ -3989,12 +3989,22 @@ pub fn tutorial_done(g: &mut Game, t: Tut) -> Result<()> {
     if g.p.tutorial_has(t) {
         return Ok(());
     }
-    let next = g.p.tutorial | t as i64;
+    let prev = g.p.tutorial;
+    let next = prev | t as i64;
     g.set_tutorial(next)?;
     if !matches!(t, Tut::Welcome) {
         g.gold(25, "tutorial")?;
     }
-    if next == Tut::ALL {
+    // Steps for systems the server switched off don't hold the reward back.
+    let m = store::modules(g.p.guild);
+    let mut need = Tut::ALL;
+    if !m.labyrinth {
+        need &= !(Tut::Labyrinth as i64);
+    }
+    if !m.saga {
+        need &= !(Tut::Saga as i64);
+    }
+    if prev & need != need && next & need == need {
         g.item("potion", 2, "tutorial")?;
         g.gold(100, "tutorial")?;
         g.add_title("Initiate of the Loom")?;
