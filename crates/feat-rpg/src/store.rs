@@ -462,7 +462,7 @@ impl Modules {
         (
             "market",
             "Market",
-            "A daily stall of gear and supplies for gold",
+            "A daily stall of materials and supplies for gold",
         ),
         ("encounters", "Encounters", "Small choices after hunts"),
         ("elites", "Elites", "Rare named monsters in hunts"),

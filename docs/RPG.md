@@ -261,7 +261,7 @@ its saved progress stays.
 | Saga | The Loom saga (second pass) |
 | Side quests | Skagi's townsfolk, six short lines with their own small story: Asa the fisherman's widow, Eydis the shieldmaiden, Jarl Sigrun, Old Hakon the hunter, Bragi the skald, the völva. Each step pays gold, XP or supplies; each line ends with a title |
 | Bounties | The daily bounty board (second pass) |
-| Market | Skagi's daily stall: three pieces picked for you (Fine or better, no repeats) and supplies with daily limits. Somewhere for gold to go besides the forge |
+| Market | Skagi's daily stall: three lots of materials for the tiers you'll forge next, and supplies with daily limits (no finished gear since the fifth pass) |
 | Encounters | Random events on hunts (second pass) |
 | Elites | Elite monsters and their once-per-player announcement |
 
