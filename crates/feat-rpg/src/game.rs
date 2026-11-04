@@ -265,9 +265,8 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         .url(ctx),
     );
     s.accent = Some(banner::accent(p.main()));
-    tutorial_block(&mut s, p, &ids, &w.modules);
+    let mut primary_used = tutorial_block(&mut s, p, &ids, &w.modules);
     s.text("-# Right now");
-    let mut primary_used = false;
     let open = |f| crate::unlocks::open(p, f);
     if let Some((name, pct, ends)) = w.titan.filter(|_| open(data::Feature::Titans)) {
         s.section(format!("{} **{name} is attacking Midgard**\n-# {pct}% left · {} to bring it down, together", e("boss"), dur(ends - p.now)), Btn::new(ids.go("titan"), "Fight").emoji("boss").danger());
@@ -3969,7 +3968,9 @@ pub fn tutorial_done(g: &mut Game, t: Tut) -> Result<()> {
     Ok(())
 }
 
-fn tutorial_block(s: &mut Screen, p: &Player, ids: &Ids, m: &store::Modules) {
+/// The tutorial step or the news card, if there is one. Returns whether it took the primary
+/// button.
+fn tutorial_block(s: &mut Screen, p: &Player, ids: &Ids, m: &store::Modules) -> bool {
     let ready = |t: &Tut| {
         t.feature()
             .is_none_or(|f| crate::unlocks::enabled(m, f) && crate::unlocks::open(p, f))
@@ -3991,8 +3992,9 @@ fn tutorial_block(s: &mut Screen, p: &Player, ids: &Ids, m: &store::Modules) {
                     .emoji(u.emoji)
                     .primary(),
             );
+            return true;
         }
-        return;
+        return false;
     };
     let (what, why, how, screen, button) = step.text();
     let head = match step.feature() {
@@ -4007,11 +4009,13 @@ fn tutorial_block(s: &mut Screen, p: &Player, ids: &Ids, m: &store::Modules) {
                 .emoji("check")
                 .primary(),
         );
+        true
     } else {
         s.section(
             format!("{head}\n{} **{what}**\n{why}\n-# How: {how}", e("help")),
             Btn::new(ids.go(screen), button).emoji("help"),
         );
+        false
     }
 }
 
