@@ -55,7 +55,7 @@ pub const MIGRATIONS: &[Migration] = &[MIGRATION_001, MIGRATION_002, MIGRATION_0
             PRIMARY KEY (channel_id, message_id));
         CREATE INDEX rpg_posts_due ON rpg_posts (delete_at);
     ",
-}, MIGRATION_006];
+}, MIGRATION_006, MIGRATION_007];
 
 /// Guild controls: who may join, a weekly minimum, asks and invites, and a cooldown after a kick.
 const MIGRATION_006: Migration = Migration {
@@ -68,6 +68,18 @@ const MIGRATION_006: Migration = Migration {
             guild_id INTEGER NOT NULL, clan_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
             kind TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (clan_id, user_id));
         CREATE INDEX rpg_clan_invites_user ON rpg_clan_invites (guild_id, user_id);
+    ",
+};
+
+/// The smith: forge rank, which unlocks have been seen, and whether a piece was forged by its
+/// owner (found gear takes fewer upgrades). Players from before this see every unlock as seen.
+const MIGRATION_007: Migration = Migration {
+    name: "007_smith_and_unlocks",
+    sql: "
+        ALTER TABLE rpg_players ADD COLUMN smith_xp INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE rpg_players ADD COLUMN unlocks INTEGER NOT NULL DEFAULT 0;
+        UPDATE rpg_players SET unlocks = 1048575;
+        ALTER TABLE rpg_gear ADD COLUMN forged INTEGER NOT NULL DEFAULT 1;
     ",
 };
 
@@ -172,9 +184,15 @@ pub struct GearRow {
     pub equipped: bool,
     pub rarity: data::Rarity,
     pub traits: crate::engine::loot::Traits,
+    /// Made at the owner's forge (or a patron's gift), not found.
+    pub forged: bool,
 }
 
 impl GearRow {
+    /// How far this piece can be upgraded at a smith rank.
+    pub fn cap(&self, rank: u32) -> i64 {
+        data::upgrade_cap(rank, self.forged)
+    }
     pub fn power(&self) -> i64 {
         let base = data::gear_power(self.gear, self.upgrade);
         base + base * self.rarity.power_pct() / 100
@@ -248,6 +266,10 @@ pub struct Player {
     pub bounty_level: Option<u32>,
     /// Tutorial step; past the last step means done.
     pub tutorial: i64,
+    /// Smith XP: the forge rank comes from it.
+    pub smith_xp: i64,
+    /// Unlocks whose news has been seen, as [`data::Unlock::bit`]s.
+    pub unlocks: i64,
     /// A Labyrinth run in progress.
     pub run: Option<crate::labyrinth::Run>,
     /// A dungeon delve in progress.
@@ -258,6 +280,9 @@ pub struct Player {
 }
 
 impl Player {
+    pub fn smith_rank(&self) -> u32 {
+        data::smith_rank(self.smith_xp)
+    }
     pub fn main(&self) -> God {
         self.patron.unwrap_or(God::Thor)
     }
@@ -511,7 +536,7 @@ pub(crate) fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Op
         .query_row(
             "SELECT name, patron, lesser, level, xp, gold, hp, hp_at, vigor, vigor_at, version, boss_won,
                     boss_reward_week, hub_channel, hub_message, report, created_at,
-                    title, event, saga, saga_progress, saga_choices, tutorial
+                    title, event, saga, saga_progress, saga_choices, tutorial, smith_xp, unlocks
              FROM rpg_players WHERE guild_id = ?1 AND user_id = ?2",
             params![guild as i64, user as i64],
             |r| {
@@ -553,6 +578,8 @@ pub(crate) fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Op
                     bounty: [(0, false); 3],
                     bounty_level: None,
                     tutorial: r.get(22)?,
+                    smith_xp: r.get(23)?,
+                    unlocks: r.get(24)?,
                     run: None,
                     delve: None,
                     clan: None,
@@ -569,7 +596,7 @@ pub(crate) fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Op
     p.items = st
         .query_map(params![g, u], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<_, _>>()?;
-    let mut st = c.prepare_cached("SELECT id, gear, upgrade, equipped, rarity, traits FROM rpg_gear WHERE guild_id = ?1 AND user_id = ?2 ORDER BY id")?;
+    let mut st = c.prepare_cached("SELECT id, gear, upgrade, equipped, rarity, traits, forged FROM rpg_gear WHERE guild_id = ?1 AND user_id = ?2 ORDER BY id")?;
     p.gear = st
         .query_map(params![g, u], |r| {
             Ok((
@@ -579,10 +606,11 @@ pub(crate) fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Op
                 r.get::<_, i64>(3)? != 0,
                 r.get::<_, i64>(4)?,
                 r.get::<_, String>(5)?,
+                r.get::<_, i64>(6)? != 0,
             ))
         })?
         .filter_map(|r| r.ok())
-        .filter_map(|(id, gear, upgrade, equipped, rarity, traits)| {
+        .filter_map(|(id, gear, upgrade, equipped, rarity, traits, forged)| {
             data::gear(&gear).map(|gear| GearRow {
                 id,
                 gear,
@@ -590,6 +618,7 @@ pub(crate) fn load(c: &Connection, guild: u64, user: u64, now: i64) -> Result<Op
                 equipped,
                 rarity: data::Rarity::from_index(rarity),
                 traits: serde_json::from_str(&traits).unwrap_or_default(),
+                forged,
             })
         })
         .collect();
@@ -865,12 +894,13 @@ impl Game<'_> {
         why: &str,
     ) -> Result<i64> {
         let (g, u) = self.ids();
+        let forged = why == "forged";
         if equip {
             self.unequip(gear.slot)?;
         }
         self.tx.execute(
-            "INSERT INTO rpg_gear (guild_id, user_id, gear, upgrade, equipped, made_at, rarity, traits) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7)",
-            params![g, u, gear.id, equip, self.p.now, rarity.index(), serde_json::to_string(&traits)?],
+            "INSERT INTO rpg_gear (guild_id, user_id, gear, upgrade, equipped, made_at, rarity, traits, forged) VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8)",
+            params![g, u, gear.id, equip, self.p.now, rarity.index(), serde_json::to_string(&traits)?, forged],
         )?;
         let id = self.tx.last_insert_rowid();
         self.p.gear.push(GearRow {
@@ -880,6 +910,7 @@ impl Game<'_> {
             equipped: equip,
             rarity,
             traits,
+            forged,
         });
         self.ledger(gear.id, 1, why)?;
         Ok(id)
@@ -899,6 +930,33 @@ impl Game<'_> {
             r.rarity = rarity;
             r.traits = traits;
         }
+        Ok(())
+    }
+
+    /// Add smith XP. Returns the new rank when it went up.
+    pub fn smith(&mut self, xp: i64) -> Result<Option<u32>> {
+        let before = data::smith_rank(self.p.smith_xp);
+        let (g, u) = self.ids();
+        self.tx.execute(
+            "UPDATE rpg_players SET smith_xp = smith_xp + ?3 WHERE guild_id = ?1 AND user_id = ?2",
+            params![g, u, xp],
+        )?;
+        self.p.smith_xp += xp;
+        let after = data::smith_rank(self.p.smith_xp);
+        Ok((after > before).then_some(after))
+    }
+
+    /// Mark unlock news as seen. Doesn't change the state version: nothing a button acts on.
+    pub fn see_unlocks(&mut self, bits: i64) -> Result<()> {
+        if self.p.unlocks & bits == bits {
+            return Ok(());
+        }
+        let (g, u) = self.ids();
+        self.p.unlocks |= bits;
+        self.tx.execute(
+            "UPDATE rpg_players SET unlocks = ?3 WHERE guild_id = ?1 AND user_id = ?2",
+            params![g, u, self.p.unlocks],
+        )?;
         Ok(())
     }
 

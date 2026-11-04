@@ -19,6 +19,8 @@ pub enum Style {
 
 pub struct SimReport {
     pub days: Vec<String>,
+    /// Level at the end.
+    pub level: u32,
     pub boss_day: Option<u32>,
     pub level_day10: u32,
     pub gold_earned: i64,
@@ -68,6 +70,9 @@ struct P {
     hp: i64,
     vigor: f64,
     boss_won: bool,
+    smith_xp: i64,
+    /// XP from the saga and the townsfolk still to come (they run out).
+    story_left: i64,
     earned: i64,
     spent: i64,
     mats: BTreeMap<String, (i64, i64)>,
@@ -138,50 +143,55 @@ impl P {
         }
         self.spend_gold(gold);
     }
-    /// The next piece worth making: a slot upgrade at our level.
-    fn wanted(&self) -> Option<&'static data::Gear> {
+    fn rank(&self) -> u32 {
+        data::smith_rank(self.smith_xp)
+    }
+    /// The next tier in a slot above what we wear.
+    fn next_tier(&self, slot: Slot) -> Option<&'static data::Gear> {
+        let worn = self.best(slot).map(|(g, _)| g.level).unwrap_or(0);
         data::GEAR
             .iter()
-            .filter(|g| !g.after_boss || self.boss_won)
+            .filter(|g| g.slot == slot && g.level > worn && (!g.after_boss || self.boss_won))
+            .min_by_key(|g| g.level)
+    }
+    /// The next piece worth making: the lowest next tier we're close to.
+    fn wanted(&self) -> Option<&'static data::Gear> {
+        data::SLOTS
+            .iter()
+            .filter_map(|s| self.next_tier(*s))
             .filter(|g| g.level <= self.level + 2)
-            .filter(|g| {
-                self.best(g.slot)
-                    .map(|(b, u)| data::gear_power(b, u))
-                    .unwrap_or(0)
-                    < g.power
-            })
             .min_by_key(|g| (g.level, g.power))
     }
     fn craft(&mut self) {
         loop {
-            let next = data::GEAR
+            let next = data::SLOTS
                 .iter()
-                .filter(|g| !g.after_boss || self.boss_won)
+                .filter_map(|s| self.next_tier(*s))
                 .find(|g| {
-                    g.level <= self.level
-                        && self
-                            .best(g.slot)
-                            .map(|(b, u)| data::gear_power(b, u))
-                            .unwrap_or(0)
-                            < g.power
-                        && self.can_pay(g.cost, g.gold)
+                    g.level <= self.level && g.smith <= self.rank() && self.can_pay(g.cost, g.gold)
                 });
             let Some(g) = next else { break };
             self.pay(g.cost, g.gold);
             self.gear.push((g.id.into(), 0));
+            self.smith_xp += data::smith_xp_forge(g);
         }
         // Upgrades with spare gold, keeping some for supplies.
         loop {
             let mut done = false;
             for s in data::SLOTS {
                 let Some((g, u)) = self.best(s) else { continue };
-                if u >= data::MAX_UPGRADE {
+                if u >= data::upgrade_cap(self.rank(), true) {
                     continue;
                 }
-                let (gold, mat, n) = data::upgrade_cost(g, u);
-                if self.gold - gold > 150 && self.have(mat) >= n + 4 {
+                let (gold, mat, n, threads) = data::upgrade_cost(g, u);
+                if self.gold - gold > 150
+                    && self.have(mat) >= n + 4
+                    && self.have("thread") >= threads
+                {
                     self.spend_gold(gold);
                     self.add(mat, -n);
+                    self.add("thread", -threads);
+                    self.smith_xp += data::smith_xp_upgrade(u + 1);
                     if let Some(e) = self.gear.iter_mut().find(|(id, up)| id == g.id && *up == u) {
                         e.1 += 1;
                     }
@@ -199,6 +209,7 @@ impl P {
             while self.have(want) < target && self.can_pay(r[recipe].cost, r[recipe].gold) {
                 self.pay(r[recipe].cost, r[recipe].gold);
                 self.add(want, r[recipe].qty);
+                self.smith_xp += data::SMITH_XP_SUPPLY;
             }
         }
         if self.facts.iter().any(|f| f == "weakness") {
@@ -206,6 +217,7 @@ impl P {
                 while self.have(r[i].makes) < 2 && self.can_pay(r[i].cost, r[i].gold) {
                     self.pay(r[i].cost, r[i].gold);
                     self.add(r[i].makes, r[i].qty);
+                    self.smith_xp += data::SMITH_XP_SUPPLY;
                 }
             }
         }
@@ -370,6 +382,31 @@ impl P {
     }
 }
 
+/// XP the saga and the townsfolk pay over all of Midgard, roughly: they run out.
+const STORY_XP: i64 = 11_000;
+
+impl P {
+    /// What the bot pays besides runs and hunts, as a day's worth: bounties (two a day for a
+    /// light player, all three for a heavy one), the saga and the townsfolk (a light player
+    /// gets through less of it a day), and loose threads from a little Labyrinth.
+    fn extras(&mut self, style: Style) {
+        let level = self.level;
+        let open = |f| level >= data::unlock(f).level;
+        if open(data::Feature::Bounties) {
+            let (xp, gold) = crate::quests::bounty_reward(self.level);
+            let n = if style == Style::Light { 2 } else { 3 };
+            self.xp(xp * n);
+            self.gain_gold(gold * n);
+        }
+        let story = (if style == Style::Light { 350 } else { 800 }).min(self.story_left);
+        self.story_left -= story;
+        self.xp(story);
+        if open(data::Feature::Labyrinth) {
+            self.add("thread", if style == Style::Light { 1 } else { 4 });
+        }
+    }
+}
+
 /// Play `days` days.
 pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
     let mut p = P {
@@ -388,6 +425,8 @@ pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
         hp: 999,
         vigor: 0.0,
         boss_won: false,
+        smith_xp: 0,
+        story_left: STORY_XP,
         earned: 0,
         spent: 0,
         mats: BTreeMap::new(),
@@ -395,6 +434,7 @@ pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
     p.hp = p.hero().stats().0;
     let mut out = SimReport {
         days: Vec::new(),
+        level: 0,
         boss_day: None,
         level_day10: 0,
         gold_earned: 0,
@@ -425,6 +465,7 @@ pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
         }
         s += 1;
         p.hunt(hunt_minutes, s);
+        p.extras(style);
         p.craft();
         // Spare materials, and gold past what the next pieces need, go to the altar.
         let keep_gold = 1500;
@@ -464,15 +505,17 @@ pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
             })
             .collect();
         out.days.push(format!(
-            "day {day:>2}: level {:>2}, Power {:>3}, gold {:>5}, bond {}, intel {}/4 | {}",
+            "day {day:>2}: level {:>2}, Power {:>3}, gold {:>5}, smith {:>2}, bond {}, intel {}/4 | {}",
             p.level,
             p.power(),
             p.gold,
+            p.rank(),
             progress::bond_rank(p.tribute[p.main as usize], data::BOND_CAP),
             p.facts.len(),
             gear.join(", ")
         ));
     }
+    out.level = p.level;
     out.gold_earned = p.earned;
     out.gold_spent = p.spent;
     out.mats = p.mats;
@@ -484,24 +527,31 @@ pub fn play(main: God, style: Style, days: u32, seed: u64) -> SimReport {
 mod tests {
     use super::*;
 
-    /// The pace from the plan: a light player reaches the first boss in about ten days, a
-    /// heavy one sooner but not in a day or two, for every patron.
+    /// The pace from the plan: a light player reaches the first boss in about two weeks, a
+    /// heavy one in about a week, for every patron. (Since the forge pass, 2026-11-04: it
+    /// counts bounties, the saga and the townsfolk too, which made the old curve far too fast.)
     #[test]
     fn pace_matches_the_plan() {
         for main in data::GODS {
             let light = play(main, Style::Light, 20, 3).boss_day.unwrap_or(99);
             let heavy = play(main, Style::Heavy, 20, 3).boss_day.unwrap_or(99);
             assert!(
-                (8..=13).contains(&light),
+                (10..=16).contains(&light),
                 "{main:?}: light player beat the boss on day {light}"
             );
             assert!(
-                (4..=9).contains(&heavy),
+                (5..=9).contains(&heavy),
                 "{main:?}: heavy player beat the boss on day {heavy}"
             );
             assert!(
                 heavy <= light,
                 "{main:?}: heavy {heavy} slower than light {light}"
+            );
+            // Systems open one at a time: a light player isn't handed everything on day one.
+            let lv = play(main, Style::Light, 1, 3).level;
+            assert!(
+                (3..=6).contains(&lv),
+                "{main:?}: light player at level {lv} after a day"
             );
         }
     }

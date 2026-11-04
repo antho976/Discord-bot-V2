@@ -19,6 +19,7 @@ pub mod quests;
 pub mod shared;
 pub mod store;
 pub mod ui;
+pub mod unlocks;
 mod web;
 
 use std::collections::VecDeque;

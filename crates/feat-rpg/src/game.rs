@@ -265,10 +265,11 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         .url(ctx),
     );
     s.accent = Some(banner::accent(p.main()));
-    tutorial_block(&mut s, p, &ids);
+    tutorial_block(&mut s, p, &ids, &w.modules);
     s.text("-# Right now");
     let mut primary_used = false;
-    if let Some((name, pct, ends)) = w.titan {
+    let open = |f| crate::unlocks::open(p, f);
+    if let Some((name, pct, ends)) = w.titan.filter(|_| open(data::Feature::Titans)) {
         s.section(format!("{} **{name} is attacking Midgard**\n-# {pct}% left · {} to bring it down, together", e("boss"), dur(ends - p.now)), Btn::new(ids.go("titan"), "Fight").emoji("boss").danger());
     }
     if let Some((name, pct, ends)) = w.raid {
@@ -370,9 +371,10 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
                     .join(", ")
             ));
         }
-        None => {
+        None if open(data::Feature::Expedition) => {
             s.section(format!("{} **No expedition out**\n-# Send one before you go: it works while you're away.", e("expedition")), Btn::new(ids.go("exp"), "Plan one").emoji("expedition"));
         }
+        None => {}
     }
     if let Some(f) = &p.fight {
         let what = if f.kind == crate::engine::combat::Kind::Boss {
@@ -450,7 +452,7 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         .enumerate()
         .filter(|(i, b)| !p.bounty[*i].1 && p.bounty[*i].0 >= b.goal.target())
         .count();
-    if ready > 0 {
+    if ready > 0 && w.modules.bounties && open(data::Feature::Bounties) {
         s.text(format!(
             "-# {} {ready} bount{} ready to claim",
             e("bounty"),
@@ -473,13 +475,13 @@ pub fn hub(ctx: &Ctx, p: &Player, w: &World) -> Screen {
         Btn::new(ids.go("combat"), "Combat").emoji("boss"),
         Btn::new(ids.go("hero"), "Character").emoji(p.main().id()),
         Btn::new(ids.go("questlog"), "Quests").emoji("quest"),
-        if m.market {
-            Btn::new(ids.go("skagi"), "Skagi").emoji("temple")
-        } else {
-            Btn::new(ids.go("temple"), "Temple").emoji("temple")
-        },
     ];
-    if m.guilds {
+    if m.market && open(data::Feature::Market) {
+        row.push(Btn::new(ids.go("skagi"), "Skagi").emoji("temple"));
+    } else if open(data::Feature::Temple) {
+        row.push(Btn::new(ids.go("temple"), "Temple").emoji("temple"));
+    }
+    if m.guilds && crate::unlocks::usable(p, data::Feature::Guild) {
         row.push(
             Btn::new(
                 ids.go("guild"),
@@ -961,7 +963,12 @@ fn expedition_report(p: &Player, r: &Report, levels: u32) -> Screen {
         ));
     }
     if levels > 0 {
-        lines.push(format!("{} **Level {}!**", e("power"), p.level));
+        lines.push(format!(
+            "{} **Level {}!**{}",
+            e("power"),
+            p.level,
+            crate::unlocks::opened_line(p, &store::modules(p.guild), p.level - levels)
+        ));
     }
     if r.wounded {
         lines.push(format!(
@@ -1385,54 +1392,118 @@ fn fight_screen(p: &Player, f: &Fight, result: Option<String>) -> Screen {
     s
 }
 
+/// The next piece per slot: the first tier above what you wear (or the first one, if
+/// nothing), whether or not you can make it yet.
+fn next_piece(p: &Player, slot: Slot) -> Option<&'static data::Gear> {
+    let worn = p.equipped(slot).map(|g| g.gear.level).unwrap_or(0);
+    data::GEAR
+        .iter()
+        .filter(|g| g.slot == slot && g.level > worn && (!g.after_boss || p.boss_won))
+        .min_by_key(|g| g.level)
+}
+
+/// Why a piece can't be forged yet: level, then smith rank.
+fn forge_lock(p: &Player, g: &data::Gear) -> Option<String> {
+    let mut why = Vec::new();
+    if g.level > p.level {
+        why.push(format!("level {}", g.level));
+    }
+    if g.smith > p.smith_rank() {
+        why.push(format!("smith rank {}", g.smith));
+    }
+    (!why.is_empty()).then(|| format!("{} {}", e("lock"), why.join(" · ")))
+}
+
 fn forge(p: &Player) -> Screen {
     let ids = Ids {
         owner: p.user,
         version: p.version,
     };
     let mut s = Screen::default();
+    let rank = p.smith_rank();
     title(
         &mut s,
         "forge",
         "Forge",
-        &format!("Level {} · {} gold", p.level, thousands(p.gold)),
+        &format!("Smith rank {rank} · {} gold", thousands(p.gold)),
     );
-    // Per slot: the next piece that beats what you wear.
+    if let Some(left) = data::smith_to_next(p.smith_xp) {
+        s.text(format!(
+            "-# Rank {} in {left} smithing: {}",
+            rank + 1,
+            data::smith_perk(rank + 1)
+        ));
+    }
+    // Per slot: the next tier, with what it takes as have / need on one line.
     let mut shown = 0;
+    let mut temper: Vec<Opt> = Vec::new();
     for slot in data::SLOTS {
-        let worn = p.equipped(slot).map(|g| g.power()).unwrap_or(0);
-        let next = data::GEAR
-            .iter()
-            .filter(|g| g.slot == slot && g.power > worn && (!g.after_boss || p.boss_won))
-            .min_by_key(|g| g.level);
-        let Some(g) = next else { continue };
+        let Some(g) = next_piece(p, slot) else {
+            continue;
+        };
         shown += 1;
-        // What it takes, as have / need, so one line says both.
+        let worn = p.equipped(slot).map(|x| x.power()).unwrap_or(0);
         let mut cost: Vec<String> = g
             .cost
             .iter()
             .map(|(id, n)| format!("{}/{}", p.have(id).min(*n), data::count(id, *n)))
             .collect();
         cost.push(format!("{} gold", g.gold));
-        let cost = if g.level > p.level {
-            format!("{} level {} · {}", e("lock"), g.level, cost.join(" · "))
-        } else {
-            cost.join(" · ")
+        let lock = forge_lock(p, g);
+        let cost = match &lock {
+            Some(l) => format!("{l} · {}", cost.join(" · ")),
+            None => cost.join(" · "),
         };
         let can =
-            g.level <= p.level && p.gold >= g.gold && g.cost.iter().all(|(id, n)| p.have(id) >= *n);
+            lock.is_none() && p.gold >= g.gold && g.cost.iter().all(|(id, n)| p.have(id) >= *n);
+        let diff = data::gear_power(g, 0) - worn;
         s.section(
             format!(
-                "{} **{}**  +{} Power\n-# {cost}",
+                "{} **{}**  {}{} Power\n-# {cost}",
                 e(slot_emoji(slot)),
                 g.name,
-                g.power - worn,
+                if diff >= 0 { "+" } else { "" },
+                diff,
             ),
             Btn::new(ids.act("forge", "gear", g.id), "Forge")
                 .emoji("forge")
                 .disabled(!can)
                 .then_primary(can),
         );
+        if lock.is_none() {
+            for (i, t) in data::TRAITS.iter().enumerate() {
+                if !t.fits(slot) {
+                    continue;
+                }
+                let cat = data::catalyst(*t);
+                // The catalyst on top of whatever the recipe already takes of it.
+                let n = data::temper_cost(g)
+                    + g.cost.iter().find(|c| c.0 == cat).map(|c| c.1).unwrap_or(0);
+                let (lo, hi) = t.range();
+                let mid = (lo + hi + 1) / 2;
+                temper.push(
+                    Opt::new(
+                        format!("{} · {}", g.name, t.name()),
+                        format!("{}.{i}", g.id),
+                    )
+                    .emoji(cat)
+                    .desc(crate::ui::truncate(
+                        &format!(
+                            "{} · at least Fine · {}/{}",
+                            if lo == hi {
+                                t.describe(lo)
+                            } else {
+                                t.describe(mid)
+                                    .replace(&mid.to_string(), &format!("{mid}-{hi}"))
+                            },
+                            p.have(cat).min(n),
+                            data::count(cat, n)
+                        ),
+                        100,
+                    )),
+                );
+            }
+        }
     }
     if shown == 0 {
         s.text(format!(
@@ -1440,54 +1511,69 @@ fn forge(p: &Player) -> Screen {
             e("check")
         ));
     }
+    if !temper.is_empty() {
+        s.inner_select(
+            ids.act("forge", "temper", ""),
+            "Temper as you forge: choose a trait…",
+            temper.into_iter().take(25).collect(),
+        );
+    }
     let ups: Vec<Opt> = data::SLOTS
         .iter()
         .filter_map(|sl| p.equipped(*sl))
-        .filter(|g| g.upgrade < data::MAX_UPGRADE)
+        .filter(|g| g.upgrade < g.cap(rank))
         .map(|g| {
-            let (gold, mat, n) = data::upgrade_cost(g.gear, g.upgrade);
+            let (gold, mat, n, threads) = data::upgrade_cost(g.gear, g.upgrade);
+            let mut cost = format!("{gold} gold, {}", data::count(mat, n));
+            if threads > 0 {
+                cost.push_str(&format!(", {}", data::count("thread", threads)));
+            }
             Opt::new(
                 format!("{} → +{}", g.label(), g.upgrade + 1),
                 g.id.to_string(),
             )
             .emoji(slot_emoji(g.gear.slot))
             .desc(format!(
-                "+{} Power · {gold} gold, {}",
-                data::gear_power(g.gear, g.upgrade + 1) - g.power(),
-                data::count(mat, n)
+                "+{} Power · {cost}",
+                data::gear_power(g.gear, g.upgrade + 1) * (100 + g.rarity.power_pct()) / 100
+                    - g.power(),
             ))
         })
         .collect();
     s.inner_select(
         ids.act("forge", "upgrade", ""),
-        "Upgrade what you wear (up to +3 in Midgard)…",
+        format!(
+            "Upgrade what you wear: your work to +{}, found gear to +{}…",
+            data::upgrade_cap(rank, true),
+            data::upgrade_cap(rank, false)
+        ),
         ups,
     );
-    let refine: Vec<Opt> = p
-        .gear
-        .iter()
-        .filter(|g| g.rarity != data::Rarity::Epic)
-        .take(25)
-        .map(|g| {
-            let to = data::Rarity::from_index(g.rarity.index() + 1);
-            let (t, gold) = data::refine_cost(to, p.level);
-            Opt::new(
-                format!(
-                    "{} → {}{}",
-                    g.label(),
-                    to.name(),
-                    if g.equipped { " (worn)" } else { "" }
-                ),
-                g.id.to_string(),
-            )
-            .emoji(to.emoji())
-            .desc(format!(
-                "Adds a trait · {} and {gold} gold",
-                data::count("thread", t)
-            ))
-        })
-        .collect();
     if p.have("thread") > 0 {
+        let refine: Vec<Opt> = p
+            .gear
+            .iter()
+            .filter(|g| g.rarity != data::Rarity::Epic)
+            .take(25)
+            .map(|g| {
+                let to = data::Rarity::from_index(g.rarity.index() + 1);
+                let (t, gold) = data::refine_cost(to, p.level);
+                Opt::new(
+                    format!(
+                        "{} → {}{}",
+                        g.label(),
+                        to.name(),
+                        if g.equipped { " (worn)" } else { "" }
+                    ),
+                    g.id.to_string(),
+                )
+                .emoji(to.emoji())
+                .desc(format!(
+                    "Adds a trait · {} and {gold} gold",
+                    data::count("thread", t)
+                ))
+            })
+            .collect();
         s.text(format!(
             "-# {} {} for refining and reforging",
             e("thread"),
@@ -1560,6 +1646,89 @@ fn forge(p: &Player) -> Screen {
     s
 }
 
+/// Forge a piece, plain or tempered with a chosen trait.
+fn forge_piece(
+    g: &mut Game,
+    gear: &'static data::Gear,
+    temper: Option<data::Trait>,
+) -> Result<Option<String>> {
+    if let Some(l) = forge_lock(&g.p, gear) {
+        return Ok(Some(format!("Not yet: {l}.")));
+    }
+    if gear.after_boss && !g.p.boss_won {
+        return Ok(Some("That needs the Barrow King's crown shards.".into()));
+    }
+    let mut cost: Vec<(&str, i64)> = gear.cost.to_vec();
+    if let Some(t) = temper {
+        if !t.fits(gear.slot) {
+            return Ok(None);
+        }
+        let cat = data::catalyst(t);
+        let n = data::temper_cost(gear);
+        match cost.iter_mut().find(|c| c.0 == cat) {
+            Some(c) => c.1 += n,
+            None => cost.push((cat, n)),
+        }
+    }
+    if !g.can_pay(&cost, gear.gold) {
+        return Ok(Some(format!(
+            "You need {} and {} gold.",
+            cost.iter()
+                .map(|(id, n)| data::count(id, *n))
+                .collect::<Vec<_>>()
+                .join(", "),
+            gear.gold
+        )));
+    }
+    g.pay(&cost, gear.gold, "forged gear")?;
+    let rank = g.p.smith_rank();
+    let mut rng = crate::engine::Rng::new(seed(&g.p, 71));
+    let (rarity, traits) = match temper {
+        Some(t) => crate::engine::loot::temper(gear, rank, t, &mut rng),
+        None => crate::engine::loot::forge(gear, rank, &mut rng),
+    };
+    let power = data::gear_power(gear, 0) + data::gear_power(gear, 0) * rarity.power_pct() / 100;
+    let worn = g.p.equipped(gear.slot).map(|x| x.power()).unwrap_or(0);
+    let wear = power > worn;
+    g.add_piece(gear, rarity, traits.clone(), wear, "forged")?;
+    let up = g.smith(data::smith_xp_forge(gear) * if temper.is_some() { 3 } else { 2 } / 2)?;
+    count_event(g, quests::Event::Forged)?;
+    tutorial_done(g, Tut::Forge)?;
+    g.bump()?;
+    let t: Vec<String> = traits
+        .iter()
+        .map(|(t, v)| format!("{} ({})", t.name(), t.describe(*v)))
+        .collect();
+    Ok(Some(format!(
+        "It came out **{}**: {}{}.{}{}",
+        rarity.name(),
+        gear.name,
+        if t.is_empty() {
+            String::new()
+        } else {
+            format!(", {}", t.join(", "))
+        },
+        if wear {
+            " You're wearing it."
+        } else {
+            " It's in your pack."
+        },
+        rank_line(up)
+    )))
+}
+
+/// "Smith rank 4: upgrades to +3, ..." when a rank was just reached.
+fn rank_line(up: Option<u32>) -> String {
+    match up {
+        Some(r) => format!(
+            "\n{} **Smith rank {r}!** {}",
+            e("forge"),
+            capital(&data::smith_perk(r))
+        ),
+        None => String::new(),
+    }
+}
+
 pub(crate) trait ThenPrimary {
     fn then_primary(self, on: bool) -> Self;
 }
@@ -1601,7 +1770,7 @@ fn pack(p: &Player) -> Screen {
         match p.equipped(slot) {
             Some(g) => {
                 wear.push(format!(
-                    "{} **{}** · {}  ·  +{} Power{}",
+                    "{} **{}** · {}  ·  +{} Power{}{}",
                     e(slot_emoji(slot)),
                     g.label(),
                     rarity_tag(g.rarity),
@@ -1610,6 +1779,11 @@ fn pack(p: &Player) -> Screen {
                         format!(", +{}% scouting", g.gear.scouting)
                     } else {
                         String::new()
+                    },
+                    if g.forged {
+                        String::new()
+                    } else {
+                        format!("  ·  found, upgrades to +{}", data::FOUND_UPGRADE)
                     }
                 ));
                 if !g.traits.is_empty() {
@@ -1693,10 +1867,11 @@ fn pack(p: &Player) -> Screen {
             spare,
         );
     }
-    s.buttons(vec![
-        back_to(&ids, "hero", "Character"),
-        Btn::new(ids.go("forge"), "Forge").emoji("forge"),
-    ]);
+    let mut b = vec![back_to(&ids, "hero", "Character")];
+    if crate::unlocks::open(p, data::Feature::Forge) {
+        b.push(Btn::new(ids.go("forge"), "Forge").emoji("forge"));
+    }
+    s.buttons(b);
     s
 }
 
@@ -1978,26 +2153,81 @@ fn help(p: &Player) -> Screen {
     };
     let mut s = Screen::default();
     title(&mut s, "help", "How to play", "The short version");
-    s.text(format!(
-        "{} **Expeditions** work while you're away. The forecast shows what comes back.\n\
-         {} **Hunts** go turn by turn: guard the heavy blows, strike when it's open.\n\
-         {} **The forge** turns materials into gear and supplies.\n\
-         {} **The Barrow King** needs {} Power. Expeditions to the Barrow Fields scout him.\n\
-         {} **The temple** builds your bond with a god, which unlocks skills.\n\
-         {} **The Labyrinth** goes floor by floor. Leave any time with your haul.\n\
-         {} **Your saga** is the story, told in chapters you finish by playing.\n\
-         {} **Bounties** are three small jobs a day.\n\
-         -# Midgard caps level, gear and bonds: playing more gets you there sooner, not stronger.",
-        e("expedition"),
-        e("hunt"),
-        e("forge"),
-        e("boss"),
-        data::BOSS_POWER,
-        e("temple"),
-        e("labyrinth"),
-        e("saga"),
-        e("bounty"),
-    ));
+    use data::Feature as F;
+    // What's open, then what's still to come: one line each.
+    let lines: [(Option<F>, &str, String); 9] = [
+        (
+            None,
+            "hunt",
+            "**Hunts** go turn by turn: guard the heavy blows, strike when it's open.".into(),
+        ),
+        (
+            None,
+            "saga",
+            "**Your saga** is the story, told in chapters you finish by playing.".into(),
+        ),
+        (
+            Some(F::Expedition),
+            "expedition",
+            "**Expeditions** work while you're away. The forecast shows what comes back.".into(),
+        ),
+        (
+            Some(F::Forge),
+            "forge",
+            "**The forge** makes all your gear. Forging raises your smith rank: better odds, further upgrades, new recipes. Temper a piece with a rare material to choose its trait.".into(),
+        ),
+        (
+            Some(F::Bounties),
+            "bounty",
+            "**Bounties** are three small jobs a day.".into(),
+        ),
+        (
+            Some(F::Temple),
+            "temple",
+            "**The temple** builds your bond with a god, which opens skills.".into(),
+        ),
+        (
+            Some(F::Labyrinth),
+            "labyrinth",
+            "**The Labyrinth** goes floor by floor. Leave any time with your haul.".into(),
+        ),
+        (
+            Some(F::Market),
+            "market",
+            "**The market** sells materials for what you'll forge next.".into(),
+        ),
+        (
+            None,
+            "boss",
+            format!(
+                "**The Barrow King** needs {} Power. Expeditions to the Barrow Fields scout him.",
+                data::BOSS_POWER
+            ),
+        ),
+    ];
+    let mut open = Vec::new();
+    let mut later = Vec::new();
+    for (f, icon, line) in lines {
+        match f {
+            Some(f) if !crate::unlocks::open(p, f) => {
+                let u = data::unlock(f);
+                later.push(format!("{} (level {})", u.name, u.level));
+            }
+            _ => open.push(format!("{} {line}", e(icon))),
+        }
+    }
+    open.push(
+        "-# Midgard caps level, gear and bonds: playing more gets you there sooner, not stronger."
+            .into(),
+    );
+    s.text(open.join("\n"));
+    if !later.is_empty() {
+        s.text(format!(
+            "-# {} Still to come: {}",
+            e("lock"),
+            later.join(", ")
+        ));
+    }
     let mut b = vec![back_to(&ids, "hero", "Character")];
     if p.tutorial < Tut::ALL {
         b.push(Btn::new(ids.act("tut", "skip", ""), "Skip the tutorial"));
@@ -2203,7 +2433,7 @@ fn fight_turn(
                     let mut drops = vec![(mat.to_string(), m * em)];
                     if elite {
                         drops.push((r.rare.0.to_string(), 2));
-                    } else if rng.chance(0.06) {
+                    } else if rng.chance(data::HUNT_RARE) {
                         drops.push((r.rare.0.to_string(), 1));
                     }
                     let mut elite_line = String::new();
@@ -2241,15 +2471,11 @@ fn fight_turn(
                         },
                     )?;
                     tutorial_done(g, Tut::Hunt)?;
-                    // Now and then the foe was carrying something.
-                    let gear_drop = if elite || rng.chance(0.03) {
+                    // An elite carries a piece; ordinary foes leave gear to the forge.
+                    let gear_drop = if elite {
                         let piece =
                             crate::engine::loot::drop_piece(g.p.level, g.p.boss_won, &mut rng);
-                        let (rarity, traits) = crate::engine::loot::roll(
-                            piece,
-                            if elite { "elite" } else { "hunt" },
-                            &mut rng,
-                        );
+                        let (rarity, traits) = crate::engine::loot::roll(piece, "elite", &mut rng);
                         let worn = g.p.equipped(piece.slot).map(|x| x.power()).unwrap_or(0);
                         let power = data::gear_power(piece, 0)
                             + data::gear_power(piece, 0) * rarity.power_pct() / 100;
@@ -2292,7 +2518,12 @@ fn fight_turn(
                             String::new()
                         },
                         if levels > 0 {
-                            format!("\n{} **Level {}!**", e("power"), g.p.level)
+                            format!(
+                                "\n{} **Level {}!**{}",
+                                e("power"),
+                                g.p.level,
+                                crate::unlocks::opened_line(&g.p, &w.modules, g.p.level - levels)
+                            )
                         } else {
                             String::new()
                         },
@@ -2300,7 +2531,11 @@ fn fight_turn(
                         (data::WIN_HEAL * 100.0) as i64
                     ));
                     // Now and then, something on the way back.
-                    if !elite && w.modules.encounters && rng.chance(0.14) {
+                    if !elite
+                        && w.modules.encounters
+                        && crate::unlocks::open(&g.p, data::Feature::Encounters)
+                        && rng.chance(0.14)
+                    {
                         let enc = rng.pick(ENCOUNTERS);
                         g.set_event(Some(enc.id))?;
                     }
@@ -2381,7 +2616,13 @@ pub fn handle(
     let value = values.first().cloned().unwrap_or_default();
     let mut announce = None;
     let mut note: Option<String> = None;
-    let screen = if stale {
+    let locked = crate::unlocks::for_screen(&route.screen)
+        .filter(|f| !crate::unlocks::usable(&g.p, *f))
+        .map(data::unlock);
+    let screen = if let Some(u) = locked {
+        note = Some(format!("{} opens at level {}.", u.name, u.level));
+        view(ctx, g, &w, "hub", None)?
+    } else if stale {
         note = note_stale;
         view(ctx, g, &w, &route.screen, None)?
     } else {
@@ -2488,8 +2729,13 @@ pub fn handle(
                     if g.p.event.is_some() {
                         g.set_event(None)?;
                     }
-                    let f =
-                        Fight::hunt_with(g.p.hero(), g.p.hp(), r, seed(&g.p, 5), w.modules.elites);
+                    let f = Fight::hunt_with(
+                        g.p.hero(),
+                        g.p.hp(),
+                        r,
+                        seed(&g.p, 5),
+                        w.modules.elites && crate::unlocks::open(&g.p, data::Feature::Elites),
+                    );
                     g.save_fight(Some(f))?;
                     g.bump()?;
                 }
@@ -2728,65 +2974,68 @@ pub fn handle(
                 forge(&g.p)
             }
             ("forge", "gear") => {
-                match data::gear(&route.arg) {
-                    Some(gear)
-                        if gear.level <= g.p.level
-                            && (!gear.after_boss || g.p.boss_won)
-                            && g.can_pay(gear.cost, gear.gold) =>
-                    {
-                        g.pay(gear.cost, gear.gold, "forged gear")?;
-                        let mut rng = crate::engine::Rng::new(seed(&g.p, 71));
-                        let (rarity, traits) = crate::engine::loot::roll(gear, "forge", &mut rng);
-                        let power = data::gear_power(gear, 0)
-                            + data::gear_power(gear, 0) * rarity.power_pct() / 100;
-                        let worn = g.p.equipped(gear.slot).map(|x| x.power()).unwrap_or(0);
-                        let wear = power > worn;
-                        g.add_piece(gear, rarity, traits.clone(), wear, "forged")?;
-                        count_event(g, quests::Event::Forged)?;
-                        tutorial_done(g, Tut::Forge)?;
-                        g.bump()?;
-                        let t: Vec<String> = traits
-                            .iter()
-                            .map(|(t, v)| format!("{} ({})", t.name(), t.describe(*v)))
-                            .collect();
-                        note = Some(format!(
-                            "It came out **{}**: {}{}.{}",
-                            rarity.name(),
-                            gear.name,
-                            if t.is_empty() {
-                                String::new()
-                            } else {
-                                format!(", {}", t.join(", "))
-                            },
-                            if wear {
-                                " You're wearing it."
-                            } else {
-                                " It's in your pack."
-                            }
-                        ));
-                    }
-                    _ => note = Some("You can't forge that yet.".into()),
-                }
+                note = match data::gear(&route.arg) {
+                    Some(gear) => forge_piece(g, gear, None)?,
+                    None => None,
+                };
+                forge(&g.p)
+            }
+            ("forge", "temper") => {
+                let (id, t) = value.split_once('.').unwrap_or(("", ""));
+                let t = t
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| data::TRAITS.get(i))
+                    .copied();
+                note = match (data::gear(id), t) {
+                    (Some(gear), Some(t)) => forge_piece(g, gear, Some(t))?,
+                    _ => None,
+                };
                 forge(&g.p)
             }
             ("forge", "upgrade") => {
                 let id: i64 = value.parse().unwrap_or(-1);
+                let rank = g.p.smith_rank();
                 match g.p.gear.iter().find(|x| x.id == id && x.equipped).cloned() {
-                    Some(row) if row.upgrade < data::MAX_UPGRADE => {
-                        let (gold, mat, n) = data::upgrade_cost(row.gear, row.upgrade);
-                        if g.can_pay(&[(mat, n)], gold) {
-                            g.pay(&[(mat, n)], gold, "upgrade")?;
+                    Some(row) if row.upgrade < row.cap(rank) => {
+                        let (gold, mat, n, threads) = data::upgrade_cost(row.gear, row.upgrade);
+                        let cost = [(mat, n), ("thread", threads)];
+                        if g.can_pay(&cost, gold) {
+                            g.pay(&cost, gold, "upgrade")?;
                             g.upgrade(id)?;
+                            let up = g.smith(data::smith_xp_upgrade(row.upgrade + 1))?;
                             g.bump()?;
-                            note = Some(format!("{} is now +{}.", row.gear.name, row.upgrade + 1));
+                            note = Some(format!(
+                                "{} is now +{}.{}",
+                                row.gear.name,
+                                row.upgrade + 1,
+                                rank_line(up)
+                            ));
                         } else {
                             note = Some(format!(
-                                "Upgrading needs {gold} gold and {}.",
-                                data::count(mat, n)
+                                "Upgrading needs {gold} gold and {}{}.",
+                                data::count(mat, n),
+                                if threads > 0 {
+                                    format!(" and {}", data::count("thread", threads))
+                                } else {
+                                    String::new()
+                                }
                             ));
                         }
                     }
-                    _ => note = Some("That can't be upgraded further in Midgard.".into()),
+                    Some(row) if !row.forged && row.upgrade >= data::FOUND_UPGRADE => {
+                        note = Some(format!(
+                            "Found gear takes upgrades to +{} only. Pieces you forge yourself go further.",
+                            data::FOUND_UPGRADE
+                        ))
+                    }
+                    Some(_) => {
+                        note = Some(format!(
+                            "Your smith rank takes your own work to +{}. Forge more to go further.",
+                            data::upgrade_cap(rank, true)
+                        ))
+                    }
+                    None => {}
                 }
                 forge(&g.p)
             }
@@ -2795,10 +3044,15 @@ pub fn handle(
                     Some(r) if g.can_pay(r.cost, r.gold) => {
                         g.pay(r.cost, r.gold, "made supplies")?;
                         g.item(r.makes, r.qty, "made at the forge")?;
+                        let up = g.smith(data::SMITH_XP_SUPPLY)?;
                         count_event(g, quests::Event::Forged)?;
                         tutorial_done(g, Tut::Forge)?;
                         g.bump()?;
-                        note = Some(format!("Made {}.", data::count(r.makes, r.qty)));
+                        note = Some(format!(
+                            "Made {}.{}",
+                            data::count(r.makes, r.qty),
+                            rank_line(up)
+                        ));
                     }
                     Some(r) => {
                         note = Some(format!(
@@ -2934,6 +3188,12 @@ pub fn view(
     screen: &str,
     _arg: Option<&str>,
 ) -> Result<Screen> {
+    if let Some(f) = crate::unlocks::for_screen(screen) {
+        if !crate::unlocks::usable(&g.p, f) {
+            return view(ctx, g, w, "hub", None);
+        }
+        g.see_unlocks(data::unlock(f).bit)?;
+    }
     let p = &g.p;
     Ok(match screen {
         "goals" => goals(
@@ -3573,13 +3833,23 @@ impl Tut {
     pub const ALL: i64 = 127;
     const ORDER: [Tut; 7] = [
         Tut::Welcome,
-        Tut::Expedition,
         Tut::Hunt,
+        Tut::Saga,
+        Tut::Expedition,
         Tut::Collect,
         Tut::Forge,
-        Tut::Saga,
         Tut::Labyrinth,
     ];
+
+    /// The system a step teaches: the step waits until it's open.
+    fn feature(self) -> Option<data::Feature> {
+        match self {
+            Tut::Expedition | Tut::Collect => Some(data::Feature::Expedition),
+            Tut::Forge => Some(data::Feature::Forge),
+            Tut::Labyrinth => Some(data::Feature::Labyrinth),
+            _ => None,
+        }
+    }
 
     /// (what, why, how, screen to open, button)
     fn text(
@@ -3594,8 +3864,8 @@ impl Tut {
         match self {
             Tut::Welcome => (
                 "How this works",
-                "**Expeditions** and **hunts** bring materials, gold and XP. The **forge** turns materials into gear, and gear is Power. Power takes you deeper into the **Labyrinth**, which drops threads to make gear better, and readies you for the **Barrow King**. Your **saga** ties it together.",
-                "Six short steps. Each one pays a little.",
+                "**Hunts** bring gold, XP and materials. Your **saga** is the story, and as it goes on, and as you level, more of Midgard opens: expeditions first, then the **forge**, where materials become the gear that carries you to the **Barrow King**.",
+                "A few short steps, each when its time comes. Each one pays a little.",
                 "hub",
                 "Let's go",
             ),
@@ -3622,7 +3892,7 @@ impl Tut {
             ),
             Tut::Forge => (
                 "Make something at the forge",
-                "Gear is Power. Forged gear comes out Common, Fine, Rare or now and then Epic, with traits.",
+                "Gear is Power, and the forge is where it comes from. Everything you make raises your smith rank: better odds, further upgrades, finer recipes.",
                 "Open **Character**, then **Forge**. Forge a piece you can afford, or make potions.",
                 "forge",
                 "Forge",
@@ -3636,7 +3906,7 @@ impl Tut {
             ),
             Tut::Labyrinth => (
                 "Go into the Labyrinth",
-                "It drops loose threads, which refine and reforge your gear, and guardians drop gear.",
+                "It drops loose threads: the forge uses them to refine, reforge and temper gear.",
                 "Open **Combat**, then **Labyrinth**, and **Enter**. Leave whenever you like and keep everything.",
                 "lab",
                 "Labyrinth",
@@ -3669,16 +3939,36 @@ pub fn tutorial_done(g: &mut Game, t: Tut) -> Result<()> {
     Ok(())
 }
 
-fn tutorial_block(s: &mut Screen, p: &Player, ids: &Ids) {
-    if p.tutorial >= Tut::ALL {
-        return;
-    }
-    let Some(step) = Tut::ORDER.into_iter().find(|t| !p.tutorial_has(*t)) else {
+fn tutorial_block(s: &mut Screen, p: &Player, ids: &Ids, m: &store::Modules) {
+    let ready = |t: &Tut| {
+        t.feature()
+            .is_none_or(|f| crate::unlocks::enabled(m, f) && crate::unlocks::open(p, f))
+            && (!matches!(t, Tut::Saga) || m.saga)
+    };
+    let step = if p.tutorial >= Tut::ALL {
+        None
+    } else {
+        Tut::ORDER
+            .into_iter()
+            .find(|t| !p.tutorial_has(*t) && ready(t))
+    };
+    let Some(step) = step else {
+        // Nothing to learn right now: say what opened since the last visit, once.
+        if let Some(u) = crate::unlocks::news(p, m) {
+            s.section(
+                format!("-# New\n{} **{}**\n{}", e(u.emoji), u.name, u.why),
+                Btn::new(ids.go(u.screen), "Take a look")
+                    .emoji(u.emoji)
+                    .primary(),
+            );
+        }
         return;
     };
-    let done = Tut::ORDER.iter().filter(|t| p.tutorial_has(**t)).count();
     let (what, why, how, screen, button) = step.text();
-    let head = format!("-# Getting started · {} of {}", done, Tut::ORDER.len() - 1);
+    let head = match step.feature() {
+        Some(_) => "-# New".to_string(),
+        None => "-# Getting started".to_string(),
+    };
     if matches!(step, Tut::Welcome) {
         s.text(format!("{head}\n### {} {what}\n{why}", e("help")));
         s.section(
@@ -3719,15 +4009,17 @@ fn refine(g: &mut Game, gear_id: i64, reforge: bool) -> Result<Option<String>> {
         let traits =
             crate::engine::loot::roll_traits(row.gear, row.rarity.index() as usize, &mut rng);
         g.set_piece(gear_id, row.rarity, traits.clone())?;
+        let up = g.smith(data::SMITH_XP_REFORGE)?;
         g.bump()?;
         let t: Vec<String> = traits
             .iter()
             .map(|(t, v)| format!("{} ({})", t.name(), t.describe(*v)))
             .collect();
         return Ok(Some(format!(
-            "Reforged the {}: {}.",
+            "Reforged the {}: {}.{}",
             row.gear.name,
-            t.join(", ")
+            t.join(", "),
+            rank_line(up)
         )));
     }
     if row.rarity == data::Rarity::Epic {
@@ -3754,15 +4046,17 @@ fn refine(g: &mut Game, gear_id: i64, reforge: bool) -> Result<Option<String>> {
         traits.push(*n);
     }
     g.set_piece(gear_id, to, traits)?;
+    let up = g.smith(data::smith_xp_refine(to))?;
     g.bump()?;
     Ok(Some(format!(
-        "The {} is now **{}**{}.",
+        "The {} is now **{}**{}.{}",
         row.gear.name,
         to.name(),
         extra
             .first()
             .map(|(t, v)| format!(", and {} ({})", t.name(), t.describe(*v)))
-            .unwrap_or_default()
+            .unwrap_or_default(),
+        rank_line(up)
     )))
 }
 
@@ -3861,7 +4155,17 @@ fn hero(p: &Player) -> Screen {
         }
     }
     s.text(wear.join("\n"));
-    forge_section(&mut s, &ids, p);
+    if crate::unlocks::open(p, data::Feature::Forge) {
+        forge_section(&mut s, &ids, p);
+    } else {
+        let u = data::unlock(data::Feature::Forge);
+        s.text(format!(
+            "-# {} {} at level {}, or sooner as your saga goes on",
+            e("lock"),
+            u.name,
+            u.level
+        ));
+    }
     s.buttons(vec![
         back(&ids),
         Btn::new(ids.go("pack"), "Pack").emoji("pack"),
@@ -3873,27 +4177,27 @@ fn hero(p: &Player) -> Screen {
 
 /// The forge line on the Character screen: what's ready to make, and threads to refine with.
 fn forge_section(s: &mut Screen, ids: &Ids, p: &Player) {
-    let n = data::GEAR
+    let n = data::SLOTS
         .iter()
+        .filter_map(|sl| next_piece(p, *sl))
         .filter(|g| {
-            g.level <= p.level
-                && (!g.after_boss || p.boss_won)
+            forge_lock(p, g).is_none()
                 && p.gold >= g.gold
                 && g.cost.iter().all(|(id, n)| p.have(id) >= *n)
-                && p.equipped(g.slot).map(|x| x.power()).unwrap_or(0) < data::gear_power(g, 0)
         })
         .count();
     s.section(
         format!(
-            "{} **Forge**\n-# {}{}",
+            "{} **Forge** · smith rank {}\n-# {}{}",
             e("forge"),
+            p.smith_rank(),
             if n > 0 {
                 format!(
-                    "{n} upgrade{} ready to forge",
+                    "{n} new piece{} ready to forge",
                     if n == 1 { "" } else { "s" }
                 )
             } else {
-                "Gear, supplies, and refining with loose threads".into()
+                "Gear, upgrades, supplies".into()
             },
             if p.have("thread") > 0 {
                 format!(" · {} loose threads", p.have("thread"))
@@ -3915,20 +4219,22 @@ fn skagi(p: &Player, w: &World) -> Screen {
     };
     let mut s = Screen::default();
     title(&mut s, "temple", "Skagi", "The village on the Grey Shore");
-    if w.modules.market {
+    if w.modules.market && crate::unlocks::open(p, data::Feature::Market) {
         s.section(
             format!("{} **Market**\n-# New stock every day", e("market")),
             Btn::new(ids.go("market"), "Market").emoji("market"),
         );
     }
-    s.section(
-        format!(
-            "{} **Temple**\n-# This week's offering {}%",
-            e("temple"),
-            w.pct()
-        ),
-        Btn::new(ids.go("temple"), "Temple").emoji("temple"),
-    );
+    if crate::unlocks::open(p, data::Feature::Temple) {
+        s.section(
+            format!(
+                "{} **Temple**\n-# This week's offering {}%",
+                e("temple"),
+                w.pct()
+            ),
+            Btn::new(ids.go("temple"), "Temple").emoji("temple"),
+        );
+    }
     s.buttons(vec![back(&ids)]);
     s
 }
@@ -3943,7 +4249,8 @@ fn combat_menu(p: &Player, w: &World) -> Screen {
     let mut s = Screen::default();
     title(&mut s, "boss", "Combat", "");
     let collect = p.expedition.as_ref().is_some_and(|x| p.now >= x.ends_at);
-    if let Some((name, pct, ends)) = w.titan {
+    let usable = |f| crate::unlocks::usable(p, f);
+    if let Some((name, pct, ends)) = w.titan.filter(|_| usable(data::Feature::Titans)) {
         s.section(
             format!(
                 "{} **{name} is attacking Midgard**\n-# {pct}% left · {} to bring it down, together",
@@ -3989,17 +4296,19 @@ fn combat_menu(p: &Player, w: &World) -> Screen {
         ),
         None => "Nothing out".into(),
     };
-    s.section(
-        format!("{} **Expedition**\n-# {exp_line}", e("expedition")),
-        if collect {
-            Btn::new(ids.act("exp", "collect", ""), "Collect")
-                .emoji("expedition")
-                .primary()
-        } else {
-            Btn::new(ids.go("exp"), "Expedition").emoji("expedition")
-        },
-    );
-    if m.labyrinth {
+    if usable(data::Feature::Expedition) {
+        s.section(
+            format!("{} **Expedition**\n-# {exp_line}", e("expedition")),
+            if collect {
+                Btn::new(ids.act("exp", "collect", ""), "Collect")
+                    .emoji("expedition")
+                    .primary()
+            } else {
+                Btn::new(ids.go("exp"), "Expedition").emoji("expedition")
+            },
+        );
+    }
+    if m.labyrinth && usable(data::Feature::Labyrinth) {
         let line = match &p.run {
             Some(run) => format!(
                 "On floor {} · carrying {}",
@@ -4022,7 +4331,7 @@ fn combat_menu(p: &Player, w: &World) -> Screen {
             .then_primary(p.run.is_some() && !collect),
         );
     }
-    if m.dungeons {
+    if m.dungeons && usable(data::Feature::Dungeons) {
         let line = match &p.delve {
             Some(d) => format!(
                 "In {} · room {} of {}",
@@ -4049,11 +4358,23 @@ fn combat_menu(p: &Player, w: &World) -> Screen {
             .emoji("dungeon"),
         );
     }
-    if m.map {
+    if m.map && usable(data::Feature::Expedition) {
         s.section(
             format!("{} **Map**", e("map")),
             Btn::new(ids.go("map"), "Map").emoji("map"),
         );
+    }
+    if let Some(line) = crate::unlocks::next_line(
+        p,
+        m,
+        &[
+            data::Feature::Expedition,
+            data::Feature::Dungeons,
+            data::Feature::Labyrinth,
+            data::Feature::Titans,
+        ],
+    ) {
+        s.text(line);
     }
     s.buttons(vec![back(&ids)]);
     s
@@ -4083,7 +4404,7 @@ fn quest_menu(p: &Player, w: &World) -> Screen {
         );
         primary_used |= ready;
     }
-    if m.quests {
+    if m.quests && crate::unlocks::open(p, data::Feature::Townsfolk) {
         let ready = quests::SIDE
             .iter()
             .filter(|q| side_step(p, q).is_some_and(|(st, pr)| pr >= q.steps[st].goal.target()))
@@ -4109,7 +4430,7 @@ fn quest_menu(p: &Player, w: &World) -> Screen {
         );
         primary_used |= ready > 0;
     }
-    if m.bounties {
+    if m.bounties && crate::unlocks::open(p, data::Feature::Bounties) {
         let done = p.bounty.iter().filter(|b| b.1).count();
         let claim = todays_bounties(p)
             .iter()
@@ -4147,6 +4468,11 @@ fn quest_menu(p: &Player, w: &World) -> Screen {
         ),
         Btn::new(ids.go("goals"), "Goals").emoji("goals"),
     );
+    if let Some(line) =
+        crate::unlocks::next_line(p, m, &[data::Feature::Bounties, data::Feature::Townsfolk])
+    {
+        s.text(line);
+    }
     s.buttons(vec![back(&ids)]);
     s
 }

@@ -565,6 +565,14 @@ pub fn bounties(user: u64, day: i64, level: u32, region: &'static data::Region) 
         Goal::Give(200 + 20 * level as i64),
         Goal::Floor(3 + level / 3),
     ];
+    // Only what's open at this level: no temple bounty before the temple, no floors before
+    // the Labyrinth.
+    let open = |g: &Goal| match g {
+        Goal::Give(_) => level >= data::unlock(data::Feature::Temple).level,
+        Goal::Floor(_) => level >= data::unlock(data::Feature::Labyrinth).level,
+        _ => true,
+    };
+    let pool: Vec<Goal> = pool.into_iter().filter(open).collect();
     let mut picked: Vec<usize> = Vec::new();
     while picked.len() < 3 {
         let i = (r.next_u64() % pool.len() as u64) as usize;
@@ -576,12 +584,20 @@ pub fn bounties(user: u64, day: i64, level: u32, region: &'static data::Region) 
     }
     picked
         .into_iter()
-        .map(|i| Bounty {
-            goal: pool[i],
-            gold: 30 + 8 * level as i64,
-            xp: 60 + 25 * level as i64,
+        .map(|i| {
+            let (xp, gold) = bounty_reward(level);
+            Bounty {
+                goal: pool[i],
+                gold,
+                xp,
+            }
         })
         .collect()
+}
+
+/// What one bounty pays at a level: (XP, gold).
+pub fn bounty_reward(level: u32) -> (i64, i64) {
+    (40 + 15 * level as i64, 25 + 6 * level as i64)
 }
 
 /// Days since the epoch, the bounties' key.
