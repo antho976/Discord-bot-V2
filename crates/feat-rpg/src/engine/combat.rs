@@ -583,7 +583,7 @@ impl Fight {
                     }
                     Skill::SoulRend => {
                         let d = self.hit(1.6, true);
-                        let h = d * 6 / 10;
+                        let h = d * 45 / 100;
                         self.heal(h);
                         self.log
                             .push(format!("Soul Rend tore for {d} and healed you {h}."));
@@ -625,7 +625,7 @@ impl Fight {
                     }
                     Skill::Judgement if main == God::Hades => {
                         let d = self.hit(1.2, true);
-                        self.heal(d);
+                        self.heal(d / 2);
                         self.shield = d;
                         self.log.push(format!(
                             "Judgement drained {d}, healed you and shielded you for it."

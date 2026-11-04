@@ -1,13 +1,14 @@
-//! Skagi's market: a stall that changes every day. Three pieces of gear picked for you (Fine
-//! or better), and supplies at fixed prices. Somewhere for gold to go besides the forge.
+//! Skagi's market: a stall that changes every day. Three lots of materials picked for what
+//! you'll forge next, and supplies at fixed prices. It sells no finished gear: that's the
+//! forge's work, and the market feeds it.
 
 use bot_core::anyhow::Result;
 use bot_core::rusqlite::params;
 
-use crate::data::{self, Gear, Rarity};
+use crate::data::{self, Gear};
 use crate::emoji::get as e;
 use crate::engine::Rng;
-use crate::engine::loot::{self, Traits};
+use crate::engine::loot;
 use crate::game::{Ids, back_to, thousands, title};
 use crate::quests;
 use crate::store::Game;
@@ -22,36 +23,55 @@ pub const SUPPLIES: [(&str, i64, i64); 5] = [
     ("thread", 180, 2),
 ];
 
-/// Today's three pieces for a player.
-pub fn stock(
-    user: u64,
-    day: i64,
-    level: u32,
-    boss: bool,
-) -> Vec<(&'static Gear, Rarity, Traits, i64)> {
+/// One lot on the stall: (material, how many, the piece it's for, gold).
+pub type Lot = (&'static str, i64, &'static Gear, i64);
+
+/// Gold per unit of a material: three times what it's worth at an altar.
+pub fn unit_price(item: &str) -> i64 {
+    data::item(item).map(|i| i.tribute * 3).unwrap_or(10)
+}
+
+/// Today's three lots for a player: materials for pieces they could forge soon, never the
+/// same material twice, never the Barrow King's shards.
+pub fn stock(user: u64, day: i64, level: u32, boss: bool) -> Vec<Lot> {
     let mut r = Rng::new(user.rotate_left(13) ^ (day as u64).wrapping_mul(0x9E37_79B9));
-    let mut picked: Vec<&'static Gear> = Vec::new();
-    for _ in 0..12 {
-        let g = loot::drop_piece(level, boss, &mut r);
-        if !picked.iter().any(|x| x.id == g.id) {
-            picked.push(g);
+    // The tiers just ahead: from your level to four past it.
+    let ahead: Vec<&'static Gear> = data::GEAR
+        .iter()
+        .filter(|g| g.level + 1 > level && g.level <= level + 4 && (!g.after_boss || boss))
+        .collect();
+    let mut out: Vec<Lot> = Vec::new();
+    for _ in 0..24 {
+        let g = if ahead.is_empty() {
+            loot::drop_piece(level, boss, &mut r)
+        } else {
+            *r.pick(&ahead)
+        };
+        let mats: Vec<(&str, i64)> = g
+            .cost
+            .iter()
+            .copied()
+            .filter(|(id, _)| *id != "shard")
+            .collect();
+        if mats.is_empty() {
+            continue;
         }
-        if picked.len() == 3 {
+        let (id, n) = *r.pick(&mats);
+        if out.iter().any(|x| x.0 == id) {
+            continue;
+        }
+        // Rare materials come a few at a time; common ones by the half-recipe.
+        let qty = if data::item(id).is_some_and(|i| i.tribute >= 10) {
+            n.clamp(1, 3)
+        } else {
+            (n / 2).max(3)
+        };
+        out.push((id, qty, g, unit_price(id) * qty));
+        if out.len() == 3 {
             break;
         }
     }
-    picked
-        .into_iter()
-        .map(|g| {
-            let (mut rarity, mut traits) = loot::roll(g, "hunt", &mut r);
-            if rarity == Rarity::Common {
-                rarity = Rarity::Fine;
-                traits = loot::roll_traits(g, 1, &mut r);
-            }
-            let price = g.gold * 2 + 150 * rarity.index().pow(2) + 10 * level as i64;
-            (g, rarity, traits, price)
-        })
-        .collect()
+    out
 }
 
 fn bought(g: &Game, slot: &str) -> Result<i64> {
@@ -94,39 +114,24 @@ pub fn screen(g: &Game) -> Result<Screen> {
         e("gold"),
         thousands(p.gold)
     ));
-    for (i, (gear, rarity, traits, price)) in stock(p.user, quests::day(p.now), p.level, p.boss_won)
+    for (i, (item, qty, gear, price)) in stock(p.user, quests::day(p.now), p.level, p.boss_won)
         .into_iter()
         .enumerate()
     {
         let sold = bought(g, &format!("g{i}"))? > 0;
-        let worn = p.equipped(gear.slot).map(|x| x.power()).unwrap_or(0);
-        let power =
-            data::gear_power(gear, 0) + data::gear_power(gear, 0) * rarity.power_pct() / 100;
-        let t: Vec<String> = traits
-            .iter()
-            .map(|(t, v)| format!("{}: {}", t.name(), t.describe(*v)))
-            .collect();
-        let line = format!(
-            "{} **{} {}** · {}{} Power vs worn{}\n-# {} · {} gold{}",
-            e(rarity.emoji()),
-            rarity.name(),
-            gear.name,
-            if power >= worn { "+" } else { "" },
-            power - worn,
-            if gear.level > p.level {
-                format!(" · {} level {}", e("lock"), gear.level)
-            } else {
-                String::new()
-            },
-            t.join(" · "),
-            thousands(price),
-            if sold { " · sold" } else { "" }
-        );
         s.section(
-            line,
+            format!(
+                "{} **{}** · {} gold{}\n-# For a {} · you have {}",
+                e(item),
+                data::count(item, qty),
+                thousands(price),
+                if sold { " · sold" } else { "" },
+                gear.name,
+                p.have(item)
+            ),
             Btn::new(ids.act("market", "gear", &i.to_string()), "Buy")
                 .emoji("gold")
-                .disabled(sold || p.gold < price || gear.level > p.level),
+                .disabled(sold || p.gold < price),
         );
     }
     let mut opts = Vec::new();
@@ -150,7 +155,7 @@ pub fn screen(g: &Game) -> Result<Screen> {
 }
 
 pub fn buy_gear(g: &mut Game, i: usize) -> Result<Option<String>> {
-    let Some((gear, rarity, traits, price)) =
+    let Some((item, qty, _, price)) =
         stock(g.p.user, quests::day(g.p.now), g.p.level, g.p.boss_won)
             .into_iter()
             .nth(i)
@@ -160,25 +165,14 @@ pub fn buy_gear(g: &mut Game, i: usize) -> Result<Option<String>> {
     if bought(g, &format!("g{i}"))? > 0 {
         return Ok(Some("Already sold.".into()));
     }
-    if g.p.gold < price || gear.level > g.p.level {
-        return Ok(Some("You can't buy that yet.".into()));
+    if g.p.gold < price {
+        return Ok(Some(format!("That's {price} gold.")));
     }
     g.gold(-price, "market")?;
+    g.item(item, qty, "market")?;
     mark(g, &format!("g{i}"))?;
-    let worn = g.p.equipped(gear.slot).map(|x| x.power()).unwrap_or(0);
-    let power = data::gear_power(gear, 0) + data::gear_power(gear, 0) * rarity.power_pct() / 100;
-    g.add_piece(gear, rarity, traits, power > worn, "market")?;
     g.bump()?;
-    Ok(Some(format!(
-        "Bought the {} {}{}.",
-        rarity.name(),
-        gear.name,
-        if power > worn {
-            ": you're wearing it"
-        } else {
-            ": it's in your pack"
-        }
-    )))
+    Ok(Some(format!("Bought {}.", data::count(item, qty))))
 }
 
 pub fn buy_supply(g: &mut Game, id: &str) -> Result<Option<String>> {

@@ -113,6 +113,15 @@ fn click_at(
     out.screen
 }
 
+/// Raise a player to a level (unlocks come with levels).
+fn level_to(ctx: &Ctx, user: u64, level: u32) {
+    store::run(&ctx.db, G, user, None, |g| {
+        let need: i64 = (g.p.level..level).map(data::xp_to_next).sum::<i64>() - g.p.xp;
+        g.xp(need.max(0)).map(|_| ())
+    })
+    .unwrap();
+}
+
 fn grant(ctx: &Ctx, items: &[(&str, i64)], gold: i64) {
     store::run(&ctx.db, G, U, None, |g| {
         for (id, n) in items {
@@ -169,6 +178,21 @@ fn a_new_player_plays_through_midgard() {
     ] {
         click(&ctx, s, "", "", &[]);
     }
+
+    // A new player has hunts, their character and the saga; the rest opens with levels.
+    let s = click(&ctx, "lab", "enter", "", &[]);
+    assert!(text_of(&s).contains("opens at level"), "{}", text_of(&s));
+    assert!(store::get(&ctx.db, G, U).unwrap().unwrap().run.is_none());
+    let s = click(&ctx, "combat", "", "", &[]);
+    assert!(!text_of(&s).contains("Labyrinth"));
+    assert!(text_of(&s).contains("Next: Expeditions at level 2"));
+    level_to(&ctx, U, 2);
+    // Said once on the overview, until you look.
+    let s = click(&ctx, "tut", "skip", "", &[]);
+    assert!(text_of(&s).contains("Expeditions"), "{}", text_of(&s));
+    click(&ctx, "exp", "", "", &[]);
+    let s = click(&ctx, "hub", "", "", &[]);
+    assert!(!text_of(&s).contains("-# New"), "{}", text_of(&s));
 
     // Plan with the menus, then send out.
     let s = click(
@@ -723,6 +747,7 @@ fn guilds_raids_and_titans() {
     assert_eq!(clan.tag, "RVN");
     // A second player joins.
     store::create(&ctx.db, G, 21, "Mira", God::Athena).unwrap();
+    level_to(&ctx, 21, 12);
     store::run(&ctx.db, G, 21, None, |g| feat_rpg::guild::join(g, clan.id)).unwrap();
     assert_eq!(
         store::get(&ctx.db, G, 21)
@@ -865,6 +890,7 @@ fn guild_controls() {
     let clan = clan_of(&ctx, U).unwrap();
     for (u, name) in [(31, "Mira"), (32, "Oskar"), (33, "Teo")] {
         store::create(&ctx.db, G, u, name, God::Athena).unwrap();
+        level_to(&ctx, u, 10);
     }
 
     // Invite only: joining straight in is refused, asking works, and the leader accepts.
@@ -1016,7 +1042,7 @@ fn dungeons_quests_market_and_switches() {
         Some(2)
     );
 
-    // The market sells a piece once a day, and supplies up to a limit.
+    // The market sells a lot of materials once a day, and supplies up to a limit.
     let gold = p.gold;
     click(&ctx, "market", "gear", "0", &[]);
     let p = store::get(&ctx.db, G, U).unwrap().unwrap();
@@ -1051,4 +1077,173 @@ fn dungeons_quests_market_and_switches() {
     let rows = format!("{:?}", s.rows);
     assert!(!rows.contains("Labyrinth") && !rows.contains("\"Guild\""));
     store::set_modules(G, store::Modules::default());
+}
+
+#[test]
+fn the_forge_is_where_gear_comes_from() {
+    let rt = bot_core::tokio::runtime::Runtime::new().unwrap();
+    let _e = rt.enter();
+    let ctx = ctx();
+    store::create(&ctx.db, G, U, "Antho", God::Thor).unwrap();
+    // Closed at level 1: the Character screen says when it opens.
+    let s = click(&ctx, "hero", "", "", &[]);
+    assert!(
+        text_of(&s).contains("The forge at level 3"),
+        "{}",
+        text_of(&s)
+    );
+    let s = click(&ctx, "forge", "gear", "beardaxe", &[]);
+    assert!(text_of(&s).contains("opens at level"));
+    level_to(&ctx, U, 6);
+    store::run(&ctx.db, G, U, None, |g| {
+        for (id, n) in [
+            ("iron", 60),
+            ("yew", 30),
+            ("pelt", 30),
+            ("frost", 6),
+            ("fang", 4),
+            ("thread", 4),
+        ] {
+            g.item(id, n, "test")?;
+        }
+        g.gold(5000, "test")
+    })
+    .unwrap();
+    let s = click(&ctx, "forge", "", "", &[]);
+    let t = text_of(&s);
+    eprintln!("{t}");
+    assert!(t.contains("Smith rank 1"), "{t}");
+    assert!(t.contains("Temper as you forge"), "{t}");
+
+    // A plain forge: worn at once, and the smith learns from it.
+    click(&ctx, "forge", "gear", "beardaxe", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.equipped(data::Slot::Weapon).unwrap().gear.id, "beardaxe");
+    assert!(p.smith_xp > 0);
+
+    // Tempered: the chosen trait, at least Fine, and the catalyst spent.
+    let sturdy = data::TRAITS
+        .iter()
+        .position(|t| *t == data::Trait::Sturdy)
+        .unwrap();
+    let frost = p.have("frost");
+    click(&ctx, "forge", "temper", "", &[&format!("jerkin.{sturdy}")]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    let vest = p.equipped(data::Slot::Armour).unwrap();
+    assert_eq!(vest.gear.id, "jerkin");
+    assert!(vest.rarity >= data::Rarity::Fine);
+    assert_eq!(vest.traits[0].0, data::Trait::Sturdy);
+    assert_eq!(p.have("frost"), frost - data::temper_cost(vest.gear));
+    // Not the wrong slot's trait.
+    let fierce = data::TRAITS
+        .iter()
+        .position(|t| *t == data::Trait::Fierce)
+        .unwrap();
+    let n = p.gear.len();
+    click(&ctx, "forge", "temper", "", &[&format!("jerkin.{fierce}")]);
+    assert_eq!(store::get(&ctx.db, G, U).unwrap().unwrap().gear.len(), n);
+
+    // Upgrades stop where the smith rank says.
+    store::run(&ctx.db, G, U, None, |g| g.smith(-g.p.smith_xp).map(|_| ())).unwrap();
+    let axe = p.equipped(data::Slot::Weapon).unwrap().id.to_string();
+    click(&ctx, "forge", "upgrade", "", &[&axe]);
+    let s = click(&ctx, "forge", "upgrade", "", &[&axe]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(
+        p.equipped(data::Slot::Weapon).unwrap().upgrade,
+        1,
+        "rank 1 stops at +1"
+    );
+    assert!(text_of(&s).contains("smith rank"), "{}", text_of(&s));
+
+    // Found gear stops at +2 whatever the rank.
+    store::run(&ctx.db, G, U, None, |g| {
+        g.smith(100_000)?;
+        let id = g.add_piece(
+            data::gear("handaxe").unwrap(),
+            data::Rarity::Fine,
+            Vec::new(),
+            true,
+            "hunt",
+        )?;
+        g.upgrade(id)?;
+        g.upgrade(id)
+    })
+    .unwrap();
+    let found = store::get(&ctx.db, G, U)
+        .unwrap()
+        .unwrap()
+        .equipped(data::Slot::Weapon)
+        .unwrap()
+        .clone();
+    assert!(!found.forged);
+    let s = click(&ctx, "forge", "upgrade", "", &[&found.id.to_string()]);
+    assert!(text_of(&s).contains("Found gear"), "{}", text_of(&s));
+
+    // Sigrun's order stays the same all day, whatever you level or learn meanwhile.
+    let ask = |ctx: &Ctx| {
+        store::run(&ctx.db, G, U, None, |g| {
+            Ok(format!("{:?}", feat_rpg::orders::today(g)?.ask))
+        })
+        .unwrap()
+    };
+    let first = ask(&ctx);
+    store::run(&ctx.db, G, U, None, |g| g.smith(2000).map(|_| ())).unwrap();
+    level_to(&ctx, U, 8);
+    assert_eq!(ask(&ctx), first);
+
+    // Sigrun's order: hand it over once a day for gold and smithing.
+    store::run(&ctx.db, G, U, None, |g| {
+        match feat_rpg::orders::today(g)?.ask {
+            feat_rpg::orders::Ask::Supply(id, n) => g.item(id, n, "test"),
+            feat_rpg::orders::Ask::Piece(gear) => g
+                .add_piece(gear, data::Rarity::Common, Vec::new(), false, "forged")
+                .map(|_| ()),
+        }
+    })
+    .unwrap();
+    let before = store::get(&ctx.db, G, U).unwrap().unwrap();
+    let s = click(&ctx, "forge", "order", "", &[]);
+    assert!(text_of(&s).contains("Sigrun weighs it"), "{}", text_of(&s));
+    let after = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert!(after.gold > before.gold && after.smith_xp > before.smith_xp);
+    let s = click(&ctx, "forge", "order", "", &[]);
+    assert!(text_of(&s).contains("Come back tomorrow"));
+    assert_eq!(store::get(&ctx.db, G, U).unwrap().unwrap().gold, after.gold);
+
+    // The market sells materials, never finished gear.
+    level_to(&ctx, U, 9);
+    let before = store::get(&ctx.db, G, U).unwrap().unwrap();
+    click(&ctx, "market", "gear", "0", &[]);
+    let after = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(after.gear.len(), before.gear.len());
+    assert!(after.gold < before.gold);
+    let more: i64 = after.items.values().sum::<i64>() - before.items.values().sum::<i64>();
+    assert!(more > 0);
+}
+
+#[test]
+fn the_saga_opens_expeditions_and_says_so() {
+    let rt = bot_core::tokio::runtime::Runtime::new().unwrap();
+    let _e = rt.enter();
+    let ctx = ctx();
+    store::create(&ctx.db, G, U, "Antho", God::Thor).unwrap();
+    // "Salt and Song" done (three wins on the shore): claiming it moves to "Iron and Bread",
+    // where the widow sends you out, so expeditions open before level 2.
+    store::run(&ctx.db, G, U, None, |g| {
+        g.p.saga = 1;
+        g.p.saga_progress = vec![3];
+        g.save_saga()
+    })
+    .unwrap();
+    let s = click(&ctx, "saga", "claim", "", &[]);
+    let p = store::get(&ctx.db, G, U).unwrap().unwrap();
+    assert_eq!(p.saga, 2);
+    assert!(
+        text_of(&s).contains("Now open:** Expeditions"),
+        "{}",
+        text_of(&s)
+    );
+    assert!(feat_rpg::unlocks::open(&p, data::Feature::Expedition));
+    assert!(!feat_rpg::unlocks::open(&p, data::Feature::Forge));
 }

@@ -67,7 +67,7 @@ impl God {
     /// Part of every hit that heals the player.
     pub fn lifesteal(self) -> f64 {
         match self {
-            God::Hades => 0.20,
+            God::Hades => 0.15,
             _ => 0.0,
         }
     }
@@ -167,6 +167,7 @@ impl Skill {
             Skill::AegisStorm => 4,
             Skill::GraveThunder | Skill::Judgement => 3,
             Skill::OwlSight => 3,
+            Skill::SoulRend => 1,
             _ => 0,
         }
     }
@@ -183,7 +184,7 @@ impl Skill {
             (Skill::OwlSight, _) => {
                 "See the foe's next two moves, and your next hit lands 50% harder."
             }
-            (Skill::SoulRend, _) => "A hit that heals you for 60% of the damage.",
+            (Skill::SoulRend, _) => "A hit that heals you for 45% of the damage.",
             (Skill::CerberusBite, _) => "Wounds that bleed for three turns.",
             (Skill::AegisStorm, God::Athena) => {
                 "Block the next hit completely and throw it back as lightning."
@@ -194,7 +195,7 @@ impl Skill {
             }
             (Skill::GraveThunder, _) => "Lightning that heals you for a third of the damage.",
             (Skill::Judgement, God::Hades) => {
-                "A drain that heals you and shields you for the damage."
+                "A drain that heals you for half the damage and shields you for all of it."
             }
             (Skill::Judgement, _) => "Guard, and heal for three turns.",
         }
@@ -474,6 +475,8 @@ pub struct Gear {
     pub name: &'static str,
     pub slot: Slot,
     pub level: u32,
+    /// Smith rank the forge needs to make it.
+    pub smith: u32,
     pub power: i64,
     /// Scouting chance added on expeditions, in percent.
     pub scouting: i64,
@@ -489,6 +492,7 @@ pub const GEAR: &[Gear] = &[
         name: "Iron Hand-axe",
         slot: Slot::Weapon,
         level: 1,
+        smith: 1,
         power: 20,
         scouting: 0,
         cost: &[("iron", 5), ("yew", 2)],
@@ -496,21 +500,47 @@ pub const GEAR: &[Gear] = &[
         after_boss: false,
     },
     Gear {
+        id: "beardaxe",
+        name: "Bearded Axe",
+        slot: Slot::Weapon,
+        level: 4,
+        smith: 1,
+        power: 32,
+        scouting: 0,
+        cost: &[("iron", 8), ("yew", 4)],
+        gold: 60,
+        after_boss: false,
+    },
+    Gear {
         id: "warhammer",
         name: "Yew-hafted Warhammer",
         slot: Slot::Weapon,
-        level: 6,
-        power: 45,
+        level: 7,
+        smith: 2,
+        power: 46,
         scouting: 0,
         cost: &[("iron", 12), ("yew", 6), ("fang", 1)],
         gold: 120,
         after_boss: false,
     },
     Gear {
+        id: "sax",
+        name: "Wolf-tooth Sax",
+        slot: Slot::Weapon,
+        level: 10,
+        smith: 3,
+        power: 62,
+        scouting: 0,
+        cost: &[("iron", 16), ("pelt", 4), ("fang", 2)],
+        gold: 200,
+        after_boss: false,
+    },
+    Gear {
         id: "barrowblade",
         name: "Barrow-steel Blade",
         slot: Slot::Weapon,
-        level: 12,
+        level: 13,
+        smith: 4,
         power: 80,
         scouting: 0,
         cost: &[("iron", 22), ("frost", 3), ("fang", 3)],
@@ -518,11 +548,24 @@ pub const GEAR: &[Gear] = &[
         after_boss: false,
     },
     Gear {
+        id: "greataxe",
+        name: "Draugr-bane Greataxe",
+        slot: Slot::Weapon,
+        level: 16,
+        smith: 5,
+        power: 98,
+        scouting: 0,
+        cost: &[("iron", 26), ("frost", 4), ("fang", 4)],
+        gold: 450,
+        after_boss: false,
+    },
+    Gear {
         id: "crownbreaker",
         name: "Crown-breaker",
         slot: Slot::Weapon,
         level: 20,
-        power: 120,
+        smith: 6,
+        power: 125,
         scouting: 0,
         cost: &[("iron", 30), ("shard", 2), ("fang", 4)],
         gold: 600,
@@ -533,6 +576,7 @@ pub const GEAR: &[Gear] = &[
         name: "Wolf-hide Vest",
         slot: Slot::Armour,
         level: 1,
+        smith: 1,
         power: 15,
         scouting: 0,
         cost: &[("pelt", 3)],
@@ -540,10 +584,23 @@ pub const GEAR: &[Gear] = &[
         after_boss: false,
     },
     Gear {
+        id: "jerkin",
+        name: "Studded Jerkin",
+        slot: Slot::Armour,
+        level: 4,
+        smith: 1,
+        power: 26,
+        scouting: 0,
+        cost: &[("pelt", 5), ("iron", 4)],
+        gold: 55,
+        after_boss: false,
+    },
+    Gear {
         id: "mail",
         name: "Iron Mail",
         slot: Slot::Armour,
         level: 8,
+        smith: 2,
         power: 40,
         scouting: 0,
         cost: &[("iron", 14), ("pelt", 4)],
@@ -551,10 +608,23 @@ pub const GEAR: &[Gear] = &[
         after_boss: false,
     },
     Gear {
+        id: "hauberk",
+        name: "Scale Hauberk",
+        slot: Slot::Armour,
+        level: 11,
+        smith: 3,
+        power: 55,
+        scouting: 0,
+        cost: &[("iron", 18), ("pelt", 6), ("fang", 1)],
+        gold: 230,
+        after_boss: false,
+    },
+    Gear {
         id: "mantle",
         name: "Frost-hide Mantle",
         slot: Slot::Armour,
         level: 14,
+        smith: 4,
         power: 70,
         scouting: 0,
         cost: &[("frost", 5), ("pelt", 8), ("iron", 6)],
@@ -562,11 +632,24 @@ pub const GEAR: &[Gear] = &[
         after_boss: false,
     },
     Gear {
+        id: "barrowplate",
+        name: "Barrow-plate",
+        slot: Slot::Armour,
+        level: 17,
+        smith: 5,
+        power: 86,
+        scouting: 0,
+        cost: &[("iron", 28), ("frost", 6), ("pelt", 6)],
+        gold: 480,
+        after_boss: false,
+    },
+    Gear {
         id: "kingsmantle",
         name: "Barrow King's Mantle",
         slot: Slot::Armour,
         level: 20,
-        power: 100,
+        smith: 6,
+        power: 105,
         scouting: 0,
         cost: &[("shard", 2), ("frost", 6), ("pelt", 10)],
         gold: 600,
@@ -577,6 +660,7 @@ pub const GEAR: &[Gear] = &[
         name: "Amber Charm",
         slot: Slot::Charm,
         level: 3,
+        smith: 1,
         power: 10,
         scouting: 5,
         cost: &[("amber", 2)],
@@ -584,10 +668,23 @@ pub const GEAR: &[Gear] = &[
         after_boss: false,
     },
     Gear {
+        id: "runestone",
+        name: "Rune Stone",
+        slot: Slot::Charm,
+        level: 6,
+        smith: 2,
+        power: 20,
+        scouting: 5,
+        cost: &[("amber", 2), ("yew", 4), ("herbs", 4)],
+        gold: 80,
+        after_boss: false,
+    },
+    Gear {
         id: "fangnecklace",
         name: "Fang Necklace",
         slot: Slot::Charm,
-        level: 10,
+        level: 9,
+        smith: 3,
         power: 30,
         scouting: 5,
         cost: &[("fang", 4), ("amber", 2)],
@@ -595,11 +692,24 @@ pub const GEAR: &[Gear] = &[
         after_boss: false,
     },
     Gear {
+        id: "bindrune",
+        name: "Seidr Bindrune",
+        slot: Slot::Charm,
+        level: 12,
+        smith: 4,
+        power: 40,
+        scouting: 8,
+        cost: &[("amber", 3), ("fang", 2), ("herbs", 6)],
+        gold: 220,
+        after_boss: false,
+    },
+    Gear {
         id: "ravencharm",
         name: "Raven Charm",
         slot: Slot::Charm,
-        level: 16,
-        power: 50,
+        level: 15,
+        smith: 5,
+        power: 52,
         scouting: 10,
         cost: &[("amber", 3), ("fang", 3), ("frost", 2)],
         gold: 300,
@@ -610,6 +720,7 @@ pub const GEAR: &[Gear] = &[
         name: "Crown Shard Circlet",
         slot: Slot::Charm,
         level: 20,
+        smith: 6,
         power: 70,
         scouting: 10,
         cost: &[("shard", 3), ("amber", 4)],
@@ -625,17 +736,118 @@ pub fn gear(id: &str) -> Option<&'static Gear> {
 /// What every new player starts with, equipped: a gift from their patron.
 pub const STARTER_GEAR: [&str; 2] = ["handaxe", "vest"];
 
-/// Upgrades in Midgard go to +3; each adds 10% of the piece's base Power.
-pub const MAX_UPGRADE: i64 = 3;
+/// The highest upgrade anything takes in Midgard. How far a piece really goes depends on your
+/// smith rank, and on whether you made it yourself ([`upgrade_cap`]).
+pub const MAX_UPGRADE: i64 = 5;
+/// Found gear (drops, chests, rewards) takes upgrades only this far: the forge's own work
+/// goes further.
+pub const FOUND_UPGRADE: i64 = 2;
+/// Power per upgrade, in percent of the piece's base.
+pub const UPGRADE_PCT: i64 = 7;
 
-/// Gold and the piece's main material to go from `upgrade` to `upgrade + 1`.
-pub fn upgrade_cost(g: &Gear, upgrade: i64) -> (i64, &'static str, i64) {
+/// Gold, the piece's main material, and loose threads (past +3) to go from `upgrade` to
+/// `upgrade + 1`.
+pub fn upgrade_cost(g: &Gear, upgrade: i64) -> (i64, &'static str, i64, i64) {
     let mat = g.cost.first().map(|c| c.0).unwrap_or("iron");
-    (g.power * 3 * (upgrade + 1), mat, 2 * (upgrade + 1))
+    (
+        g.power * 3 * (upgrade + 1),
+        mat,
+        2 * (upgrade + 1),
+        (upgrade - 2).max(0),
+    )
 }
 
 pub fn gear_power(g: &Gear, upgrade: i64) -> i64 {
-    g.power + g.power * upgrade / 10
+    g.power + g.power * upgrade * UPGRADE_PCT / 100
+}
+
+// ---- the smith: your forge rank ----
+
+/// Smith XP needed for each rank (index = rank). Rank 1 is where everyone starts.
+pub const SMITH_AT: [i64; 11] = [0, 0, 60, 160, 320, 540, 820, 1180, 1620, 2160, 2800];
+pub const SMITH_CAP: u32 = 10;
+
+pub fn smith_rank(xp: i64) -> u32 {
+    let mut r = 1;
+    while (r as usize) < SMITH_AT.len() - 1 && xp >= SMITH_AT[r as usize + 1] {
+        r += 1;
+    }
+    r.min(SMITH_CAP)
+}
+
+/// Smith XP still needed for the next rank, if there is one.
+pub fn smith_to_next(xp: i64) -> Option<i64> {
+    let r = smith_rank(xp);
+    (r < SMITH_CAP).then(|| SMITH_AT[r as usize + 1] - xp)
+}
+
+/// How far a piece can be upgraded: your rank sets it for your own work, found gear stops at
+/// [`FOUND_UPGRADE`].
+pub fn upgrade_cap(rank: u32, forged: bool) -> i64 {
+    let own = (1 + rank as i64 / 2).min(MAX_UPGRADE);
+    if forged { own } else { own.min(FOUND_UPGRADE) }
+}
+
+/// What a rank adds, for the forge screen: the first rank that raises the upgrade cap, or
+/// that's needed by a recipe, says so.
+pub fn smith_perk(rank: u32) -> String {
+    let mut parts = Vec::new();
+    if upgrade_cap(rank, true) > upgrade_cap(rank - 1, true) {
+        parts.push(format!("upgrades to +{}", upgrade_cap(rank, true)));
+    }
+    let new: Vec<&str> = GEAR
+        .iter()
+        .filter(|g| g.smith == rank)
+        .map(|g| g.name)
+        .collect();
+    if !new.is_empty() {
+        parts.push(if new.len() == 1 {
+            format!("the {}", new[0])
+        } else {
+            format!("{} new recipes", new.len())
+        });
+    }
+    parts.push("better odds".into());
+    parts.join(", ")
+}
+
+/// A title for reaching a smith rank.
+pub fn smith_title(rank: u32) -> Option<&'static str> {
+    match rank {
+        5 => Some("Smith of Skagi"),
+        10 => Some("Master of the Forge"),
+        _ => None,
+    }
+}
+
+/// Smith XP for each kind of work.
+pub fn smith_xp_forge(g: &Gear) -> i64 {
+    20 + 6 * g.level as i64
+}
+pub const SMITH_XP_SUPPLY: i64 = 6;
+pub fn smith_xp_upgrade(to: i64) -> i64 {
+    10 * to
+}
+pub fn smith_xp_refine(to: Rarity) -> i64 {
+    20 * to.index()
+}
+pub const SMITH_XP_REFORGE: i64 = 10;
+/// Taking a piece apart teaches a little too.
+pub const SMITH_XP_SALVAGE: i64 = 5;
+
+/// The rare material that sets a trait when you temper a piece as you forge it.
+pub fn catalyst(t: Trait) -> &'static str {
+    match t {
+        Trait::Fierce | Trait::Keen => "fang",
+        Trait::Flame | Trait::Lucky | Trait::Seeing | Trait::Warding => "amber",
+        Trait::Frost | Trait::Sturdy => "frost",
+        Trait::Vampiric | Trait::Steady => "thread",
+    }
+}
+
+/// How much catalyst tempering a piece takes.
+pub fn temper_cost(g: &Gear) -> i64 {
+    1 + g.level as i64 / 7
 }
 
 // ---- regions and danger ----
@@ -1131,9 +1343,13 @@ pub fn boss_weakness(week: i64) -> &'static str {
 pub const LEVEL_CAP: u32 = 20;
 pub const BOND_CAP: u32 = 2;
 
+/// The XP curve: `XP_BASE * level ^ XP_EXP` to the next level.
+pub const XP_BASE: f64 = 80.0;
+pub const XP_EXP: f64 = 1.6;
+
 /// XP from `level` to `level + 1`.
 pub fn xp_to_next(level: u32) -> i64 {
-    (55.0 * (level as f64).powf(1.4)).round() as i64
+    (XP_BASE * (level as f64).powf(XP_EXP)).round() as i64
 }
 
 /// Personal tribute to a god needed for each bond rank (index = rank).
@@ -1159,6 +1375,8 @@ pub const REGEN_PER_MIN: f64 = 1.0 / 15.0;
 /// Hunt monsters' HP and attack, times the region's Power and the monster's own multiples.
 pub const HUNT_HP: f64 = 1.25;
 pub const HUNT_ATK: f64 = 0.75;
+/// Chance a hunt win also drops the region's rare material (for tempering at the forge).
+pub const HUNT_RARE: f64 = 0.09;
 /// Share of max HP a hunt win gives back: you catch your breath.
 pub const WIN_HEAL: f64 = 0.08;
 /// Lifesteal works at this share against the realm boss.
@@ -1288,13 +1506,23 @@ impl Rarity {
 /// Odds of each rarity, in percent, by where the piece came from.
 pub fn rarity_odds(source: &str) -> [u32; 4] {
     match source {
-        "forge" => [60, 30, 9, 1],
+        "forge" => forge_odds(1),
         "hunt" => [50, 35, 13, 2],
         "elite" => [0, 60, 32, 8],
         "guardian" => [0, 50, 40, 10],
         "boss" => [0, 0, 70, 30],
         _ => [100, 0, 0, 0],
     }
+}
+
+/// The forge's odds at a smith rank: rank 1 is mostly Common; by rank 10 a Common piece is
+/// rare and one in ten is Epic, better than anything a hunt drops.
+pub fn forge_odds(rank: u32) -> [u32; 4] {
+    let r = rank.clamp(1, SMITH_CAP) - 1;
+    let common = 60 - 6 * r;
+    let rare = 9 + 3 * r;
+    let epic = 1 + r;
+    [common, 100 - common - rare - epic, rare, epic]
 }
 
 /// A small extra on a piece of gear. Values are in percent unless said otherwise.
@@ -1518,4 +1746,226 @@ pub const DUNGEONS: &[Dungeon] = &[
 
 pub fn dungeon(id: &str) -> Option<&'static Dungeon> {
     DUNGEONS.iter().find(|d| d.id == id)
+}
+
+// ---- what opens when ----
+
+/// Systems that open as you play, so a new player meets them one at a time instead of all at
+/// once. Hunts, your character and the saga are open from the start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Feature {
+    Expedition,
+    Forge,
+    Encounters,
+    Bounties,
+    Temple,
+    Elites,
+    Dungeons,
+    Townsfolk,
+    Labyrinth,
+    Market,
+    Guild,
+    Titans,
+}
+
+pub struct Unlock {
+    pub feature: Feature,
+    /// Its bit in the player's seen-unlocks mask.
+    pub bit: i64,
+    pub name: &'static str,
+    pub level: u32,
+    /// A saga chapter that opens it sooner, when the story gets there.
+    pub chapter: Option<&'static str>,
+    /// Why it matters, said once when it opens. Empty: it opens quietly.
+    pub why: &'static str,
+    /// The screen it lives on.
+    pub screen: &'static str,
+    pub emoji: &'static str,
+}
+
+pub const UNLOCKS: &[Unlock] = &[
+    Unlock {
+        feature: Feature::Expedition,
+        bit: 1,
+        name: "Expeditions",
+        level: 2,
+        chapter: Some("bread"),
+        why: "Send someone out while you're away. They bring back materials, gold and XP.",
+        screen: "exp",
+        emoji: "expedition",
+    },
+    Unlock {
+        feature: Feature::Forge,
+        bit: 2,
+        name: "The forge",
+        level: 3,
+        chapter: Some("jarl"),
+        why: "Turn materials into gear. The more you forge, the better your smith rank, and the better what comes out.",
+        screen: "forge",
+        emoji: "forge",
+    },
+    Unlock {
+        feature: Feature::Encounters,
+        bit: 4,
+        name: "Encounters",
+        level: 3,
+        chapter: None,
+        why: "",
+        screen: "hunt",
+        emoji: "hunt",
+    },
+    Unlock {
+        feature: Feature::Bounties,
+        bit: 8,
+        name: "The bounty board",
+        level: 4,
+        chapter: None,
+        why: "Three small jobs a day, with a bonus for all three.",
+        screen: "bounties",
+        emoji: "bounty",
+    },
+    Unlock {
+        feature: Feature::Temple,
+        bit: 16,
+        name: "The temple",
+        level: 5,
+        chapter: None,
+        why: "Give gold or spare materials to a god. Bonds open your second skill and fill the server's weekly offering.",
+        screen: "temple",
+        emoji: "temple",
+    },
+    Unlock {
+        feature: Feature::Elites,
+        bit: 32,
+        name: "Elites",
+        level: 5,
+        chapter: None,
+        why: "",
+        screen: "hunt",
+        emoji: "elite",
+    },
+    Unlock {
+        feature: Feature::Dungeons,
+        bit: 64,
+        name: "Dungeons",
+        level: 6,
+        chapter: None,
+        why: "Four rooms and a boss. The first clear each day opens a chest.",
+        screen: "dungeons",
+        emoji: "dungeon",
+    },
+    Unlock {
+        feature: Feature::Townsfolk,
+        bit: 128,
+        name: "Skagi's townsfolk",
+        level: 7,
+        chapter: None,
+        why: "The village has asks of its own. Each line ends with a title.",
+        screen: "quests",
+        emoji: "quest",
+    },
+    Unlock {
+        feature: Feature::Labyrinth,
+        bit: 256,
+        name: "The Labyrinth",
+        level: 8,
+        chapter: None,
+        why: "Floor after floor, as deep as you dare. It drops loose threads, which the forge uses to refine and temper gear.",
+        screen: "lab",
+        emoji: "labyrinth",
+    },
+    Unlock {
+        feature: Feature::Market,
+        bit: 512,
+        name: "The market",
+        level: 9,
+        chapter: None,
+        why: "Materials and supplies for gold, new every day.",
+        screen: "market",
+        emoji: "market",
+    },
+    Unlock {
+        feature: Feature::Guild,
+        bit: 1024,
+        name: "Guilds",
+        level: 10,
+        chapter: None,
+        why: "Join or found one. Members' play levels the guild, and its perks are shared.",
+        screen: "guild",
+        emoji: "guild",
+    },
+    Unlock {
+        feature: Feature::Titans,
+        bit: 2048,
+        name: "Titans",
+        level: 12,
+        chapter: None,
+        why: "Now and then a Titan attacks Midgard, and the whole server brings it down together.",
+        screen: "titan",
+        emoji: "boss",
+    },
+];
+
+pub fn unlock(f: Feature) -> &'static Unlock {
+    UNLOCKS
+        .iter()
+        .find(|u| u.feature == f)
+        .expect("every feature has an unlock")
+}
+
+#[cfg(test)]
+mod forge_tests {
+    use super::*;
+
+    #[test]
+    fn forge_odds_add_up_and_improve() {
+        for r in 1..=SMITH_CAP {
+            assert_eq!(forge_odds(r).iter().sum::<u32>(), 100);
+            if r > 1 {
+                assert!(forge_odds(r)[0] < forge_odds(r - 1)[0]);
+                assert!(forge_odds(r)[3] > forge_odds(r - 1)[3]);
+            }
+        }
+        // A top smith out-forges a hunt drop.
+        assert!(forge_odds(SMITH_CAP)[3] > rarity_odds("hunt")[3]);
+    }
+
+    #[test]
+    fn ranks_and_caps() {
+        assert_eq!(smith_rank(0), 1);
+        assert_eq!(smith_rank(59), 1);
+        assert_eq!(smith_rank(60), 2);
+        assert_eq!(smith_rank(1_000_000), SMITH_CAP);
+        assert_eq!(upgrade_cap(1, true), 1);
+        assert_eq!(upgrade_cap(SMITH_CAP, true), MAX_UPGRADE);
+        assert_eq!(upgrade_cap(SMITH_CAP, false), FOUND_UPGRADE);
+        // Every recipe can be reached.
+        assert!(GEAR.iter().all(|g| g.smith >= 1 && g.smith <= SMITH_CAP));
+        // Every trait has a catalyst that exists.
+        for t in TRAITS {
+            assert!(item(catalyst(t)).is_some());
+        }
+    }
+
+    #[test]
+    fn unlocks_come_one_at_a_time() {
+        let mut bits = 0;
+        let mut last = 0;
+        for u in UNLOCKS {
+            assert_eq!(bits & u.bit, 0, "{} shares a bit", u.name);
+            bits |= u.bit;
+            assert!(u.level >= last, "{} is out of order", u.name);
+            last = u.level;
+        }
+        // Never more than two systems open at the same level.
+        for l in 1..=LEVEL_CAP {
+            assert!(
+                UNLOCKS
+                    .iter()
+                    .filter(|u| u.level == l && !u.why.is_empty())
+                    .count()
+                    <= 1
+            );
+        }
+    }
 }

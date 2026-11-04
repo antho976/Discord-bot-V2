@@ -555,6 +555,7 @@ fn player_view(ctx: &Ctx, page: &Page, guild: u64, player: Option<u64>) -> Resul
         (ui::readings(&[
             ("level", p.level.to_string()),
             ("Power", p.power().to_string()),
+            ("smith rank", p.smith_rank().to_string()),
             ("gold", thousands(p.gold)),
             ("saga chapter", format!("{} of {}", (p.saga + 1).min(crate::quests::CHAPTERS.len()), crate::quests::CHAPTERS.len())),
         ]))
@@ -562,6 +563,9 @@ fn player_view(ctx: &Ctx, page: &Page, guild: u64, player: Option<u64>) -> Resul
             div.card {
                 div.row { div.row-text { label { "Level" } p.help { "Sets the level; gear stays." } } div.row-control {
                     (form("level", "Set level", html! { input type="number" name="level" value=(p.level) min="1" max=(data::LEVEL_CAP) style="width:80px" aria-label="Level"; }))
+                } }
+                div.row { div.row-text { label { "Smith rank" } p.help { "Sets their forge rank: odds, how far upgrades go, which recipes open." } } div.row-control {
+                    (form("smith", "Set rank", html! { input type="number" name="rank" value=(p.smith_rank()) min="1" max=(data::SMITH_CAP) style="width:80px" aria-label="Smith rank"; }))
                 } }
                 div.row { div.row-text { label { "Give items" } } div.row-control {
                     (form("item", "Give", html! {
@@ -572,7 +576,7 @@ fn player_view(ctx: &Ctx, page: &Page, guild: u64, player: Option<u64>) -> Resul
                 div.row { div.row-text { label { "Expedition" } p.help { "Bring their expedition back now." } } div.row-control {
                     (form("finish", "Finish now", html! {}))
                 } }
-                div.row { div.row-text { label { "Ready for the boss" } p.help { "Level cap, the best Midgard gear at +3, all four facts, three potions and full health." } } div.row-control {
+                div.row { div.row-text { label { "Ready for the boss" } p.help { "Level cap, the best Midgard gear at +4, all four facts, three potions and full health." } } div.row-control {
                     (form("boss", "Make boss-ready", html! {}))
                 } }
                 div.row { div.row-text { label { "Saga" } p.help { "Jump to a chapter (its goals start from zero)." } } div.row-control {
@@ -601,6 +605,12 @@ async fn tool(
                 g.tx.execute("UPDATE rpg_players SET level = ?3, xp = 0 WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, player as i64, lvl as i64])?;
                 what = format!("set level to {lvl}");
             }
+            "smith" => {
+                let r = form.int_in("rank", 1, data::SMITH_CAP as i64, 1) as usize;
+                let xp = data::SMITH_AT[r] - g.p.smith_xp;
+                g.smith(xp)?;
+                what = format!("set their smith rank to {r}");
+            }
             "item" => {
                 let id = form.string("item");
                 let n = form.int_in("qty", 1, 999, 1);
@@ -621,7 +631,7 @@ async fn tool(
                 g.p.level = data::LEVEL_CAP;
                 for id in ["barrowblade", "mantle", "ravencharm"] {
                     let row = g.add_gear(data::gear(id).unwrap(), true)?;
-                    for _ in 0..data::MAX_UPGRADE {
+                    for _ in 0..4 {
                         g.upgrade(row)?;
                     }
                 }
@@ -766,7 +776,8 @@ pub fn seed(ctx: &Ctx, guild: u64) -> Result<()> {
             "seed",
         )?;
         g.item("thread", 4, "seed")?;
-        g.set_tutorial(1 | 2 | 4)?;
+        g.smith(400)?;
+        g.set_tutorial(1 | 2 | 4 | 32)?;
         g.tribute(God::Thor, 1600)?;
         g.tribute(God::Athena, 400)?;
         g.learn("slam")?;
