@@ -39,6 +39,27 @@ pub fn forget(ctx: &Ctx, guild: u64, user: u64) -> Result<()> {
     Ok(())
 }
 
+/// Note a member who joined during rules screening, so their roles wait until they accept.
+pub fn hold_for_screening(ctx: &Ctx, guild: u64, user: u64) -> Result<()> {
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO welcome_screening (guild_id, user_id, joined_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT (guild_id, user_id) DO UPDATE SET joined_at = excluded.joined_at",
+            params![guild as i64, user as i64, bot_core::now_ms()],
+        )
+    })?;
+    Ok(())
+}
+
+/// Clear a member's screening note. True when there was one, so of two updates at once only one
+/// gives the roles.
+pub fn take_screened(ctx: &Ctx, guild: u64, user: u64) -> Result<bool> {
+    let n = ctx.db.with(|c| {
+        c.execute("DELETE FROM welcome_screening WHERE guild_id = ?1 AND user_id = ?2", params![guild as i64, user as i64])
+    })?;
+    Ok(n > 0)
+}
+
 /// The roles waiting for a member who left no more than `days` ago and hasn't been restored.
 pub fn waiting(ctx: &Ctx, guild: u64, user: u64, days: i64) -> Result<Vec<u64>> {
     let cutoff = bot_core::now_ms() - days * 86_400_000;

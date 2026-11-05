@@ -14,7 +14,7 @@ use bot_core::anyhow::{Result, anyhow};
 use bot_core::rusqlite::params;
 use bot_core::twilight_model::channel::message::AllowedMentions;
 use bot_core::twilight_model::gateway::event::Event;
-use bot_core::twilight_model::gateway::payload::incoming::{MemberAdd, MemberRemove};
+use bot_core::twilight_model::gateway::payload::incoming::{MemberAdd, MemberRemove, MemberUpdate};
 use bot_core::twilight_model::http::attachment::Attachment;
 use bot_core::twilight_model::id::Id;
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, text};
@@ -133,6 +133,15 @@ pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
         CREATE TABLE welcome_banner_turn (
             guild_id INTEGER NOT NULL, kind TEXT NOT NULL, last_id INTEGER NOT NULL, PRIMARY KEY (guild_id, kind));
     ",
+}, Migration {
+    // Members who joined a server with rules screening and haven't accepted the rules yet. Their
+    // auto-roles and saved roles wait until they do; kept in the database so a restart in between
+    // doesn't lose them.
+    name: "004_screening",
+    sql: "
+        CREATE TABLE welcome_screening (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, joined_at INTEGER NOT NULL, PRIMARY KEY (guild_id, user_id));
+    ",
 }];
 
 #[derive(Default)]
@@ -165,6 +174,7 @@ impl Feature for Welcome {
         match event {
             Event::MemberAdd(m) => self.joined(ctx, m).await,
             Event::MemberRemove(m) => self.left(ctx, m).await,
+            Event::MemberUpdate(m) if !m.pending => self.screened(ctx, m).await,
             Event::InviteCreate(i) => {
                 let guild = i.guild_id.get();
                 if ctx.settings::<Settings>(guild, KEY)?.track_invites {
@@ -246,7 +256,15 @@ impl Welcome {
         // (reading invites gets rate-limited in a join raid) holds neither up.
         let record = invites::record_join(ctx, &self.readings, guild, user, bot, s.track_invites);
         let greet = async {
-            give_roles(ctx, &s, guild, user, bot, &m.member.roles.iter().map(|r| r.get()).collect::<Vec<_>>()).await;
+            // With rules screening on, a role given now would let them past the rules unread, so
+            // the roles wait for `screened`.
+            if m.member.pending && !bot {
+                if let Err(e) = roles::hold_for_screening(ctx, guild, user) {
+                    bot_core::tracing::warn!(guild, user, error = %e, "couldn't note a member waiting on rules screening");
+                }
+            } else {
+                give_roles(ctx, &s, guild, user, bot, &m.member.roles.iter().map(|r| r.get()).collect::<Vec<_>>()).await;
+            }
             if s.welcome_on && !bot && s.welcome_channel.is_some() {
                 let name = m.member.nick.clone().or_else(|| m.user.global_name.clone()).unwrap_or_else(|| m.user.name.clone());
                 let avatar = bot_core::discord::avatar_url(user, m.user.avatar.map(|a| a.to_string()).as_deref());
@@ -260,9 +278,25 @@ impl Welcome {
         Ok(())
     }
 
+    /// A member who joined during rules screening has accepted the rules: they get the roles
+    /// held back at join. Only the first update after accepting finds them waiting.
+    async fn screened(&self, ctx: &Ctx, m: &MemberUpdate) -> Result<()> {
+        let guild = m.guild_id.get();
+        let user = m.user.id.get();
+        if !roles::take_screened(ctx, guild, user)? {
+            return Ok(());
+        }
+        let s = ctx.settings::<Settings>(guild, KEY)?;
+        give_roles(ctx, &s, guild, user, m.user.bot, &m.roles.iter().map(|r| r.get()).collect::<Vec<_>>()).await;
+        Ok(())
+    }
+
     async fn left(&self, ctx: &Ctx, m: &MemberRemove) -> Result<()> {
         let guild = m.guild_id.get();
         let user = m.user.id.get();
+        if let Err(e) = roles::take_screened(ctx, guild, user) {
+            bot_core::tracing::warn!(guild, user, error = %e, "couldn't clear rules screening");
+        }
         let s = ctx.settings::<Settings>(guild, KEY)?;
 
         if s.rejoin_on
