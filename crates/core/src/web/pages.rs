@@ -624,7 +624,8 @@ fn day_label(user: &User, at: i64) -> String {
 async fn features_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -> WebResult {
     let page = admin_page(&ctx, &user, guild, "features")?;
     // A feature kept for Admin+ (App approvals) isn't listed for a plain admin to switch.
-    let mut feats: Vec<_> = ctx.features().iter().filter(|f| user.admin_plus || !f.admin_plus_only()).map(|f| f.meta()).collect();
+    // A feature with a page of its own outside any server (Server) has nothing to switch here.
+    let mut feats: Vec<_> = ctx.features().iter().filter(|f| (user.admin_plus || !f.admin_plus_only()) && f.global_page().is_none()).map(|f| f.meta()).collect();
     feats.sort_by_key(|m| m.group);
     let mut groups: Vec<(crate::Group, Vec<crate::FeatureMeta>)> = Vec::new();
     for m in feats {
@@ -636,7 +637,7 @@ async fn features_page(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     let shown = groups.iter().map(|(_, l)| l.len()).sum::<usize>();
     let on_here = groups.iter().flat_map(|(_, l)| l).filter(|m| ctx.enabled(guild, m.key)).count();
     let guilds = ctx.guilds_for(&user);
-    let count_on = |g: u64| ctx.features().iter().filter(|f| ctx.enabled(g, f.meta().key)).count();
+    let count_on = |g: u64| ctx.features().iter().filter(|f| f.global_page().is_none() && ctx.enabled(g, f.meta().key)).count();
     let switched = audit_lines(&ctx, "features", Some(guild), 6);
     // What members can type here: every switched-on feature's commands, named once.
     let mut commands: Vec<String> = ctx
@@ -999,7 +1000,7 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                                     (ui::guild_avatar(&ctx, g))
                                     span.cp-txt {
                                         strong { (ctx.guild_name(g)) }
-                                        span { "Every page, and can change them" @if person.admin_plus || is_owner { ", App approvals too" } }
+                                        span { "Every page, and can change them" @if person.admin_plus || is_owner { ", App approvals and Server too" } }
                                     }
                                 }
                             }
@@ -1087,13 +1088,13 @@ async fn user_page(State(ctx): State<Ctx>, user: User, Path(id): Path<u64>) -> W
                     h2 { "Role" }
                     div.cp-fields {
                         @if is_owner {
-                            (ui::field_custom("Admin", Some("The owner is always an admin, with App approvals."), ui::badge("Owner", Tone::Muted)))
+                            (ui::field_custom("Admin", Some("The owner is always an admin, with App approvals and Server."), ui::badge("Owner", Tone::Muted)))
                         } @else if person.admin_plus && !viewer_is_owner {
                             (ui::field_custom("Admin+", Some("Only the owner changes an Admin+ person's access."), ui::badge("Admin+", Tone::Muted)))
                         } @else {
-                            (ui::field_toggle("admin", "Admin", Some("Everything on every server, including features, people and the activity log, except App approvals."), person.admin))
+                            (ui::field_toggle("admin", "Admin", Some("Everything on every server, including features, people and the activity log, except App approvals and Server."), person.admin))
                             @if viewer_is_owner {
-                                (ui::field_toggle("admin_plus", "Admin+", Some("Admin, plus App approvals, which is otherwise yours alone. On, it keeps them an admin whatever the switch above says. Only you can give it."), person.admin_plus))
+                                (ui::field_toggle("admin_plus", "Admin+", Some("Admin, plus App approvals and Server, which are otherwise yours alone. On, it keeps them an admin whatever the switch above says. Only you can give it."), person.admin_plus))
                             }
                         }
                     }

@@ -1,0 +1,12 @@
+[package]
+name = "feat-server"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+bot-core.workspace = true
+maud.workspace = true
+serde.workspace = true
+# statvfs, for the disk reading. Already in the tree (tokio, rusqlite's build and others use it).
+libc = "0.2"
