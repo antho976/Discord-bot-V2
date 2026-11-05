@@ -102,10 +102,29 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
                             let ctx = ctx.clone();
                             let registered = registered.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = register_commands(&ctx, id).await {
-                                    tracing::warn!(guild = id, error = %e, "couldn't register commands");
-                                    // The next GuildCreate (a reconnect) tries again.
-                                    registered.lock().unwrap().remove(&id);
+                                // A 429 or a 5xx at boot passes; tried again after 1, 5 and 15
+                                // minutes, then on the next GuildCreate (a reconnect).
+                                let mut last = None;
+                                for wait in [0, 60, 300, 900] {
+                                    tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                                    match register_commands(&ctx, id).await {
+                                        Ok(()) => return,
+                                        Err(e) => {
+                                            tracing::warn!(guild = id, error = %e, "couldn't register commands");
+                                            last = Some(e);
+                                        }
+                                    }
+                                }
+                                registered.lock().unwrap().remove(&id);
+                                if let Some(e) = last {
+                                    ctx.notify_once(
+                                        id,
+                                        "features",
+                                        "register",
+                                        format!("Slash commands didn't reach Discord when the bot started. {}", why_not_registered(&e)),
+                                        Some(format!("/g/{id}/features")),
+                                        std::time::Duration::from_secs(3600),
+                                    );
                                 }
                             });
                         }

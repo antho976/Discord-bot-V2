@@ -784,6 +784,15 @@ async fn toggle_feature(State(ctx): State<Ctx>, user: User, Path((guild, key)): 
     tokio::spawn(async move {
         if let Err(e) = crate::discord::register_commands(&ctx2, guild).await {
             tracing::warn!(error = %e, "couldn't update commands");
+            // "Saved" was already shown; the bell says why the commands didn't change.
+            ctx2.notify_once(
+                guild,
+                "features",
+                "register",
+                format!("Slash commands didn't reach Discord after a feature was switched. {}", crate::discord::why_not_registered(&e)),
+                Some(format!("/g/{guild}/features")),
+                std::time::Duration::from_secs(3600),
+            );
         }
     });
     Ok(saved(&format!("/g/{guild}/features")))
