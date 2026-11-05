@@ -571,13 +571,16 @@ fn is_image(a: &bot_core::twilight_model::channel::Attachment) -> bool {
             || [".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().any(|ext| a.filename.to_lowercase().ends_with(ext)))
 }
 
-/// The first image attachment, or else an embed's image or thumbnail.
+/// The first image attachment, or else an embed's image or thumbnail. A message with any
+/// spoiler in its text gets no embed image: a link behind spoiler bars still has its preview,
+/// which Discord blurs in the message but not once it's an embed's image here.
 fn image_of(m: &Message) -> Option<String> {
-    m.attachments
-        .iter()
-        .find(|a| is_image(a))
-        .map(|a| a.url.clone())
-        .or_else(|| m.embeds.iter().find_map(|e| e.image.as_ref().map(|i| i.url.clone()).or_else(|| e.thumbnail.as_ref().map(|t| t.url.clone()))))
+    m.attachments.iter().find(|a| is_image(a)).map(|a| a.url.clone()).or_else(|| {
+        if m.content.contains("||") {
+            return None;
+        }
+        m.embeds.iter().find_map(|e| e.image.as_ref().map(|i| i.url.clone()).or_else(|| e.thumbnail.as_ref().map(|t| t.url.clone())))
+    })
 }
 
 /// A short line for the dashboard table.
