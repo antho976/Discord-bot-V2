@@ -497,16 +497,29 @@ fn cached_messages_of(ctx: &Ctx, guild: u64, user: u64, now: i64) -> Vec<(u64, u
     out
 }
 
-/// Delete messages, in bulk per channel where there are several. Returns how many went.
+/// Discord refuses a bulk delete that holds any message older than 14 days; a minute's margin.
+const BULK_MAX_AGE_MS: i64 = 14 * 86_400_000 - 60_000;
+
+/// Delete messages, in bulk per channel where there are several. Messages too old for a bulk
+/// delete (an old message edited into a scam) go one by one, so they can't sink the rest.
+/// Returns how many went.
 async fn delete_all(ctx: &Ctx, ids: &[(u64, u64)]) -> usize {
+    let now = now_ms();
+    let (old, recent): (Vec<_>, Vec<_>) = ids.iter().copied().partition(|(_, id)| now - bot_core::discord::snowflake_ms(*id) > BULK_MAX_AGE_MS);
+    let mut done = 0;
+    for (ch, id) in old {
+        match ctx.http.delete_message(Id::new(ch), Id::new(id)).reason("Scam protection").await {
+            Ok(_) => done += 1,
+            Err(e) => tracing::warn!(channel = ch, error = %e, "couldn't delete a caught message"),
+        }
+    }
     let mut by_channel: Vec<(u64, Vec<u64>)> = Vec::new();
-    for (ch, id) in ids {
+    for (ch, id) in &recent {
         match by_channel.iter_mut().find(|(c, _)| c == ch) {
             Some((_, list)) => list.push(*id),
             None => by_channel.push((*ch, vec![*id])),
         }
     }
-    let mut done = 0;
     for (ch, list) in by_channel {
         let channel: Id<ChannelMarker> = Id::new(ch);
         for chunk in list.chunks(100) {
@@ -695,7 +708,7 @@ fn own_release(guild: u64, user: u64, now: i64) -> bool {
 }
 
 /// Whether `by` (with `by_roles`) may ban `target` by Discord's role order, from the cache.
-fn may_ban(ctx: &Ctx, guild: u64, by: u64, by_roles: &[u64], target: u64) -> bool {
+pub(crate) fn may_ban(ctx: &Ctx, guild: u64, by: u64, by_roles: &[u64], target: u64) -> bool {
     let top = |roles: &mut dyn Iterator<Item = u64>| roles.filter_map(|r| Id::new_checked(r).and_then(|r| ctx.cache.role(r)).map(|r| r.position)).max().unwrap_or(0);
     let g = Id::new_checked(guild);
     let owner = g.and_then(|g| ctx.cache.guild(g)).map(|g| g.owner_id().get());

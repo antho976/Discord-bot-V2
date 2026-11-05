@@ -805,6 +805,21 @@ async fn ban(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i
 
 async fn act(ctx: Ctx, user: User, guild: u64, id: i64, outcome: Outcome, reason: Option<&str>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    // The same role check as the alert's Ban button, so an Edit grant doesn't reach past the
+    // person's own place in the server. Dashboard admins are trusted with any ban.
+    if outcome == Outcome::Banned
+        && !page.user.admin
+        && let Some(c) = crate::catch(&ctx, guild, id)?
+    {
+        let roles: Vec<u64> = Id::new_checked(guild)
+            .zip(Id::new_checked(page.user.id))
+            .and_then(|(g, u)| ctx.cache.member(g, u))
+            .map(|m| m.roles().iter().map(|r| r.get()).collect())
+            .unwrap_or_default();
+        if !crate::may_ban(&ctx, guild, page.user.id, &roles, c.user_id) {
+            return Err(WebError::Bad("Their highest role in the server is level with or above yours, so you can't ban them.".into()));
+        }
+    }
     let c = crate::resolve(&ctx, guild, id, outcome, page.user.id, &page.user.name, reason, true).await.map_err(WebError::Bad)?;
     let mut what = match outcome {
         Outcome::Banned => format!("Banned {} from a scam catch", c.user_name),
