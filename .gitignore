@@ -4,3 +4,8 @@
 *.db-shm
 .env
 /data
+*.env
+.env.*
+!*.env.example
+/deploy.log
+/.deploy-state

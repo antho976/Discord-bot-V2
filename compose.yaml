@@ -1,0 +1,30 @@
+# Self-hosting on the home server: the bot image (the bot, Caddy and Relay's rendezvous, see the
+# Dockerfile) and a Cloudflare Tunnel in front of it. See README, "Self-hosting".
+#
+# No service publishes a port. Docker-published ports bypass ufw, and the tunnel dials out to
+# Cloudflare, so nothing on the server has to be open. Cloudflare's public hostname points at
+# http://bot:3000 (Caddy, which sends /relay to Relay and everything else to the bot).
+#
+#   bot.env  the bot's variables (bot.env.example lists them). chmod 600, never committed.
+#   .env     TUNNEL_TOKEN for cloudflared. chmod 600, never committed.
+#   data/    the database and Relay's state, mounted at /data.
+name: discord-bot
+
+services:
+  bot:
+    build: .
+    image: discord-bot-v2:local
+    restart: unless-stopped
+    env_file: bot.env
+    volumes:
+      - ./data:/data
+    stop_grace_period: 20s
+
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.7
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?put TUNNEL_TOKEN in .env next to compose.yaml}
+    depends_on:
+      - bot
