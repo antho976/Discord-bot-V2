@@ -215,9 +215,7 @@ impl Feature for Welcome {
                 bot_core::tracing::warn!(guild, error = %e, "couldn't prune saved roles");
             }
             // Someone who accepted the rules while the bot was offline sent no update it saw.
-            if bot_core::tokio::time::timeout(Duration::from_secs(10), catch_up_screening(ctx, guild)).await.is_err() {
-                bot_core::tracing::warn!(guild, "checking rules screening took over 10 seconds; trying again next minute");
-            }
+            catch_up_screening(ctx, guild);
         }
         Ok(())
     }
@@ -478,7 +476,7 @@ async fn release_if_accepted(ctx: &Ctx, guild: u64, user: u64, bot: bool) -> Res
 /// Members still noted as waiting on rules screening whom the cache already shows as past it,
 /// a few a minute, in a random order so a few the cache has wrong can't hold up the rest. Each
 /// is confirmed with Discord before getting roles.
-async fn catch_up_screening(ctx: &Ctx, guild: u64) {
+fn catch_up_screening(ctx: &Ctx, guild: u64) {
     let waiting = match roles::screening(ctx, guild, 200) {
         Ok(w) => w,
         Err(e) => {
@@ -499,9 +497,14 @@ async fn catch_up_screening(ctx: &Ctx, guild: u64) {
         }
         asked += 1;
         let bot = ctx.cache.user(user_id).is_some_and(|u| u.bot);
-        if let Err(e) = release_if_accepted(ctx, guild, user, bot).await {
-            bot_core::tracing::warn!(guild, user, error = %e, "couldn't check a member's rules screening");
-        }
+        // On its own task: the tick's time limit mustn't stop it between clearing the note and
+        // giving the last role.
+        let ctx = ctx.clone();
+        bot_core::tokio::spawn(async move {
+            if let Err(e) = release_if_accepted(&ctx, guild, user, bot).await {
+                bot_core::tracing::warn!(guild, user, error = %e, "couldn't check a member's rules screening");
+            }
+        });
     }
 }
 
