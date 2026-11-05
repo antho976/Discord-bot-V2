@@ -32,7 +32,7 @@ const HOLD: Duration = Duration::from_secs(600);
 const MAX_HELD: usize = 10;
 /// The most a message's copied files weigh together; a set that would pass this stays as links.
 /// Well under the 10 MB Discord takes from a bot anywhere, so the upload also fits in the HTTP
-/// client's 10 seconds on a home connection.
+/// client's 30 seconds on a slow home connection (about 1.2 Mbit/s up).
 const COPY_MAX: u64 = 4 * 1024 * 1024;
 /// How long copying one message's files may take before the rest go as links.
 const COPY_TIME: Duration = Duration::from_secs(30);
@@ -833,6 +833,15 @@ pub async fn on_staff_message(f: &Modmail, ctx: &Ctx, guild: u64, m: &Message) -
     // longer to send than the text after it.
     let turn = f.turn(conv.user_id);
     let _turn = turn.lock().await;
+    // Closed while this waited its turn. Written before the close, it still goes, ahead of the
+    // closing text (which waits its turn too); written after, it doesn't.
+    let written = m.timestamp.as_micros() / 1000;
+    let now = ctx.db.with(|c| by_id(c, guild, conv.id))?;
+    if now.is_none_or(|c| c.closed_at.is_some_and(|at| at <= written)) {
+        let text = format!("This conversation closed before that went out, so {} doesn't get it.", conv.name(ctx, guild));
+        ctx.say(channel, &text).await?;
+        return Ok(());
+    }
     let staff = m.author.id.get();
     let staff_name = m
         .member
@@ -952,6 +961,10 @@ async fn close_here(f: &Modmail, ctx: &Ctx, i: &Interaction, guild: u64, conv: &
     }
     f.drop_thread(conv.thread_id);
     ctx.reply(i, Reply::text(format!("Closed by <@{by}>. {} gets the closing text by DM.", conv.name(ctx, guild)))).await?;
+    // After any reply written before the close that is still going out, so the closing text
+    // comes last.
+    let turn = f.turn(conv.user_id);
+    let _turn = turn.lock().await;
     send_closing(ctx, guild, conv.user_id).await;
     archive(ctx, conv.thread_id).await;
     Ok(())

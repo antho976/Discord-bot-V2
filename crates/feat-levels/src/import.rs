@@ -159,8 +159,8 @@ pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode, any_role
                             voice_require_active: flag(14, current.voice_require_active)?,
                             // "custom" is marked here and read from level_curve below; an empty
                             // curve type keeps the curve set here, like the other settings.
-                            custom_curve: match loose_text(r, 5)? {
-                                Some(t) if t == "custom" => BTreeMap::from([(CUSTOM_MARK, 0)]),
+                            custom_curve: match loose_text(r, 5)?.filter(|t| !t.trim().is_empty()) {
+                                Some(t) if t.trim() == "custom" => BTreeMap::from([(CUSTOM_MARK, 0)]),
                                 Some(_) => BTreeMap::new(),
                                 None => current.custom_curve.clone(),
                             },

@@ -297,7 +297,9 @@ impl Deref for Ctx {
 
 impl Ctx {
     pub fn new(cfg: Config, db: Db) -> Result<Self> {
-        let http = twilight_http::Client::new(cfg.discord_token.clone());
+        // 30 seconds rather than twilight's 10: modmail copies files of up to 4 MB across, and
+        // the bot runs on a home connection.
+        let http = twilight_http::Client::builder().token(cfg.discord_token.clone()).timeout(std::time::Duration::from_secs(30)).build();
         let cache = DefaultInMemoryCache::builder()
             .resource_types(
                 ResourceType::GUILD
