@@ -206,6 +206,16 @@ The page fills the window; nothing is capped at a fixed width and parked at the 
   `/pet mine` (their pets by status, withdraw or remove their own with a confirm, staff notified),
   which the submit flow points to. Custom commands take up to 4 pictures per reply (8 MB, 50 MB a
   server), sent as attachments for /slash, !text and triggers, added and removed on the edit page.
+- **Server** (2026-11-04, owner: "a usage dashboard like Render's"; `docs/ui/server.webp`): one
+  page for the owner and Admin+ at `/server`, linked from the account menu beside People and
+  Activity, not tied to a Discord server and not in the sidebar. A bordered panel of the latest
+  reading (CPU with the load, memory and disk with their totals and a thin lilac meter that turns
+  amber from 90%, uptime with the day it started, CPU temperature when a sensor reads), then
+  "Over the last 24 hours / 7 days" (`.seg`, swapped in place) over four equal chart panels: Server
+  CPU, Server memory, Bot CPU, Bot memory, each with its average and peak in the head. Server
+  memory scales to all the memory there is; CPU scales to its peak but never under 10% (1% for the
+  bot). The bot's numbers are its container's (Caddy and Relay share it) and say so. One quiet line
+  at the end points to Beszel for per-container detail and alerts. Not a Beszel clone.
 - Shared since then: `.rail` is a plain column of bordered panels (`.rail > .rail-block`), the
   `ui::empty` icon is still and neutral, `[data-count]` numbers no longer count up, and the bell's
   notice icons are neutral with no tint on new ones.
@@ -222,6 +232,7 @@ The page fills the window; nothing is capped at a fixed width and parked at the 
 | `div.mini` | Rail line: avatar or icon, name and detail, figure |
 | `.need` | A row that waits on you: avatar(s) or a hue icon tile, text, an outlined button (primary when it's an alert). Hover slides it right |
 | `ui::area_chart`, `ui::bar_chart`, `ui::column_bars`, `ui::mini_bars`, `.meter` | Charts draw in; bars grow one after another; hovering any bar or day shows a tooltip (`data-tip="Label: value"`, read by app.js) |
+| `ui::area_chart_readings` | The area chart for readings over time (CPU, memory): the hover shows a formatted value ("7.4%", "3.6 GB"), the chart names itself for screen readers, and the scale can be fixed (100%, all the memory) instead of following the peak |
 | `img.avatar`, `ui::avatars` | Faces; overlapping stacks fan out on hover. Always `ctx.member_avatar` |
 | `ui::art(icon, still)` | Generated server art when there's no banner |
 | `ui::empty` | Icon in a hue tile that floats gently, title, one line on how it fills |
