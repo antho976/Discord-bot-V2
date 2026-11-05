@@ -143,6 +143,14 @@ fn create_on(c: &Connection, new: &NewRequest, now: i64) -> Result<Result<Reques
         if recent {
             return Ok(Err(Refusal::SlowDown));
         }
+        let denied: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM connect_requests WHERE ip = ?1 AND status = 'denied' AND decided_at >= ?2)",
+            params![ip, now - domain::DENIED_COOLDOWN_MS],
+            |r| r.get(0),
+        )?;
+        if denied {
+            return Ok(Err(Refusal::SlowDown));
+        }
     }
     let req = Request {
         id: domain::random_hex(16),
