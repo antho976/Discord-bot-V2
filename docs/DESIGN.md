@@ -216,6 +216,13 @@ The page fills the window; nothing is capped at a fixed width and parked at the 
   memory scales to all the memory there is; CPU scales to its peak but never under 10% (1% for the
   bot). The bot's numbers are its container's (Caddy and Relay share it) and say so. One quiet line
   at the end points to Beszel for per-container detail and alerts. Not a Beszel clone.
+- **Idleon account check** (2026-11-05, owner: AutoReview "looks pretty safe and boring", picked
+  "do-next first"): public page `/p/{guild}/idleon` in the pets' public frame. Paste box, then the
+  answer: one big share with a column per world, then Do next (28 px game picture, name, the why
+  line, a meter, the figure, a world tag), then world tabs (radio + `:has`, no reload) over a grid
+  of mechanic cards that open to their items, least done first, maxed folded under. **Each world
+  has its own data colour** (`--w1`..`--w7`, `--w0` neutral for account-wide), used only on the
+  columns, meters, dots and tags. Game pictures draw pixelated at 24-28 px.
 - Shared since then: `.rail` is a plain column of bordered panels (`.rail > .rail-block`), the
   `ui::empty` icon is still and neutral, `[data-count]` numbers no longer count up, and the bell's
   notice icons are neutral with no tint on new ones.
