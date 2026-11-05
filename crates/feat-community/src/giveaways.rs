@@ -643,14 +643,40 @@ async fn finish(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
         return settled(ctx, id);
     }
     let g = Giveaway { winner_ids: winners.clone(), drawing: false, ..g };
-    refresh(ctx, &g, all.len() as i64).await;
+    if close_and_announce(ctx, &g, all.len() as i64).await {
+        ctx.db.with(|c| c.execute("UPDATE giveaways SET announced = 1 WHERE id = ?1", [id]))?;
+    }
+    Ok(EndOutcome::Ended(winners))
+}
+
+/// Close an ended giveaway's post and reply to it with the winners. False when the reply
+/// couldn't be posted.
+async fn close_and_announce(ctx: &Ctx, g: &Giveaway, entrants: i64) -> bool {
+    refresh(ctx, g, entrants).await;
+    let winners = &g.winner_ids;
     let content = if winners.is_empty() {
-        if all.is_empty() { format!("Nobody entered the {} giveaway.", g.prize) } else { format!("Nobody who entered the {} giveaway could win.", g.prize) }
+        if entrants == 0 { format!("Nobody entered the {} giveaway.", g.prize) } else { format!("Nobody who entered the {} giveaway could win.", g.prize) }
     } else {
         format!("Congratulations {}, you won **{}**.", mentions(winners.iter().copied()), g.prize)
     };
-    announce(ctx, &g, &content, &winners).await;
-    Ok(EndOutcome::Ended(winners))
+    announce(ctx, g, &content, winners).await
+}
+
+/// Try again to announce a giveaway whose winners were stored but never announced (the bot
+/// stopped in between, or Discord refused the post). Claimed first, so two ticks can't both post.
+async fn reannounce(ctx: &Ctx, id: i64) -> Result<()> {
+    if ctx.db.with(|c| c.execute("UPDATE giveaways SET announced = 1 WHERE id = ?1 AND announced = 0", [id]))? == 0 {
+        return Ok(());
+    }
+    let found = ctx.db.with(|c| match get(c, id)? {
+        Some(g) => Ok(Some((g, entry_count(c, id)?))),
+        None => Ok(None),
+    })?;
+    let Some((g, n)) = found else { return Ok(()) };
+    if !close_and_announce(ctx, &g, n).await {
+        ctx.db.with(|c| c.execute("UPDATE giveaways SET announced = 0 WHERE id = ?1", [id]))?;
+    }
+    Ok(())
 }
 
 /// Draw again a giveaway whose draw was cut short. Claimed like `end`, by moving its time, so
@@ -834,7 +860,7 @@ pub fn open_places(g: &Giveaway) -> usize {
 /// Store the winners of a draw and mark it ended, in one write. 0 when it isn't being drawn
 /// any more.
 fn store_winners(c: &Connection, id: i64, winners: &[u64]) -> bot_core::rusqlite::Result<usize> {
-    c.execute("UPDATE giveaways SET ended = ?3, winner_ids = ?2 WHERE id = ?1 AND ended = ?4", params![id, join_ids(winners), ENDED, DRAWING])
+    c.execute("UPDATE giveaways SET ended = ?3, winner_ids = ?2, announced = 0 WHERE id = ?1 AND ended = ?4", params![id, join_ids(winners), ENDED, DRAWING])
 }
 
 /// Messages were deleted in a channel: cancel any running giveaway whose post was one of them,
@@ -858,8 +884,9 @@ async fn refresh(ctx: &Ctx, g: &Giveaway, entries: i64) {
     }
 }
 
-/// Post `content` in the giveaway's channel, as a reply to its post, pinging only `ping`.
-async fn announce(ctx: &Ctx, g: &Giveaway, content: &str, ping: &[u64]) {
+/// Post `content` in the giveaway's channel, as a reply to its post, pinging only `ping`. False
+/// when Discord refused it.
+async fn announce(ctx: &Ctx, g: &Giveaway, content: &str, ping: &[u64]) -> bool {
     let mentions = AllowedMentions { users: ping.iter().filter_map(|u| Id::new_checked(*u)).collect(), ..Default::default() };
     let mut req = ctx.http.create_message(Id::new(g.channel_id)).content(content).allowed_mentions(Some(&mentions));
     if let Some(m) = g.message_id {
@@ -867,7 +894,9 @@ async fn announce(ctx: &Ctx, g: &Giveaway, content: &str, ping: &[u64]) {
     }
     if let Err(e) = req.await {
         tracing::warn!(giveaway = g.id, error = %e, "couldn't announce giveaway winners");
+        return false;
     }
+    true
 }
 
 /// A test for the dashboard, in `to`'s DMs: how this giveaway's end looks, with `to` as the
@@ -897,6 +926,13 @@ fn due(c: &Connection, guild: u64, now: i64) -> bot_core::rusqlite::Result<(Vec<
     Ok((due, stuck))
 }
 
+/// Ended giveaways whose winners weren't announced, from the last hour (after that a late
+/// "you won" would only confuse), leaving the first few minutes to the draw that ended them.
+fn unannounced(c: &Connection, guild: u64, now: i64) -> bot_core::rusqlite::Result<Vec<i64>> {
+    let mut s = c.prepare_cached("SELECT id FROM giveaways WHERE guild_id = ?1 AND ended = 1 AND announced = 0 AND ended_at < ?2 AND ended_at > ?3")?;
+    s.query_map(params![id_i64(guild), now - STUCK_MS, now - 3_600_000], |r| r.get(0))?.collect()
+}
+
 /// End every giveaway whose time is up, and draw again any whose draw was cut short.
 pub async fn tick(ctx: &Ctx) {
     for guild in ctx.enabled_guilds(KEY) {
@@ -916,6 +952,11 @@ pub async fn tick(ctx: &Ctx) {
         for id in stuck {
             if let Err(e) = redraw(ctx, id, now).await {
                 tracing::warn!(guild, giveaway = id, error = %e, "couldn't draw a giveaway again");
+            }
+        }
+        for id in ctx.db.with(|c| unannounced(c, guild, now)).unwrap_or_default() {
+            if let Err(e) = reannounce(ctx, id).await {
+                tracing::warn!(guild, giveaway = id, error = %e, "couldn't announce a giveaway again");
             }
         }
     }
@@ -1180,6 +1221,13 @@ mod tests {
             // A second draw finds it finished.
             assert_eq!(store_winners(c, 1, &[6])?, 0);
             assert_eq!(due(c, 9, 10 * STUCK_MS)?, (vec![], vec![]));
+            // Stored but not announced: the tick tries again after the draw's own few minutes,
+            // for an hour.
+            assert!(unannounced(c, 9, 1000 + STUCK_MS)?.is_empty());
+            assert_eq!(unannounced(c, 9, 1001 + STUCK_MS)?, vec![1]);
+            assert!(unannounced(c, 9, 1000 + 3_600_000)?.is_empty());
+            c.execute("UPDATE giveaways SET announced = 1 WHERE id = 1", [])?;
+            assert!(unannounced(c, 9, 1001 + STUCK_MS)?.is_empty());
             Ok(())
         })
         .unwrap();

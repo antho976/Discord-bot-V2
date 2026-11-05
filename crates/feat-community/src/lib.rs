@@ -90,6 +90,11 @@ const MIGRATIONS: &[Migration] = &[Migration {
 }, Migration {
     name: "006_giveaway_emoji",
     sql: "ALTER TABLE giveaways ADD COLUMN emoji TEXT NOT NULL DEFAULT '';",
+}, Migration {
+    // 0 while an ended giveaway's winners haven't been announced yet, so `tick` can try again
+    // after a crash or a failed post. Giveaways that ended before this count as announced.
+    name: "007_giveaway_announced",
+    sql: "ALTER TABLE giveaways ADD COLUMN announced INTEGER NOT NULL DEFAULT 1;",
 }];
 
 #[feature_async]
