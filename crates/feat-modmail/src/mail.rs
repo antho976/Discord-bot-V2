@@ -30,9 +30,10 @@ const DAY_MS: i64 = 86_400_000;
 const HOLD: Duration = Duration::from_secs(600);
 /// The most messages held for one member while they pick.
 const MAX_HELD: usize = 10;
-/// The most a message's copied files weigh together. Discord takes 10 MB uploads from a bot
-/// anywhere (more only in boosted servers); a set that would pass this stays as links.
-const COPY_MAX: u64 = 8 * 1024 * 1024;
+/// The most a message's copied files weigh together; a set that would pass this stays as links.
+/// Well under the 10 MB Discord takes from a bot anywhere, so the upload also fits in the HTTP
+/// client's 10 seconds on a home connection.
+const COPY_MAX: u64 = 4 * 1024 * 1024;
 /// How long copying one message's files may take before the rest go as links.
 const COPY_TIME: Duration = Duration::from_secs(30);
 
@@ -389,19 +390,20 @@ async fn download(ctx: &Ctx, url: &str, size: u64) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Discord refused an upload as too large for that channel.
-fn too_large(e: &bot_core::twilight_http::Error) -> bool {
-    matches!(e.kind(), bot_core::twilight_http::error::ErrorType::Response { status, .. } if status.get() == 413)
+/// Discord refused an upload: too large for that channel (413), or no Attach Files there (403).
+/// Without the files the message may still go.
+fn files_refused(e: &bot_core::twilight_http::Error) -> bool {
+    matches!(e.kind(), bot_core::twilight_http::error::ErrorType::Response { status, .. } if matches!(status.get(), 403 | 413))
 }
 
 /// Post a carried message as an embed, its files copied onto it where they fit. If Discord
-/// refuses the files as too large, it goes again with every file as a link.
+/// refuses the files, it goes again with every file as a link.
 async fn post_carried(ctx: &Ctx, channel: Id<ChannelMarker>, author: &str, avatar: &str, footer: Option<&str>, content: &str, files: &[File]) -> std::result::Result<(), bot_core::twilight_http::Error> {
     let none = AllowedMentions::default();
     let (copies, links) = copy_files(ctx, files).await;
     let first = embed(author, avatar, &body(content, &links, copies.len()), footer);
     match ctx.http.create_message(channel).embeds(&[first]).attachments(&copies).allowed_mentions(Some(&none)).await {
-        Err(e) if !copies.is_empty() && too_large(&e) => {
+        Err(e) if !copies.is_empty() && files_refused(&e) => {
             let all: Vec<_> = files.iter().map(File::link).collect();
             let again = embed(author, avatar, &body(content, &all, 0), footer);
             ctx.http.create_message(channel).embeds(&[again]).allowed_mentions(Some(&none)).await.map(|_| ())
@@ -827,6 +829,10 @@ pub async fn on_staff_message(f: &Modmail, ctx: &Ctx, guild: u64, m: &Message) -
         f.drop_thread(channel);
         return note_closed(f, ctx, guild, channel).await;
     };
+    // One conversation's replies go out one at a time, in order: a reply carrying a file takes
+    // longer to send than the text after it.
+    let turn = f.turn(conv.user_id);
+    let _turn = turn.lock().await;
     let staff = m.author.id.get();
     let staff_name = m
         .member
@@ -1246,9 +1252,9 @@ mod tests {
     #[test]
     fn files_are_copied_while_they_fit() {
         let f = |size: u64| File { name: "a.png".into(), url: String::new(), size };
-        let mb = 1024 * 1024;
+        let u = COPY_MAX / 8;
         // In order, while the total fits; a big one goes as a link and smaller ones after it still fit.
-        assert_eq!(to_copy(&[f(3 * mb), f(6 * mb), f(4 * mb), f(2 * mb)]), vec![true, false, true, false]);
+        assert_eq!(to_copy(&[f(3 * u), f(6 * u), f(4 * u), f(2 * u)]), vec![true, false, true, false]);
         assert_eq!(to_copy(&[f(COPY_MAX + 1), f(0)]), vec![false, false]);
         // At most 10 a message.
         assert_eq!(to_copy(&vec![f(1); 12]).iter().filter(|c| **c).count(), 10);

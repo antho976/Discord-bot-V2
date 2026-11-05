@@ -98,9 +98,13 @@ impl Ctx {
         }
         let everyone = self.cache.role(g.cast())?.permissions;
         let owner = self.cache.guild(g).is_some_and(|x| x.owner_id().get() == user);
-        let roles: Vec<u64> = self.cache.member(g, Id::new_checked(user)?)?.roles().iter().map(|r| r.get()).collect();
+        let member = self.cache.member(g, Id::new_checked(user)?)?;
+        let roles: Vec<u64> = member.roles().iter().map(|r| r.get()).collect();
         let role_perms: HashMap<u64, Permissions> = roles.iter().filter_map(|r| self.cache.role(Id::new(*r)).map(|role| (*r, role.permissions))).collect();
-        Some(member_permissions(guild, owner, everyone, &role_perms, &roles, user, &s.overwrites))
+        let p = member_permissions(guild, owner, everyone, &role_perms, &roles, user, &s.overwrites);
+        // A member in a timeout only reads, unless they're the owner or an administrator.
+        let timed_out = member.communication_disabled_until().is_some_and(|t| t.as_micros() / 1000 > crate::now_ms());
+        Some(if timed_out && p != Permissions::all() { p & (Permissions::VIEW_CHANNEL | Permissions::READ_MESSAGE_HISTORY) } else { p })
     }
 
     /// Forget a server's kept answers: its channels, roles or members changed.
@@ -218,5 +222,19 @@ mod tests {
         assert_eq!(sees(999, 10), None);
         assert_eq!(sees(101, 999), None);
         assert_eq!(ctx.member_perms_in(2, 101, 10), None);
+        // A member in a timeout still reads but can't post.
+        let send = Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES;
+        let role = |id: u64, perms: Permissions| {
+            let v = serde_json::json!({"guild_id": "1", "role": {"id": id.to_string(), "name": "r", "color": 0, "colors": {"primary_color": 0}, "hoist": false, "managed": false, "mentionable": false, "permissions": perms.bits().to_string(), "position": id, "flags": 0}});
+            ctx.cache.update(&Event::RoleUpdate(serde_json::from_value(v).unwrap()));
+        };
+        role(2, send);
+        assert!(ctx.member_perms_in(1, 101, 10).unwrap().contains(send));
+        let v = serde_json::json!({"guild_id": "1", "roles": ["2"], "joined_at": "2025-01-01T00:00:00+00:00", "deaf": false, "mute": false, "flags": 0,
+            "communication_disabled_until": "2999-01-01T00:00:00+00:00",
+            "user": {"id": "101", "username": "u", "discriminator": "0", "avatar": null}});
+        ctx.cache.update(&Event::MemberAdd(Box::new(serde_json::from_value(v).unwrap())));
+        let p = ctx.member_perms_in(1, 101, 10).unwrap();
+        assert!(p.contains(Permissions::VIEW_CHANNEL) && !p.contains(Permissions::SEND_MESSAGES));
     }
 }

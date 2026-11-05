@@ -65,6 +65,9 @@ struct Row {
     prestige: Option<i64>,
 }
 
+/// Marks a file's settings as using its own curve, until the curve is read. No real level is this high.
+const CUSTOM_MARK: u32 = u32::MAX;
+
 /// The most prestige the dashboard lets staff set; imports are held to it too.
 const MAX_PRESTIGE: i64 = 1000;
 
@@ -154,14 +157,20 @@ pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode, any_role
                                 .unwrap_or_else(|| current.message.clone()),
                             stack_rewards: flag(13, current.stack_rewards)?,
                             voice_require_active: flag(14, current.voice_require_active)?,
-                            custom_curve: if loose_text(r, 5)?.as_deref() == Some("custom") { BTreeMap::from([(0, 0)]) } else { BTreeMap::new() },
+                            // "custom" is marked here and read from level_curve below; an empty
+                            // curve type keeps the curve set here, like the other settings.
+                            custom_curve: match loose_text(r, 5)? {
+                                Some(t) if t == "custom" => BTreeMap::from([(CUSTOM_MARK, 0)]),
+                                Some(_) => BTreeMap::new(),
+                                None => current.custom_curve.clone(),
+                            },
                             ..(*current).clone()
                         })
                     },
                 )
                 .optional()?;
             if let Some(mut s) = cfg {
-                if s.custom_curve.remove(&0).is_some() && has("level_curve") {
+                if s.custom_curve.remove(&CUSTOM_MARK).is_some() && has("level_curve") {
                     let mut stmt = src.prepare("SELECT level, xp_required FROM level_curve WHERE guild_id = ?1")?;
                     // Points with a missing or impossible level or XP are left out.
                     s.custom_curve = stmt
@@ -586,7 +595,7 @@ mod tests {
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
     async fn empty_values_in_an_old_file_dont_stop_the_import() {
         let ctx = two_servers();
-        let mine = Settings { xp_min: 7, cooldown_secs: 45, announce: true, ..Default::default() };
+        let mine = Settings { xp_min: 7, cooldown_secs: 45, announce: true, custom_curve: BTreeMap::from([(1, 50), (2, 400)]), ..Default::default() };
         ctx.save_settings(1, KEY, &mine).unwrap();
         // NULL counts, ids stored as numbers, a row with no user, and settings left empty.
         let path = old_db(
@@ -605,6 +614,7 @@ mod tests {
         assert_eq!((s.xp_min, s.xp_max, s.cooldown_secs, s.voice_xp, s.curve_base), (7, 20, 45, 4, 120));
         assert!(s.announce);
         assert_eq!(s.curve_factor, Settings::default().curve_factor);
+        assert_eq!(s.custom_curve, mine.custom_curve, "no curve type in the file keeps the curve set here");
         assert_eq!(crate::rewards(&ctx, 1).unwrap(), vec![(5, 100)]);
     }
 
