@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use bot_core::anyhow::{Context, Result, bail};
+use bot_core::rusqlite::types::ValueRef;
 use bot_core::rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use bot_core::serde_json;
 use bot_core::{Ctx, text};
@@ -100,20 +101,13 @@ pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode, any_role
     let mut rows = Vec::new();
     {
         let mut stmt = src.prepare("SELECT guild_id, user_id, xp, messages, voice_minutes, prestige FROM levels")?;
-        let it = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)?,
-                r.get::<_, i64>(3)?,
-                r.get::<_, i64>(4)?,
-                r.get::<_, Option<i64>>(5)?,
-            ))
-        })?;
+        // Read loosely, value by value: a NULL or a number stored as text in one row shouldn't
+        // stop the whole import. A missing count is 0; a row without both ids is skipped.
+        let it = stmt.query_map([], |r| Ok((loose_text(r, 0)?, loose_text(r, 1)?, loose_int(r, 2)?, loose_int(r, 3)?, loose_int(r, 4)?, loose_int(r, 5)?)))?;
         for row in it {
             let (g, u, xp, messages, voice_minutes, prestige) = row?;
-            let (Some(guild), Some(user)) = (id(&g), id(&u)) else { continue };
-            rows.push(Row { guild, user, xp, messages, voice_minutes, prestige });
+            let (Some(guild), Some(user)) = (g.as_deref().and_then(id), u.as_deref().and_then(id)) else { continue };
+            rows.push(Row { guild, user, xp: xp.unwrap_or(0), messages: messages.unwrap_or(0), voice_minutes: voice_minutes.unwrap_or(0), prestige });
         }
     }
 
@@ -134,31 +128,33 @@ pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode, any_role
                      FROM level_config WHERE guild_id = ?1",
                     [guild.to_string()],
                     |r| {
+                        // A setting the file leaves empty (NULL) keeps the one set here.
+                        let int = |i: usize, here: i64| loose_int(r, i).map(|v| v.unwrap_or(here));
+                        let flag = |i: usize, here: bool| loose_int(r, i).map(|v| v.map_or(here, |n| n != 0));
                         Ok(Settings {
-                            xp_min: r.get(0)?,
-                            xp_max: r.get(1)?,
-                            cooldown_secs: r.get(2)?,
-                            voice_xp: r.get(3)?,
-                            reaction_xp: r.get(4)?,
-                            curve_base: r.get(6)?,
-                            curve_factor: r.get(7)?,
-                            announce: r.get(8)?,
+                            xp_min: int(0, current.xp_min)?,
+                            xp_max: int(1, current.xp_max)?,
+                            cooldown_secs: int(2, current.cooldown_secs)?,
+                            voice_xp: int(3, current.voice_xp)?,
+                            reaction_xp: int(4, current.reaction_xp)?,
+                            curve_base: int(6, current.curve_base)?,
+                            curve_factor: loose_real(r, 7)?.unwrap_or(current.curve_factor),
+                            announce: flag(8, current.announce)?,
                             // None posts where the member levelled up, in both bots. A channel
                             // that isn't this server's keeps the one set here.
-                            announce_channel: match r.get::<_, Option<String>>(9)?.filter(|c| !c.trim().is_empty()) {
+                            announce_channel: match loose_text(r, 9)?.filter(|c| !c.trim().is_empty()) {
                                 None => None,
                                 Some(c) => file_channel(ctx, *guild, &c).or(current.announce_channel),
                             },
-                            announce_ping: r.get(10)?,
-                            announce_min_level: r.get::<_, i64>(11)?.clamp(0, 500) as u32,
-                            message: r
-                                .get::<_, Option<String>>(12)?
+                            announce_ping: flag(10, current.announce_ping)?,
+                            announce_min_level: int(11, current.announce_min_level as i64)?.clamp(0, 500) as u32,
+                            message: loose_text(r, 12)?
                                 .filter(|m| !m.trim().is_empty())
                                 .map(|m| text::clip(&m, 500))
                                 .unwrap_or_else(|| current.message.clone()),
-                            stack_rewards: r.get(13)?,
-                            voice_require_active: r.get(14)?,
-                            custom_curve: if r.get::<_, String>(5)? == "custom" { BTreeMap::from([(0, 0)]) } else { BTreeMap::new() },
+                            stack_rewards: flag(13, current.stack_rewards)?,
+                            voice_require_active: flag(14, current.voice_require_active)?,
+                            custom_curve: if loose_text(r, 5)?.as_deref() == Some("custom") { BTreeMap::from([(0, 0)]) } else { BTreeMap::new() },
                             ..(*current).clone()
                         })
                     },
@@ -167,8 +163,14 @@ pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode, any_role
             if let Some(mut s) = cfg {
                 if s.custom_curve.remove(&0).is_some() && has("level_curve") {
                     let mut stmt = src.prepare("SELECT level, xp_required FROM level_curve WHERE guild_id = ?1")?;
+                    // Points with a missing or impossible level or XP are left out.
                     s.custom_curve = stmt
-                        .query_map([guild.to_string()], |r| Ok((r.get::<_, i64>(0)? as u32, r.get::<_, i64>(1)?)))?
+                        .query_map([guild.to_string()], |r| Ok((loose_int(r, 0)?, loose_int(r, 1)?)))?
+                        .filter_map(|p| match p {
+                            Ok((Some(level), Some(xp))) => u32::try_from(level).ok().map(|l| Ok((l, xp))),
+                            Ok(_) => None,
+                            Err(e) => Some(Err(e)),
+                        })
                         .collect::<Result<_, _>>()?;
                 }
                 // The old bot didn't check these; hold them to what the settings page allows.
@@ -190,9 +192,9 @@ pub fn import_db(ctx: &Ctx, path: &Path, only: Option<u64>, mode: Mode, any_role
     if has("level_rewards") {
         let mut stmt = src.prepare("SELECT guild_id, level, role_id FROM level_rewards")?;
         let rewards: Vec<(u64, i64, u64)> = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)))?
+            .query_map([], |r| Ok((loose_text(r, 0)?, loose_int(r, 1)?, loose_text(r, 2)?)))?
             .filter_map(|r| r.ok())
-            .filter_map(|(g, l, role)| Some((id(&g)?, l, id(&role)?)))
+            .filter_map(|(g, l, role)| Some((id(&g?)?, l?, id(&role?)?)))
             // Only the servers being imported: roles of other servers in the file aren't looked at.
             .filter(|(g, _, _)| targets.contains(g))
             // The levels the rewards page takes. A reward at level 0 would go to everyone.
@@ -242,6 +244,37 @@ pub fn import_json(ctx: &Ctx, bytes: &[u8], only: Option<u64>, mode: Mode) -> Re
     let targets = targets(ctx, &rows, only, &mut report);
     write_rows(ctx, &rows, &targets, mode, &mut report)?;
     Ok(report)
+}
+
+/// A whole number from the old file however it was stored (as a number, a decimal or text).
+/// None for NULL, a blob or text that isn't a number.
+fn loose_int(r: &bot_core::rusqlite::Row<'_>, i: usize) -> bot_core::rusqlite::Result<Option<i64>> {
+    Ok(match r.get_ref(i)? {
+        ValueRef::Integer(n) => Some(n),
+        ValueRef::Real(f) if f.is_finite() => Some(f as i64),
+        ValueRef::Text(t) => std::str::from_utf8(t).ok().and_then(|s| s.trim().parse().ok()),
+        _ => None,
+    })
+}
+
+/// A decimal from the old file, like [`loose_int`].
+fn loose_real(r: &bot_core::rusqlite::Row<'_>, i: usize) -> bot_core::rusqlite::Result<Option<f64>> {
+    Ok(match r.get_ref(i)? {
+        ValueRef::Integer(n) => Some(n as f64),
+        ValueRef::Real(f) => Some(f),
+        ValueRef::Text(t) => std::str::from_utf8(t).ok().and_then(|s| s.trim().parse().ok()),
+        _ => None,
+    }
+    .filter(|f| f.is_finite()))
+}
+
+/// Text from the old file; an id stored as a number reads as its digits. None for NULL or a blob.
+fn loose_text(r: &bot_core::rusqlite::Row<'_>, i: usize) -> bot_core::rusqlite::Result<Option<String>> {
+    Ok(match r.get_ref(i)? {
+        ValueRef::Integer(n) => Some(n.to_string()),
+        ValueRef::Text(t) => Some(String::from_utf8_lossy(t).into_owned()),
+        _ => None,
+    })
 }
 
 /// An id from the file. 0 is never a Discord id, so it counts as none, like text that isn't a number.
@@ -548,6 +581,31 @@ mod tests {
         assert_eq!(crate::rewards(&ctx, 1).unwrap(), vec![(5, 100)]);
         let prestige = |user| crate::member(&ctx, 1, user).unwrap().unwrap().prestige;
         assert_eq!((prestige(11), prestige(12), prestige(13)), (MAX_PRESTIGE, 0, 0));
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn empty_values_in_an_old_file_dont_stop_the_import() {
+        let ctx = two_servers();
+        let mine = Settings { xp_min: 7, cooldown_secs: 45, announce: true, ..Default::default() };
+        ctx.save_settings(1, KEY, &mine).unwrap();
+        // NULL counts, ids stored as numbers, a row with no user, and settings left empty.
+        let path = old_db(
+            "INSERT INTO levels VALUES ('1', '11', NULL, NULL, NULL, NULL), (1, 12, 300, '4', 2.0, 1), ('1', NULL, 900, 0, 0, 0);
+             INSERT INTO level_config VALUES ('1', NULL, 20, NULL, 4, 0, NULL, 120, NULL, NULL, NULL, 0, NULL, NULL, 1, NULL);
+             INSERT INTO level_rewards VALUES ('1', NULL, '100'), (1, 5, 100);",
+        );
+        let report = import_db(&ctx, &path, Some(1), Mode::Replace, false).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(report.imported, vec![(1, 2)]);
+        assert_eq!(crate::member(&ctx, 1, 11).unwrap().unwrap().xp, 0);
+        let m = crate::member(&ctx, 1, 12).unwrap().unwrap();
+        assert_eq!((m.xp, m.prestige), (300, 1));
+        let s = ctx.settings::<Settings>(1, KEY).unwrap();
+        // The file's settings came over; the empty ones kept what was set here.
+        assert_eq!((s.xp_min, s.xp_max, s.cooldown_secs, s.voice_xp, s.curve_base), (7, 20, 45, 4, 120));
+        assert!(s.announce);
+        assert_eq!(s.curve_factor, Settings::default().curve_factor);
+        assert_eq!(crate::rewards(&ctx, 1).unwrap(), vec![(5, 100)]);
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]

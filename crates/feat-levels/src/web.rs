@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use bot_core::axum::body::Bytes;
-use bot_core::axum::extract::{DefaultBodyLimit, Path, Query, State};
+use bot_core::axum::body::{Body, Bytes};
+use bot_core::axum::extract::{Path, Query, State};
 use bot_core::axum::response::{IntoResponse, Json, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::axum::Router;
@@ -27,7 +27,7 @@ pub fn routes() -> Router<Ctx> {
         .route("/g/{guild}/levels/rewards/{level}/edit", post(edit_reward))
         .route("/g/{guild}/levels/members", get(|Path(guild): Path<u64>| async move { Redirect::to(&format!("/g/{guild}/levels")) }))
         .route("/g/{guild}/levels/members/{user}", post(set_member_xp))
-        .route("/g/{guild}/levels/import", get(import_page).post(import_upload).layer(DefaultBodyLimit::max(64 * 1024 * 1024)))
+        .route("/g/{guild}/levels/import", get(import_page).post(import_upload))
         .route("/g/{guild}/levels/import-local", post(import_local))
 }
 
@@ -1468,8 +1468,16 @@ struct ImportQuery {
     mode: Option<String>,
 }
 
-async fn import_upload(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<ImportQuery>, body: Bytes) -> WebResult {
+/// The largest file the import reads.
+const MAX_IMPORT: usize = 64 * 1024 * 1024;
+
+/// The body is read only after the access check, so someone without access can't make the bot
+/// buffer 64 MB uploads.
+async fn import_upload(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Query(q): Query<ImportQuery>, body: Body) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    let Ok(body) = bot_core::axum::body::to_bytes(body, MAX_IMPORT).await else {
+        return Err(WebError::Bad("That file is too large to import (64 MB at most).".into()));
+    };
     let mode = if q.mode.as_deref() == Some("higher") { import::Mode::KeepHigher } else { import::Mode::Replace };
     let res = tokio_blocking(ctx.clone(), body, guild, mode, page.user.admin).await;
     let (ok, message) = match res {
