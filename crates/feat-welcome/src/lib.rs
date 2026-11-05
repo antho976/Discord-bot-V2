@@ -214,6 +214,10 @@ impl Feature for Welcome {
             if let Err(e) = roles::prune(ctx, guild, s.rejoin_days.max(1)) {
                 bot_core::tracing::warn!(guild, error = %e, "couldn't prune saved roles");
             }
+            // Someone who accepted the rules while the bot was offline sent no update it saw.
+            if bot_core::tokio::time::timeout(Duration::from_secs(10), catch_up_screening(ctx, guild)).await.is_err() {
+                bot_core::tracing::warn!(guild, "checking rules screening took over 10 seconds; trying again next minute");
+            }
         }
         Ok(())
     }
@@ -278,16 +282,15 @@ impl Welcome {
         Ok(())
     }
 
-    /// A member who joined during rules screening has accepted the rules: they get the roles
-    /// held back at join. Only the first update after accepting finds them waiting.
+    /// A member who joined during rules screening may have accepted the rules: they get the
+    /// roles held back at join. Discord can leave `pending` out of an update, which reads as
+    /// false, so Discord is asked first; that call is only made for members still waiting.
     async fn screened(&self, ctx: &Ctx, m: &MemberUpdate) -> Result<()> {
         let guild = m.guild_id.get();
         let user = m.user.id.get();
-        if !roles::take_screened(ctx, guild, user)? {
-            return Ok(());
+        if roles::is_screening(ctx, guild, user)? {
+            release_if_accepted(ctx, guild, user, m.user.bot).await?;
         }
-        let s = ctx.settings::<Settings>(guild, KEY)?;
-        give_roles(ctx, &s, guild, user, m.user.bot, &m.roles.iter().map(|r| r.get()).collect::<Vec<_>>()).await;
         Ok(())
     }
 
@@ -445,6 +448,56 @@ fn notify_failure(ctx: &Ctx, guild: u64, kind: &'static str, text: String) {
         last.insert((guild, kind), Instant::now());
     }
     ctx.notify(Some(guild), KEY, text, Some(format!("/g/{guild}/{KEY}")));
+}
+
+/// Give a member waiting on rules screening their roles once Discord says they've accepted.
+/// Gone from the server: their note goes.
+async fn release_if_accepted(ctx: &Ctx, guild: u64, user: u64, bot: bool) -> Result<()> {
+    let (Some(guild_id), Some(user_id)) = (Id::new_checked(guild), Id::new_checked(user)) else { return Ok(()) };
+    let member = match ctx.http.guild_member(guild_id, user_id).await {
+        Ok(r) => r.model().await?,
+        Err(e) if bot_core::discord::is_not_found(&e) => {
+            roles::take_screened(ctx, guild, user)?;
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
+    // Only the first to clear the note gives the roles.
+    if member.pending || !roles::take_screened(ctx, guild, user)? {
+        return Ok(());
+    }
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    give_roles(ctx, &s, guild, user, bot, &member.roles.iter().map(|r| r.get()).collect::<Vec<_>>()).await;
+    Ok(())
+}
+
+/// Members still noted as waiting on rules screening whom the cache already shows as past it,
+/// a few a minute. Each is confirmed with Discord before getting roles.
+async fn catch_up_screening(ctx: &Ctx, guild: u64) {
+    let waiting = match roles::screening(ctx, guild, 200) {
+        Ok(w) => w,
+        Err(e) => {
+            bot_core::tracing::warn!(guild, error = %e, "couldn't read members waiting on rules screening");
+            return;
+        }
+    };
+    let Some(guild_id) = Id::new_checked(guild) else { return };
+    let mut asked = 0;
+    for user in waiting {
+        let Some(user_id) = Id::new_checked(user) else { continue };
+        // Not cached (member lists still loading, or they left unseen) or still pending: wait.
+        if !ctx.cache.member(guild_id, user_id).is_some_and(|m| !m.pending()) {
+            continue;
+        }
+        if asked == 5 {
+            break;
+        }
+        asked += 1;
+        let bot = ctx.cache.user(user_id).is_some_and(|u| u.bot);
+        if let Err(e) = release_if_accepted(ctx, guild, user, bot).await {
+            bot_core::tracing::warn!(guild, user, error = %e, "couldn't check a member's rules screening");
+        }
+    }
 }
 
 /// Auto-roles, plus the roles a returning member left with. Each role is tried on its own so

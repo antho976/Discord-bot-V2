@@ -51,6 +51,28 @@ pub fn hold_for_screening(ctx: &Ctx, guild: u64, user: u64) -> Result<()> {
     Ok(())
 }
 
+/// Whether a member is noted as waiting on rules screening.
+pub fn is_screening(ctx: &Ctx, guild: u64, user: u64) -> Result<bool> {
+    ctx.db.with(|c| {
+        c.query_row(
+            "SELECT EXISTS (SELECT 1 FROM welcome_screening WHERE guild_id = ?1 AND user_id = ?2)",
+            params![guild as i64, user as i64],
+            |r| r.get(0),
+        )
+    })
+}
+
+/// Members noted as waiting on rules screening, longest waiting first. Notes over 30 days old
+/// are dropped first: someone who left while the bot was offline is never seen leaving.
+pub fn screening(ctx: &Ctx, guild: u64, limit: i64) -> Result<Vec<u64>> {
+    let cutoff = bot_core::now_ms() - 30 * 86_400_000;
+    ctx.db.with(|c| {
+        c.execute("DELETE FROM welcome_screening WHERE guild_id = ?1 AND joined_at < ?2", params![guild as i64, cutoff])?;
+        let mut q = c.prepare_cached("SELECT user_id FROM welcome_screening WHERE guild_id = ?1 ORDER BY joined_at LIMIT ?2")?;
+        q.query_map(params![guild as i64, limit], |r| r.get::<_, i64>(0).map(|u| u as u64))?.collect::<Result<Vec<_>, _>>()
+    })
+}
+
 /// Clear a member's screening note. True when there was one, so of two updates at once only one
 /// gives the roles.
 pub fn take_screened(ctx: &Ctx, guild: u64, user: u64) -> Result<bool> {
@@ -172,5 +194,20 @@ mod tests {
         mark_restored(&ctx, 1, 11, &[100]).unwrap();
         forget(&ctx, 1, 11).unwrap();
         assert_eq!(recently_restored(&ctx, 1, 10).unwrap().len(), 1);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn screening_notes_are_taken_once() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Welcome::default())]).unwrap();
+        hold_for_screening(&ctx, 1, 10).unwrap();
+        hold_for_screening(&ctx, 1, 10).unwrap();
+        hold_for_screening(&ctx, 2, 11).unwrap();
+        assert!(is_screening(&ctx, 1, 10).unwrap());
+        assert_eq!(screening(&ctx, 1, 50).unwrap(), vec![10], "per server");
+        assert!(take_screened(&ctx, 1, 10).unwrap());
+        assert!(!take_screened(&ctx, 1, 10).unwrap(), "only the first take gives the roles");
+        assert!(!is_screening(&ctx, 1, 10).unwrap());
+        assert!(is_screening(&ctx, 2, 11).unwrap());
     }
 }
