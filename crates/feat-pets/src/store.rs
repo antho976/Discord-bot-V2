@@ -493,13 +493,15 @@ fn insert_owned(c: &rusqlite::Connection, guild: u64, pet_id: &str, added_by: u6
 }
 
 /// Remove up to `qty` copies, oldest first, preferring copies `prefer` gave. `plus` picks Pet+
-/// copies or plain ones; `None` takes either, plain ones first. Returns how many went.
+/// copies or plain ones; `None` takes either, plain ones first. The giver preference comes
+/// before plain-first, so a giver's Pet+ goes before someone else's plain copy. Returns how
+/// many went.
 pub fn remove_owned(ctx: &Ctx, guild: u64, pet_id: &str, qty: i64, prefer: Option<u64>, plus: Option<bool>) -> Result<i64> {
     ctx.db.with(|c| {
         let n = c.execute(
             "DELETE FROM pets_owned WHERE id IN (
                SELECT id FROM pets_owned WHERE guild_id = ?1 AND pet_id = ?2 AND (?5 IS NULL OR plus = ?5)
-               ORDER BY plus, (given_by = ?3) DESC, added_at, id LIMIT ?4)",
+               ORDER BY (given_by = ?3) DESC, plus, added_at, id LIMIT ?4)",
             params![guild as i64, pet_id, prefer.map(|p| p as i64).unwrap_or(-1), qty.max(0), plus],
         )?;
         Ok(n as i64)
@@ -1151,6 +1153,16 @@ mod flow {
         assert_eq!(remove_owned(&ctx, g, "slime", 1, None, Some(false)).unwrap(), 0, "no plain copies left");
         assert_eq!(remove_owned(&ctx, g, "slime", 5, None, Some(true)).unwrap(), 2);
         assert!(plus_counts(&ctx, g).unwrap().is_empty());
+
+        // A confirmed giveaway takes the giver's copy, even when it's their Pet+ and someone
+        // else gave a plain one.
+        let (mira, oskar) = (7, 8);
+        add_owned(&ctx, g, "slime", mira, mira, 1, true, "Antho").unwrap();
+        add_owned(&ctx, g, "slime", oskar, oskar, 1, false, "Antho").unwrap();
+        assert_eq!(remove_owned(&ctx, g, "slime", 1, Some(mira), None).unwrap(), 1);
+        assert!(contributions(&ctx, g, mira).unwrap().iter().all(|o| o.pet_id != "slime"), "Mira's Pet+ went");
+        assert_eq!(contributions(&ctx, g, oskar).unwrap().iter().filter(|o| o.pet_id == "slime").count(), 1, "Oskar's plain copy stays");
+        assert_eq!(remove_owned(&ctx, g, "slime", 1, None, None).unwrap(), 1);
 
         let mut slime = super::pet(&ctx, g, "slime").unwrap().unwrap();
         slime.plus_bonus = "+50% Golden Balls".into();
