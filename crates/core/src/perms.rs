@@ -86,6 +86,23 @@ impl Ctx {
         ok
     }
 
+    /// What a member may do in a channel (a thread goes by its parent's overwrites), from the
+    /// cache. None when the cache doesn't have the server, the channel or the member: unknown
+    /// counts as nothing allowed.
+    pub fn member_perms_in(&self, guild: u64, user: u64, channel: u64) -> Option<Permissions> {
+        let g = Id::<GuildMarker>::new_checked(guild)?;
+        let s = seen(self, channel)?;
+        let c = self.cache.channel(Id::new_checked(channel)?)?;
+        if c.guild_id != Some(g) {
+            return None;
+        }
+        let everyone = self.cache.role(g.cast())?.permissions;
+        let owner = self.cache.guild(g).is_some_and(|x| x.owner_id().get() == user);
+        let roles: Vec<u64> = self.cache.member(g, Id::new_checked(user)?)?.roles().iter().map(|r| r.get()).collect();
+        let role_perms: HashMap<u64, Permissions> = roles.iter().filter_map(|r| self.cache.role(Id::new(*r)).map(|role| (*r, role.permissions))).collect();
+        Some(member_permissions(guild, owner, everyone, &role_perms, &roles, user, &s.overwrites))
+    }
+
     /// Forget a server's kept answers: its channels, roles or members changed.
     pub(crate) fn forget_seen(&self, guild: u64) {
         self.seen.lock().unwrap().retain(|k, _| k.0 != guild);
@@ -191,5 +208,15 @@ mod tests {
         assert!(!ctx.readers_can_see(1, 10, 12));
         // Unknown channels count as private.
         assert!(!ctx.readers_can_see(1, 10, 999));
+
+        // One member's own permissions: a mod opens the mods' channel, a plain member doesn't;
+        // a member, channel or server the cache doesn't have allows nothing.
+        let sees = |user: u64, channel: u64| ctx.member_perms_in(1, user, channel).map(|p| p.contains(Permissions::VIEW_CHANNEL));
+        assert_eq!(sees(100, 13), Some(true));
+        assert_eq!(sees(101, 13), Some(false));
+        assert_eq!(sees(101, 10), Some(true));
+        assert_eq!(sees(999, 10), None);
+        assert_eq!(sees(101, 999), None);
+        assert_eq!(ctx.member_perms_in(2, 101, 10), None);
     }
 }

@@ -6,6 +6,7 @@ use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_http::error::ErrorType;
 use bot_core::twilight_model::channel::message::{AllowedMentions, Embed, MentionType};
+use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
 use bot_core::web::ui::{self, Tone};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
@@ -95,7 +96,7 @@ fn render(ctx: &Ctx, page: &Page, v: View<'_>) -> bot_core::anyhow::Result<Marku
     let d = &v.data;
     let color_ok = model::parse_color(&d.color).map(|c| format!("#{c:06x}"));
     let mut options = vec![(String::new(), "Pick a channel".to_owned())];
-    options.extend(channels.iter().map(|(id, n)| (id.to_string(), format!("#{n}"))));
+    options.extend(targets(ctx, page).iter().map(|(id, n)| (id.to_string(), format!("#{n}"))));
     let selected = v.channel.map(|c| c.to_string()).unwrap_or_default();
     let picked = v.channel.and_then(|c| channels.iter().find(|(id, _)| *id == c)).map(|(_, n)| n.clone());
     let can_edit = page.can_edit();
@@ -437,7 +438,7 @@ async fn send(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, form: 
     if let Err(e) = data.validate() {
         return rerender(&ctx, &page, failed(data, &form, None, e));
     }
-    let Some(channel) = form.id("channel").filter(|c| ctx.text_channels(guild).iter().any(|(id, _)| id == c)) else {
+    let Some(channel) = form.id("channel").filter(|c| targets(&ctx, &page).iter().any(|(id, _)| id == c)) else {
         return rerender(&ctx, &page, failed(data, &form, None, "Pick a channel to send to.".into()));
     };
     let embeds: Vec<Embed> = data.embed().into_iter().collect();
@@ -471,6 +472,9 @@ async fn update(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64
     if let Err(e) = data.validate() {
         return rerender(&ctx, &page, failed(data, &form, Some(&sent), e));
     }
+    if !may_post(&ctx, &page, sent.channel_id) {
+        return rerender(&ctx, &page, failed(data, &form, Some(&sent), "You can't post in that channel in Discord, so you can't edit this message.".into()));
+    }
     // A stored row never holds 0, but a 0 would be no message to edit.
     let (Some(channel), Some(message)) = (Id::new_checked(sent.channel_id), Id::new_checked(sent.message_id)) else { return Err(WebError::NotFound) };
     let embeds: Vec<Embed> = data.embed().into_iter().collect();
@@ -489,6 +493,22 @@ async fn update(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64
     crate::sent_update(&ctx, guild, id, &data)?;
     ctx.audit(&page.user, Some(guild), KEY, format!("Edited an embed in #{}", channel_label(&ctx, guild, sent.channel_id)));
     Ok(saved(&page.path(&format!("embeds?sent={id}"))))
+}
+
+/// The channels this person may send embeds to: for a dashboard admin, every text channel the
+/// bot sees; for anyone else with access to this page, those they can see and post in on
+/// Discord themselves, so the bot doesn't carry their message somewhere they couldn't.
+fn targets(ctx: &Ctx, page: &Page) -> Vec<(u64, String)> {
+    let mut all = ctx.text_channels(page.guild_id);
+    all.retain(|(id, _)| may_post(ctx, page, *id));
+    all
+}
+
+fn may_post(ctx: &Ctx, page: &Page, channel: u64) -> bool {
+    page.user.admin
+        || ctx
+            .member_perms_in(page.guild_id, page.user.id, channel)
+            .is_some_and(|p| p.contains(Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES))
 }
 
 fn channel_label(ctx: &Ctx, guild: u64, channel: u64) -> String {
