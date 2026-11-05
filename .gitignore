@@ -7,3 +7,5 @@
 *.env
 .env.*
 !*.env.example
+/deploy.log
+/.deploy-state

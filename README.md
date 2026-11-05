@@ -204,9 +204,21 @@ from before the switch, so anything since then is only on the server (`~/apps/di
 
 ### Updating
 
-```fish
-cd ~/apps/discord-bot; and git pull; and docker compose up -d --build
+The server updates itself. `deploy/auto-update.sh` runs from cron every 2 minutes. When `main` has
+a new commit and both CI jobs passed on it, it pulls, builds while the old bot keeps running, and
+restarts onto the new image (a few seconds down). If the new bot doesn't answer `/healthz` within 2
+minutes, the previous image goes back up. It never deploys a commit whose CI failed. What it did
+is in `~/apps/discord-bot/deploy.log`.
+
+The cron line (`crontab -e` on the server):
+
 ```
+*/2 * * * * $HOME/apps/discord-bot/deploy/auto-update.sh
+```
+
+To update by hand instead: `cd ~/apps/discord-bot; and git pull; and docker compose up -d --build`.
+The server checks GitHub rather than GitHub reaching the server: the repository is public, and a
+self-hosted Actions runner on a public repository would let a pull request run code on the server.
 
 ## CI and deploys
 
