@@ -284,6 +284,17 @@ pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
             break;
         }
     }
+    // Twitch keeps one subscription per type and broadcaster whatever the address, so ones left
+    // on an old address (the bot moved, e.g. off Render) would answer every create with 409 and
+    // keep getting the events. Never run two bots on one Twitch app: they'd remove each other's.
+    for s in subs.iter().filter(|s| stale_callback(s.transport.callback.as_deref(), &callback) && TYPES.iter().any(|(t, _)| *t == s.kind)) {
+        tracing::info!(id = %s.id, kind = %s.kind, callback = ?s.transport.callback, "removing a Twitch subscription for an old address");
+        match request(ctx, Method::DELETE, "eventsub/subscriptions", &[("id", s.id.clone())], None).await {
+            Ok(r) if r.status().is_success() || r.status() == StatusCode::NOT_FOUND => {}
+            Ok(r) => tracing::warn!(id = %s.id, status = %r.status(), "Twitch refused to remove a subscription"),
+            Err(e) => tracing::warn!(id = %s.id, error = %e, "couldn't remove a Twitch subscription"),
+        }
+    }
     let mut have: HashSet<(String, String)> = HashSet::new();
     for s in subs.iter().filter(|s| s.transport.callback.as_deref() == Some(callback.as_str())) {
         let bid = s.condition["broadcaster_user_id"].as_str().unwrap_or_default().to_owned();
@@ -343,6 +354,11 @@ pub async fn ensure_subscriptions(ctx: &Ctx) -> Result<()> {
     }
     save_sub_states(ctx, &states);
     Ok(())
+}
+
+/// A webhook subscription this bot made from another address: same path, different host.
+fn stale_callback(theirs: Option<&str>, ours: &str) -> bool {
+    theirs.is_some_and(|c| c != ours && c.ends_with("/webhooks/twitch"))
 }
 
 /// The state to show for a subscription Twitch says already exists (409) but the listing
@@ -490,7 +506,21 @@ pub async fn webhook(State(ctx): State<Ctx>, headers: HeaderMap, body: Bytes) ->
                     note_online_state(&ctx, bid, Some(status));
                 }
             }
-            ctx.notify(None, KEY, format!("Twitch stopped sending {t} events ({status}). The bot subscribes again within a day."), None);
+            // Revoked for failed deliveries (the bot was down or slow): the address answers again,
+            // since this message came through it, so subscribe again now rather than at the
+            // daily check. Live posts would be missed until then.
+            if status == "notification_failures_exceeded" && mode(&ctx) == Mode::Push {
+                ctx.notify(None, KEY, format!("Twitch stopped sending {t} events after failed deliveries. The bot is subscribing again."), None);
+                let ctx = ctx.clone();
+                bot_core::tokio::spawn(async move {
+                    bot_core::tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    if let Err(e) = ensure_subscriptions(&ctx).await {
+                        tracing::warn!(error = %e, "couldn't subscribe again after a revocation");
+                    }
+                });
+            } else {
+                ctx.notify(None, KEY, format!("Twitch stopped sending {t} events ({status}). The bot subscribes again within a day."), None);
+            }
             StatusCode::NO_CONTENT.into_response()
         }
         "notification" => {
@@ -674,6 +704,13 @@ fn sample(ctx: &Ctx, id: i64, viewers: i64) -> Result<()> {
     Ok(())
 }
 
+static GOING_LIVE: bot_core::tokio::sync::Mutex<()> = bot_core::tokio::sync::Mutex::const_new(());
+
+/// Push mode's check for go-lives the webhook missed: how often, and how long a stream has been on
+/// before the check posts it, so the webhook (retries included) goes first.
+const PUSH_CHECK_MS: i64 = FIVE_MIN;
+const PUSH_GRACE_MS: i64 = 3 * 60_000;
+
 /// A stream that drops and comes back within this long is the same stream: its posts go back to
 /// live instead of a second post (and ping).
 const RECONNECT_MS: i64 = 10 * 60_000;
@@ -725,6 +762,9 @@ fn resume_row(c: &Connection, prev: &StreamRow, stream_id: &str, title: &str, ga
 /// A broadcaster went live: store the stream and post in every server that follows them. When
 /// it's the last stream back after a drop, its posts are edited back to live instead.
 pub async fn on_online(ctx: &Ctx, b: &Broadcaster, stream_id: &str, started_at: i64, info: Option<HStream>) -> Result<()> {
+    // One go-live at a time: the webhook and push mode's check can see the same stream together,
+    // and both would find no row and post it twice. The second one finds the first's row.
+    let _one_at_a_time = GOING_LIVE.lock().await;
     let latest = ctx.db.with(|c| latest_stream(c, &b.user_id))?;
     let decision = go_live(latest.as_ref(), stream_id, started_at);
     match (&latest, decision) {
@@ -966,25 +1006,37 @@ fn note_info(ctx: &Ctx, row: &StreamRow, title: &str, game: &str) -> Result<bool
 /// Broadcaster id -> how many checks in a row didn't find their stream.
 static MISSING: LazyLock<Mutex<HashMap<String, u8>>> = LazyLock::new(Default::default);
 
-/// Called every tick. Polling mode reads `/streams` every 2 minutes for everyone; push mode only
-/// reads it every 5 minutes for broadcasters who are live, for viewer counts.
+/// Called every tick. Polling mode reads `/streams` every 2 minutes for everyone. Push mode reads
+/// it every 5 minutes: for live broadcasters' viewer counts, and for everyone followed, to post a
+/// go-live the webhook missed (a revoked subscription, a lost event).
 pub async fn poll(ctx: &Ctx, mode: Mode) -> Result<()> {
     let open = open_streams(ctx)?;
     let now = now_ms();
+    let followed = || {
+        let logins = logins(&alert_guilds(ctx));
+        broadcasters(ctx).into_iter().filter(|b| logins.contains(&b.login)).map(|b| b.user_id).collect::<Vec<_>>()
+    };
     let ids: Vec<String> = match mode {
         Mode::Off => return Ok(()),
         Mode::Poll => {
             if !due(ctx, "poll", 115_000) {
                 return Ok(());
             }
-            let logins = logins(&alert_guilds(ctx));
-            broadcasters(ctx).into_iter().filter(|b| logins.contains(&b.login)).map(|b| b.user_id).collect()
+            followed()
         }
         Mode::Push => {
-            if open.is_empty() || open.iter().all(|r| now - r.last_sample < FIVE_MIN - 30_000) {
+            let sample_due = open.iter().any(|r| now - r.last_sample >= FIVE_MIN - 30_000);
+            let check_due = due(ctx, "push_check", PUSH_CHECK_MS - 30_000);
+            if !sample_due && !check_due {
                 return Ok(());
             }
-            open.iter().map(|r| r.broadcaster_id.clone()).collect()
+            let mut ids: Vec<String> = open.iter().map(|r| r.broadcaster_id.clone()).collect();
+            if check_due {
+                ids.extend(followed());
+                ids.sort();
+                ids.dedup();
+            }
+            ids
         }
     };
     if ids.is_empty() {
@@ -997,6 +1049,15 @@ pub async fn poll(ctx: &Ctx, mode: Mode) -> Result<()> {
             None => {
                 let Some(b) = all.iter().find(|b| b.user_id == st.user_id) else { continue };
                 let started = st.started_at.parse::<jiff::Timestamp>().map(|t| t.as_millisecond()).unwrap_or(now);
+                if mode == Mode::Push {
+                    // A stream the webhook already handled: /streams goes on listing a stream for
+                    // a few minutes after its offline event, and that's no reason to reopen it.
+                    let known = ctx.db.with(|c| latest_stream(c, &b.user_id))?.is_some_and(|r| r.stream_id == st.id);
+                    if known || now - started < PUSH_GRACE_MS {
+                        continue;
+                    }
+                    tracing::warn!(login = %b.login, "posting a go-live the Twitch webhook didn't send");
+                }
                 on_online(ctx, b, &st.id, started, Some(st.clone())).await?;
             }
             Some(row) => {
@@ -1354,6 +1415,16 @@ mod tests {
         assert!(follower_tokens(false, Some(now - 7 * day + 1), now).is_empty());
         assert_eq!(follower_tokens(false, Some(now - 7 * day), now), [Via::App]);
         assert_eq!(follower_tokens(true, Some(now - 8 * day), now), [Via::User, Via::App]);
+    }
+
+    #[test]
+    fn old_addresses_are_stale() {
+        let ours = "https://anthobot.bid/webhooks/twitch";
+        assert!(stale_callback(Some("https://anthos-bot.onrender.com/webhooks/twitch"), ours));
+        assert!(!stale_callback(Some(ours), ours));
+        // Another app's hook, or a transport with no callback, is left alone.
+        assert!(!stale_callback(Some("https://example.com/eventsub"), ours));
+        assert!(!stale_callback(None, ours));
     }
 
     #[test]

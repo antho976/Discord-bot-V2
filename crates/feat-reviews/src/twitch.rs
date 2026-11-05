@@ -171,7 +171,8 @@ pub async fn disconnect(ctx: &Ctx, guild: u64) -> Result<()> {
     if let (Some(c), Some((id, _))) = (conn(ctx, guild)?, app(ctx))
         && c.connected()
     {
-        let access = match token(ctx, guild, false).await {
+        // No "signed out" notice from here: the owner is the one ending it.
+        let access = match refresh(ctx, guild, false, false).await {
             Ok((t, _)) => Some(t),
             Err(_) => c.access_token,
         };
@@ -190,35 +191,59 @@ pub fn note_error(ctx: &Ctx, guild: u64, error: Option<&str>) {
 /// A token good for the next minute, refreshed when it isn't. A refresh Twitch refuses means
 /// the broadcaster took the bot's access away: the tokens are dropped and the page says so.
 async fn token(ctx: &Ctx, guild: u64, force: bool) -> Result<(String, String)> {
+    refresh(ctx, guild, force, true).await
+}
+
+/// One refresh at a time. The keep-alive, the sync and the follower read can all find the same
+/// expired token (after downtime, every one of them), and two refreshes with one refresh token
+/// race: the loser's may be refused, which would drop the sign-in.
+static REFRESHING: bot_core::tokio::sync::Mutex<()> = bot_core::tokio::sync::Mutex::const_new(());
+
+/// [`token`], with `notice` false to drop a refused sign-in without the "signed out" bell.
+async fn refresh(ctx: &Ctx, guild: u64, force: bool, notice: bool) -> Result<(String, String)> {
+    let fresh = |c: &Conn| c.access_token.clone().filter(|_| c.expires_at > now_ms() + 60_000);
+    let c = conn(ctx, guild)?.context("Twitch isn't connected")?;
+    if !force && let Some(t) = fresh(&c) {
+        return Ok((t, c.broadcaster_id));
+    }
+    let _one_at_a_time = REFRESHING.lock().await;
+    // Read again: whoever held the lock may have just refreshed it.
     let c = conn(ctx, guild)?.context("Twitch isn't connected")?;
     let Some(refresh) = c.refresh_token.clone() else { bail!("Twitch isn't connected") };
-    if !force
-        && let Some(t) = c.access_token.clone()
-        && c.expires_at > now_ms() + 60_000
-    {
+    if !force && let Some(t) = fresh(&c) {
         return Ok((t, c.broadcaster_id));
     }
     let (id, secret) = app(ctx).context("Twitch isn't set up on this bot")?;
     let res = ctx.web.post(TOKEN_URL).form(&[("client_id", id), ("client_secret", secret), ("grant_type", "refresh_token"), ("refresh_token", refresh.as_str())]).send().await?;
-    if matches!(res.status(), StatusCode::BAD_REQUEST | StatusCode::UNAUTHORIZED) {
+    let status = res.status();
+    if !status.is_success() {
+        let body: Value = res.json().await.unwrap_or(Value::Null);
+        let msg = body["message"].as_str().unwrap_or_default().to_owned();
+        if !refresh_refused(status, &msg) {
+            // The bot's own setup (a wrong client id or secret) or Twitch being down: the
+            // broadcaster's sign-in is still good, so it's kept for when that's fixed.
+            if msg.is_empty() {
+                bail!("Twitch answered {status}");
+            }
+            bail!("Twitch said: {}", text::clip(&msg, 200));
+        }
         ctx.db.with(|c| {
             c.execute(
                 "UPDATE reviews_twitch SET access_token = NULL, refresh_token = NULL, error = 'Twitch no longer accepts the bot''s sign-in. Connect again.' WHERE guild_id = ?1",
                 [guild as i64],
             )
         })?;
-        ctx.notify_once(
-            guild,
-            crate::KEY,
-            "twitch",
-            "Twitch signed the bot out. Connect again on Account reviews > Settings; channel points and follower counts stop until then.",
-            Some(format!("/g/{guild}/reviews/settings")),
-            std::time::Duration::from_secs(86_400),
-        );
+        if notice {
+            ctx.notify_once(
+                guild,
+                crate::KEY,
+                "twitch",
+                "Twitch signed the bot out. Connect again on Account reviews > Settings; channel points and follower counts stop until then.",
+                Some(format!("/g/{guild}/reviews/settings")),
+                std::time::Duration::from_secs(86_400),
+            );
+        }
         bail!("Twitch no longer accepts the bot's sign-in. Connect again.");
-    }
-    if !res.status().is_success() {
-        bail!(twitch_error(res).await);
     }
     let t: Tokens = res.json().await?;
     ctx.db.with(|c| {
@@ -228,6 +253,13 @@ async fn token(ctx: &Ctx, guild: u64, force: bool) -> Result<(String, String)> {
         )
     })?;
     Ok((t.access_token, c.broadcaster_id))
+}
+
+/// Whether a failed refresh means the broadcaster's sign-in is gone. Twitch answers 400 "Invalid
+/// refresh token" for that, but also 400 "invalid client" for the bot's own wrong client id, and
+/// dropping every sign-in over a typo in the env would make each server connect again.
+fn refresh_refused(status: StatusCode, message: &str) -> bool {
+    status == StatusCode::UNAUTHORIZED || (status == StatusCode::BAD_REQUEST && message.to_ascii_lowercase().contains("refresh token"))
 }
 
 /// Servers whose connection signed in as `broadcaster_id` and can still be refreshed.
@@ -534,6 +566,16 @@ pub fn due(ctx: &Ctx, guild: u64, now: i64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_dead_refresh_token_drops_the_sign_in() {
+        assert!(refresh_refused(StatusCode::BAD_REQUEST, "Invalid refresh token"));
+        assert!(refresh_refused(StatusCode::UNAUTHORIZED, ""));
+        // The bot's own setup or Twitch being down keeps the sign-in.
+        assert!(!refresh_refused(StatusCode::BAD_REQUEST, "invalid client"));
+        assert!(!refresh_refused(StatusCode::FORBIDDEN, "invalid client secret"));
+        assert!(!refresh_refused(StatusCode::INTERNAL_SERVER_ERROR, ""));
+    }
 
     #[test]
     fn redemptions_become_requests() {

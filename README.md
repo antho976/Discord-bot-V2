@@ -49,11 +49,11 @@ cargo run -p bot -- preview   # the dashboard with sample servers, no Discord ne
 | `DISCORD_TOKEN` | The bot token. |
 | `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET` | The application's OAuth2 id and secret, for dashboard sign-in. |
 | `OWNER_ID` | Your Discord user id. Always a dashboard admin, and the first approver for app connections. (`TALLY_OWNER_ID` is read too.) |
-| `PUBLIC_URL` | The dashboard's address, e.g. `https://anthos-bot.onrender.com`. On Render it's picked up automatically. (`PUBLIC_BASE_URL` is read too.) |
+| `PUBLIC_URL` | The dashboard's address, e.g. `https://anthobot.bid`. On Render it's picked up automatically. (`PUBLIC_BASE_URL` is read too.) |
 | `DATABASE_PATH` | Default `data/bot-v2.db`; `/data/bot-v2.db` in the image. Separate from antho-s-bot's `/data/bot.db`. |
 | `TWITCH_CLIENT_ID`, `TWITCH_CLIENT_SECRET` | From dev.twitch.tv. Needed for Twitch alerts and the schedule. |
 | `TWITCH_EVENTSUB_SECRET` | Any random string of 10 to 100 characters. With it and an https `PUBLIC_URL`, Twitch pushes live events; without it the bot checks every 2 minutes. |
-| `RELAY_PUBLIC_URL` | Relay's public address; `off` runs the bot without Relay. Set automatically on Render. |
+| `RELAY_PUBLIC_URL` | Relay's public address; `off` runs the bot without Relay. Defaults to `wss://<PUBLIC_URL host>/relay` when `PUBLIC_URL` is https (on Render, the Render host). |
 | `RELAY_BIN` | Path to the relay binary. Default `relay`. |
 | `LEGACY_DB_PATH` | Where antho-s-bot's database is, for the one-click XP import. Default `/data/bot.db`. |
 
@@ -224,9 +224,9 @@ self-hosted Actions runner on a public repository would let a pull request run c
 ## CI and deploys
 
 GitHub Actions (`.github/workflows/ci.yml`) runs clippy with warnings as errors, the tests and a
-Docker image build on every pull request and every push to `main`. Render deploys `main`. In the
-service's settings, set Auto-Deploy to **After CI checks pass** so a red build never ships
-(`render.yaml` says the same for a Blueprint).
+Docker image build on every pull request and every push to `main`. The home server deploys `main`
+once both jobs pass (see Updating above), so a red build never ships. The Render service is
+suspended as a fallback; `render.yaml` goes when it's deleted.
 
 ## Code
 

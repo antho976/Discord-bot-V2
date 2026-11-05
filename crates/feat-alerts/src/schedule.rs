@@ -282,7 +282,8 @@ pub fn week_svg(name: &str, link: &str, monday: Date, today: Date, tz: &TimeZone
             y + 68,
             date.strftime("%b %-d")
         );
-        match day.first() {
+        // The day's first stream that's on, so a cancelled one before it doesn't hide it.
+        match day.iter().find(|s| !s.canceled).or(day.first()) {
             None => {
                 let _ = write!(o, r##"<text x="176" y="{}" font-family="Geist" font-size="22" fill="#ededed" fill-opacity="0.3">No stream</text>"##, y + 54);
             }
