@@ -14,7 +14,9 @@ use bot_core::twilight_model::channel::message::{AllowedMentions, Embed, Message
 use bot_core::twilight_model::channel::thread::AutoArchiveDuration;
 use bot_core::twilight_model::channel::{ChannelType, Message};
 use bot_core::twilight_model::guild::Permissions;
+use bot_core::twilight_model::http::attachment::Attachment;
 use bot_core::twilight_model::id::Id;
+use bot_core::twilight_model::id::marker::ChannelMarker;
 use bot_core::twilight_util::builder::embed::{EmbedAuthorBuilder, EmbedBuilder, EmbedFooterBuilder, ImageSource};
 use bot_core::{Ctx, now_ms, text};
 
@@ -28,6 +30,12 @@ const DAY_MS: i64 = 86_400_000;
 const HOLD: Duration = Duration::from_secs(600);
 /// The most messages held for one member while they pick.
 const MAX_HELD: usize = 10;
+/// The most a message's copied files weigh together; a set that would pass this stays as links.
+/// Well under the 10 MB Discord takes from a bot anywhere, so the upload also fits in the HTTP
+/// client's 30 seconds on a slow home connection (about 1.2 Mbit/s up).
+const COPY_MAX: u64 = 4 * 1024 * 1024;
+/// How long copying one message's files may take before the rest go as links.
+const COPY_TIME: Duration = Duration::from_secs(30);
 
 pub const OPEN: &str = "open";
 pub const CLOSED: &str = "closed";
@@ -236,10 +244,10 @@ const MAX_BODY: usize = 4096;
 /// Kept free for the line saying some attachments didn't fit.
 const MORE_ROOM: usize = 48;
 
-/// A message as it reaches the other side: its text, then its attachments as links, within
-/// [`MAX_BODY`]. With attachments, the text keeps some room for their links. Links that don't
-/// fit are counted on a last line instead.
-pub fn body(content: &str, files: &[(String, String)]) -> String {
+/// A message as it reaches the other side: its text, then the attachments that weren't copied
+/// over as links, within [`MAX_BODY`]. With links, the text keeps some room for them. Links
+/// that don't fit are counted on a last line instead. `copied` files go on the message itself.
+pub fn body(content: &str, files: &[(String, String)], copied: usize) -> String {
     let room = if files.is_empty() { MAX_BODY } else { 3500 };
     let mut out = text::clip(content.trim(), room);
     let mut len = out.chars().count();
@@ -264,7 +272,11 @@ pub fn body(content: &str, files: &[(String, String)]) -> String {
         n => out.push_str(&format!("\n{n} more attachments didn't fit here.")),
     }
     if out.is_empty() {
-        out = "Sent something the bot can't show here, like a sticker.".into();
+        out = match copied {
+            0 => "Sent something the bot can't show here, like a sticker.".into(),
+            1 => "Sent a file.".into(),
+            n => format!("Sent {n} files."),
+        };
     }
     out
 }
@@ -288,15 +300,116 @@ fn with_forwards(content: &str, forwards: &[&str]) -> String {
 
 /// What a message carries to the other side: its text and attachments, then those of any
 /// message it forwards.
-fn carried(m: &Message) -> (String, Vec<(String, String)>) {
+fn carried(m: &Message) -> (String, Vec<File>) {
     let forwards: Vec<&str> = m.message_snapshots.iter().map(|s| s.message.content.as_str()).collect();
     let files = m
         .attachments
         .iter()
         .chain(m.message_snapshots.iter().flat_map(|s| &s.message.attachments))
-        .map(|a| (a.filename.clone(), a.url.clone()))
+        .map(|a| File { name: a.filename.clone(), url: a.url.clone(), size: a.size })
         .collect();
     (with_forwards(&m.content, &forwards), files)
+}
+
+/// A file on a message: its name, its link on Discord's CDN, and its size in bytes.
+#[derive(Debug, Clone)]
+pub(crate) struct File {
+    name: String,
+    url: String,
+    size: u64,
+}
+
+impl File {
+    fn link(&self) -> (String, String) {
+        (self.name.clone(), self.url.clone())
+    }
+}
+
+/// Which of a message's files to copy onto the other side, in order, while they fit in
+/// [`COPY_MAX`] together and Discord's 10 files a message. The rest go as links.
+fn to_copy(files: &[File]) -> Vec<bool> {
+    let mut left = COPY_MAX;
+    let mut n = 0;
+    files
+        .iter()
+        .map(|f| {
+            let fits = n < 10 && f.size > 0 && f.size <= left;
+            if fits {
+                left -= f.size;
+                n += 1;
+            }
+            fits
+        })
+        .collect()
+}
+
+/// A file name Discord takes for an upload: letters, digits, dots, dashes and underscores, at
+/// most 100 of them. A long name keeps its start and its end, so a `SPOILER_` name stays one
+/// and the extension stays.
+fn upload_name(name: &str) -> String {
+    let clean: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' }).collect();
+    let clean = clean.trim_start_matches('.');
+    match clean.len() {
+        0 => "file".into(),
+        // All ASCII by now, so byte offsets are character offsets.
+        n if n > 100 => format!("{}{}", &clean[..50], &clean[n - 50..]),
+        _ => clean.to_owned(),
+    }
+}
+
+/// Copy a message's files so they last on the other side: a link to Discord's CDN expires, and
+/// dies with the original message. Only Discord's CDN is read. Files that don't fit, or don't
+/// download in time, come back as links.
+async fn copy_files(ctx: &Ctx, files: &[File]) -> (Vec<Attachment>, Vec<(String, String)>) {
+    let deadline = bot_core::tokio::time::Instant::now() + COPY_TIME;
+    let (mut copies, mut links) = (Vec::new(), Vec::new());
+    for (f, copy) in files.iter().zip(to_copy(files)) {
+        let bytes = if copy { bot_core::tokio::time::timeout_at(deadline, download(ctx, &f.url, f.size)).await.ok().flatten() } else { None };
+        match bytes {
+            Some(b) => copies.push(Attachment::from_bytes(upload_name(&f.name), b, copies.len() as u64)),
+            None => links.push(f.link()),
+        }
+    }
+    (copies, links)
+}
+
+/// A file from Discord's CDN, if it's there and no bigger than it said.
+async fn download(ctx: &Ctx, url: &str, size: u64) -> Option<Vec<u8>> {
+    let u = bot_core::reqwest::Url::parse(url).ok()?;
+    if u.scheme() != "https" || !matches!(u.host_str(), Some("cdn.discordapp.com" | "media.discordapp.net")) {
+        return None;
+    }
+    let mut res = ctx.web.get(u).send().await.ok()?.error_for_status().ok()?;
+    let mut out = Vec::with_capacity(size as usize);
+    while let Some(chunk) = res.chunk().await.ok()? {
+        out.extend_from_slice(&chunk);
+        if out.len() as u64 > size {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+/// Discord refused an upload: too large for that channel (413), or no Attach Files there (403).
+/// Without the files the message may still go.
+fn files_refused(e: &bot_core::twilight_http::Error) -> bool {
+    matches!(e.kind(), bot_core::twilight_http::error::ErrorType::Response { status, .. } if matches!(status.get(), 403 | 413))
+}
+
+/// Post a carried message as an embed, its files copied onto it where they fit. If Discord
+/// refuses the files, it goes again with every file as a link.
+async fn post_carried(ctx: &Ctx, channel: Id<ChannelMarker>, author: &str, avatar: &str, footer: Option<&str>, content: &str, files: &[File]) -> std::result::Result<(), bot_core::twilight_http::Error> {
+    let none = AllowedMentions::default();
+    let (copies, links) = copy_files(ctx, files).await;
+    let first = embed(author, avatar, &body(content, &links, copies.len()), footer);
+    match ctx.http.create_message(channel).embeds(&[first]).attachments(&copies).allowed_mentions(Some(&none)).await {
+        Err(e) if !copies.is_empty() && files_refused(&e) => {
+            let all: Vec<_> = files.iter().map(File::link).collect();
+            let again = embed(author, avatar, &body(content, &all, 0), footer);
+            ctx.http.create_message(channel).embeds(&[again]).allowed_mentions(Some(&none)).await.map(|_| ())
+        }
+        res => res.map(|_| ()),
+    }
 }
 
 /// How a message starts, on one line, for the dashboard.
@@ -326,7 +439,7 @@ pub(crate) struct Incoming {
     channel: u64,
     message: u64,
     content: String,
-    files: Vec<(String, String)>,
+    files: Vec<File>,
     at: i64,
 }
 
@@ -343,6 +456,8 @@ pub(crate) struct Held {
     name: String,
     avatar: String,
     messages: Vec<Incoming>,
+    /// They were told that messages past [`MAX_HELD`] aren't kept.
+    told_full: bool,
 }
 
 // ---- where a DM goes ----
@@ -487,22 +602,26 @@ struct Places<'a> {
 /// Keep the message and, the first time, ask which server it's for. Open conversations are
 /// marked in the list; a stuck one is named in the question.
 async fn hold(f: &Modmail, ctx: &Ctx, user: u64, name: String, avatar: String, msg: Incoming, places: Places<'_>) -> Result<()> {
-    let ask = {
+    let (ask, full) = {
         let mut held = f.held.lock().unwrap();
         held.retain(|_, h| h.since.elapsed() < HOLD);
         match held.get_mut(&user) {
-            Some(h) => {
-                if h.messages.len() < MAX_HELD {
-                    h.messages.push(msg);
-                }
-                false
+            Some(h) if h.messages.len() < MAX_HELD => {
+                h.messages.push(msg);
+                (false, false)
             }
+            // Full: say so once, rather than dropping messages without a word.
+            Some(h) => (false, !std::mem::replace(&mut h.told_full, true)),
             None => {
-                held.insert(user, Held { since: Instant::now(), name, avatar, messages: vec![msg] });
-                true
+                held.insert(user, Held { since: Instant::now(), name, avatar, messages: vec![msg], told_full: false });
+                (true, false)
             }
         }
     };
+    if full {
+        let text = format!("{MAX_HELD} messages are already waiting for you to pick a server, so this one and any more until you pick aren't passed on. Pick a server above, then send them again.");
+        ctx.dm(user, &text, &[], &[]).await?;
+    }
     if !ask {
         return Ok(());
     }
@@ -600,10 +719,8 @@ async fn thread_closed(ctx: &Ctx, thread: u64) -> bool {
 }
 
 async fn relay_in(ctx: &Ctx, conv: &Conv, name: &str, avatar: &str, messages: &[Incoming]) -> Result<()> {
-    let none = AllowedMentions::default();
     for m in messages {
-        let embed = embed(name, avatar, &body(&m.content, &m.files), None);
-        ctx.http.create_message(Id::new(conv.thread_id)).embeds(&[embed]).allowed_mentions(Some(&none)).await?;
+        post_carried(ctx, Id::new(conv.thread_id), name, avatar, None, &m.content, &m.files).await?;
         let _ = ctx.http.create_reaction(Id::new(m.channel), Id::new(m.message), &RequestReactionType::Unicode { name: "✅" }).await;
         ctx.db.with(|c| record(c, conv.id, conv.user_id, &preview(&m.content, m.files.len()), m.at))?;
     }
@@ -712,6 +829,19 @@ pub async fn on_staff_message(f: &Modmail, ctx: &Ctx, guild: u64, m: &Message) -
         f.drop_thread(channel);
         return note_closed(f, ctx, guild, channel).await;
     };
+    // One conversation's replies go out one at a time, in order: a reply carrying a file takes
+    // longer to send than the text after it.
+    let turn = f.turn(conv.user_id);
+    let _turn = turn.lock().await;
+    // Closed while this waited its turn. Written before the close, it still goes, ahead of the
+    // closing text (which waits its turn too); written after, it doesn't.
+    let written = m.timestamp.as_micros() / 1000;
+    let now = ctx.db.with(|c| by_id(c, guild, conv.id))?;
+    if now.is_none_or(|c| c.closed_at.is_some_and(|at| at <= written)) {
+        let text = format!("This conversation closed before that went out, so {} doesn't get it.", conv.name(ctx, guild));
+        ctx.say(channel, &text).await?;
+        return Ok(());
+    }
     let staff = m.author.id.get();
     let staff_name = m
         .member
@@ -721,8 +851,7 @@ pub async fn on_staff_message(f: &Modmail, ctx: &Ctx, guild: u64, m: &Message) -
         .unwrap_or_else(|| m.author.name.clone());
     let (content, files) = carried(m);
     let avatar = ctx.member_avatar(guild, staff);
-    let reply = embed(&staff_name, &avatar, &body(&content, &files), Some(&ctx.guild_name(guild)));
-    match dm_embed(ctx, conv.user_id, reply).await {
+    match dm_carried(ctx, conv.user_id, &staff_name, &avatar, &ctx.guild_name(guild), &content, &files).await {
         Ok(()) => {
             let _ = ctx.http.create_reaction(m.channel_id, m.id, &RequestReactionType::Unicode { name: "✅" }).await;
             ctx.db.with(|c| record(c, conv.id, staff, &preview(&content, files.len()), m.timestamp.as_micros() / 1000))?;
@@ -746,15 +875,14 @@ async fn note_closed(f: &Modmail, ctx: &Ctx, guild: u64, thread: u64) -> Result<
     Ok(())
 }
 
-/// DM an embed to a member. The error says why it didn't go, for staff: closed DMs and a refused
-/// message read differently. (`ctx.dm` reports both as closed DMs.)
-async fn dm_embed(ctx: &Ctx, user: u64, embed: Embed) -> std::result::Result<(), String> {
+/// DM a staff reply to a member, its files copied on. The error says why it didn't go, for
+/// staff: closed DMs and a refused message read differently. (`ctx.dm` reports both as closed DMs.)
+async fn dm_carried(ctx: &Ctx, user: u64, author: &str, avatar: &str, server: &str, content: &str, files: &[File]) -> std::result::Result<(), String> {
     let channel = match ctx.http.create_private_channel(Id::new(user)).await {
         Ok(r) => r.model().await.map_err(|_| "Discord didn't open a DM with them.".to_owned())?,
         Err(e) => return Err(why_no_dm(&e)),
     };
-    let none = AllowedMentions::default();
-    ctx.http.create_message(channel.id).embeds(&[embed]).allowed_mentions(Some(&none)).await.map(|_| ()).map_err(|e| why_no_dm(&e))
+    post_carried(ctx, channel.id, author, avatar, Some(server), content, files).await.map_err(|e| why_no_dm(&e))
 }
 
 fn why_no_dm(e: &bot_core::twilight_http::Error) -> String {
@@ -833,6 +961,10 @@ async fn close_here(f: &Modmail, ctx: &Ctx, i: &Interaction, guild: u64, conv: &
     }
     f.drop_thread(conv.thread_id);
     ctx.reply(i, Reply::text(format!("Closed by <@{by}>. {} gets the closing text by DM.", conv.name(ctx, guild)))).await?;
+    // After any reply written before the close that is still going out, so the closing text
+    // comes last.
+    let turn = f.turn(conv.user_id);
+    let _turn = turn.lock().await;
     send_closing(ctx, guild, conv.user_id).await;
     archive(ctx, conv.thread_id).await;
     Ok(())
@@ -1102,7 +1234,7 @@ mod tests {
     fn forwarded_text_follows_the_message() {
         assert_eq!(with_forwards("see this", &["two\nlines"]), "see this\nForwarded:\n> two\n> lines");
         assert_eq!(with_forwards("", &["scam link"]), "Forwarded:\n> scam link");
-        // A forward of only a picture still says it was one; its file comes as a link.
+        // A forward of only a picture still says it was one; its file comes with it.
         assert_eq!(with_forwards("", &[""]), "Forwarded:");
         assert_eq!(with_forwards("plain", &[]), "plain");
     }
@@ -1110,20 +1242,43 @@ mod tests {
     #[test]
     fn bodies_carry_attachments_as_links() {
         let files = vec![("shot [1].png".to_owned(), "https://cdn/x.png".to_owned())];
-        assert_eq!(body("look", &files), "look\n[shot 1.png](https://cdn/x.png)");
-        assert_eq!(body("", &files), "[shot 1.png](https://cdn/x.png)");
-        assert!(body("  ", &[]).starts_with("Sent something"));
+        assert_eq!(body("look", &files, 0), "look\n[shot 1.png](https://cdn/x.png)");
+        assert_eq!(body("", &files, 0), "[shot 1.png](https://cdn/x.png)");
+        assert!(body("  ", &[], 0).starts_with("Sent something"));
+        // Files copied onto the message aren't listed; with no text, the embed says they came.
+        assert_eq!(body("look", &[], 2), "look");
+        assert_eq!(body("", &[], 1), "Sent a file.");
+        assert_eq!(body("", &[], 3), "Sent 3 files.");
         // Long text and long links stay within an embed, and say what was left out.
         let long: Vec<(String, String)> = (0..10).map(|i| (format!("{i}.png"), format!("https://cdn/{}", "a".repeat(300)))).collect();
-        let full = body(&"x".repeat(5000), &long);
+        let full = body(&"x".repeat(5000), &long, 0);
         assert!(full.chars().count() <= MAX_BODY);
         assert!(full.ends_with("9 more attachments didn't fit here."), "{full}");
-        assert_eq!(body("", &long[..1]).lines().count(), 1);
+        assert_eq!(body("", &long[..1], 0).lines().count(), 1);
         // With nothing attached, the text gets the whole embed.
-        assert_eq!(body(&"x".repeat(5000), &[]).chars().count(), MAX_BODY);
+        assert_eq!(body(&"x".repeat(5000), &[], 0).chars().count(), MAX_BODY);
         assert_eq!(preview("two\nlines", 0), "two lines");
         assert_eq!(preview("", 1), "An attachment");
         assert_eq!(preview("", 3), "3 attachments");
+    }
+
+    #[test]
+    fn files_are_copied_while_they_fit() {
+        let f = |size: u64| File { name: "a.png".into(), url: String::new(), size };
+        let u = COPY_MAX / 8;
+        // In order, while the total fits; a big one goes as a link and smaller ones after it still fit.
+        assert_eq!(to_copy(&[f(3 * u), f(6 * u), f(4 * u), f(2 * u)]), vec![true, false, true, false]);
+        assert_eq!(to_copy(&[f(COPY_MAX + 1), f(0)]), vec![false, false]);
+        // At most 10 a message.
+        assert_eq!(to_copy(&vec![f(1); 12]).iter().filter(|c| **c).count(), 10);
+        // Names Discord takes; a spoiler stays one.
+        assert_eq!(upload_name("my pic (1).png"), "my_pic__1_.png");
+        assert_eq!(upload_name("SPOILER_x.png"), "SPOILER_x.png");
+        assert_eq!(upload_name("ünï.txt"), "_n_.txt");
+        assert_eq!(upload_name(".."), "file");
+        let long = upload_name(&format!("SPOILER_{}.png", "a".repeat(200)));
+        assert_eq!(long.len(), 100);
+        assert!(long.starts_with("SPOILER_") && long.ends_with(".png"));
     }
 
     #[test]
