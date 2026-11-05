@@ -297,13 +297,17 @@ impl Welcome {
     async fn left(&self, ctx: &Ctx, m: &MemberRemove) -> Result<()> {
         let guild = m.guild_id.get();
         let user = m.user.id.get();
-        if let Err(e) = roles::take_screened(ctx, guild, user) {
+        // Still on the rules screen, they never got their roles back, so the save waiting for
+        // them stays as it is for the next join.
+        let screening = roles::take_screened(ctx, guild, user).unwrap_or_else(|e| {
             bot_core::tracing::warn!(guild, user, error = %e, "couldn't clear rules screening");
-        }
+            false
+        });
         let s = ctx.settings::<Settings>(guild, KEY)?;
 
         if s.rejoin_on
             && !m.user.bot
+            && !screening
             && let Some(before) = ctx.before_member(guild, user)
         {
             let kept: Vec<u64> = before.roles.into_iter().filter(|r| *r != guild).collect();
@@ -472,7 +476,8 @@ async fn release_if_accepted(ctx: &Ctx, guild: u64, user: u64, bot: bool) -> Res
 }
 
 /// Members still noted as waiting on rules screening whom the cache already shows as past it,
-/// a few a minute. Each is confirmed with Discord before getting roles.
+/// a few a minute, in a random order so a few the cache has wrong can't hold up the rest. Each
+/// is confirmed with Discord before getting roles.
 async fn catch_up_screening(ctx: &Ctx, guild: u64) {
     let waiting = match roles::screening(ctx, guild, 200) {
         Ok(w) => w,

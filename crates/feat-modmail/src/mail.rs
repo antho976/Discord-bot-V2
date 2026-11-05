@@ -556,6 +556,13 @@ async fn deliver(f: &Modmail, ctx: &Ctx, guild: u64, user: u64, name: &str, avat
     let s = ctx.settings::<Settings>(guild, KEY)?;
     for attempt in 0..2 {
         let conv = match ctx.db.with(|c| open_in(c, guild, user))?.filter(|c| c.thread_id != 0) {
+            // Asked before sending: the bot can manage threads, so a post could reopen one staff
+            // closed by hand.
+            Some(c) if thread_closed(ctx, c.thread_id).await => {
+                ctx.db.with(|db| mark_closed(db, c.id, None, now_ms()))?;
+                f.drop_thread(c.thread_id);
+                continue;
+            }
             Some(c) => c,
             None => match open(f, ctx, guild, &s, user, name).await? {
                 Some(c) => c,
@@ -564,10 +571,7 @@ async fn deliver(f: &Modmail, ctx: &Ctx, guild: u64, user: u64, name: &str, avat
         };
         match relay_in(ctx, &conv, name, avatar, messages).await {
             Ok(()) => return Ok(()),
-            Err(e)
-                if attempt == 0
-                    && (e.downcast_ref::<bot_core::twilight_http::Error>().is_some_and(is_not_found) || thread_closed(ctx, conv.thread_id).await) =>
-            {
+            Err(e) if attempt == 0 && e.downcast_ref::<bot_core::twilight_http::Error>().is_some_and(is_not_found) => {
                 ctx.db.with(|c| mark_closed(c, conv.id, None, now_ms()))?;
                 f.drop_thread(conv.thread_id);
             }
@@ -584,9 +588,13 @@ async fn deliver(f: &Modmail, ctx: &Ctx, guild: u64, user: u64, name: &str, avat
 }
 
 /// Whether a staff thread is archived and locked, as staff leave it when they close one by hand.
-/// Asked of Discord: an archived thread isn't in the cache.
+/// A thread the cache doesn't have (archived ones aren't kept, and one closed while the bot was
+/// offline never came in) is asked of Discord.
 async fn thread_closed(ctx: &Ctx, thread: u64) -> bool {
     let Some(id) = Id::new_checked(thread) else { return false };
+    if let Some(c) = ctx.cache.channel(id) {
+        return c.thread_metadata.as_ref().is_some_and(|m| m.archived && m.locked);
+    }
     let Ok(res) = ctx.http.channel(id).await else { return false };
     res.model().await.is_ok_and(|c| c.thread_metadata.is_some_and(|m| m.archived && m.locked))
 }

@@ -62,13 +62,13 @@ pub fn is_screening(ctx: &Ctx, guild: u64, user: u64) -> Result<bool> {
     })
 }
 
-/// Members noted as waiting on rules screening, longest waiting first. Notes over 30 days old
+/// Members noted as waiting on rules screening, in a random order. Notes over 30 days old
 /// are dropped first: someone who left while the bot was offline is never seen leaving.
 pub fn screening(ctx: &Ctx, guild: u64, limit: i64) -> Result<Vec<u64>> {
     let cutoff = bot_core::now_ms() - 30 * 86_400_000;
     ctx.db.with(|c| {
         c.execute("DELETE FROM welcome_screening WHERE guild_id = ?1 AND joined_at < ?2", params![guild as i64, cutoff])?;
-        let mut q = c.prepare_cached("SELECT user_id FROM welcome_screening WHERE guild_id = ?1 ORDER BY joined_at LIMIT ?2")?;
+        let mut q = c.prepare_cached("SELECT user_id FROM welcome_screening WHERE guild_id = ?1 ORDER BY random() LIMIT ?2")?;
         q.query_map(params![guild as i64, limit], |r| r.get::<_, i64>(0).map(|u| u as u64))?.collect::<Result<Vec<_>, _>>()
     })
 }
