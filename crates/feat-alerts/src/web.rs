@@ -767,7 +767,11 @@ async fn save_twitch(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
     let old = ctx.settings::<Settings>(guild, KEY)?;
     let logins = parse_logins(&form.string("twitch_logins"))?;
     let mode = twitch::mode(&ctx);
-    if mode != Mode::Off && logins != old.twitch_logins {
+    // Also when one was saved before but never looked up (Twitch was down), so saving again
+    // retries it instead of waiting for the daily check.
+    let known = twitch::broadcasters(&ctx);
+    let unresolved = logins.iter().any(|l| !known.iter().any(|b| &b.login == l));
+    if mode != Mode::Off && (logins != old.twitch_logins || unresolved) {
         match twitch::resolve(&ctx, &logins).await {
             Ok(missing) if !missing.is_empty() => return Err(WebError::Bad(format!("Twitch has no channel called {}.", missing.join(", ")))),
             Ok(_) => {}
@@ -784,7 +788,11 @@ async fn save_twitch(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>,
         ..(*old).clone()
     };
     ctx.save_settings(guild, KEY, &s)?;
-    if mode == Mode::Push && logins != old.twitch_logins {
+    if logins != old.twitch_logins {
+        // The next tick reads the new channels' schedules instead of up to 30 minutes later.
+        crate::state_del(&ctx, "at:schedule");
+    }
+    if mode == Mode::Push && (logins != old.twitch_logins || unresolved) {
         let ctx = ctx.clone();
         bot_core::tokio::spawn(async move {
             if let Err(e) = twitch::ensure_subscriptions(&ctx).await {
