@@ -259,7 +259,9 @@ impl Feature for Pets {
                 if let Some(m) = call.interaction.message.as_ref()
                     && !first_press(m.id.get())
                 {
-                    return Ok(());
+                    // Answered, so Discord doesn't show "This interaction failed"; the first
+                    // press updates the message.
+                    return ctx.defer_update(&call.interaction).await;
                 }
                 store::submit(ctx, guild, &pet.id, user, qty, plus)?;
                 ctx.notify(
@@ -303,8 +305,8 @@ impl Feature for Pets {
             }
             ["wd", id, issued] => {
                 let user = call.user_id();
-                if !first_press(nonce(issued)) {
-                    return Ok(());
+                if !first_press(nonce(issued, user)) {
+                    return ctx.defer_update(&call.interaction).await;
                 }
                 let note = match store::withdraw(ctx, guild, user, id.parse().unwrap_or(0))? {
                     Some(w) => {
@@ -319,8 +321,8 @@ impl Feature for Pets {
             }
             ["rm", pet_id, plus, qty, issued] => {
                 let user = call.user_id();
-                if !first_press(nonce(issued)) {
-                    return Ok(());
+                if !first_press(nonce(issued, user)) {
+                    return ctx.defer_update(&call.interaction).await;
                 }
                 let plus = *plus == "1";
                 let qty: i64 = qty.parse::<i64>().unwrap_or(1).clamp(1, 1000);
@@ -350,21 +352,10 @@ impl Feature for Pets {
     }
 
     async fn tick(&self, ctx: &Ctx) -> Result<()> {
+        // One server's error is logged and skipped, not the rest of the tick.
         for guild in ctx.enabled_guilds(KEY) {
-            for g in store::expiring(ctx, guild, WARN_BEFORE_MS)? {
-                let Some(at) = g.expires_at else { continue };
-                if at <= now_ms() {
-                    if store::close_giveaway(ctx, guild, g.id, Status::Expired, "Expired")? {
-                        let line = expired_dm(&g.pet_name, &name(ctx, guild, g.giver_id), &name(ctx, guild, g.winner_id), &ctx.guild_name(guild));
-                        dm_later(ctx, g.winner_id, line.clone());
-                        dm_later(ctx, g.giver_id, line);
-                    }
-                } else if !g.warned {
-                    store::mark_warned(ctx, guild, g.id)?;
-                    let line = warning_dm(&g.pet_name, &name(ctx, guild, g.giver_id), &name(ctx, guild, g.winner_id), &ctx.guild_name(guild), at);
-                    dm_later(ctx, g.winner_id, line.clone());
-                    dm_later(ctx, g.giver_id, line);
-                }
+            if let Err(e) = expire_giveaways(ctx, guild) {
+                bot_core::tracing::warn!(guild, error = %e, "couldn't check pet giveaways for expiry");
             }
         }
         Ok(())
@@ -373,6 +364,26 @@ impl Feature for Pets {
     fn seed_preview(&self, ctx: &Ctx, guild: u64) -> Result<()> {
         preview_rows(ctx, guild)
     }
+}
+
+/// Warn about pet giveaways about to expire, and cancel the ones that have.
+fn expire_giveaways(ctx: &Ctx, guild: u64) -> Result<()> {
+    for g in store::expiring(ctx, guild, WARN_BEFORE_MS)? {
+        let Some(at) = g.expires_at else { continue };
+        if at <= now_ms() {
+            if store::close_giveaway(ctx, guild, g.id, Status::Expired, "Expired")? {
+                let line = expired_dm(&g.pet_name, &name(ctx, guild, g.giver_id), &name(ctx, guild, g.winner_id), &ctx.guild_name(guild));
+                dm_later(ctx, g.winner_id, line.clone());
+                dm_later(ctx, g.giver_id, line);
+            }
+        } else if !g.warned {
+            store::mark_warned(ctx, guild, g.id)?;
+            let line = warning_dm(&g.pet_name, &name(ctx, guild, g.giver_id), &name(ctx, guild, g.winner_id), &ctx.guild_name(guild), at);
+            dm_later(ctx, g.winner_id, line.clone());
+            dm_later(ctx, g.giver_id, line);
+        }
+    }
+    Ok(())
 }
 
 /// The `/pet add` dialogs submitted lately, so a second press of the same Submit is ignored.
@@ -392,9 +403,10 @@ fn first_press(message: u64) -> bool {
     true
 }
 
-/// A question's issue time, as the key that keeps a double press from removing twice.
-fn nonce(issued: &str) -> u64 {
-    issued.parse().unwrap_or(0)
+/// A question's issue time and who it was for, as the key that keeps a double press from
+/// removing twice. Two members asked in the same millisecond get different keys.
+fn nonce(issued: &str, user: u64) -> u64 {
+    issued.parse::<u64>().unwrap_or(0).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ user
 }
 
 /// True when a `/pet mine` question was asked longer ago than buttons stay good.
@@ -684,18 +696,23 @@ pub(crate) fn review_dm(qty: i64, pet: &str, server: &str, approved: bool, reaso
 }
 
 /// The DMs the winner and the giver get when a giveaway is recorded: `(winner's, giver's)`.
+/// Names are members' own choosing, so they're escaped: a nickname like
+/// "[Free nitro](https://x)" mustn't turn into a link in the bot's DM. The same in the two below.
 pub(crate) fn recorded_dms(icon: &str, pet: &str, giver: &str, winner: &str, server: &str, expires_at: Option<i64>) -> (String, String) {
+    let (giver, winner, server) = (text::escape_markdown(giver), text::escape_markdown(winner), text::escape_markdown(server));
     let until = expires_at.map(|t| format!(" It expires <t:{}:R>.", t / 1000)).unwrap_or_default();
     (format!("You won {icon} {pet} from {giver} in {server}.{until}"), format!("You're giving {icon} {pet} to {winner} in {server}.{until}"))
 }
 
 /// Sent to both 15 minutes before a giveaway expires.
 pub(crate) fn warning_dm(pet: &str, giver: &str, winner: &str, server: &str, at: i64) -> String {
+    let (giver, winner, server) = (text::escape_markdown(giver), text::escape_markdown(winner), text::escape_markdown(server));
     format!("The {pet} giveaway from {giver} to {winner} in {server} expires <t:{}:R>. Finish the hand-over before then.", at / 1000)
 }
 
 /// Sent to both when a giveaway expires unconfirmed.
 pub(crate) fn expired_dm(pet: &str, giver: &str, winner: &str, server: &str) -> String {
+    let (giver, winner, server) = (text::escape_markdown(giver), text::escape_markdown(winner), text::escape_markdown(server));
     format!("The {pet} giveaway from {giver} to {winner} in {server} expired and was cancelled.")
 }
 
