@@ -112,7 +112,6 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
     // Every series over twice the longest range in one read: the range, and the one before it.
     let [messages, joins, active, voice]: [Vec<(String, i64)>; 4] =
         daily_keys(&ctx, guild, &["messages", "joins", "active", "voice_minutes"], 60).try_into().unwrap_or_default();
-    let voice: Vec<(String, i64)> = voice.into_iter().map(|(l, m)| (l, (m as f64 / 60.0).round() as i64)).collect();
     type Days = Vec<(String, i64)>;
     let window = |s: &[(String, i64)]| -> (Days, Days) {
         let n = s.len();
@@ -142,10 +141,26 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         let (value, before) = (total(&cur), total(&prev));
         Metric { key, label, unit, tip_unit, cur, prev, value, before }
     };
+    // Voice is counted in minutes. The totals are summed before turning into hours, so 25
+    // minutes a day reads as 13 hours over 30 days, not 0; the chart shows hours a day, or
+    // minutes when no day in the range reaches half an hour.
+    let voice_metric = {
+        let mut m = metric("voice", "Voice hours", "hours in voice", "hours", &voice, false);
+        let hours = |min: i64| (min as f64 / 60.0).round() as i64;
+        (m.value, m.before) = (hours(m.value), hours(m.before));
+        if m.cur.iter().any(|d| d.1 >= 30) {
+            for d in m.cur.iter_mut().chain(m.prev.iter_mut()) {
+                d.1 = hours(d.1);
+            }
+        } else {
+            m.tip_unit = "minutes";
+        }
+        m
+    };
     let metrics = [
         metric("messages", "Messages", "messages", "messages", &messages, false),
         metric("active", "Active members", "active a day", "active", &active, true),
-        metric("voice", "Voice hours", "hours in voice", "hours", &voice, false),
+        voice_metric,
         metric("joins", "Joins", "joined", "joined", &joins, false),
     ];
     let m = metrics.iter().find(|m| m.key == show).unwrap_or(&metrics[0]);
@@ -769,6 +784,15 @@ async fn toggle_feature(State(ctx): State<Ctx>, user: User, Path((guild, key)): 
     tokio::spawn(async move {
         if let Err(e) = crate::discord::register_commands(&ctx2, guild).await {
             tracing::warn!(error = %e, "couldn't update commands");
+            // "Saved" was already shown; the bell says why the commands didn't change.
+            ctx2.notify_once(
+                guild,
+                "features",
+                "register",
+                format!("Slash commands didn't reach Discord after a feature was switched. {}", crate::discord::why_not_registered(&e)),
+                Some(format!("/g/{guild}/features")),
+                std::time::Duration::from_secs(3600),
+            );
         }
     });
     Ok(saved(&format!("/g/{guild}/features")))

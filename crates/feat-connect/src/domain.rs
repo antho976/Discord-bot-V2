@@ -13,6 +13,10 @@ pub const TTL_MS: i64 = 15 * 60_000;
 pub const MAX_PENDING: i64 = 3;
 /// One request per address in this window, so a loop cannot fire DMs back to back.
 pub const IP_COOLDOWN_MS: i64 = 5_000;
+/// An address an approver denied can't ask again for this long, so denying a stranger's
+/// requests frees their places for good instead of for the next five seconds. Requests with
+/// no address share one key and are never held back this way: one denial would stop them all.
+pub const DENIED_COOLDOWN_MS: i64 = 3_600_000;
 /// Rounds of approval DMs in a rolling hour. Past this, requests wait on the dashboard only.
 pub const MAX_DM_ROUNDS_PER_HOUR: i64 = 6;
 /// Pairing links one allowed request may collect: a device whose first attempt failed retries.

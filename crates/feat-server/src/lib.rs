@@ -144,6 +144,8 @@ mod tests {
         assert!(s.mem_total.is_some_and(|t| s.mem_used.is_some_and(|u| u > 0 && u <= t)));
         assert!(s.disk_total.is_some_and(|t| s.disk_used.is_some_and(|u| u <= t)));
         assert!(s.uptime.is_some_and(|u| u > 0));
-        assert!(s.bot_mem.is_some_and(|m| m > 0));
+        // Asked of this machine directly: `machine()` is set once per process, and a test that
+        // seeds the preview may have set it first, to a container this machine may not be.
+        assert!(super::probe::bot_memory(super::probe::bot_scope()).is_some_and(|m| m > 0));
     }
 }

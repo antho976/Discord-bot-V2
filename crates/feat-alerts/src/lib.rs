@@ -169,6 +169,11 @@ const MIGRATIONS: &[Migration] = &[Migration {
         ALTER TABLE alerts_streams ADD COLUMN clips INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE alerts_streams ADD COLUMN resumed_at INTEGER;
     ",
+}, Migration {
+    // 1 for a premiere or scheduled stream that's in the feed but hasn't aired: its post waits
+    // until it does.
+    name: "006_alerts_video_held",
+    sql: "ALTER TABLE alerts_videos ADD COLUMN held INTEGER NOT NULL DEFAULT 0;",
 }];
 
 #[derive(Default)]

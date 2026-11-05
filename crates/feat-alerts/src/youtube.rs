@@ -217,22 +217,87 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
         }
         let now = now_ms();
         for v in fresh.iter().filter(|v| now - v.published_ms <= MAX_AGE_MS) {
-            let channel_name = if v.author.is_empty() { f.title.as_str() } else { v.author.as_str() };
-            for (guild, s) in guilds {
-                let Some(channel) = s.youtube_channel.filter(|_| s.youtube_ids.contains(&feed)) else { continue };
-                let text = fill_video(&s.youtube_message, channel_name, &v.title, &v.url());
-                let content = match s.youtube_role {
-                    Some(r) => format!("<@&{r}> {text}"),
-                    None => text,
-                };
-                let mentions = AllowedMentions { roles: s.youtube_role.map(Id::new).into_iter().collect(), ..Default::default() };
-                let rows: Vec<Component> = rewards_on(ctx, *guild, s).then(|| reward_row(s, &v.id, false)).into_iter().collect();
-                if let Err(e) = ctx.http.create_message(Id::new(channel)).content(&content).components(&rows).allowed_mentions(Some(&mentions)).await {
-                    tracing::warn!(guild, channel, error = %e, "couldn't post a new video");
+            // A premiere or a scheduled stream is in the feed from when it's scheduled; its post
+            // waits until it airs, or the link would only show a countdown.
+            // A page that couldn't be read posts it, as before.
+            if upcoming(ctx, &v.id).await == Some(true) {
+                set_held(ctx, &feed, &v.id, true);
+                continue;
+            }
+            post_video(ctx, guilds, &feed, &f.title, v).await;
+        }
+        for v in held(ctx, &feed) {
+            match upcoming(ctx, &v.id).await {
+                // A page that was read and says it's on.
+                Some(false) => {
+                    set_held(ctx, &feed, &v.id, false);
+                    post_video(ctx, guilds, &feed, &f.title, &v).await;
                 }
+                // Scheduled further out than the hold: posted now, as it was before holds, so
+                // it isn't lost.
+                Some(true) if now - v.published_ms > HOLD_MS => {
+                    set_held(ctx, &feed, &v.id, false);
+                    post_video(ctx, guilds, &feed, &f.title, &v).await;
+                }
+                // Gone for the whole hold (deleted, or made private): let it go unannounced.
+                None if now - v.published_ms > HOLD_MS => set_held(ctx, &feed, &v.id, false),
+                // Still to come, or a failed read: wait for the next check.
+                _ => {}
             }
         }
     }
+}
+
+/// How long a premiere or scheduled stream is held after it appears in the feed. One scheduled
+/// further out is posted when the hold ends, as it was before holds.
+const HOLD_MS: i64 = 30 * 86_400_000;
+
+/// Post a new video in every server that follows the channel.
+async fn post_video(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)], feed: &str, feed_title: &str, v: &Video) {
+    let channel_name = if v.author.is_empty() { feed_title } else { v.author.as_str() };
+    for (guild, s) in guilds {
+        let Some(channel) = s.youtube_channel.filter(|_| s.youtube_ids.iter().any(|f| f == feed)) else { continue };
+        let text = fill_video(&s.youtube_message, channel_name, &v.title, &v.url());
+        let content = match s.youtube_role {
+            Some(r) => format!("<@&{r}> {text}"),
+            None => text,
+        };
+        let mentions = AllowedMentions { roles: s.youtube_role.map(Id::new).into_iter().collect(), ..Default::default() };
+        let rows: Vec<Component> = rewards_on(ctx, *guild, s).then(|| reward_row(s, &v.id, false)).into_iter().collect();
+        if let Err(e) = ctx.http.create_message(Id::new(channel)).content(&content).components(&rows).allowed_mentions(Some(&mentions)).await {
+            tracing::warn!(guild, channel, error = %e, "couldn't post a new video");
+        }
+    }
+}
+
+/// Whether a video is a premiere or a live stream that hasn't started, from its watch page.
+/// None when the page couldn't be read, or wasn't a watch page (a consent or bot check).
+async fn upcoming(ctx: &Ctx, id: &str) -> Option<bool> {
+    let page = ctx.web.get(format!("https://www.youtube.com/watch?v={id}")).send().await.ok()?.error_for_status().ok()?.text().await.ok()?;
+    upcoming_from_page(&page)
+}
+
+/// YouTube's player data on the watch page marks a premiere or stream still to come. A page
+/// without the player data says nothing either way.
+pub fn upcoming_from_page(page: &str) -> Option<bool> {
+    page.contains("\"videoDetails\"").then(|| page.contains("\"isUpcoming\":true"))
+}
+
+fn set_held(ctx: &Ctx, feed: &str, id: &str, held: bool) {
+    let res = ctx.db.with(|c| c.execute("UPDATE alerts_videos SET held = ?3 WHERE feed = ?1 AND video_id = ?2", params![feed, id, held]));
+    if let Err(e) = res {
+        tracing::warn!(feed, video = id, error = %e, "couldn't mark a video as waiting to air");
+    }
+}
+
+/// A channel's videos waiting to air.
+fn held(ctx: &Ctx, feed: &str) -> Vec<Video> {
+    ctx.db
+        .with(|c| {
+            let mut s = c.prepare_cached("SELECT video_id, title, author, published_at FROM alerts_videos WHERE feed = ?1 AND held = 1")?;
+            s.query_map([feed], |r| Ok(Video { id: r.get(0)?, title: r.get(1)?, author: r.get(2)?, published_ms: r.get(3)? }))?.collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The dashboard's "Send a test post": the post for a stored video, with nobody pinged. The
@@ -376,7 +441,8 @@ fn store(ctx: &Ctx, feed: &str, f: &Feed) -> Result<Vec<Video>> {
         }
     }
     tx.execute(
-        "DELETE FROM alerts_videos WHERE feed = ?1 AND video_id NOT IN
+        // Held videos stay until they air, however many newer ones come.
+        "DELETE FROM alerts_videos WHERE feed = ?1 AND held = 0 AND video_id NOT IN
          (SELECT video_id FROM alerts_videos WHERE feed = ?1 ORDER BY published_at DESC LIMIT 50)",
         [feed],
     )?;
@@ -443,6 +509,29 @@ mod tests {
   <published>2026-10-20T12:00:00+00:00</published>
  </entry>
 </feed>"#;
+
+    #[test]
+    fn premieres_are_told_from_their_page() {
+        assert_eq!(upcoming_from_page(r#"..."videoDetails":{"videoId":"x","isLiveContent":true,"isUpcoming":true}..."#), Some(true));
+        assert_eq!(upcoming_from_page(r#"..."videoDetails":{"videoId":"x","isLiveContent":true}..."#), Some(false));
+        // A consent page or an empty answer: unknown.
+        assert_eq!(upcoming_from_page("<html>Before you continue to YouTube</html>"), None);
+        assert_eq!(upcoming_from_page(""), None);
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn held_videos_wait_and_go() {
+        let ctx = Ctx::new(bot_core::Config::preview(0), bot_core::Db::memory().unwrap()).unwrap();
+        ctx.install_features(vec![std::sync::Arc::new(crate::Alerts)]).unwrap();
+        let f = parse_feed(SAMPLE);
+        assert_eq!(store(&ctx, "UCx", &f).unwrap().len(), 2);
+        assert!(held(&ctx, "UCx").is_empty());
+        set_held(&ctx, "UCx", "dQw4w9WgXcQ", true);
+        let h = held(&ctx, "UCx");
+        assert_eq!((h.len(), h[0].title.as_str()), (1, "Pets \"tier list\" – part 2"));
+        set_held(&ctx, "UCx", "dQw4w9WgXcQ", false);
+        assert!(held(&ctx, "UCx").is_empty());
+    }
 
     #[test]
     fn feed_parses() {

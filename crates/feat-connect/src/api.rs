@@ -372,6 +372,24 @@ mod tests {
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
+    async fn a_denied_address_waits_an_hour() {
+        let ctx = testing::ctx();
+        add_host(&ctx);
+        let (_, v) = enroll_answer(&ctx, &enroll_body("relay", 1), Some("1.2.3.4")).await;
+        let id = v["id"].as_str().unwrap().to_owned();
+        store::decide(&ctx, &id, false, 1, "discord", now_ms()).unwrap().unwrap();
+        // Past the five-second cooldown, but denied: still refused.
+        let later = now_ms() + 60_000;
+        let again = NewRequest { kind: "relay", device: "x", challenge: &domain::sha256_hex(&verifier(2)), ip: Some("1.2.3.4") };
+        assert!(matches!(store::create(&ctx, &again, later).unwrap(), Err(store::Refusal::SlowDown)));
+        // Another address isn't held back, and the denied one is let back in after the hour.
+        let other = NewRequest { ip: Some("5.6.7.8"), ..again };
+        assert!(store::create(&ctx, &other, later).unwrap().is_ok());
+        let again = NewRequest { ip: Some("1.2.3.4"), challenge: &domain::sha256_hex(&verifier(3)), ..other };
+        assert!(store::create(&ctx, &again, now_ms() + domain::DENIED_COOLDOWN_MS + 1_000).unwrap().is_ok());
+    }
+
+    #[bot_core::tokio::test(crate = "bot_core::tokio")]
     async fn a_relay_phone_goes_through_the_pc() {
         let ctx = testing::ctx();
         let token = add_host(&ctx);

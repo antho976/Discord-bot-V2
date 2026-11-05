@@ -4,6 +4,7 @@ use bot_core::axum::response::{IntoResponse, Redirect};
 use bot_core::axum::routing::{get, post};
 use bot_core::maud::{Markup, PreEscaped, html};
 use bot_core::twilight_model::channel::ChannelType;
+use bot_core::twilight_model::guild::Permissions;
 use bot_core::twilight_model::id::Id;
 use bot_core::web::{dc, ui};
 use bot_core::web::{FormData, Level, Page, User, WebError, WebResult, saved};
@@ -805,6 +806,30 @@ async fn ban(State(ctx): State<Ctx>, user: User, Path((guild, id)): Path<(u64, i
 
 async fn act(ctx: Ctx, user: User, guild: u64, id: i64, outcome: Outcome, reason: Option<&str>) -> WebResult {
     let page = ctx.page(&user, guild, KEY, Level::Edit)?;
+    // The same role check as the alert's Ban button, so an Edit grant doesn't reach past the
+    // person's own place in the server. Dashboard admins are trusted with any ban.
+    if outcome == Outcome::Banned
+        && !page.user.admin
+        && let Some(c) = crate::catch(&ctx, guild, id)?
+    {
+        let roles: Vec<u64> = Id::new_checked(guild)
+            .zip(Id::new_checked(page.user.id))
+            .and_then(|(g, u)| ctx.cache.member(g, u))
+            .map(|m| m.roles().iter().map(|r| r.get()).collect())
+            .unwrap_or_default();
+        // Server-wide permissions from @everyone and their roles; the owner has them all.
+        let owner = Id::new_checked(guild).and_then(|g| ctx.cache.guild(g)).is_some_and(|g| g.owner_id().get() == page.user.id);
+        let perms = std::iter::once(guild)
+            .chain(roles.iter().copied())
+            .filter_map(|r| Id::new_checked(r).and_then(|r| ctx.cache.role(r)).map(|r| r.permissions))
+            .fold(Permissions::empty(), |a, p| a | p);
+        if !owner && !perms.intersects(Permissions::BAN_MEMBERS | Permissions::ADMINISTRATOR) {
+            return Err(WebError::Bad("You need the Ban Members permission in the server for this.".into()));
+        }
+        if !crate::may_ban(&ctx, guild, page.user.id, &roles, c.user_id) {
+            return Err(WebError::Bad("Their highest role in the server is level with or above yours, so you can't ban them.".into()));
+        }
+    }
     let c = crate::resolve(&ctx, guild, id, outcome, page.user.id, &page.user.name, reason, true).await.map_err(WebError::Bad)?;
     let mut what = match outcome {
         Outcome::Banned => format!("Banned {} from a scam catch", c.user_name),
