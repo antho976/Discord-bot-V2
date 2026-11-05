@@ -54,6 +54,16 @@ pub fn today() -> String {
     jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC).date().to_string()
 }
 
+/// The UTC day a moment falls on, as a number: cheap to take on every counted event.
+fn utc_day(ms: i64) -> i64 {
+    ms.div_euclid(86_400_000)
+}
+
+/// A day from [`utc_day`] as `YYYY-MM-DD`.
+fn day_key(day: i64) -> String {
+    jiff::Timestamp::from_millisecond(day * 86_400_000).map(|t| t.to_zoned(jiff::tz::TimeZone::UTC).date().to_string()).unwrap_or_else(|_| today())
+}
+
 /// Where a feature's pages sit in the dashboard sidebar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Group {
@@ -261,9 +271,9 @@ pub struct CtxInner {
     /// Bumped on every settings save, so a read that loaded from the database before a save
     /// doesn't put its older value back into the cache after it.
     settings_saves: std::sync::atomic::AtomicU64,
-    counters: Mutex<HashMap<(u64, &'static str), i64>>,
-    /// Who sent a message today, per server, for the "active today" count: `(day, sets)`.
-    active: Mutex<(String, HashMap<u64, HashSet<u64>>)>,
+    /// Counts not yet written, by server, key and the UTC day they happened on.
+    counters: Mutex<HashMap<(u64, &'static str, i64), i64>>,
+    active: Mutex<Active>,
     pub(crate) snapshots: Mutex<discord::Snapshots>,
     /// Recent answers of `readers_can_see`.
     pub(crate) seen: Mutex<perms::Answers>,
@@ -325,7 +335,7 @@ impl Ctx {
             settings_cache: RwLock::new(HashMap::new()),
             settings_saves: std::sync::atomic::AtomicU64::new(0),
             counters: Mutex::new(HashMap::new()),
-            active: Mutex::new((today(), HashMap::new())),
+            active: Mutex::new(Active { day: utc_day(now_ms()), members: HashMap::new(), finished: Vec::new() }),
             snapshots: Mutex::new(discord::Snapshots::default()),
             seen: Mutex::new(HashMap::new()),
             member_counts: Mutex::new(HashMap::new()),
@@ -494,7 +504,7 @@ impl Ctx {
 
     /// Add to today's counter for `key` in a server. Held in memory, written once a minute.
     pub fn count(&self, guild_id: u64, key: &'static str, n: i64) {
-        *self.counters.lock().unwrap().entry((guild_id, key)).or_default() += n;
+        *self.counters.lock().unwrap().entry((guild_id, key, utc_day(now_ms()))).or_default() += n;
     }
 
     /// Set today's value for `key` outright, e.g. a follower total.
@@ -511,56 +521,81 @@ impl Ctx {
 
     /// Count `user` as active in `guild` today.
     pub(crate) fn mark_active(&self, guild_id: u64, user_id: u64) {
-        self.active.lock().unwrap().1.entry(guild_id).or_default().insert(user_id);
+        let mut a = self.active.lock().unwrap();
+        a.roll(utc_day(now_ms()));
+        a.members.entry(guild_id).or_default().insert(user_id);
     }
 
     pub(crate) fn flush_counters(&self) -> Result<()> {
         let drained: Vec<_> = self.counters.lock().unwrap().drain().collect();
-        let day = today();
-        // Active members: written under the day they were counted, then reset at midnight UTC.
-        // MAX keeps the day's count after a restart empties the sets.
-        let active: Vec<(String, u64, i64)> = {
+        // Active members: each day's sets are written under that day, and a day that ended
+        // is written one last time before its sets go. MAX keeps the day's count after a
+        // restart empties the sets.
+        let active: Vec<(i64, u64, i64)> = {
             let mut a = self.active.lock().unwrap();
-            let list = a.1.iter().map(|(g, set)| (a.0.clone(), *g, set.len() as i64)).collect();
-            if a.0 != day {
-                a.0 = day.clone();
-                a.1.clear();
-            }
+            a.roll(utc_day(now_ms()));
+            let day = a.day;
+            let mut list = std::mem::take(&mut a.finished);
+            list.extend(a.members.iter().map(|(g, set)| (day, *g, set.len() as i64)));
             list
         };
         if drained.is_empty() && active.is_empty() {
             return Ok(());
         }
-        let res = self.write_counters(&day, &drained, &active);
+        let res = self.write_counters(&drained, &active);
         if res.is_err() {
             // Keep the counts for the next flush instead of losing the minute.
             let mut c = self.counters.lock().unwrap();
             for (k, n) in drained {
                 *c.entry(k).or_default() += n;
             }
+            let mut a = self.active.lock().unwrap();
+            let today = a.day;
+            a.finished.extend(active.into_iter().filter(|(d, _, _)| *d != today));
         }
         res
     }
 
-    fn write_counters(&self, day: &str, drained: &[((u64, &'static str), i64)], active: &[(String, u64, i64)]) -> Result<()> {
+    fn write_counters(&self, drained: &[((u64, &'static str, i64), i64)], active: &[(i64, u64, i64)]) -> Result<()> {
         let mut conn = self.db.lock();
         let tx = conn.transaction()?;
-        for ((guild, key), n) in drained {
+        for ((guild, key, day), n) in drained {
             tx.execute(
                 "INSERT INTO daily_stats (guild_id, day, key, value) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT (guild_id, key, day) DO UPDATE SET value = value + excluded.value",
-                params![*guild as i64, day, key, n],
+                params![*guild as i64, day_key(*day), key, n],
             )?;
         }
-        for (d, guild, n) in active {
+        for (day, guild, n) in active {
             tx.execute(
                 "INSERT INTO daily_stats (guild_id, day, key, value) VALUES (?1, ?2, 'active', ?3)
                  ON CONFLICT (guild_id, key, day) DO UPDATE SET value = MAX(value, excluded.value)",
-                params![*guild as i64, d, n],
+                params![*guild as i64, day_key(*day), n],
             )?;
         }
         tx.commit()?;
         Ok(())
+    }
+}
+
+/// Who sent a message on the current UTC day, per server, for the "active today" count.
+struct Active {
+    day: i64,
+    members: HashMap<u64, HashSet<u64>>,
+    /// Counts of days that ended and aren't written yet: `(day, server, members)`.
+    finished: Vec<(i64, u64, i64)>,
+}
+
+impl Active {
+    /// Move to `day` if it's a new one: the day that ended keeps its counts for the next write,
+    /// and nobody counted after midnight lands in it.
+    fn roll(&mut self, day: i64) {
+        if day == self.day {
+            return;
+        }
+        let ended = self.day;
+        self.finished.extend(self.members.drain().map(|(g, set)| (ended, g, set.len() as i64)));
+        self.day = day;
     }
 }
 
@@ -569,6 +604,21 @@ mod tests {
     use std::time::Duration;
 
     use super::{Config, Ctx, Db};
+
+    #[test]
+    fn active_members_stay_on_their_own_day() {
+        let mut a = super::Active { day: 100, members: Default::default(), finished: Vec::new() };
+        a.members.entry(1).or_default().extend([10, 11]);
+        a.roll(100);
+        assert!(a.finished.is_empty());
+        // Midnight: the ended day keeps its two, and someone counted now starts the new day.
+        a.roll(101);
+        a.members.entry(1).or_default().insert(12);
+        assert_eq!(a.finished, vec![(100, 1, 2)]);
+        assert_eq!((a.day, a.members[&1].len()), (101, 1));
+        assert_eq!(super::day_key(0), "1970-01-01");
+        assert_eq!(super::day_key(super::utc_day(86_400_000 * 2 + 5)), "1970-01-03");
+    }
 
     #[tokio::test]
     async fn notify_once_posts_once_per_window_and_key() {
