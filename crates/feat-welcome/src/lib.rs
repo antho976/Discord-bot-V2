@@ -142,6 +142,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
         CREATE TABLE welcome_screening (
             guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, joined_at INTEGER NOT NULL, PRIMARY KEY (guild_id, user_id));
     ",
+}, Migration {
+    // When an invite stops working (its expiry, or when it was deleted), so one that expired or
+    // was revoked isn't taken as used up by the next join.
+    name: "005_invite_ends",
+    sql: "ALTER TABLE welcome_invites ADD COLUMN ends_at INTEGER;",
 }];
 
 #[derive(Default)]
@@ -178,7 +183,8 @@ impl Feature for Welcome {
             Event::InviteCreate(i) => {
                 let guild = i.guild_id.get();
                 if ctx.settings::<Settings>(guild, KEY)?.track_invites {
-                    invites::on_invite_create(ctx, guild, &i.code, i.max_uses as i64, i.inviter.as_ref().map(|u| u.id.get()));
+                    let ends_at = (i.max_age > 0).then(|| i.created_at.as_micros() / 1000 + i.max_age as i64 * 1000);
+                    invites::on_invite_create(ctx, guild, &i.code, i.max_uses as i64, i.inviter.as_ref().map(|u| u.id.get()), ends_at);
                 }
                 Ok(())
             }

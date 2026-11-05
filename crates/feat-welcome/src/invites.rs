@@ -18,19 +18,25 @@ pub struct Inv {
     /// 0 means unlimited.
     pub max_uses: i64,
     pub inviter: Option<u64>,
+    /// When it stops working, in ms: its expiry, or when Discord said it was deleted. None for
+    /// one that never expires.
+    pub ends_at: Option<i64>,
 }
 
 /// Which invite a join came through, from the counts before the join and the counts now.
 ///
 /// The one invite whose use count went up, or else the one limited invite that vanished a use
-/// from its limit (this join used it up). When more than one moved, several members joined
+/// from its limit (this join used it up). One that had already expired, or was deleted over a
+/// minute ago (staff revoked it), wasn't used up by this join and doesn't count. When more than one moved, several members joined
 /// between the two readings (at the same moment, or while the bot was away) and nothing says who
 /// used which, so the answer is `None` rather than a guess. Vanity links and widget joins match
 /// nothing, which is `None` too.
 pub fn find_used(old: &[Inv], new: &[Inv]) -> Option<Inv> {
     let before = |code: &str| old.iter().find(|o| o.code == code).map(|o| o.uses).unwrap_or(0);
     let risen: Vec<&Inv> = new.iter().filter(|n| n.uses > before(&n.code)).collect();
-    let used_up: Vec<&Inv> = old.iter().filter(|o| o.max_uses > 0 && o.uses + 1 >= o.max_uses && !new.iter().any(|n| n.code == o.code)).collect();
+    let still_working = |o: &Inv| o.ends_at.is_none_or(|t| t > bot_core::now_ms() - 60_000);
+    let used_up: Vec<&Inv> =
+        old.iter().filter(|o| o.max_uses > 0 && o.uses + 1 >= o.max_uses && still_working(o) && !new.iter().any(|n| n.code == o.code)).collect();
     match (risen.as_slice(), used_up.as_slice()) {
         ([one], []) => Some((*one).clone()),
         ([], [one]) => Some(Inv { uses: one.uses + 1, ..(*one).clone() }),
@@ -77,10 +83,10 @@ pub fn state(ctx: &Ctx, guild: u64) -> Result<Option<State>> {
 /// The server's invites as last read, most used first.
 pub fn load(ctx: &Ctx, guild: u64) -> Result<Vec<Inv>> {
     ctx.db.with(|c| {
-        let mut s = c.prepare_cached("SELECT code, uses, max_uses, inviter_id FROM welcome_invites WHERE guild_id = ?1 ORDER BY uses DESC, code")?;
+        let mut s = c.prepare_cached("SELECT code, uses, max_uses, inviter_id, ends_at FROM welcome_invites WHERE guild_id = ?1 ORDER BY uses DESC, code")?;
         s
             .query_map([guild as i64], |r| {
-                Ok(Inv { code: r.get(0)?, uses: r.get(1)?, max_uses: r.get(2)?, inviter: r.get::<_, Option<i64>>(3)?.map(|i| i as u64) })
+                Ok(Inv { code: r.get(0)?, uses: r.get(1)?, max_uses: r.get(2)?, inviter: r.get::<_, Option<i64>>(3)?.map(|i| i as u64), ends_at: r.get(4)? })
             })?
             .collect()
     })
@@ -92,8 +98,8 @@ fn store(ctx: &Ctx, guild: u64, invites: &[Inv]) -> Result<()> {
     tx.execute("DELETE FROM welcome_invites WHERE guild_id = ?1", [guild as i64])?;
     for i in invites {
         tx.execute(
-            "INSERT OR REPLACE INTO welcome_invites (guild_id, code, uses, max_uses, inviter_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![guild as i64, i.code, i.uses, i.max_uses, i.inviter.map(|u| u as i64)],
+            "INSERT OR REPLACE INTO welcome_invites (guild_id, code, uses, max_uses, inviter_id, ends_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![guild as i64, i.code, i.uses, i.max_uses, i.inviter.map(|u| u as i64), i.ends_at],
         )?;
     }
     tx.execute(
@@ -142,7 +148,13 @@ async fn fetch(ctx: &Ctx, guild: u64) -> Result<Vec<Inv>, String> {
     let list = res.models().await.map_err(|e| format!("Couldn't read Discord's answer: {e}"))?;
     Ok(list
         .into_iter()
-        .map(|i| Inv { code: i.code, uses: i.uses.unwrap_or(0) as i64, max_uses: i.max_uses.unwrap_or(0) as i64, inviter: i.inviter.map(|u| u.id.get()) })
+        .map(|i| Inv {
+            code: i.code,
+            uses: i.uses.unwrap_or(0) as i64,
+            max_uses: i.max_uses.unwrap_or(0) as i64,
+            inviter: i.inviter.map(|u| u.id.get()),
+            ends_at: i.expires_at.map(|t| t.as_micros() / 1000),
+        })
         .collect())
 }
 
@@ -244,11 +256,12 @@ pub fn due(ctx: &Ctx, guild: u64) -> bool {
     }
 }
 
-pub fn on_invite_create(ctx: &Ctx, guild: u64, code: &str, max_uses: i64, inviter: Option<u64>) {
+/// `ends_at`: when it expires, in ms; None when it never does.
+pub fn on_invite_create(ctx: &Ctx, guild: u64, code: &str, max_uses: i64, inviter: Option<u64>, ends_at: Option<i64>) {
     let res = ctx.db.with(|c| {
         c.execute(
-            "INSERT OR REPLACE INTO welcome_invites (guild_id, code, uses, max_uses, inviter_id) VALUES (?1, ?2, 0, ?3, ?4)",
-            params![guild as i64, code, max_uses, inviter.map(|u| u as i64)],
+            "INSERT OR REPLACE INTO welcome_invites (guild_id, code, uses, max_uses, inviter_id, ends_at) VALUES (?1, ?2, 0, ?3, ?4, ?5)",
+            params![guild as i64, code, max_uses, inviter.map(|u| u as i64), ends_at],
         )
     });
     if let Err(e) = res {
@@ -257,12 +270,17 @@ pub fn on_invite_create(ctx: &Ctx, guild: u64, code: &str, max_uses: i64, invite
 }
 
 /// Forget a deleted invite, unless it was one use from its limit: that join may be about to be
-/// counted and needs the row to find it.
+/// counted and needs the row to find it. The row notes when it went, so a join long after (it
+/// was revoked, not used up) isn't put down to it.
 pub fn on_invite_delete(ctx: &Ctx, guild: u64, code: &str) {
     let res = ctx.db.with(|c| {
         c.execute(
             "DELETE FROM welcome_invites WHERE guild_id = ?1 AND code = ?2 AND NOT (max_uses > 0 AND uses + 1 >= max_uses)",
             params![guild as i64, code],
+        )?;
+        c.execute(
+            "UPDATE welcome_invites SET ends_at = MIN(COALESCE(ends_at, ?3), ?3) WHERE guild_id = ?1 AND code = ?2",
+            params![guild as i64, code, bot_core::now_ms()],
         )
     });
     if let Err(e) = res {
@@ -393,7 +411,7 @@ mod tests {
     use super::*;
 
     fn inv(code: &str, uses: i64, max: i64) -> Inv {
-        Inv { code: code.into(), uses, max_uses: max, inviter: Some(7) }
+        Inv { code: code.into(), uses, max_uses: max, inviter: Some(7), ends_at: None }
     }
 
     #[test]
@@ -416,6 +434,19 @@ mod tests {
         let new = [inv("a", 3, 0)];
         let used = find_used(&old, &new).unwrap();
         assert_eq!((used.code.as_str(), used.uses), ("once", 1));
+    }
+
+    #[test]
+    fn an_invite_that_expired_or_was_revoked_earlier_is_not_used_up_now() {
+        let now = bot_core::now_ms();
+        let ending = |at| Inv { ends_at: Some(at), ..inv("once", 0, 1) };
+        let new = [inv("a", 3, 0)];
+        // Expired an hour ago, or deleted by staff an hour ago: a vanity join now isn't its use.
+        assert!(find_used(&[inv("a", 3, 0), ending(now - 3_600_000)], &new).is_none());
+        // Deleted moments ago, as Discord does when a join uses it up: that join.
+        assert_eq!(find_used(&[inv("a", 3, 0), ending(now - 5_000)], &new).unwrap().code, "once");
+        // Expires next week: still a candidate.
+        assert_eq!(find_used(&[inv("a", 3, 0), ending(now + 7 * 86_400_000)], &new).unwrap().code, "once");
     }
 
     #[test]
