@@ -650,7 +650,7 @@ async fn finish(ctx: &Ctx, id: i64) -> Result<EndOutcome> {
 }
 
 /// Close an ended giveaway's post and reply to it with the winners. False when the reply
-/// couldn't be posted.
+/// couldn't be posted and trying again may help.
 async fn close_and_announce(ctx: &Ctx, g: &Giveaway, entrants: i64) -> bool {
     refresh(ctx, g, entrants).await;
     let winners = &g.winner_ids;
@@ -885,8 +885,9 @@ async fn refresh(ctx: &Ctx, g: &Giveaway, entries: i64) {
     }
 }
 
-/// Post `content` in the giveaway's channel, as a reply to its post, pinging only `ping`. False
-/// when Discord refused it.
+/// Post `content` in the giveaway's channel, as a reply to its post, pinging only `ping`. True
+/// when it went out, or Discord refused it for good (a 4xx other than a rate limit, such as no
+/// Send Messages there), which another try won't change; false when trying again may help.
 async fn announce(ctx: &Ctx, g: &Giveaway, content: &str, ping: &[u64]) -> bool {
     let mentions = AllowedMentions { users: ping.iter().filter_map(|u| Id::new_checked(*u)).collect(), ..Default::default() };
     let mut req = ctx.http.create_message(Id::new(g.channel_id)).content(content).allowed_mentions(Some(&mentions));
@@ -895,7 +896,8 @@ async fn announce(ctx: &Ctx, g: &Giveaway, content: &str, ping: &[u64]) -> bool 
     }
     if let Err(e) = req.await {
         tracing::warn!(giveaway = g.id, error = %e, "couldn't announce giveaway winners");
-        return false;
+        let lasting = matches!(e.kind(), bot_core::twilight_http::error::ErrorType::Response { status, .. } if (400..500).contains(&status.get()) && status.get() != 429);
+        return lasting;
     }
     true
 }

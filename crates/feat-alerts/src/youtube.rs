@@ -227,20 +227,30 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
             post_video(ctx, guilds, &feed, &f.title, v).await;
         }
         for v in held(ctx, &feed) {
-            if now - v.published_ms > HOLD_MS {
-                // Never aired (cancelled, or moved far out): let it go unannounced.
-                set_held(ctx, &feed, &v.id, false);
-            } else if upcoming(ctx, &v.id).await == Some(false) {
-                // Only a page that was read and says it's on; a failed read waits for the next.
-                set_held(ctx, &feed, &v.id, false);
-                post_video(ctx, guilds, &feed, &f.title, &v).await;
+            match upcoming(ctx, &v.id).await {
+                // A page that was read and says it's on.
+                Some(false) => {
+                    set_held(ctx, &feed, &v.id, false);
+                    post_video(ctx, guilds, &feed, &f.title, &v).await;
+                }
+                // Scheduled further out than the hold: posted now, as it was before holds, so
+                // it isn't lost.
+                Some(true) if now - v.published_ms > HOLD_MS => {
+                    set_held(ctx, &feed, &v.id, false);
+                    post_video(ctx, guilds, &feed, &f.title, &v).await;
+                }
+                // Gone for the whole hold (deleted, or made private): let it go unannounced.
+                None if now - v.published_ms > HOLD_MS => set_held(ctx, &feed, &v.id, false),
+                // Still to come, or a failed read: wait for the next check.
+                _ => {}
             }
         }
     }
 }
 
-/// How long a premiere or scheduled stream is waited for after it appears in the feed.
-const HOLD_MS: i64 = 14 * 86_400_000;
+/// How long a premiere or scheduled stream is held after it appears in the feed. One scheduled
+/// further out is posted when the hold ends, as it was before holds.
+const HOLD_MS: i64 = 30 * 86_400_000;
 
 /// Post a new video in every server that follows the channel.
 async fn post_video(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)], feed: &str, feed_title: &str, v: &Video) {
