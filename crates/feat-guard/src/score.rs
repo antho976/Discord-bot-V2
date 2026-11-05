@@ -130,7 +130,16 @@ pub fn score(text: &str, facts: &Facts) -> Verdict {
         v.add(4, "@everyone or @here with a link");
     }
     if facts.repeat_channels >= 3 {
-        let w = if !found.is_empty() || facts.has_attachments { 8 } else { 5 };
+        // With a link or a file it's the compromised-account pattern. Plain text in three
+        // channels is often a real member asking around, so it only counts with another sign,
+        // like a new account; in four or more it counts on its own.
+        let w = if !found.is_empty() || facts.has_attachments {
+            8
+        } else if facts.repeat_channels >= 4 {
+            5
+        } else {
+            3
+        };
         v.add(w, format!("Same message in {} channels within 30 seconds", facts.repeat_channels));
     }
     if v.score > 0
@@ -672,9 +681,15 @@ mod tests {
         // Images only, no text: still the compromised pattern.
         let img = Facts { repeat_channels: 4, has_attachments: true, new_account_days: 7, ..Default::default() };
         assert!(score("", &img).caught(Strictness::Low));
-        // Plain text repeated: caught at normal, not at low.
-        let text = score("anyone want to play tonight?", &facts(3));
-        assert!(text.caught(Strictness::Normal) && !text.caught(Strictness::Low));
+        // Plain text in three channels from an established member is someone asking around.
+        let established = |n| Facts { account_age_days: Some(400.0), ..facts(n) };
+        let text = score("anyone around to help with my build?", &established(3));
+        assert!(!text.caught(Strictness::Normal), "{}", explain(&text));
+        // From a new account it's caught, and in four channels from anyone.
+        let young = Facts { account_age_days: Some(1.0), ..facts(3) };
+        assert!(score("anyone around to help with my build?", &young).caught(Strictness::Normal));
+        let four = score("anyone want to play tonight?", &established(4));
+        assert!(four.caught(Strictness::Normal) && !four.caught(Strictness::Low));
     }
 
     #[test]

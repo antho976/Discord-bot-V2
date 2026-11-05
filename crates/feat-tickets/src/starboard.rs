@@ -559,18 +559,28 @@ fn count_stars(users: &[bot_core::twilight_model::user::User], author: Id<bot_co
 
 // ---- the post ----
 
-fn is_image(a: &bot_core::twilight_model::channel::Attachment) -> bool {
-    a.content_type.as_deref().is_some_and(|t| t.starts_with("image/"))
-        || [".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().any(|ext| a.filename.to_lowercase().ends_with(ext))
+/// Discord blurs a file sent as a spoiler, but never an embed's image, so a spoiler is listed
+/// under Attachments (behind spoiler bars) instead of shown.
+fn is_spoiler(filename: &str) -> bool {
+    filename.starts_with("SPOILER_")
 }
 
-/// The first image attachment, or else an embed's image or thumbnail.
+fn is_image(a: &bot_core::twilight_model::channel::Attachment) -> bool {
+    !is_spoiler(&a.filename)
+        && (a.content_type.as_deref().is_some_and(|t| t.starts_with("image/"))
+            || [".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().any(|ext| a.filename.to_lowercase().ends_with(ext)))
+}
+
+/// The first image attachment, or else an embed's image or thumbnail. A message with any
+/// spoiler in its text gets no embed image: a link behind spoiler bars still has its preview,
+/// which Discord blurs in the message but not once it's an embed's image here.
 fn image_of(m: &Message) -> Option<String> {
-    m.attachments
-        .iter()
-        .find(|a| is_image(a))
-        .map(|a| a.url.clone())
-        .or_else(|| m.embeds.iter().find_map(|e| e.image.as_ref().map(|i| i.url.clone()).or_else(|| e.thumbnail.as_ref().map(|t| t.url.clone()))))
+    m.attachments.iter().find(|a| is_image(a)).map(|a| a.url.clone()).or_else(|| {
+        if m.content.contains("||") {
+            return None;
+        }
+        m.embeds.iter().find_map(|e| e.image.as_ref().map(|i| i.url.clone()).or_else(|| e.thumbnail.as_ref().map(|t| t.url.clone())))
+    })
 }
 
 /// A short line for the dashboard table.
@@ -613,7 +623,8 @@ fn attachments_field(files: &[(&str, &str)]) -> Option<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut used = 0;
     for (i, (name, url)) in files.iter().enumerate().take(5) {
-        let line = format!("[{}]({})", text::clip(name, 60), url);
+        let link = format!("[{}]({})", text::clip(name, 60), url);
+        let line = if is_spoiler(name) { format!("||{link}||") } else { link };
         let after = files.len() - i - 1;
         // This line, and the "and N more" line in case nothing more fits after it.
         let need = used + usize::from(!lines.is_empty()) + len(&line) + if after > 0 { 1 + len(&more_line(after)) } else { 0 };
@@ -944,6 +955,7 @@ mod tests {
         // One link too long for a field on its own.
         let huge = "x".repeat(2000);
         assert_eq!(attachments_field(&[("a", huge.as_str())]).unwrap(), "1 file");
+        assert_eq!(attachments_field(&[("SPOILER_cat.png", "https://x/c.png")]).unwrap(), "||[SPOILER_cat.png](https://x/c.png)||");
     }
 
     fn post(message: u64, stars: i64, created: i64) -> Post {

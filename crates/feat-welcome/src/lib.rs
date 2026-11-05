@@ -14,7 +14,7 @@ use bot_core::anyhow::{Result, anyhow};
 use bot_core::rusqlite::params;
 use bot_core::twilight_model::channel::message::AllowedMentions;
 use bot_core::twilight_model::gateway::event::Event;
-use bot_core::twilight_model::gateway::payload::incoming::{MemberAdd, MemberRemove};
+use bot_core::twilight_model::gateway::payload::incoming::{MemberAdd, MemberRemove, MemberUpdate};
 use bot_core::twilight_model::http::attachment::Attachment;
 use bot_core::twilight_model::id::Id;
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async, text};
@@ -133,6 +133,15 @@ pub(crate) const MIGRATIONS: &[Migration] = &[Migration {
         CREATE TABLE welcome_banner_turn (
             guild_id INTEGER NOT NULL, kind TEXT NOT NULL, last_id INTEGER NOT NULL, PRIMARY KEY (guild_id, kind));
     ",
+}, Migration {
+    // Members who joined a server with rules screening and haven't accepted the rules yet. Their
+    // auto-roles and saved roles wait until they do; kept in the database so a restart in between
+    // doesn't lose them.
+    name: "004_screening",
+    sql: "
+        CREATE TABLE welcome_screening (
+            guild_id INTEGER NOT NULL, user_id INTEGER NOT NULL, joined_at INTEGER NOT NULL, PRIMARY KEY (guild_id, user_id));
+    ",
 }];
 
 #[derive(Default)]
@@ -165,6 +174,7 @@ impl Feature for Welcome {
         match event {
             Event::MemberAdd(m) => self.joined(ctx, m).await,
             Event::MemberRemove(m) => self.left(ctx, m).await,
+            Event::MemberUpdate(m) if !m.pending => self.screened(ctx, m).await,
             Event::InviteCreate(i) => {
                 let guild = i.guild_id.get();
                 if ctx.settings::<Settings>(guild, KEY)?.track_invites {
@@ -204,6 +214,8 @@ impl Feature for Welcome {
             if let Err(e) = roles::prune(ctx, guild, s.rejoin_days.max(1)) {
                 bot_core::tracing::warn!(guild, error = %e, "couldn't prune saved roles");
             }
+            // Someone who accepted the rules while the bot was offline sent no update it saw.
+            catch_up_screening(ctx, guild);
         }
         Ok(())
     }
@@ -246,7 +258,15 @@ impl Welcome {
         // (reading invites gets rate-limited in a join raid) holds neither up.
         let record = invites::record_join(ctx, &self.readings, guild, user, bot, s.track_invites);
         let greet = async {
-            give_roles(ctx, &s, guild, user, bot, &m.member.roles.iter().map(|r| r.get()).collect::<Vec<_>>()).await;
+            // With rules screening on, a role given now would let them past the rules unread, so
+            // the roles wait for `screened`.
+            if m.member.pending && !bot {
+                if let Err(e) = roles::hold_for_screening(ctx, guild, user) {
+                    bot_core::tracing::warn!(guild, user, error = %e, "couldn't note a member waiting on rules screening");
+                }
+            } else {
+                give_roles(ctx, &s, guild, user, bot, &m.member.roles.iter().map(|r| r.get()).collect::<Vec<_>>()).await;
+            }
             if s.welcome_on && !bot && s.welcome_channel.is_some() {
                 let name = m.member.nick.clone().or_else(|| m.user.global_name.clone()).unwrap_or_else(|| m.user.name.clone());
                 let avatar = bot_core::discord::avatar_url(user, m.user.avatar.map(|a| a.to_string()).as_deref());
@@ -260,13 +280,32 @@ impl Welcome {
         Ok(())
     }
 
+    /// A member who joined during rules screening may have accepted the rules: they get the
+    /// roles held back at join. Discord can leave `pending` out of an update, which reads as
+    /// false, so Discord is asked first; that call is only made for members still waiting.
+    async fn screened(&self, ctx: &Ctx, m: &MemberUpdate) -> Result<()> {
+        let guild = m.guild_id.get();
+        let user = m.user.id.get();
+        if roles::is_screening(ctx, guild, user)? {
+            release_if_accepted(ctx, guild, user, m.user.bot).await?;
+        }
+        Ok(())
+    }
+
     async fn left(&self, ctx: &Ctx, m: &MemberRemove) -> Result<()> {
         let guild = m.guild_id.get();
         let user = m.user.id.get();
+        // Still on the rules screen, they never got their roles back, so the save waiting for
+        // them stays as it is for the next join.
+        let screening = roles::take_screened(ctx, guild, user).unwrap_or_else(|e| {
+            bot_core::tracing::warn!(guild, user, error = %e, "couldn't clear rules screening");
+            false
+        });
         let s = ctx.settings::<Settings>(guild, KEY)?;
 
         if s.rejoin_on
             && !m.user.bot
+            && !screening
             && let Some(before) = ctx.before_member(guild, user)
         {
             let kept: Vec<u64> = before.roles.into_iter().filter(|r| *r != guild).collect();
@@ -411,6 +450,62 @@ fn notify_failure(ctx: &Ctx, guild: u64, kind: &'static str, text: String) {
         last.insert((guild, kind), Instant::now());
     }
     ctx.notify(Some(guild), KEY, text, Some(format!("/g/{guild}/{KEY}")));
+}
+
+/// Give a member waiting on rules screening their roles once Discord says they've accepted.
+/// Gone from the server: their note goes.
+async fn release_if_accepted(ctx: &Ctx, guild: u64, user: u64, bot: bool) -> Result<()> {
+    let (Some(guild_id), Some(user_id)) = (Id::new_checked(guild), Id::new_checked(user)) else { return Ok(()) };
+    let member = match ctx.http.guild_member(guild_id, user_id).await {
+        Ok(r) => r.model().await?,
+        Err(e) if bot_core::discord::is_not_found(&e) => {
+            roles::take_screened(ctx, guild, user)?;
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
+    // Only the first to clear the note gives the roles.
+    if member.pending || !roles::take_screened(ctx, guild, user)? {
+        return Ok(());
+    }
+    let s = ctx.settings::<Settings>(guild, KEY)?;
+    give_roles(ctx, &s, guild, user, bot, &member.roles.iter().map(|r| r.get()).collect::<Vec<_>>()).await;
+    Ok(())
+}
+
+/// Members still noted as waiting on rules screening whom the cache already shows as past it,
+/// a few a minute, in a random order so a few the cache has wrong can't hold up the rest. Each
+/// is confirmed with Discord before getting roles.
+fn catch_up_screening(ctx: &Ctx, guild: u64) {
+    let waiting = match roles::screening(ctx, guild, 200) {
+        Ok(w) => w,
+        Err(e) => {
+            bot_core::tracing::warn!(guild, error = %e, "couldn't read members waiting on rules screening");
+            return;
+        }
+    };
+    let Some(guild_id) = Id::new_checked(guild) else { return };
+    let mut asked = 0;
+    for user in waiting {
+        let Some(user_id) = Id::new_checked(user) else { continue };
+        // Not cached (member lists still loading, or they left unseen) or still pending: wait.
+        if !ctx.cache.member(guild_id, user_id).is_some_and(|m| !m.pending()) {
+            continue;
+        }
+        if asked == 5 {
+            break;
+        }
+        asked += 1;
+        let bot = ctx.cache.user(user_id).is_some_and(|u| u.bot);
+        // On its own task: the tick's time limit mustn't stop it between clearing the note and
+        // giving the last role.
+        let ctx = ctx.clone();
+        bot_core::tokio::spawn(async move {
+            if let Err(e) = release_if_accepted(&ctx, guild, user, bot).await {
+                bot_core::tracing::warn!(guild, user, error = %e, "couldn't check a member's rules screening");
+            }
+        });
+    }
 }
 
 /// Auto-roles, plus the roles a returning member left with. Each role is tried on its own so

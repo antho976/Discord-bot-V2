@@ -550,11 +550,19 @@ async fn hold(f: &Modmail, ctx: &Ctx, user: u64, name: String, avatar: String, m
 }
 
 /// Carry DMs into the member's conversation in `guild`, opening one if needed. A thread that
-/// was deleted without the bot noticing closes its conversation, and a new one opens.
+/// was deleted, or archived and locked, without the bot noticing (it was offline then) closes
+/// its conversation, and a new one opens.
 async fn deliver(f: &Modmail, ctx: &Ctx, guild: u64, user: u64, name: &str, avatar: &str, messages: &[Incoming]) -> Result<()> {
     let s = ctx.settings::<Settings>(guild, KEY)?;
     for attempt in 0..2 {
         let conv = match ctx.db.with(|c| open_in(c, guild, user))?.filter(|c| c.thread_id != 0) {
+            // Asked before sending: the bot can manage threads, so a post could reopen one staff
+            // closed by hand.
+            Some(c) if thread_closed(ctx, c.thread_id).await => {
+                ctx.db.with(|db| mark_closed(db, c.id, None, now_ms()))?;
+                f.drop_thread(c.thread_id);
+                continue;
+            }
             Some(c) => c,
             None => match open(f, ctx, guild, &s, user, name).await? {
                 Some(c) => c,
@@ -577,6 +585,18 @@ async fn deliver(f: &Modmail, ctx: &Ctx, guild: u64, user: u64, name: &str, avat
         }
     }
     Ok(())
+}
+
+/// Whether a staff thread is archived and locked, as staff leave it when they close one by hand.
+/// A thread the cache doesn't have (archived ones aren't kept, and one closed while the bot was
+/// offline never came in) is asked of Discord.
+async fn thread_closed(ctx: &Ctx, thread: u64) -> bool {
+    let Some(id) = Id::new_checked(thread) else { return false };
+    if let Some(c) = ctx.cache.channel(id) {
+        return c.thread_metadata.as_ref().is_some_and(|m| m.archived && m.locked);
+    }
+    let Ok(res) = ctx.http.channel(id).await else { return false };
+    res.model().await.is_ok_and(|c| c.thread_metadata.is_some_and(|m| m.archived && m.locked))
 }
 
 async fn relay_in(ctx: &Ctx, conv: &Conv, name: &str, avatar: &str, messages: &[Incoming]) -> Result<()> {
