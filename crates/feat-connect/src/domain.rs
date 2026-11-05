@@ -14,7 +14,8 @@ pub const MAX_PENDING: i64 = 3;
 /// One request per address in this window, so a loop cannot fire DMs back to back.
 pub const IP_COOLDOWN_MS: i64 = 5_000;
 /// An address an approver denied can't ask again for this long, so denying a stranger's
-/// requests frees their places for good instead of for the next five seconds.
+/// requests frees their places for good instead of for the next five seconds. Requests with
+/// no address share one key and are never held back this way: one denial would stop them all.
 pub const DENIED_COOLDOWN_MS: i64 = 3_600_000;
 /// Rounds of approval DMs in a rolling hour. Past this, requests wait on the dashboard only.
 pub const MAX_DM_ROUNDS_PER_HOUR: i64 = 6;
@@ -224,14 +225,14 @@ pub fn client_ip(forwarded_for: Option<&str>) -> Option<String> {
     Some(pick.to_string())
 }
 
-/// What the per-address limits count by. An IPv6 client usually holds a whole /64 and often a
-/// /48 (a /56 for many homes), so the limits count the /48, not each address or /64 in it. A request with no forwarded address (no proxy
+/// What the per-address limits count by. An IPv6 client usually holds a whole /64, so the
+/// limits count the /64, not each address in it. A request with no forwarded address (no proxy
 /// in front) shares one key, so it can't skip the limits.
 pub fn limit_key(ip: Option<&str>) -> String {
     match ip.and_then(|i| i.parse::<IpAddr>().ok()) {
         Some(IpAddr::V6(v6)) if v6.to_ipv4_mapped().is_none() => {
             let s = v6.segments();
-            format!("{:x}:{:x}:{:x}::/48", s[0], s[1], s[2])
+            format!("{:x}:{:x}:{:x}:{:x}::/64", s[0], s[1], s[2], s[3])
         }
         Some(ip) => ip.to_string(),
         None => "unknown".into(),
@@ -378,8 +379,8 @@ mod tests {
         assert_eq!(client_ip(Some("garbage, , ")), None);
         assert_eq!(client_ip(Some(" ")), None);
         assert_eq!(client_ip(None), None);
-        assert_eq!(limit_key(Some("2001:db8:1:2:aaaa::1")), "2001:db8:1::/48");
-        assert_eq!(limit_key(Some("2001:db8:1:ff:bbbb::9")), "2001:db8:1::/48");
+        assert_eq!(limit_key(Some("2001:db8:1:2:aaaa::1")), "2001:db8:1:2::/64");
+        assert_eq!(limit_key(Some("2001:db8:1:2:bbbb::9")), "2001:db8:1:2::/64");
         assert_eq!(limit_key(Some("203.0.113.9")), "203.0.113.9");
         assert_eq!(limit_key(None), "unknown");
     }

@@ -102,10 +102,10 @@ pub async fn run(ctx: Ctx, mut shutdown: tokio::sync::watch::Receiver<bool>) -> 
                             let ctx = ctx.clone();
                             let registered = registered.clone();
                             tokio::spawn(async move {
-                                // A 429 or a 5xx at boot passes; tried again after 1, 5 and 15
-                                // minutes, then on the next GuildCreate (a reconnect).
+                                // A 429 or a 5xx at boot passes; tried again 1, 5 and 15 minutes
+                                // in, then on the next GuildCreate (a reconnect).
                                 let mut last = None;
-                                for wait in [0, 60, 300, 900] {
+                                for wait in [0, 60, 240, 600] {
                                     tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
                                     match register_commands(&ctx, id).await {
                                         Ok(()) => return,

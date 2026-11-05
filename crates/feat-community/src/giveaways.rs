@@ -803,7 +803,8 @@ fn apply_reroll(c: &Connection, g: &Giveaway, swaps: &[(u64, u64)], added: &[u64
     let mut winners = swapped(&g.winner_ids, swaps);
     winners.extend_from_slice(added);
     let passed: Vec<u64> = g.passed_ids.iter().copied().chain(swaps.iter().map(|s| s.0)).collect();
-    c.execute("UPDATE giveaways SET winner_ids = ?2, passed_ids = ?3 WHERE id = ?1", params![g.id, join_ids(&winners), join_ids(&passed)])?;
+    // A reroll posts its own line, so a first announcement still owed isn't sent on top of it.
+    c.execute("UPDATE giveaways SET winner_ids = ?2, passed_ids = ?3, announced = 1 WHERE id = ?1", params![g.id, join_ids(&winners), join_ids(&passed)])?;
     Ok(Some(Giveaway { winner_ids: winners, passed_ids: passed, ..g.clone() }))
 }
 

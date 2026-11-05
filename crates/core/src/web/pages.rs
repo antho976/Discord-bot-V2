@@ -142,7 +142,7 @@ async fn overview(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>, Qu
         Metric { key, label, unit, tip_unit, cur, prev, value, before }
     };
     // Voice is counted in minutes. The totals are summed before turning into hours, so 25
-    // minutes a day reads as 12 hours over 30 days, not 0; the chart shows hours a day, or
+    // minutes a day reads as 13 hours over 30 days, not 0; the chart shows hours a day, or
     // minutes when no day in the range reaches half an hour.
     let voice_metric = {
         let mut m = metric("voice", "Voice hours", "hours in voice", "hours", &voice, false);

@@ -219,7 +219,8 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
         for v in fresh.iter().filter(|v| now - v.published_ms <= MAX_AGE_MS) {
             // A premiere or a scheduled stream is in the feed from when it's scheduled; its post
             // waits until it airs, or the link would only show a countdown.
-            if upcoming(ctx, &v.id).await {
+            // A page that couldn't be read posts it, as before.
+            if upcoming(ctx, &v.id).await == Some(true) {
                 set_held(ctx, &feed, &v.id, true);
                 continue;
             }
@@ -229,7 +230,8 @@ pub async fn check(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)]) {
             if now - v.published_ms > HOLD_MS {
                 // Never aired (cancelled, or moved far out): let it go unannounced.
                 set_held(ctx, &feed, &v.id, false);
-            } else if !upcoming(ctx, &v.id).await {
+            } else if upcoming(ctx, &v.id).await == Some(false) {
+                // Only a page that was read and says it's on; a failed read waits for the next.
                 set_held(ctx, &feed, &v.id, false);
                 post_video(ctx, guilds, &feed, &f.title, &v).await;
             }
@@ -259,15 +261,16 @@ async fn post_video(ctx: &Ctx, guilds: &[(u64, Arc<Settings>)], feed: &str, feed
 }
 
 /// Whether a video is a premiere or a live stream that hasn't started, from its watch page.
-/// When the page can't be read, it isn't: the post goes out as it always did.
-async fn upcoming(ctx: &Ctx, id: &str) -> bool {
-    let page = async { ctx.web.get(format!("https://www.youtube.com/watch?v={id}")).send().await.ok()?.error_for_status().ok()?.text().await.ok() };
-    page.await.is_some_and(|p| is_upcoming_page(&p))
+/// None when the page couldn't be read, or wasn't a watch page (a consent or bot check).
+async fn upcoming(ctx: &Ctx, id: &str) -> Option<bool> {
+    let page = ctx.web.get(format!("https://www.youtube.com/watch?v={id}")).send().await.ok()?.error_for_status().ok()?.text().await.ok()?;
+    upcoming_from_page(&page)
 }
 
-/// YouTube's player data on the watch page marks a premiere or stream still to come.
-pub fn is_upcoming_page(page: &str) -> bool {
-    page.contains("\"isUpcoming\":true")
+/// YouTube's player data on the watch page marks a premiere or stream still to come. A page
+/// without the player data says nothing either way.
+pub fn upcoming_from_page(page: &str) -> Option<bool> {
+    page.contains("\"videoDetails\"").then(|| page.contains("\"isUpcoming\":true"))
 }
 
 fn set_held(ctx: &Ctx, feed: &str, id: &str, held: bool) {
@@ -428,7 +431,8 @@ fn store(ctx: &Ctx, feed: &str, f: &Feed) -> Result<Vec<Video>> {
         }
     }
     tx.execute(
-        "DELETE FROM alerts_videos WHERE feed = ?1 AND video_id NOT IN
+        // Held videos stay until they air, however many newer ones come.
+        "DELETE FROM alerts_videos WHERE feed = ?1 AND held = 0 AND video_id NOT IN
          (SELECT video_id FROM alerts_videos WHERE feed = ?1 ORDER BY published_at DESC LIMIT 50)",
         [feed],
     )?;
@@ -498,9 +502,11 @@ mod tests {
 
     #[test]
     fn premieres_are_told_from_their_page() {
-        assert!(is_upcoming_page(r#"..."videoDetails":{"videoId":"x","isLiveContent":true,"isUpcoming":true}..."#));
-        assert!(!is_upcoming_page(r#"..."videoDetails":{"videoId":"x","isLiveContent":true}..."#));
-        assert!(!is_upcoming_page(""));
+        assert_eq!(upcoming_from_page(r#"..."videoDetails":{"videoId":"x","isLiveContent":true,"isUpcoming":true}..."#), Some(true));
+        assert_eq!(upcoming_from_page(r#"..."videoDetails":{"videoId":"x","isLiveContent":true}..."#), Some(false));
+        // A consent page or an empty answer: unknown.
+        assert_eq!(upcoming_from_page("<html>Before you continue to YouTube</html>"), None);
+        assert_eq!(upcoming_from_page(""), None);
     }
 
     #[bot_core::tokio::test(crate = "bot_core::tokio")]
