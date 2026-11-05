@@ -360,7 +360,8 @@ impl Audit {
                 e = e.description(match content {
                     None => "Content not available".to_owned(),
                     Some(c) if c.trim().is_empty() => "No text".to_owned(),
-                    Some(c) => text::clip(c, 1000),
+                    // Deleted messages are often the scams; their links stay unclickable here.
+                    Some(c) => text::clip(&text::unlink(c), 1000),
                 });
                 e = field(e, "Channel", &format!("<#{channel}>"), true);
                 if !files.is_empty() {
@@ -392,8 +393,8 @@ impl Audit {
                     PRIVATE_NOTE.to_owned()
                 } else {
                     e = e.description(format!("In <#{channel}>, [jump to message]({link})"));
-                    e = field(e, "Before", &before.as_ref().map(|b| clip_or(&b.content, 900, "No text")).unwrap_or_else(|| "Not available".into()), false);
-                    e = field(e, "After", &clip_or(&m.content, 900, "No text"), false);
+                    e = field(e, "Before", &before.as_ref().map(|b| clip_or(&text::unlink(&b.content), 900, "No text")).unwrap_or_else(|| "Not available".into()), false);
+                    e = field(e, "After", &clip_or(&text::unlink(&m.content), 900, "No text"), false);
                     diff_json(before.as_ref().map(|b| b.content.as_str()), Some(&m.content))
                 };
                 out.push(Item { guild, kind: Kind::MessageEdit, user: Some(author), channel: Some(channel), summary, embed: e.build() });

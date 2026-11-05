@@ -134,9 +134,44 @@ pub fn num(n: i64) -> String {
     if n < 0 { format!("-{out}") } else { out }
 }
 
+/// Make the links in quoted text unclickable, for a log that repeats what someone wrote:
+/// `https://` becomes `hxxps://`, which Discord neither links nor accepts in a masked link, so a
+/// deleted scam message doesn't come back as a live link. The length stays the same.
+pub fn unlink(s: &str) -> String {
+    let mut bytes = s.as_bytes().to_vec();
+    let mut from = 0;
+    while let Some(at) = s[from..].find("://").map(|i| from + i) {
+        let scheme_end = if at >= 5 && bytes[at - 5..at].eq_ignore_ascii_case(b"https") {
+            Some(at - 1)
+        } else if at >= 4 && bytes[at - 4..at].eq_ignore_ascii_case(b"http") {
+            Some(at)
+        } else {
+            None
+        };
+        if let Some(end) = scheme_end {
+            // "http" ends at `end`; its two t's are bytes end-3 and end-2.
+            bytes[end - 3] = if bytes[end - 3].is_ascii_uppercase() { b'X' } else { b'x' };
+            bytes[end - 2] = if bytes[end - 2].is_ascii_uppercase() { b'X' } else { b'x' };
+        }
+        from = at + 3;
+    }
+    // Only ASCII bytes were swapped for ASCII bytes, so this is still UTF-8.
+    String::from_utf8(bytes).unwrap_or_else(|_| s.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unlink_makes_links_inert() {
+        assert_eq!(unlink("free https://dlscord.com/x now"), "free hxxps://dlscord.com/x now");
+        assert_eq!(unlink("[discord.com/gift](https://evil.co)"), "[discord.com/gift](hxxps://evil.co)");
+        assert_eq!(unlink("HTTP://a.b and Https://c.d"), "HXXP://a.b and Hxxps://c.d");
+        assert_eq!(unlink("no links here: a://b, ://, x"), "no links here: a://b, ://, x");
+        assert_eq!(unlink("é https://ü.de"), "é hxxps://ü.de");
+        assert_eq!(unlink(""), "");
+    }
 
     #[test]
     fn durations_parse() {
