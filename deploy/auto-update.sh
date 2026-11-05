@@ -2,8 +2,9 @@
 # Auto-update for the self-hosted bot (README, "Self-hosting"). Cron runs it every 2 minutes.
 # When main has a new commit and every GitHub check on it passed, it pulls the commit, builds the
 # new image while the old bot keeps running, and restarts onto it. If the new bot doesn't answer
-# /healthz within 2 minutes, the previous image goes back up. It logs to deploy.log only when
-# something happens.
+# /healthz within 2 minutes, the previous image goes back up. After a good deploy it removes old
+# images and keeps Docker's build cache under 4 GB. It logs to deploy.log only when something
+# happens.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -56,7 +57,9 @@ for _ in $(seq 24); do
   if healthy && sleep 10 && healthy; then
     log "$short: up"
     rm -f "$state"
-    docker image prune -f >/dev/null
+    docker image prune -f >/dev/null || true
+    # Every code change recompiles from scratch, so older build layers are dead weight.
+    docker builder prune -f --max-used-space 4GB >/dev/null || true
     exit 0
   fi
 done
