@@ -550,7 +550,8 @@ async fn hold(f: &Modmail, ctx: &Ctx, user: u64, name: String, avatar: String, m
 }
 
 /// Carry DMs into the member's conversation in `guild`, opening one if needed. A thread that
-/// was deleted without the bot noticing closes its conversation, and a new one opens.
+/// was deleted, or archived and locked, without the bot noticing (it was offline then) closes
+/// its conversation, and a new one opens.
 async fn deliver(f: &Modmail, ctx: &Ctx, guild: u64, user: u64, name: &str, avatar: &str, messages: &[Incoming]) -> Result<()> {
     let s = ctx.settings::<Settings>(guild, KEY)?;
     for attempt in 0..2 {
@@ -563,7 +564,10 @@ async fn deliver(f: &Modmail, ctx: &Ctx, guild: u64, user: u64, name: &str, avat
         };
         match relay_in(ctx, &conv, name, avatar, messages).await {
             Ok(()) => return Ok(()),
-            Err(e) if attempt == 0 && e.downcast_ref::<bot_core::twilight_http::Error>().is_some_and(is_not_found) => {
+            Err(e)
+                if attempt == 0
+                    && (e.downcast_ref::<bot_core::twilight_http::Error>().is_some_and(is_not_found) || thread_closed(ctx, conv.thread_id).await) =>
+            {
                 ctx.db.with(|c| mark_closed(c, conv.id, None, now_ms()))?;
                 f.drop_thread(conv.thread_id);
             }
@@ -577,6 +581,14 @@ async fn deliver(f: &Modmail, ctx: &Ctx, guild: u64, user: u64, name: &str, avat
         }
     }
     Ok(())
+}
+
+/// Whether a staff thread is archived and locked, as staff leave it when they close one by hand.
+/// Asked of Discord: an archived thread isn't in the cache.
+async fn thread_closed(ctx: &Ctx, thread: u64) -> bool {
+    let Some(id) = Id::new_checked(thread) else { return false };
+    let Ok(res) = ctx.http.channel(id).await else { return false };
+    res.model().await.is_ok_and(|c| c.thread_metadata.is_some_and(|m| m.archived && m.locked))
 }
 
 async fn relay_in(ctx: &Ctx, conv: &Conv, name: &str, avatar: &str, messages: &[Incoming]) -> Result<()> {
