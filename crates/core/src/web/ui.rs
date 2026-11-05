@@ -66,6 +66,8 @@ pub enum Icon {
     Level,
     /// Up and down chevrons: a switcher that opens a list.
     Updown,
+    /// The machine the bot runs on: two stacked units with a light each.
+    Server,
 }
 
 impl Icon {
@@ -116,6 +118,7 @@ impl Icon {
             Icon::Enter => (16, r#"<path d="M3 8h9.5M9 4.5 12.5 8 9 11.5"/>"#),
             Icon::Member => (16, r#"<circle cx="8" cy="5.5" r="2.5"/><path d="M3 13.5c.5-2.5 2.5-4 5-4s4.5 1.5 5 4"/>"#),
             Icon::Updown => (16, r#"<path d="m5 6 3-3 3 3M5 10l3 3 3-3"/>"#),
+            Icon::Server => (24, r#"<path d="M5.5 4h13A1.5 1.5 0 0 1 20 5.5v3A1.5 1.5 0 0 1 18.5 10h-13A1.5 1.5 0 0 1 4 8.5v-3A1.5 1.5 0 0 1 5.5 4ZM5.5 14h13a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-3A1.5 1.5 0 0 1 5.5 14ZM7.5 7h.01M7.5 17h.01M11 7h5.5M11 17h5.5"/>"#),
             Icon::Level => (24, r#"<path d="M12 2.75 19.75 7.25v9.5L12 21.25 4.25 16.75v-9.5zM8.5 12.25 12 9.5l3.5 2.75M8.5 16 12 13.25 15.5 16"/>"#),
         }
     }
@@ -211,7 +214,8 @@ fn identity(ctx: &Ctx, page: &Page, title: &str) -> (Icon, Option<&'static str>,
         key => match ctx.feature(key) {
             Some(f) => {
                 let meta = f.meta();
-                let nav = meta.nav.iter().find(|n| n.label == title).or(meta.nav.first());
+                let global = f.global_page();
+                let nav = meta.nav.iter().find(|n| n.label == title).or(meta.nav.first()).or(global.as_ref());
                 let ic = nav.map(|n| n.icon).unwrap_or(Icon::Toggle);
                 (ic, Some(nav.map(|n| n.about).filter(|a| !a.is_empty()).unwrap_or(meta.description)), meta.group.hue())
             }
@@ -264,6 +268,9 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
     let frame = super::banner::frame(ctx, guild);
     let icon_url = ctx.guild_icon_large(guild);
     let me = page.user.avatar_url();
+    // Pages outside any server (Server), for whoever may open them.
+    let global: Vec<(&'static str, crate::NavItem)> =
+        ctx.features().iter().filter_map(|f| f.global_page().map(|n| (f.meta().key, n))).filter(|(k, _)| levels.get(k) != Level::None).collect();
 
     html! {
         (DOCTYPE)
@@ -358,6 +365,9 @@ fn shell(ctx: &Ctx, page: &Page, title: &str, hue: &str, unread: &HashMap<String
                                     @if page.user.admin {
                                         a.menu-item.on[key == "users"] href="/users" { (icon(Icon::Users)) span { "People" } }
                                         a.menu-item.on[key == "activity"] href="/activity" { (icon(Icon::Activity)) span { "Activity" } }
+                                    }
+                                    @for (k, n) in &global {
+                                        a.menu-item.on[key == *k] href={ "/" (n.path) } { (icon(n.icon)) span { (n.label) } }
                                     }
                                     form method="post" action="/logout" {
                                         button.menu-item type="submit" data-signout { (icon(Icon::Logout)) span { "Sign out" } }
@@ -934,20 +944,35 @@ pub fn area_chart(series: &[(String, i64)], unit: &str) -> Markup {
 /// [`area_chart`] over the same number of days before it, drawn as a dashed grey line on the
 /// same scale. Hovering a day says how it compares with the matching day of that period.
 pub fn area_chart_vs(series: &[(String, i64)], prev: Option<&[(String, i64)]>, unit: &str) -> Markup {
-    area(series, prev, unit, true)
+    area(series, prev, unit, true, Scale::default(), &|v| crate::text::num(v))
 }
 
 /// [`area_chart`] for a series that isn't days ending today (one point per stream): the last
 /// point keeps its own label.
 pub fn area_chart_series(series: &[(String, i64)], unit: &str) -> Markup {
-    area(series, None, unit, false)
+    area(series, None, unit, false, Scale::default(), &|v| crate::text::num(v))
 }
 
-fn area(series: &[(String, i64)], prev: Option<&[(String, i64)]>, unit: &str, ends_today: bool) -> Markup {
+/// [`area_chart_series`] for readings over time rather than counts (CPU, memory): `show` writes
+/// a value for the hover with its unit ("7.4%", "3.6 GB"), `about` names the chart for screen
+/// readers, and `top` fixes the top of the scale (100%, all the memory there is) instead of the
+/// highest point.
+pub fn area_chart_readings(series: &[(String, i64)], about: &str, top: Option<i64>, show: &dyn Fn(i64) -> String) -> Markup {
+    area(series, None, "", false, Scale { top, about: Some(about) }, show)
+}
+
+#[derive(Default)]
+struct Scale<'a> {
+    top: Option<i64>,
+    about: Option<&'a str>,
+}
+
+fn area(series: &[(String, i64)], prev: Option<&[(String, i64)]>, unit: &str, ends_today: bool, scale: Scale, show: &dyn Fn(i64) -> String) -> Markup {
     let n = series.len();
     // Nothing counted in the period before (a new server): no line to compare with.
     let prev = prev.filter(|p| p.len() == n && p.iter().any(|d| d.1 > 0));
-    let max = series.iter().chain(prev.unwrap_or(&[])).map(|(_, v)| *v).max().unwrap_or(0).max(1) as f64;
+    let highest = series.iter().chain(prev.unwrap_or(&[])).map(|(_, v)| *v).max().unwrap_or(0);
+    let max = scale.top.unwrap_or(0).max(highest).max(1) as f64;
     let (w, h) = (1000.0, 190.0);
     let step = if n > 1 { w / (n - 1) as f64 } else { w };
     let place = |s: &[(String, i64)]| -> Vec<(f64, f64)> { s.iter().enumerate().map(|(i, (_, v))| (i as f64 * step, h - 3.0 - (*v as f64 / max) * (h - 22.0))).collect() };
@@ -968,7 +993,7 @@ fn area(series: &[(String, i64)], prev: Option<&[(String, i64)]>, unit: &str, en
                     let d = v - p[i].1;
                     format!("{}{} vs {span}", if d >= 0 { "+" } else { "−" }, crate::text::num(d.abs()))
                 });
-                serde_json::json!([(x / w * 1000.0).round() / 10.0, (y / h * 1000.0).round() / 10.0, label, crate::text::num(*v), change])
+                serde_json::json!([(x / w * 1000.0).round() / 10.0, (y / h * 1000.0).round() / 10.0, label, show(*v), change])
             })
             .collect::<Vec<_>>(),
     )
@@ -977,7 +1002,7 @@ fn area(series: &[(String, i64)], prev: Option<&[(String, i64)]>, unit: &str, en
     html! {
         figure.area data-points=(points) data-unit=(unit) data-today=(if ends_today { "1" } else { "0" }) {
             div.area-plot {
-                svg viewBox={ "0 0 " (w) " " (h) } preserveAspectRatio="none" role="img" aria-label={ (crate::text::num(total)) " " (unit) " in " (n) " days" } {
+                svg viewBox={ "0 0 " (w) " " (h) } preserveAspectRatio="none" role="img" aria-label=(scale.about.map_or_else(|| format!("{} {unit} in {n} days", crate::text::num(total)), str::to_owned)) {
                     defs {
                         // One colour: the line solid lilac, the area under it fading out.
                         linearGradient id="area-fill" x1="0" y1="0" x2="0" y2="1" {

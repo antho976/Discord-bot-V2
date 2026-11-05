@@ -27,6 +27,11 @@ implementation: read it before writing a feature, and copy its shape.
   - `tick()`: once a minute. Keep your own slower cadence by checking times stored in the DB.
   - `start()`: once at boot, before the gateway connects.
   - `routes()`: dashboard pages and endpoints (axum `Router<Ctx>`).
+  - `admin_plus_only()`: pages for the owner and Admin+ only (App approvals, Server).
+  - `global_page()`: a page that isn't about any one server, at `/{path}` and linked from the
+    account menu beside People and Activity. The feature isn't switched per server and has no
+    sidebar entry. `crates/feat-server` is the example: its handler opens the shell with
+    `ctx.guilds_for(&user).first()` and `ctx.page(.., KEY, Level::View)`.
   - `seed_preview()`: sample rows for `bot preview` (use ids from `bot_core::preview::MEMBERS`).
 - `src/web.rs`: the dashboard pages.
 - `examples/preview.rs`: already there. `cargo run -p feat-x --example preview -- 3101` serves

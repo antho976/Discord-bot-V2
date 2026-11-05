@@ -166,6 +166,14 @@ pub trait Feature: Send + Sync + 'static {
         false
     }
 
+    /// A page that isn't about any one server (the machine the bot runs on): served by the
+    /// feature's own route at `/{path}` and linked from the account menu beside People and
+    /// Activity, for whoever can open it. Such a feature isn't switched per server, so the
+    /// Features page leaves it out; its `tick` runs whatever the switches say.
+    fn global_page(&self) -> Option<NavItem> {
+        None
+    }
+
     /// Slash commands, registered per server where the feature is on.
     fn commands(&self) -> Vec<Command> {
         Vec::new()

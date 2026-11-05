@@ -26,6 +26,7 @@ feat-rules = { path = "../feat-rules" }
 feat-commands = { path = "../feat-commands" }
 feat-reviews = { path = "../feat-reviews" }
 feat-rpg = { path = "../feat-rpg" }
+feat-server = { path = "../feat-server" }
 anyhow.workspace = true
 tokio.workspace = true
 tracing.workspace = true

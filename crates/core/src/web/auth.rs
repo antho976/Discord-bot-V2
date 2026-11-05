@@ -66,7 +66,7 @@ pub struct User {
     pub name: String,
     pub avatar: Option<String>,
     pub admin: bool,
-    /// An admin who also opens the owner's pages (App approvals). The owner always is.
+    /// An admin who also opens the owner's pages (App approvals, Server). The owner always is.
     pub admin_plus: bool,
     /// The browser's timezone, from the `tz` cookie app.js sets. UTC until it's known.
     pub tz: jiff::tz::TimeZone,

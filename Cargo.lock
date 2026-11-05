@@ -199,6 +199,7 @@ dependencies = [
  "feat-reviews",
  "feat-rpg",
  "feat-rules",
+ "feat-server",
  "feat-tickets",
  "feat-utility",
  "feat-welcome",
@@ -671,6 +672,16 @@ name = "feat-rules"
 version = "0.1.0"
 dependencies = [
  "bot-core",
+ "maud",
+ "serde",
+]
+
+[[package]]
+name = "feat-server"
+version = "0.1.0"
+dependencies = [
+ "bot-core",
+ "libc",
  "maud",
  "serde",
 ]
