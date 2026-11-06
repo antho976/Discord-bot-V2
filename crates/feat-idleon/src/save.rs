@@ -134,8 +134,13 @@ pub fn numbers(v: &Value) -> Vec<f64> {
     match v {
         Value::Array(a) => a.iter().map(num).collect(),
         Value::Object(o) => {
-            let len = o.keys().filter_map(|k| k.parse::<usize>().ok()).filter(|&k| k < MAX_INDEX).max().map_or(0, |m| m + 1);
-            (0..len).map(|i| o.get(&i.to_string()).map(num).unwrap_or(0.0)).collect()
+            // From the entries, so the work is the object's size, not its highest key.
+            let entries: Vec<(usize, f64)> = o.iter().filter_map(|(k, v)| k.parse::<usize>().ok().filter(|&i| i < MAX_INDEX).map(|i| (i, num(v)))).collect();
+            let mut out = vec![0.0; entries.iter().map(|(i, _)| i + 1).max().unwrap_or(0)];
+            for (i, v) in entries {
+                out[i] = v;
+            }
+            out
         }
         _ => Vec::new(),
     }

@@ -51,7 +51,7 @@ fn value(save: &Save, key: &str, path: &[usize]) -> f64 {
 const ARTIFACT_TIERS: [&str; 8] = ["Not found", "Found", "Ancient", "Eldritch", "Sovereign", "Omnipotent", "Transcendent", "Verisimilitude"];
 
 /// Sailing artifacts: `Sailing[3][i]` is the tier, 0 not found to 7 Verisimilitude. What opens
-/// each form (N.js, the artifact tooltip): Eldritch from rift 30 (`Rift[0]` over 29), Sovereign
+/// each form (N.js, the artifact tooltip): Eldritch once 30 rifts are done (`Rift[0]` over 29), Sovereign
 /// with Jade Emporium 35, Omnipotent with Spelunking lore bonus 0 (`OmnipotentArtifactsUnlocked`),
 /// Transcendent with research node 109 (`TranscendentArtifactsUnlocked`), Verisimilitude with
 /// Menagerie unlock 0 (`VerisimilitudeUnlocked`).
@@ -60,7 +60,7 @@ fn artifacts(save: &Save) -> Mechanic {
     let emporium = save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or("");
     let gate = |tier: usize| -> Option<String> {
         match tier {
-            3 if value(save, "Rift", &[0]) <= 29.0 => Some("Eldritch forms open at rift 30.".into()),
+            3 if value(save, "Rift", &[0]) <= 29.0 => Some("Eldritch forms open once rift 30 is done.".into()),
             4 if !letter_in(emporium, 35) => Some("Sovereign forms come with the Jade Emporium's Sovereign Artifacts.".into()),
             5 if !lore(save, 0) => Some("Omnipotent forms come with Spelunking's first lore bonus.".into()),
             6 if !grid_node(save, 109) => Some(format!("Transcendent forms come with research node {}.", grid_name(109))),

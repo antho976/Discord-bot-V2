@@ -102,7 +102,6 @@ fn cards(save: &Save) -> Mechanic {
 /// (A for World 1) + its place in that world counted from 1, `TaskAchA1` for row 0.
 fn achievements(save: &Save) -> Mechanic {
     let reg = save.numbers("AchieveReg", &[]);
-    let letters = number_to_letter();
     let items = rows("RegAchieves", &[])
         .iter()
         .enumerate()
@@ -110,8 +109,7 @@ fn achievements(save: &Save) -> Mechanic {
         .filter(|(_, r)| text(r, 0) != "FILLERZZZ_ACH")
         .map(|(i, r)| {
             let done = at(&reg, i) == -1.0;
-            let picture = letters.get(27 + i / 70).map(|l| format!("TaskAch{l}{}", i % 70 + 1));
-            let mut it = Item::new(label(text(r, 0)), picture, f64::from(done), 1.0);
+            let mut it = Item::new(label(text(r, 0)), achievement_picture(i), f64::from(done), 1.0);
             it.world = later((i / 70 + 1) as f64, 1);
             if !done {
                 it.how = achievement_how(text(r, 2));
@@ -260,6 +258,12 @@ fn short(n: f64) -> String {
         n if n >= 1e3 => format!("{:.0}K", down(n / 1e3, 0)),
         n => format!("{n:.0}"),
     }
+}
+
+/// Achievement `i`'s icon, as the achievements page draws it: "TaskAch" + `Number2Letter[27 +
+/// i / 70]` (A for World 1) + its place in that world from 1, "TaskAchA1" for row 0.
+pub(super) fn achievement_picture(i: usize) -> Option<String> {
+    number_to_letter().get(27 + i / 70).map(|l| format!("TaskAch{l}{}", i % 70 + 1))
 }
 
 /// Greenstacks: 10M or more of one item in storage. The game keeps every item that has ever

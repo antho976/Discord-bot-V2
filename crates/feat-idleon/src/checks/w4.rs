@@ -408,26 +408,26 @@ fn rift_task(s: &str) -> String {
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
-/// Rift: `Rift[0]` is the rift you're in, `Rift[1]` the progress on its task. The task is
-/// `RiftStuff[4][rift % 100]` (N.js `RiftStuff` "Task"), its goal `RiftStuff[5][task]`, done
-/// once progress reaches it (`RiftCompleted`).
+/// Rift: `Rift[0]` counts the rifts done (the game greets you in the next, "WELCOME_TO_RIFT_" +
+/// (Rift[0] + 1)), `Rift[1]` is the progress on that rift's task. The task is
+/// `RiftStuff[4][Rift[0] % 100]` (N.js `RiftStuff` "Task"), its goal `RiftStuff[5][task]`, done
+/// once progress reaches it (`RiftCompleted`). The rift opens with the Rift Ripper's quest
+/// (`QuestComplete_c.Rift_Ripper1` is 1), before any rift is done.
 fn rift(save: &Save) -> Mechanic {
-    // `Rift[0]` counts the rifts done: the game greets you in the next one ("WELCOME_TO_RIFT_" +
-    // (Rift[0] + 1)), so it reads as rifts done, not the rift you're in.
-    let raw = save.at("Rift", &[0]).map(num).unwrap_or(0.0);
-    let level = raw;
+    let done = save.at("Rift", &[0]).map(num).unwrap_or(0.0).max(0.0);
+    let open = done > 0.0 || (0..save.characters().clamp(1, 12)).any(|c| save.at(&format!("QuestComplete_{c}"), &[]).and_then(|q| q.get("Rift_Ripper1")).map(num).unwrap_or(0.0) >= 1.0);
     let last = last_rift();
-    let mut it = Item::new("Rifts done", None, level, last);
-    if level > 0.0 && level < last {
-        let task = rows("RiftStuff", &[4]).get((raw.clamp(0.0, 1e6) as usize) % 100).map_or(0, |v| num(v) as usize);
+    let mut it = Item::new("Rifts done", None, done, last);
+    if open && done < last {
+        let task = rows("RiftStuff", &[4]).get((done.min(1e6) as usize) % 100).map_or(0, |v| num(v) as usize);
         let goal = rows("RiftStuff", &[5]).get(task).map_or(0.0, |v| num(v));
         let progress = save.at("Rift", &[1]).map(num).unwrap_or(0.0);
         let text = rows("RiftStuff", &[0]).get(task).and_then(|v| v.as_str()).map(rift_task).unwrap_or_default();
-        it.how = Some(format!("Rift {}: {text}, {} of {} so far.", raw + 1.0, big(progress.floor()), big(goal)));
+        it.how = Some(format!("Rift {}: {text}, {} of {} so far.", done + 1.0, big(progress.floor()), big(goal)));
         if goal > 0.0 && progress >= goal {
             it.state = State::Ready;
         }
-    } else if level <= 0.0 {
+    } else if !open {
         it.how = Some("Opens with the Rift Ripper's quest in World 4.".into());
     }
     mech("rift", 4, "Rift", None, Count::Levels, "rifts", vec![it])

@@ -283,13 +283,14 @@ fn fresh(m: &Mechanic) -> Markup {
 
 /// Every card's full item list as compact data, for the page script to draw when a "Show
 /// all" opens: per mechanic, the items not at max (in the card's order) and those at max, each
-/// `[name, picture or null, share 0-1, figure text, 1 when it has a max]`. Character names come from the paste, so the
+/// `[name, picture or null, share 0-1, figure text, 1 when it has a max, 1 when the picture is
+/// drawn as its left square]`. Character names come from the paste, so the
 /// JSON is made safe for a script tag and the script only ever sets text, never HTML.
 fn items_data(r: &Review) -> Markup {
     use bot_core::serde_json::{Map, Value, json};
     let row = |i: &Item| {
         let pic = i.picture.as_deref().filter(|p| pictures::has(p));
-        json!([i.name, pic, (i.share() * 1000.0).round() / 1000.0, item_fig(i), u8::from(i.max > 0.0)])
+        json!([i.name, pic, (i.share() * 1000.0).round() / 1000.0, item_fig(i), u8::from(i.max > 0.0), u8::from(pic.is_some_and(left_square))])
     };
     let mut all = Map::new();
     for m in &r.mechanics {
@@ -554,7 +555,7 @@ fn mark(m: &Mechanic) -> Markup {
 }
 
 /// Pictures that are a portrait at the left end of a wide name plate (the cavern villagers):
-/// drawn as their left square, which is the portrait. The page script knows the same prefixes.
+/// drawn as their left square, which is the portrait. Show all rows carry it as a flag.
 const LEFT_SQUARE: &[&str] = &["HoleUIvillager"];
 
 fn left_square(id: &str) -> bool {
@@ -704,7 +705,7 @@ document.addEventListener("toggle",function(e){
   var lists=data[box.dataset.key]||[[],[]];
   function row(r,done){
     var it=document.createElement("div");it.className="ia-item"+(done?" done":"");
-    if(r[1]){var im=document.createElement("img");im.src="/idleon/pic/"+r[1]+".png";im.alt="";im.loading="lazy";if(/^HoleUIvillager/.test(r[1]))im.className="left";it.appendChild(im)}
+    if(r[1]){var im=document.createElement("img");im.src="/idleon/pic/"+r[1]+".png";im.alt="";im.loading="lazy";if(r[5])im.className="left";it.appendChild(im)}
     else{var dot=document.createElement("span");dot.className="ia-item-dot";it.appendChild(dot)}
     var nm=document.createElement("span");nm.className="ia-item-name";nm.textContent=r[0];it.appendChild(nm);
     var mt=document.createElement("span");

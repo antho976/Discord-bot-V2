@@ -213,9 +213,13 @@ fn totem_world(i: usize) -> Option<u8> {
     (w > 3).then_some(w as u8)
 }
 
-/// A worship totem's name, `RANDOlist[10][i]`; the game's list stops short of the newest.
+/// A worship totem's name, `RANDOlist[10][i]`. Past the fifth the game's list has placeholders
+/// ("Tower_Defence_6") or stops; its banners (`WorshipTop5`..`7`) name them.
 fn totem_name(i: usize) -> String {
-    rows("RANDOlist", &[10]).get(i).and_then(|v| v.as_str()).map_or_else(|| format!("Tower Defence {}", i + 1), label)
+    match rows("RANDOlist", &[10]).get(i).and_then(|v| v.as_str()) {
+        Some(n) if !n.starts_with("Tower_Defence") => label(n),
+        _ => LATE_TOTEMS.get(i.wrapping_sub(5)).map_or_else(|| format!("Totem {}", i + 1), |n| (*n).to_string()),
+    }
 }
 
 /// The atom cap (N.js `AtomMaxLv`): 20, +10 (gaming superbit), +20 (compass), +20 (event shop),
@@ -605,7 +609,7 @@ fn library(save: &Save) -> Mechanic {
     }
     if let Some(r) = rows("RegAchieves", &[]).get(145) {
         let have = if at(&save.numbers("AchieveReg", &[]), 145) == -1.0 { 5.0 } else { 0.0 };
-        let mut it = Item::new(format!("{} achievement", label(text(r, 0))), pic(achievement_pic(145)), have, 5.0);
+        let mut it = Item::new(format!("{} achievement", label(text(r, 0))), super::general::achievement_picture(145), have, 5.0);
         it.how = Some(format!("{}.", label(text(r, 2))));
         items.push(it);
     }
@@ -630,12 +634,6 @@ fn library(save: &Save) -> Mechanic {
     let mut m = mech("library", 3, "Talent Book Library", pic("ConTower1".into()), Count::Levels, "book levels", items);
     m.note = Some("How high the library prints talent books, on top of its base of 125. Summoning wins add more that isn't counted here.".into());
     m
-}
-
-/// An achievement's icon: the achievements board draws `RegAchieves[i]` as "TaskAch" + the
-/// world's capital letter (`Number2Letter[27 + i / 70]`) + (i % 70 + 1), e.g. "TaskAchC6".
-fn achievement_pic(i: usize) -> String {
-    format!("TaskAch{}{}", char::from(b'A' + (i / 70) as u8), i % 70 + 1)
 }
 
 /// Refinery: `Refinery[3 + i][1]` is salt i's rank; salts from `Refinery[0][0]` on aren't unlocked.
@@ -767,17 +765,11 @@ const LATE_TOTEMS: [&str; 3] = ["Citric Conflict", "Breezy Battle", "Pufferblob 
 fn worship(save: &Save) -> Mechanic {
     let waves = save.numbers("TotemInfo", &[0]);
     let prayers = save.numbers("PrayOwned", &[]);
-    let names = rows("RANDOlist", &[10]);
     let items = rows("WorshipBASEinfos", &[])
         .iter()
         .enumerate()
         .map(|(i, _)| {
-            // The game's list still has placeholders ("Tower_Defence_6") past the fifth totem; its
-            // banners (`WorshipTop5`..`7`) say Citric Conflict, Breezy Battle, Pufferblob Brawl.
-            let name = match names.get(i).and_then(|v| v.as_str()) {
-                Some(n) if !n.starts_with("Tower_Defence") => label(n),
-                _ => LATE_TOTEMS.get(i.wrapping_sub(5)).map_or_else(|| format!("Totem {}", i + 1), |n| (*n).to_string()),
-            };
+            let name = totem_name(i);
             let best = at(&waves, i);
             let mut it = Item::new(name, None, best, 0.0);
             it.world = totem_world(i);

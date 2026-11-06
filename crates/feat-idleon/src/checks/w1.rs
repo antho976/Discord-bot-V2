@@ -151,7 +151,7 @@ fn star_signs(save: &Save) -> Mechanic {
         .map(|i| {
             let name = text(signs[i], 0);
             let on = found.and_then(|f| f.get(name)).map(num).unwrap_or(0.0) > 0.0;
-            let mut it = Item::new(label(name), star_picture(i), f64::from(on), 1.0);
+            let mut it = Item::new(label(name), star_picture(i, on), f64::from(on), 1.0);
             if !on {
                 let cost = cost_of.iter().find(|(k, _)| *k == i).map_or(0.0, |(_, c)| *c);
                 it.how = Some(if cost > 0.0 { format!("Costs {cost:.0} star points on the star map.") } else { "Free on the star map once you reach it.".into() });
@@ -167,9 +167,11 @@ fn star_signs(save: &Save) -> Mechanic {
 
 /// How the star map draws sign `sign` once found (N.js `StarSignStuff`): `SSignInfoUI` rows 0-33
 /// are the first galaxy, 34-63 the second, 64-93 the third, and a sign is its galaxy's star,
-/// `SignStar2a`, `2b` or `2c` (2 is the found look). The three Cosmos signs, at the galaxies'
-/// places 21, 9 and 15, have their own `SignStarA2`, `B2` and `C2`.
-fn star_picture(sign: usize) -> Option<String> {
+/// `SignStar2a`, `2b` or `2c` once found (2 is the bright look; 0, dim, is one not found). The
+/// three Cosmos signs, at the galaxies' places 21, 9 and 15, have their own `SignStarA2`, `B2`,
+/// `C2` (and `A0`...).
+fn star_picture(sign: usize, found: bool) -> Option<String> {
+    let look = if found { 2 } else { 0 };
     let row = rows("SSignInfoUI", &[]).iter().position(|r| cell(r, 0) as usize == sign)?;
     let (galaxy, place) = match row {
         0..=33 => (0, row),
@@ -179,9 +181,9 @@ fn star_picture(sign: usize) -> Option<String> {
     };
     let letter = char::from(b'a' + galaxy as u8);
     Some(if place == [21, 9, 15][galaxy] {
-        format!("SignStar{}2", letter.to_ascii_uppercase())
+        format!("SignStar{}{look}", letter.to_ascii_uppercase())
     } else {
-        format!("SignStar2{letter}")
+        format!("SignStar{look}{letter}")
     })
 }
 

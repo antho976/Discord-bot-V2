@@ -26,4 +26,4 @@ table Owlz
 table MapAFKtarget
 picture ForgeA
 # Star signs: each galaxy's found star, and the three Cosmos signs' own.
-picture SignStar(2[abc]|[ABC]2)
+picture SignStar([02][abc]|[ABC][02])
