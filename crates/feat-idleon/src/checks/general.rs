@@ -194,12 +194,20 @@ fn gem_shop(save: &Save) -> Mechanic {
 
 /// The letters the event shop writes into `OptLacc[311]`, one per item owned: the game's
 /// `Number2Letter`, "_", a to z, A to Z, then the `TournyStuff` characters in order.
-fn number_to_letter() -> Vec<String> {
-    let mut v: Vec<String> = std::iter::once('_').chain('a'..='z').chain('A'..='Z').map(String::from).collect();
-    for row in GAME.rows("TournyStuff").iter().take(13) {
-        v.extend(row.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string));
-    }
-    v
+fn number_to_letter() -> &'static [String] {
+    static LETTERS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+        let mut v: Vec<String> = std::iter::once('_').chain('a'..='z').chain('A'..='Z').map(String::from).collect();
+        for row in GAME.rows("TournyStuff").iter().take(13) {
+            v.extend(row.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string));
+        }
+        v
+    });
+    &LETTERS
+}
+
+/// Whether thing `i` is in a bought-letters string (the event shop's and the Jade Emporium's).
+fn letter_bought(owned: &str, i: usize) -> bool {
+    number_to_letter().get(i).is_some_and(|l| owned.contains(l.as_str()))
 }
 
 /// Event shop: `NinjaInfo[39]` pairs "Name_@_what_it_does" and cost. Item i is owned when
@@ -242,15 +250,13 @@ fn event_shop(save: &Save) -> Mechanic {
 
 /// Whether event shop item `i` is bought.
 pub(super) fn event_shop_owned(save: &Save, i: usize) -> bool {
-    let owned = save.at("OptLacc", &[311]).and_then(Value::as_str).unwrap_or("");
-    number_to_letter().get(i).is_some_and(|l| owned.contains(l.as_str()))
+    letter_bought(save.at("OptLacc", &[311]).and_then(Value::as_str).unwrap_or(""), i)
 }
 
 /// Whether Jade Emporium upgrade `i` is bought. N.js `EmporiumBonus`: its letter (see
 /// [`number_to_letter`]) is in `Ninja[102][9]`.
 pub(super) fn emporium_owned(save: &Save, i: usize) -> bool {
-    let owned = save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or("");
-    number_to_letter().get(i).is_some_and(|l| owned.contains(l.as_str()))
+    letter_bought(save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or(""), i)
 }
 
 /// "2.4M", "380K": a stack size as the storage chest shows it. Rounded down, so 9.98M never

@@ -167,7 +167,10 @@ fn buildings(save: &Save) -> Mechanic {
     let mut m = mech("construction", 3, "Construction Buildings", pic("ConTowerA0".into()), Count::Levels, "levels", items);
     m.raises = vec![
         Raise { name: "Carbon atom, per level".into(), amount: "+2 max levels on each of the 9 wizard towers".into(), owned: carbon_now > 0.0 },
-        Raise { name: "Construct Mastery (40 rifts, then building levels)".into(), amount: "+35 on the trapper drone at 500 total levels, +100 on the library at 1,000, +100 on every shrine at 1,500, +30 on every wizard tower at 2,500".into(), owned: mastery(2500.0) },
+        Raise { name: "Construct Mastery at 500 building levels (and 40 rifts)".into(), amount: "+35 max levels on the trapper drone".into(), owned: mastery(500.0) },
+        Raise { name: "Construct Mastery at 1,000 building levels".into(), amount: "+100 max levels on the library".into(), owned: mastery(1000.0) },
+        Raise { name: "Construct Mastery at 1,500 building levels".into(), amount: "+100 max levels on all 9 shrines".into(), owned: mastery(1500.0) },
+        Raise { name: "Construct Mastery at 2,500 building levels".into(), amount: "+30 max levels on all 9 wizard towers".into(), owned: mastery(2500.0) },
         Raise { name: "Sushi Station bonus 59 (59 unique sushi)".into(), amount: format!("+{} max levels on all 9 shrines", research(37, 58)), owned: sushi > 0.0 },
         Raise { name: format!("Spelunking shrine unlocks, {} of 9 done", spelunk.clamp(0.0, 9.0)), amount: "+100 max levels on that shrine, one shrine each".into(), owned: spelunk >= 9.0 },
         Raise { name: "Menagerie boost 5, per boost".into(), amount: format!("+{} max levels on all 9 shrines", research(58, 5)), owned: menagerie_boosts(save, 5) > 0.0 },
@@ -295,7 +298,12 @@ fn totem_name(i: usize) -> String {
 /// +20 (event shop), plus `Research[58][17]` per Menagerie boost 17. Boosts have no end, so the
 /// cap counts the boosts bought, and at least one.
 fn atom_max(save: &Save) -> f64 {
-    70.0 + research(58, 17) * menagerie_boosts(save, 17).max(1.0)
+    70.0 + atom_boost_levels(save).max(research(58, 17))
+}
+
+/// Max atom levels from Menagerie boost 17: `Research[58][17]` per boost bought.
+fn atom_boost_levels(save: &Save) -> f64 {
+    research(58, 17) * menagerie_boosts(save, 17).max(0.0)
 }
 
 /// Levels of the compass's Atomic Potential, `Compass[0][53]`: its `CompassUpg` row gives +1 max
@@ -310,7 +318,7 @@ fn atomic_potential(save: &Save) -> f64 {
 fn atom_cap(save: &Save) -> f64 {
     let superbit = if super::w5::superbit_owned(save, 23) { 10.0 } else { 0.0 };
     let higgs = if super::general::event_shop_owned(save, 28) { 20.0 } else { 0.0 };
-    20.0 + superbit + atomic_potential(save) + higgs + research(58, 17) * menagerie_boosts(save, 17).max(0.0)
+    20.0 + superbit + atomic_potential(save) + higgs + atom_boost_levels(save)
 }
 
 /// What lifts the atom cap next, for an atom sitting at it.

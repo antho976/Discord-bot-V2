@@ -618,7 +618,10 @@ fn pct(s: f64) -> String {
 /// on, the game's short form ("1.2Qa", "3.4e21"): past 2^53 the digits aren't real, and past
 /// 2^64 a plain cast reads 18,446,744,073,709,551,615.
 pub(crate) fn num(n: f64) -> String {
-    if !n.is_finite() || n.abs() >= 1e15 {
+    if n.is_nan() {
+        return "0".into();
+    }
+    if n.is_infinite() || n.abs() >= 1e15 {
         return crate::checks::big(n);
     }
     if n.fract().abs() > 1e-9 {
@@ -752,7 +755,8 @@ document.addEventListener("toggle",function(e){
 var rc=document.querySelector(".ia-report-copy");
 if(rc)rc.addEventListener("submit",function(e){
   e.preventDefault();
-  var msg=rc.querySelector(".ia-report-msg"),card=rc.querySelector("select").value,acc=rc.dataset.account;
+  // The same header budget as a report sent from here (account 40, card 60): it fits /suggest's 1,500.
+  var msg=rc.querySelector(".ia-report-msg"),card=rc.querySelector("select").value.slice(0,60),acc=(rc.dataset.account||"").slice(0,40);
   var txt="Account check report"+(acc?" ("+acc+")":"")+(card?", "+card:"")+": "+rc.querySelector("textarea").value.trim();
   var done=function(){msg.textContent="Copied. Now run /suggest in the server and paste it."},fail=function(){msg.textContent="Couldn't copy it here: select the text in the box and copy it yourself."};
   if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(done,fail);else fail();

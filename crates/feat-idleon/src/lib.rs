@@ -154,18 +154,22 @@ async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>
         return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None }).into_response());
     }
     // A plain-text paste is the save itself (plus "save="): refuse an oversized one before it is
-    // decoded or waits in line holding its body.
+    // decoded. Either kind is decoded before it waits in line, so a slot is never held by a paste
+    // that's too big, and what waits is the paste, not its (up to three times bigger) body.
     if plain(&headers) && body.len() > save::MAX_BYTES + 16 {
         return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some(save::SaveError::TooBig.message()) }).into_response());
     }
-    let Ok(Ok(slot)) = bot_core::tokio::time::timeout(WAIT, READING.acquire()).await else {
-        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some("A lot of saves are being read right now. Try again in a few seconds.") }).into_response());
-    };
     let text = paste(&headers, &body);
     drop(body);
     if text.is_empty() {
         return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some("Paste your save first.") }).into_response());
     }
+    if text.len() > save::MAX_BYTES {
+        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some(save::SaveError::TooBig.message()) }).into_response());
+    }
+    let Ok(Ok(slot)) = bot_core::tokio::time::timeout(WAIT, READING.acquire()).await else {
+        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some("A lot of saves are being read right now. Try again in a few seconds.") }).into_response());
+    };
     // About 14 ms of CPU: run it off the bot's two runtime threads, so Discord events and other
     // pages never wait behind a check (at most two at once, `READING`).
     let html = bot_core::tokio::task::spawn_blocking(move || {
