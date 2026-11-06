@@ -12,3 +12,5 @@ picture UIboxUpg\d+
 picture IslandSail[0-5]
 picture Quest69
 cell AlchemyDescription 4 5
+table AlchemyVialQTYreq
+table SkullShopDesc
