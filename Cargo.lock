@@ -622,6 +622,7 @@ version = "0.1.0"
 dependencies = [
  "bot-core",
  "feat-community",
+ "feat-connect",
  "libc",
  "maud",
  "serde",

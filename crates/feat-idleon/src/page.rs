@@ -9,6 +9,7 @@ use bot_core::Ctx;
 use bot_core::maud::{DOCTYPE, Markup, PreEscaped, html};
 use bot_core::web::ui;
 
+use crate::expected::Pace;
 use crate::game::GAME;
 use crate::pictures;
 use crate::review::{Count, Item, Mechanic, Review, State as Step, Tier, Why};
@@ -19,13 +20,21 @@ pub struct Access {
     pub closed: bool,
     /// This viewer may use it (always, when it isn't closed).
     pub allowed: bool,
-    pub signed_in: bool,
+    /// A dashboard user with this page.
+    pub staff: bool,
+    /// The name of whoever signed in with Discord (on this page or the dashboard).
+    pub member: Option<String>,
 }
 
 pub enum State<'a> {
-    Ask { error: Option<&'a str> },
+    /// The paste box, with what went wrong. `retry`: the paste was fine and only has to be sent
+    /// again (the page was busy), so the box gets it back.
+    Ask { error: Option<&'a str>, retry: bool },
     Done(&'a Review),
 }
+
+/// The page in a sentence, for link previews.
+const ABOUT: &str = "Paste your Idleon save and see how far each mechanic is from the game's max, and what to work on next.";
 
 pub const WORLD_NAMES: [&str; 8] = ["Account", "Blunder Hills", "Yum-Yum Desert", "Frostbite Tundra", "Hyperion Nebula", "Smolderin' Plateau", "Spirited Valley", "Shimmerfin Deep"];
 
@@ -46,7 +55,14 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
     html! {
         (DOCTYPE)
         html lang="en" {
-            head { (ui::head(&title)) }
+            head {
+                (ui::head(&title))
+                // What a link to the page shows when it's posted in Discord.
+                meta name="description" content=(ABOUT);
+                meta property="og:title" content={ "Idleon account check · " (name) };
+                meta property="og:description" content=(ABOUT);
+                @if let Some(i) = &icon { meta property="og:image" content=(i); }
+            }
             body.ia-pub data-guild=(guild) data-icon=[icon.as_deref()] data-hue="pets" {
                 style { (PreEscaped(CSS)) }
                 header.ov-hero.ia-hero {
@@ -69,7 +85,7 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
                 }
                 main.ia-page {
                     @if !access.allowed {
-                        (closed_door(access))
+                        (closed_door(guild, access))
                     } @else {
                         @if access.closed {
                             p.ia-test role="note" {
@@ -78,15 +94,15 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
                             }
                         }
                         @match state {
-                            State::Ask { error } => (ask(guild, error)),
+                            State::Ask { error, retry } => (ask(guild, error, retry)),
                             State::Done(r) => {
                                 (done(guild, r))
-                                (report_box(guild, r, access.signed_in))
+                                (report_box(guild, r, access.member.as_deref()))
                             },
                         }
                     }
                     footer.ia-foot {
-                        span { "Maxes and names come from the game's own data, from " (GAME.updated) ". Your save is read once and not kept." }
+                        span { "Maxes and names come from the game's own data, from " (GAME.updated) ". Your save is read once and not kept. This tab remembers the last one until you close it." }
                     }
                 }
                 script { (PreEscaped(JS)) }
@@ -95,17 +111,33 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
     }
 }
 
+/// The page itself, for a sign-in to come back to.
+fn here(guild: u64) -> String {
+    format!("/p/{guild}/idleon")
+}
+
+/// "Signed in as Mira · Sign out": the sign-out is a form, so a link elsewhere can't do it.
+fn signed_in_as(guild: u64, name: &str) -> Markup {
+    html! {
+        form.ia-signout method="post" action="/auth/signout" {
+            input type="hidden" name="to" value=(here(guild));
+            span { "Signed in as " b { (name) } }
+            button type="submit" { "Sign out" }
+        }
+    }
+}
+
 /// The page while it's closed, for someone who isn't a tester.
-fn closed_door(a: &Access) -> Markup {
+fn closed_door(guild: u64, a: &Access) -> Markup {
     html! {
         section.ia-panel.ia-door {
             h2 { "The account check is in closed testing" }
-            @if a.signed_in {
+            @if let Some(name) = &a.member {
                 p { "Only staff and testers can use it for now. Ask staff if you'd like to help test it." }
+                (signed_in_as(guild, name))
             } @else {
-                p { "Sign in with Discord to use it. Staff and testers can try it now; everyone else soon." }
-                a.btn.primary href="/login" { "Sign in with Discord" }
-                p.ia-note { "Then come back to this page." }
+                p { "Staff and testers can try it now; everyone else soon. Testers, sign in with Discord to use it." }
+                a.btn.primary href=(bot_core::web::auth::member_sign_in(&here(guild))) { "Sign in with Discord" }
             }
         }
     }
@@ -116,19 +148,19 @@ fn closed_door(a: &Access) -> Markup {
 const REPORT_TEXT: usize = 1370;
 
 /// "Report a problem": a note to staff about what looks wrong, sent to the suggestion box.
-fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
+fn report_box(guild: u64, r: &Review, member: Option<&str>) -> Markup {
     html! {
         section.ia-panel.ia-report #ia-report {
             div.ia-ask-text {
                 h2 { "Report a problem" }
                 p { "A number that's wrong, advice that doesn't make sense, something missing: tell staff here. It goes to the suggestion box with your name, and says which account and card it's about." }
-                @if !signed_in { p.ia-note { "Staff with dashboard access can " a href="/login" target="_blank" rel="noopener" { "sign in" } " and send it from here." } }
+                @if let Some(name) = member { (signed_in_as(guild, name)) }
             }
-            @if !signed_in {
-                // Signing in here is for dashboard users, so members send it with /suggest: the
-                // page writes the report for them to paste.
+            @if member.is_none() {
+                // Sending it needs a name to send it under: sign in with Discord (any member can;
+                // the page comes back with your results), or copy it for /suggest.
                 form.ia-report-copy data-account=(r.name) {
-                    p.ia-note { "Write it here, copy it, then send it with /suggest in the server." }
+                    p.ia-note { "Sign in with Discord to send it from here, or copy it and send it with /suggest in the server." }
                     label.ia-report-card {
                         span { "Card (optional)" }
                         select name="card" {
@@ -139,11 +171,12 @@ fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
                     textarea name="text" rows="4" maxlength=(REPORT_TEXT) required placeholder="What looks wrong, and what you expected" {}
                     div.ia-ask-actions {
                         span.ia-report-msg role="status" {}
-                        button.btn.primary type="submit" { "Copy for /suggest" }
+                        button.btn type="submit" { "Copy for /suggest" }
+                        a.btn.primary.ia-sign-in href=(bot_core::web::auth::member_sign_in(&format!("{}?from=signin", here(guild)))) { "Sign in with Discord to send" }
                     }
                 }
             } @else {
-            form method="post" action={ "/p/" (guild) "/idleon/report" } data-full {
+            form #ia-report-send method="post" action={ "/p/" (guild) "/idleon/report" } data-full {
                 input type="hidden" name="account" value=(r.name);
                 label.ia-report-card {
                     span { "Card (optional)" }
@@ -163,7 +196,7 @@ fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
     }
 }
 
-fn ask(guild: u64, error: Option<&str>) -> Markup {
+fn ask(guild: u64, error: Option<&str>, retry: bool) -> Markup {
     html! {
         section.ia-panel.ia-ask {
             div.ia-ask-text {
@@ -174,7 +207,8 @@ fn ask(guild: u64, error: Option<&str>) -> Markup {
             // server's work per check.
             form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
                 textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
-                p.ia-err #ia-err role="alert" hidden[error.is_none()] { (error.unwrap_or_default()) }
+                p.ia-err #ia-err role="alert" hidden[error.is_none()] data-retry[retry] { (error.unwrap_or_default()) }
+                p.ia-note #ia-last hidden { "Filled in with the save you last checked in this tab." }
                 div.ia-ask-actions {
                     label.btn {
                         (ui::icon(bot_core::Icon::Enter))
@@ -201,7 +235,7 @@ fn done(guild: u64, r: &Review) -> Markup {
                 span { "of the maxes this check reads, across " (r.mechanics.iter().filter(|m| m.world <= r.world && m.total() > 0.0).count()) " mechanics" }
                 p.ia-lead-line {
                     "World " (r.world) " · " (r.characters) " characters"
-                    " · " a href={ "/p/" (guild) "/idleon" } { "Check another account" }
+                    " · " a.ia-again href={ "/p/" (guild) "/idleon" } { "Check another account" }
                 }
             }
             div.ia-cols role="img" aria-label="How far each world is from max" {
@@ -277,7 +311,7 @@ fn done(guild: u64, r: &Review) -> Markup {
             @for w in &worlds {
                 div.ia-world data-w=(w) style={ "--w: var(--w" (w) ")" } {
                     div.ia-grid {
-                        @for m in r.mechanics.iter().filter(|m| m.world == *w) { (card(m)) }
+                        @for m in r.mechanics.iter().filter(|m| m.world == *w) { (card(m, r.world)) }
                     }
                 }
             }
@@ -329,7 +363,18 @@ fn item_fig(i: &Item) -> String {
     }
 }
 
-fn card(m: &Mechanic) -> Markup {
+/// Where a mechanic stands against its tiers' worlds, in a line: what world it's at, and the
+/// first tier overdue for the world you're in.
+fn pace_line(p: &Pace, reached: u8) -> Option<String> {
+    let at = p.at.map(|w| format!("Where a World {w} player would be."));
+    match (at, p.due.and_then(|k| p.worlds[k].map(|w| (k, w)))) {
+        (at, Some((k, w))) => Some(format!("{}Tier {} is expected by World {w}, and you're in World {reached}.", at.map(|a| a + " ").unwrap_or_default(), k + 1)),
+        (Some(at), None) => Some(format!("{at} Nothing here is overdue for World {reached}.")),
+        (None, None) => p.worlds.iter().flatten().min().map(|w| format!("Its first tier is expected by World {w}.")),
+    }
+}
+
+fn card(m: &Mechanic, reached: u8) -> Markup {
     let open = m.open_items();
     let tiers = m.tiers();
     let current = tiers.iter().position(|t| !t.complete());
@@ -350,6 +395,13 @@ fn card(m: &Mechanic) -> Markup {
                             None if !tiers.is_empty() => { " · All tiers" },
                             None => {},
                         }
+                        @if let Some(p) = &m.pace {
+                            @match (p.at, p.worlds.iter().flatten().min()) {
+                                (Some(w), _) => { " · World " (w) " level" },
+                                (None, Some(f)) if *f <= reached => { " · Under World " (f) " level" },
+                                _ => {},
+                            }
+                        }
                     }
                 }
                 @if m.count == Count::Open {
@@ -364,6 +416,7 @@ fn card(m: &Mechanic) -> Markup {
                     p.ia-hold { b { "Order coming later." } " The numbers here are right, but these tiers aren't in the order you'd really do them yet. That comes in a later update." }
                 }
                 @if let Some(n) = &m.note { p.ia-note { (n) } }
+                @if let Some(line) = m.pace.as_ref().and_then(|p| pace_line(p, reached)) { p.ia-pace { (line) } }
                 @if m.count == Count::Open {
                     @if let Some([avg, median, top, low]) = m.spread() {
                         div.ia-spread {
@@ -381,6 +434,9 @@ fn card(m: &Mechanic) -> Markup {
                                 span.ia-rung-k {
                                     "Tier " (k + 1)
                                     @if current == Some(k) { " · you're here" } @else if t.complete() { " · done" }
+                                    @if let Some(w) = m.pace.as_ref().and_then(|p| p.worlds.get(k).copied().flatten()) {
+                                        span.ia-rung-w style={ "--w: var(--w" (w) ")" } title={ "Expected by World " (w) } { "W" (w) }
+                                    }
                                 }
                                 b { (t.label) }
                                 span.ia-fig { (t.met) " of " (t.need) }
@@ -660,6 +716,39 @@ if(pb&&t&&navigator.clipboard&&navigator.clipboard.readText){
     },function(){say("Your browser didn't let the page read the clipboard. Press and hold in the box and choose Paste instead.")});
   });
 }
+// Results arrive by POST. Made a plain visit, a reload (or a phone bringing a closed tab back)
+// opens the paste box instead of asking to send the form again, and the save you last checked
+// in this tab is filled in, to check again with one tap. It stays in this tab's own storage.
+// Back from signing in to send a report (?from=signin): check the same save again and land on
+// the report, with what you'd written put back.
+var signin=/[?&]from=signin/.test(location.search);
+try{history.replaceState(null,"",location.pathname+location.hash)}catch(x){}
+var LAST="ia-last-save";
+function keep(s){try{if(s)sessionStorage.setItem(LAST,s);else sessionStorage.removeItem(LAST)}catch(x){try{sessionStorage.removeItem(LAST)}catch(y){}}}
+if(t){
+  t.form.addEventListener("submit",function(){keep(t.value)});
+  // After a paste that didn't read, there's nothing worth filling back in. After "busy, try
+  // again" the paste was fine: it goes back in the box to send again.
+  var failed=er&&!er.hidden;
+  if(failed&&!er.hasAttribute("data-retry"))keep("");
+  else{var last=null;try{last=sessionStorage.getItem(LAST)}catch(x){}
+    if(last&&!t.value){t.value=last;var ln=document.getElementById("ia-last");if(ln&&!failed)ln.hidden=false}
+    if(signin&&last&&!failed){t.form.action=location.pathname+"#ia-report";t.form.requestSubmit()}}
+}
+var DRAFT="ia-report-draft";
+document.addEventListener("click",function(e){
+  if(!e.target.closest("a.ia-sign-in"))return;
+  var f=e.target.closest("form");
+  try{if(f)sessionStorage.setItem(DRAFT,JSON.stringify({card:f.querySelector("select").value,text:f.querySelector("textarea").value}))}catch(x){}
+});
+(function(){
+  var f=document.getElementById("ia-report-send")||document.querySelector(".ia-report-copy"),d=null;
+  if(!f)return;
+  try{d=JSON.parse(sessionStorage.getItem(DRAFT)||"null");sessionStorage.removeItem(DRAFT)}catch(x){}
+  if(!d)return;
+  f.querySelector("select").value=d.card||"";f.querySelector("textarea").value=d.text||"";
+})();
+document.addEventListener("click",function(e){if(e.target.closest("a.ia-again"))keep("")});
 // On a phone the world tabs are one row that scrolls sideways: keep the chosen one in view.
 function showTab(smooth){
   var s=document.querySelector(".ia-tabs"),i=s&&s.querySelector("input:checked");
@@ -762,7 +851,7 @@ if(rc)rc.addEventListener("submit",function(e){
   if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(done,fail);else fail();
 });
 // Report a problem without leaving your results.
-var rf=document.querySelector("#ia-report form[action]");
+var rf=document.getElementById("ia-report-send");
 if(rf)rf.addEventListener("submit",function(e){
   e.preventDefault();
   var msg=rf.querySelector(".ia-report-msg"),b=rf.querySelector("button");
@@ -890,6 +979,8 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-rung .ia-fig { text-align: left; }
 .ia-rung .ia-meter { height: 4px; margin-top: 2px; }
 .ia-rung-k { font-size: 12px; color: var(--ink-2); }
+.ia-rung-w { float: right; font: 600 11px var(--mono); color: var(--w); }
+.ia-pace { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); }
 .ia-rung.here { background: color-mix(in oklab, var(--w) 12%, var(--raised)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--w) 60%, transparent); }
 .ia-rung.here .ia-rung-k { color: var(--w); }
 .ia-rung.done .ia-rung-k { color: var(--live); }
@@ -965,9 +1056,14 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-report textarea { width: 100%; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 14px/1.5 var(--sans); }
 .ia-report textarea:focus, .ia-report select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 .ia-report-card { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); }
+.ia-report-card select { flex: 0 1 auto; min-width: 0; }
 .ia-report select { height: 34px; padding: 0 10px; border-radius: 9px; border: 0; background: var(--control); color: var(--ink); font: 13px var(--sans); box-shadow: inset 0 0 0 1px var(--edge-1); max-width: 100%; }
 .ia-report .ia-ask-actions { align-items: center; }
 .ia-report-msg { flex: 1; font-size: 13px; color: var(--ink-2); }
+form.ia-signout { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 8px; font-size: 13px; color: var(--ink-3); }
+form.ia-signout b { color: var(--ink-2); font-weight: 500; }
+form.ia-signout button { padding: 0; border: 0; background: none; color: var(--ink-2); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+@media (pointer: coarse) { form.ia-signout button { min-height: 40px; } }
 .ia-foot { padding-top: 16px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 12.5px; }
 
 /* An open card keeps its head in view while you read down it, so closing it is one tap away. */

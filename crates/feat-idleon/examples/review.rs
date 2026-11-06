@@ -1,5 +1,6 @@
 //! Read a save and print what each check finds: `cargo run -p feat-idleon --example review -- save.json`.
-//! Flags any level above its max and any picture the crate doesn't have.
+//! Flags any level above its max and any picture the crate doesn't have, and lists what's
+//! overdue for the account's world (from expected.txt).
 
 use feat_idleon::review::Review;
 use feat_idleon::save::Save;
@@ -42,6 +43,22 @@ fn main() {
         println!("  do next:");
         for n in &r.next {
             println!("    {} ({:?})", r.mechanics[n.mechanic].name, n.why);
+        }
+        // From expected.txt: what's overdue for the account's world, most overdue world first.
+        let overdue = r.overdue();
+        if !overdue.is_empty() {
+            println!("  overdue for World {}:", r.world);
+            for (w, ms) in overdue {
+                let names: Vec<String> = ms
+                    .iter()
+                    .map(|&i| {
+                        let m = &r.mechanics[i];
+                        let p = m.pace.as_ref().expect("overdue has a pace");
+                        format!("{} (tier {}, at {})", m.name, p.due.map_or(0, |k| k + 1), p.at.map_or("none".into(), |a| format!("W{a}")))
+                    })
+                    .collect();
+                println!("    W{w}: {}", names.join(", "));
+            }
         }
     }
 }
