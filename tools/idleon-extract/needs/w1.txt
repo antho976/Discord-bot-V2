@@ -19,3 +19,6 @@ picture HoopShop\d
 picture DartShop\d
 picture VaultUpg\d+
 picture ClassIcons\d+
+table ShopNames
+table ShopLocations
+table MapDispName

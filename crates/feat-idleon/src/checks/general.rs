@@ -5,7 +5,8 @@ use std::collections::{HashMap, HashSet};
 use bot_core::serde_json::Value;
 
 use super::*;
-use super::w1::{char_name, characters, class_icon};
+use super::w1::{char_name, characters, class_icon, shop_of};
+use crate::review::{Have, State};
 
 pub fn all(save: &Save) -> Vec<Mechanic> {
     vec![
@@ -45,6 +46,17 @@ pub(super) fn card_stars(count: f64, base: f64, chizoar: bool) -> f64 {
     (level - 1) as f64
 }
 
+/// Cards for star `s` (0 is the first star) of a card whose first star costs `base`: the
+/// count must pass this (the game's `CardLv`, as in [`card_stars`]).
+fn card_step(s: usize, base: f64, chizoar: bool) -> f64 {
+    let f = s as f64;
+    if chizoar {
+        1.5 * (f + 1.0 + (f / 3.0).floor()).powi(2)
+    } else {
+        base * (f + 1.0 + (f / 3.0).floor() + 16.0 * (f / 4.0).floor() + 100.0 * (f / 5.0).floor()).powi(2)
+    }
+}
+
 /// Cards: `Cards0` maps a monster to the cards you have of it.
 fn cards(save: &Save) -> Mechanic {
     let have = save.get("Cards0");
@@ -58,7 +70,13 @@ fn cards(save: &Save) -> Mechanic {
             let count = have.and_then(|h| h.get(mob)).map(num).unwrap_or(0.0);
             let stars = card_stars(count, cell(r, 2), mob == "Boss3B");
             let name = GAME.monster_name(mob).map(str::to_string).unwrap_or_else(|| words(mob));
-            let mut it = Item::new(name, pic(format!("Cards{}", text(r, 1))), stars, CARD_STARS as f64);
+            let mut it = Item::new(name.clone(), pic(format!("Cards{}", text(r, 1))), stars, CARD_STARS as f64);
+            if count <= 0.0 {
+                it.how = Some(format!("Drops from {name}."));
+            } else if (stars as usize) < CARD_STARS {
+                let need = (card_step(stars as usize, cell(r, 2), mob == "Boss3B") + 1.0 - count).ceil().max(1.0);
+                it.how = Some(format!("{} more cards for the next star.", big(need)));
+            }
             it.level_name = Some(match (count > 0.0, stars as u8) {
                 (false, _) => "Not found".into(),
                 (true, 0) => "Found".into(),
@@ -69,7 +87,8 @@ fn cards(save: &Save) -> Mechanic {
         }
     }
     let mut m = mech("cards", 0, "Cards", pic("CardsA0".into()), Count::Levels, "stars", items);
-    m.tier_names = Some(["Found", "1 star", "2 stars", "3 stars", "4 stars", "5 stars", "6 stars"].iter().map(|s| s.to_string()).collect());
+    // Levels are stars, so the game's tiers start at the first star; "Found" is level 0.
+    m.tier_names = Some(["1 star", "2 stars", "3 stars", "4 stars", "5 stars", "6 stars"].iter().map(|s| s.to_string()).collect());
     m.note = Some("4 stars at first, 5 with the Rift unlock, 6 with Spelunking's.".into());
     m
 }
@@ -82,9 +101,35 @@ fn achievements(save: &Save) -> Mechanic {
         .enumerate()
         .take(420)
         .filter(|(_, r)| text(r, 0) != "FILLERZZZ_ACH")
-        .map(|(i, r)| Item::new(label(text(r, 0)), None, f64::from(at(&reg, i) == -1.0), 1.0))
+        .map(|(i, r)| {
+            let done = at(&reg, i) == -1.0;
+            let mut it = Item::new(label(text(r, 0)), None, f64::from(done), 1.0);
+            if !done {
+                it.how = achievement_how(text(r, 2));
+            }
+            it
+        })
         .collect();
     mech("achievements", 0, "Achievements", None, Count::Done, "done", items)
+}
+
+/// An achievement's own description, tidied to one short line: no "SECRET ACHIEVEMENT"
+/// banner or dash rules, and cut at a word near 90 characters.
+fn achievement_how(desc: &str) -> Option<String> {
+    let s = words(desc).replace("SECRET ACHIEVEMENT", "").replace(['{', '}'], "");
+    let s: Vec<&str> = s.split_whitespace().filter(|w| !w.chars().all(|c| c == '-')).collect();
+    let mut out = String::new();
+    for w in s {
+        if out.len() + w.len() > 88 {
+            out.push_str("...");
+            break;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(w);
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// Gem shop: `MTXinfo[section][tab][slot]` is one offer: col 0 its picture, col 1 its name,
@@ -92,8 +137,13 @@ fn achievements(save: &Save) -> Mechanic {
 /// "YOU HAVE BOUGHT: n/col5" when col 5 is under 50000). Left out: blank slots, offers with no
 /// limit, stock the game restocks daily, weekly or each update (found by the extractor from
 /// where the game zeroes the count), and the Complete Class Redo, which is a one-off reset.
+///
+/// The next one costs `GemItemsPurchased[i]` × col 7 + col 3 gems (the shop's own `_GemCost`);
+/// gems held are `GemsOwned`.
 fn gem_shop(save: &Save) -> Mechanic {
     let bought = save.numbers("GemItemsPurchased", &[]);
+    let gems = save.get("GemsOwned").map(num).unwrap_or(0.0).max(0.0);
+    let mut ready = 0;
     let restocks: Vec<usize> = GAME.extra("general").get("gem_restocks").map(crate::save::numbers).unwrap_or_default().into_iter().map(|v| v as usize).collect();
     let mut items = Vec::new();
     for section in GAME.rows("MTXinfo") {
@@ -104,12 +154,25 @@ fn gem_shop(save: &Save) -> Mechanic {
                     continue;
                 }
                 let picture = (code != "Blank").then(|| code.to_string());
-                items.push(Item::new(label(name), picture, at(&bought, index), max));
+                let mut it = Item::new(label(name), picture, at(&bought, index), max);
+                if !it.done() {
+                    let cost = (it.level * cell(r, 7) + cell(r, 3)).round();
+                    it.how = Some(format!("The next one costs {} gems.", big(cost)));
+                    if cost <= gems {
+                        it.state = State::Ready;
+                        ready += 1;
+                    }
+                }
+                items.push(it);
             }
         }
     }
     let mut m = mech("gem-shop", 0, "Gem Shop", pic("GemP1".into()), Count::Levels, "bought", items);
     m.note = Some("Permanent upgrades only: no restocking items, cosmetics or packs.".into());
+    m.have = Some(Have {
+        figure: format!("{} gems", big(gems)),
+        text: if ready == 0 { "Not enough for the next purchase of any of these yet.".into() } else { format!("Enough for the next purchase of {ready} of these, one at a time.") },
+    });
     m
 }
 
@@ -125,20 +188,43 @@ fn number_to_letter() -> Vec<String> {
 
 /// Event shop: `NinjaInfo[39]` pairs "Name_@_what_it_does" and cost. Item i is owned when
 /// its letter (see [`number_to_letter`]) is in `OptLacc[311]`.
+/// Event points to spend are `OptLacc[310]`; the shop takes the cost from there.
 fn event_shop(save: &Save) -> Mechanic {
     let owned = save.at("OptLacc", &[311]).and_then(Value::as_str).unwrap_or("");
+    let points = save.option(310).max(0.0);
     let letters = number_to_letter();
     let shop = rows("NinjaInfo", &[39]);
+    let mut ready = 0;
     let items = shop
         .chunks(2)
         .enumerate()
         .map(|(i, pair)| {
             let name = pair[0].as_str().unwrap_or("").split('@').next().unwrap_or("");
             let has = letters.get(i).is_some_and(|l| owned.contains(l.as_str()));
-            Item::new(label(name), pic(format!("EventShopBuy{i}")), f64::from(has), 1.0)
+            let mut it = Item::new(label(name), pic(format!("EventShopBuy{i}")), f64::from(has), 1.0);
+            if !has {
+                let cost = pair.get(1).map(|v| num(v)).unwrap_or(0.0);
+                it.how = Some(format!("Costs {cost:.0} event points."));
+                if cost <= points {
+                    it.state = State::Ready;
+                    ready += 1;
+                }
+            }
+            it
         })
         .collect();
-    mech("event-shop", 0, "Event Shop", pic("EventShopBuy0".into()), Count::Done, "bought", items)
+    let mut m = mech("event-shop", 0, "Event Shop", pic("EventShopBuy0".into()), Count::Done, "bought", items);
+    m.have = Some(Have {
+        figure: format!("{points:.0} event points"),
+        text: if ready == 0 { "Not enough for anything left in the shop yet.".into() } else { format!("Enough for any one of {ready} items you don't have.") },
+    });
+    m
+}
+
+/// Whether event shop item `i` is bought.
+pub(super) fn event_shop_owned(save: &Save, i: usize) -> bool {
+    let owned = save.at("OptLacc", &[311]).and_then(Value::as_str).unwrap_or("");
+    number_to_letter().get(i).is_some_and(|l| owned.contains(l.as_str()))
 }
 
 /// "2.4M", "380K": a stack size as the storage chest shows it.
@@ -185,6 +271,9 @@ fn greenstacks(save: &Save) -> Mechanic {
             let mut it = Item::new(name, None, f64::from(done), 1.0);
             if !done {
                 it.level_name = Some(if n > 0.0 { format!("{} of 10M", short(n)) } else { "Not in storage".into() });
+                if n > 0.0 {
+                    it.how = Some(format!("{} more in storage makes it green.", short(1e7 - n)));
+                }
             }
             it
         })
@@ -241,7 +330,12 @@ fn storage_chests(save: &Save) -> Mechanic {
         .into_iter()
         .map(|(key, id)| {
             let name = GAME.item_name(&id).map(str::to_string).unwrap_or_else(|| id.clone());
-            Item::new(name, pic(id), f64::from(has_key(used, &key)), 1.0)
+            let done = has_key(used, &key);
+            let mut it = Item::new(name, pic(id.clone()), f64::from(done), 1.0);
+            if !done {
+                it.how = shop_of(&id);
+            }
+            it
         })
         .collect();
     mech("storage-chests", 0, "Storage Chests", pic("InvStorage1".into()), Count::Done, "used", items)
@@ -255,7 +349,16 @@ fn inventory_bags(save: &Save) -> Mechanic {
         .map(|i| {
             let used = save.get(&format!("InvBagsUsed_{i}"));
             let n = bags.iter().filter(|(key, _)| has_key(used, key)).count();
-            Item::new(format!("{}: Inventory bags", char_name(save, i)), class_icon(save, i), n as f64, bags.len() as f64)
+            let mut it = Item::new(format!("{}: Inventory bags", char_name(save, i)), class_icon(save, i), n as f64, bags.len() as f64);
+            // The first bag this character hasn't used, with where it's sold when a town shop has it.
+            if let Some((_, id)) = bags.iter().find(|(key, _)| !has_key(used, key)) {
+                let name = GAME.item_name(id).unwrap_or(id);
+                it.how = Some(match shop_of(id) {
+                    Some(shop) => format!("Missing {name}. {shop}"),
+                    None => format!("Missing {name}."),
+                });
+            }
+            it
         })
         .collect();
     mech("inventory-bags", 0, "Inventory Bags", pic("InvBag1".into()), Count::Levels, "bags", items)
@@ -269,31 +372,45 @@ fn inventory_bags(save: &Save) -> Mechanic {
 fn carry_capacity(save: &Save) -> Mechanic {
     let table = rows("PlayerCapacities", &[2]);
     let tiers: Vec<f64> = table.first().and_then(|r| r.as_array()).map(|a| a.iter().map(num).collect()).unwrap_or_default();
-    let kinds: Vec<(String, usize)> = table
+    let kinds: Vec<(String, usize, &Value)> = table
         .iter()
         .skip(1)
         .filter_map(|r| {
             let a = r.as_array()?;
             let top = a.iter().enumerate().skip(1).filter(|(_, b)| !matches!(b.as_str(), Some("MaxCapBag" | "Blank"))).map(|(j, _)| j).max()?;
-            Some((text(r, 0).to_string(), top.min(tiers.len().saturating_sub(1))))
+            Some((text(r, 0).to_string(), top.min(tiers.len().saturating_sub(1)), *r))
         })
         .collect();
-    let max: usize = kinds.iter().map(|(_, top)| top).sum();
+    let max: usize = kinds.iter().map(|(_, top, _)| top).sum();
     let items = (0..characters(save))
         .map(|i| {
             let caps = save.get(&format!("MaxCarryCap_{i}"));
-            let reached: usize = kinds
+            let tier_of: Vec<usize> = kinds
                 .iter()
-                .map(|(k, top)| {
+                .map(|(k, top, _)| {
                     let cap = caps.and_then(|c| c.get(k)).map(num).unwrap_or(0.0);
                     tiers.iter().rposition(|&t| t <= cap).unwrap_or(0).min(*top)
                 })
-                .sum();
-            Item::new(format!("{}: Carry bags", char_name(save, i)), class_icon(save, i), reached as f64, max as f64)
+                .collect();
+            let reached: usize = tier_of.iter().sum();
+            let mut it = Item::new(format!("{}: Carry bags", char_name(save, i)), class_icon(save, i), reached as f64, max as f64);
+            // The kind furthest from its best bag, and the bag one tier up from where it is.
+            let low = kinds.iter().zip(&tier_of).filter(|((_, top, _), t)| *t < top).min_by_key(|((_, top, _), t)| (**t * 100) / (*top).max(1));
+            if let Some(((_, _, row), t)) = low {
+                let next = (t + 1..row.as_array().map_or(0, Vec::len)).find_map(|j| text(row, j).starts_with("MaxCapBag").then(|| text(row, j)).filter(|b| *b != "MaxCapBag"));
+                if let Some(bag) = next {
+                    let name = GAME.item_name(bag).unwrap_or(bag);
+                    it.how = Some(match shop_of(bag) {
+                        Some(shop) => format!("Next bag up: {name}. {shop}"),
+                        None => format!("Next bag up: {name}."),
+                    });
+                }
+            }
+            it
         })
         .collect();
     let mut m = mech("carry-capacity", 0, "Carry Capacity", None, Count::Levels, "bag tiers", items);
-    let best = kinds.iter().map(|(_, top)| at(&tiers, *top)).fold(0.0, f64::max);
+    let best = kinds.iter().map(|(_, top, _)| at(&tiers, *top)).fold(0.0, f64::max);
     m.note = Some(format!("Bag tiers reached across the {} item kinds; the best bags hold {} a slot.", kinds.len(), short(best)));
     m
 }
