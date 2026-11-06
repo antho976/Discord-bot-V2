@@ -83,8 +83,10 @@ const BUBBLE_SHARES: [f64; 5] = [0.5, 0.75, 0.9, 0.95, 0.99];
 /// aim a quarter higher (World 7: 2.5 times).
 const FLAT_STEPS: [f64; 5] = [100.0, 250.0, 500.0, 1000.0, 2000.0];
 
-/// The world a bubble belongs to: each cauldron opens five bubbles per world (N.js
-/// `NumBubblesUnlocked` against `5 * (1 + CauldronInfo[7][c])`), so slot i is world i/5 + 1.
+/// The world an unfound bubble waits for. Nothing in N.js holds a bubble back by world: each
+/// cauldron finds the next one in order as it brews (`PctChanceNewBubble`; `CauldronInfo[7][c]`
+/// is only the page of five shown). Slot i is read as World i/5 + 1, roughly when it came out,
+/// so a bubble not found yet leaves the ladder until then. One you have always counts.
 fn bubble_world(i: usize) -> u8 {
     (i / 5 + 1).min(7) as u8
 }
@@ -129,7 +131,7 @@ fn bubbles(save: &Save) -> Mechanic {
             } else {
                 format!("Lv {}", crate::page::num(level))
             });
-            if world > 2 {
+            if world > 2 && level <= 0.0 {
                 it.world = Some(world);
             }
             let parts: Vec<(String, f64)> = (0..4).filter_map(|s| bubble_cost(r, i, s, level)).collect();
@@ -231,7 +233,7 @@ fn p2w_cost(kind: usize, s: usize, level: f64) -> f64 {
 /// Maxes from `cauldronp2wbonuses("CauldronLvMAX")`: 150/125/100, 100/80, 15/45, and the
 /// highest Alchemy level of any character for the player upgrades. A locked liquid reads -1 and
 /// opens at Alchemy level 20, 35 and 80 (`LiquidCauldronLvReq`). Paid in coins from the
-/// character you're on, so the richest one (`Money_<i>`) is what counts.
+/// character you're on, which can take more from the bank first (see `w1::spendable`).
 fn pay2win(save: &Save) -> Mechanic {
     let cauldron = save.numbers("CauldronP2W", &[0]);
     let liquid = save.numbers("CauldronP2W", &[1]);
@@ -240,7 +242,7 @@ fn pay2win(save: &Save) -> Mechanic {
     // The game has 12 character slots; the save can't be trusted to say fewer or more.
     let chars = 12;
     let alchemy = (0..chars).map(|i| at(&save.numbers(&format!("Lv0_{i}"), &[]), 5)).fold(0.0, f64::max);
-    let coins = (0..chars).map(|i| save.get(&format!("Money_{i}")).map(num).unwrap_or(0.0)).fold(0.0, f64::max).max(0.0);
+    let coins = super::w1::spendable(save);
     // (name, level, max, kind, s)
     let mut rows: Vec<(String, f64, f64, usize, usize)> = Vec::new();
     for (c, name) in CAULDRONS.iter().enumerate() {
@@ -303,14 +305,14 @@ fn pay2win(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("pay2win", 2, "Alchemy Pay2Win", pic("aEmptyCauldronB1".into()), Count::Levels, "levels", items);
-    m.have = Some(Have {
-        figure: format!("{} coins", big(coins)),
-        text: match reach.as_slice() {
-            [] => "Not enough for the next level of anything here yet. That's your richest character's coins.".into(),
-            [one] => format!("Your richest character has enough to take {one}."),
-            [a, b, ..] => format!("Your richest character has enough to take {a}, or {b}."),
+    m.have = Some(super::w1::coin_have(
+        coins,
+        match reach.as_slice() {
+            [] => "Not enough for the next level of anything here yet.".into(),
+            [one] => format!("Enough to take {one}."),
+            [a, b, ..] => format!("Enough to take {a}, or {b}."),
         },
-    });
+    ));
     m.note = Some("The two Player upgrades cap at your highest character's Alchemy level, so each Alchemy level up adds 1 to both caps.".into());
     m
 }
@@ -377,8 +379,7 @@ const SIGIL_TIERS: [&str; 6] = ["Locked", "Blue", "Yellow", "Red", "Purple", "Gr
 /// `GreenSigilsUnlocked`. A sigil shows once the one before it is unlocked.
 fn sigils(save: &Save) -> Mechanic {
     let p2w = save.numbers("CauldronP2W", &[4]);
-    // N.js `EmporiumBonus`: bought when `Ninja[102][9]` holds `Number2Letter[31]`, "E".
-    let ionized = save.at("Ninja", &[102, 9]).and_then(Value::as_str).is_some_and(|s| s.contains('E'));
+    let ionized = super::general::emporium_owned(save, 31);
     let lore = at(&save.numbers("Spelunk", &[0]), 6) >= 1.0;
     let eclectic = lore && at(&save.numbers("Research", &[0]), 128) >= 1.0;
     let table = rows("SigilDesc", &[]);
@@ -456,11 +457,16 @@ fn arcade_cost(i: usize, l: f64) -> f64 {
 
 /// Arcade: `ArcadeUpg[i]`, max 102 (101 Cosmic, 102 Omega). The last six rows are fillers.
 /// Gold balls are `OptLacc[75]`.
+///
+/// The shop sells only this update's rotation: N.js fills its nine slots from the server list
+/// `ArcadeBonuses` (`GenINFO[52]`), and every buy, Cosmic and Omega too, goes through a slot.
+/// IdleonToolbox copies that list in `serverVars`; without it nothing reads as ready.
 fn arcade(save: &Save) -> Mechanic {
     let levels = save.numbers("ArcadeUpg", &[]);
     let gold = save.option(75).max(0.0);
     let cosmic = save.option(324).max(0.0);
     let omega = save.option(625).max(0.0);
+    let rotation: Option<Vec<f64>> = save.server_list("ArcadeBonuses");
     let mut ready: Vec<(usize, usize, f64)> = Vec::new();
     let items: Vec<Item> = rows("ArcadeShopInfo", &[])
         .iter()
@@ -469,21 +475,23 @@ fn arcade(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let level = at(&levels, i);
             let mut it = Item::new(label(text(r, 0)), pic(format!("PachiShopICON{i}")), level, 102.0);
-            if level < 100.0 {
+            let (how, enough) = if level < 100.0 {
                 let cost = arcade_cost(i, level);
-                it.how = Some(format!("Next level costs {} gold balls.", big(cost)));
-                if cost <= gold {
-                    it.state = State::Ready;
-                }
+                (format!("Next level costs {} gold balls.", big(cost)), cost <= gold)
             } else if level < 101.0 {
-                it.how = Some("Level 101 (Cosmic) costs 5 Cosmic balls.".into());
-                if cosmic >= 5.0 {
-                    it.state = State::Ready;
-                }
+                ("Level 101 (Cosmic) costs 5 Cosmic balls.".into(), cosmic >= 5.0)
             } else if level < 102.0 {
-                it.how = Some("Level 102 (Omega) costs 2 Omega balls.".into());
-                if omega >= 2.0 {
-                    it.state = State::Ready;
+                ("Level 102 (Omega) costs 2 Omega balls.".into(), omega >= 2.0)
+            } else {
+                return it;
+            };
+            match &rotation {
+                Some(on) if !on.contains(&(i as f64)) => it.how = Some("Not in this update's shop rotation.".into()),
+                on => {
+                    it.how = Some(how);
+                    if enough && on.is_some() {
+                        it.state = State::Ready;
+                    }
                 }
             }
             it
@@ -517,12 +525,13 @@ fn arcade(save: &Save) -> Mechanic {
     m.have = Some(Have {
         figure: format!("{} gold balls, {} Cosmic, {} Omega", big(gold), big(cosmic), big(omega)),
         text: match reach.as_slice() {
-            [] => "Not enough gold balls for the next level of anything below 100.".into(),
+            [] if rotation.is_none() => "Your paste doesn't say which upgrades the shop sells this update, so none reads as ready.".into(),
+            [] => "Not enough gold balls for the next level of anything below 100 in this update's rotation.".into(),
             [one] => format!("Enough to take {one}. Costs here are before your Golden Balls stamp."),
             [a, b, ..] => format!("Enough to take {a}, or {b}. Costs here are before your Golden Balls stamp, so you get a little further."),
         },
     });
-    m.note = Some("Levels 1 to 100 cost gold balls; level 101 (Cosmic) costs 5 Cosmic balls and level 102 (Omega) 2 Omega balls.".into());
+    m.note = Some("Levels 1 to 100 cost gold balls; level 101 (Cosmic) costs 5 Cosmic balls and level 102 (Omega) 2 Omega balls. The shop sells nine upgrades at a time, a new set each update.".into());
     m
 }
 
@@ -650,9 +659,11 @@ fn islands(save: &Save) -> Mechanic {
 }
 
 /// Fractal Island: hours of Nothing AFK (`OptLacc[184]`) against the reward thresholds the game
-/// lists on the island (24 to 60,000 hours).
+/// lists on the island (24 to 40,000 hours). The island lists an eighth at 60,000 hours, "World
+/// 7 Bonus... I wonder what it will be...", that does nothing yet (N.js never asks
+/// `FractalIslandBonus` for it, index 7), so it's left out.
 fn fractal_island(save: &Save) -> Mechanic {
-    const REWARDS: [(f64, &str); 8] = [
+    const REWARDS: [(f64, &str); 7] = [
         (24.0, "Master of Nothing Trophy Chance"),
         (200.0, "Dungeon Credits and Flurbos"),
         (750.0, "Kitchen Upgrade Costs"),
@@ -660,7 +671,6 @@ fn fractal_island(save: &Save) -> Mechanic {
         (10000.0, "Gold Nuggets from the Dirty Shovel"),
         (20000.0, "Star Talent Points"),
         (40000.0, "Ninja Twin Stealth"),
-        (60000.0, "World 7 Bonus"),
     ];
     let hours = save.option(184).max(0.0);
     let fractal = owned_islands(save).contains('e');
@@ -680,7 +690,7 @@ fn fractal_island(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("fractal-island", 2, "Fractal Island", pic("IslandSail5".into()), Count::Done, "unlocked", items);
-    m.note = Some("Hours spent AFK on Nothing at Fractal Island unlock each reward. The last one is at 60,000 hours.".into());
+    m.note = Some("Hours spent AFK on Nothing at Fractal Island unlock each reward. The last one out is at 40,000 hours; the 60,000-hour World 7 bonus does nothing yet, so it isn't counted.".into());
     m
 }
 
@@ -759,4 +769,41 @@ fn killroy(save: &Save) -> Mechanic {
 /// A character's name, or "Character 3" when the save has none.
 fn character(save: &Save, i: usize) -> String {
     save.names.get(i).cloned().unwrap_or_else(|| format!("Character {}", i + 1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_arcade_rotation_reads_as_ready() {
+        let mut opt = vec![0.0; 76];
+        opt[75] = 1000.0;
+        let paste = |server: &str| Save::parse(&format!(r#"{{"data": {{"OptLacc": {opt:?}}}{server}}}"#)).unwrap();
+        let m = arcade(&paste(r#", "serverVars": {"ArcadeBonuses": [5, 7]}"#));
+        assert_eq!((m.items[5].state, m.items[7].state), (State::Ready, State::Ready));
+        assert_eq!((m.items[3].state, m.items[3].how.as_deref()), (State::Unknown, Some("Not in this update's shop rotation.")));
+        // No rotation in the paste: the costs show, nothing is ready.
+        let m = arcade(&paste(""));
+        assert!(m.items.iter().all(|i| i.state != State::Ready));
+        assert!(m.items[5].how.as_deref().is_some_and(|h| h.starts_with("Next level costs")));
+    }
+
+    #[test]
+    fn a_bubble_you_have_counts_whatever_its_world() {
+        let mut orange = vec![0.0; 30];
+        orange[20] = 5.0;
+        let s = Save::parse(&format!(r#"{{"OptLacc": [0], "CauldronInfo": [{orange:?}]}}"#)).unwrap();
+        let m = bubbles(&s);
+        let name = |i: usize| label(text(rows("AlchemyDescription", &[0])[i], 0));
+        let world = |i: usize| m.items.iter().find(|it| it.name == name(i)).map(|it| it.world);
+        assert_eq!(world(20), Some(None));
+        assert_eq!(world(21), Some(Some(5)));
+    }
+
+    #[test]
+    fn fractal_island_leaves_out_the_unreleased_reward() {
+        let m = fractal_island(&Save::parse(r#"{"OptLacc": [0]}"#).unwrap());
+        assert_eq!(m.items.last().map(|i| i.max), Some(40_000.0));
+    }
 }

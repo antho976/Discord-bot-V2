@@ -75,8 +75,9 @@ fn cards(save: &Save) -> Mechanic {
             if count <= 0.0 {
                 it.how = Some(format!("Drops from {name}."));
             } else if (stars as usize) < CARD_STARS {
-                let need = (card_step(stars as usize, cell(r, 2), mob == "Boss3B") + 1.0 - count).ceil().max(1.0);
-                it.how = Some(format!("{} more cards for the next star.", big(need)));
+                // The count has to pass the step, so a step of 1.5 needs 2 cards, not 3.
+                let need = (card_step(stars as usize, cell(r, 2), mob == "Boss3B").floor() + 1.0 - count).ceil().max(1.0);
+                it.how = Some(if need == 1.0 { "1 more card for the next star.".into() } else { format!("{} more cards for the next star.", big(need)) });
             }
             it.level_name = Some(match (count > 0.0, stars as u8) {
                 (false, _) => "Not found".into(),
@@ -242,6 +243,13 @@ fn event_shop(save: &Save) -> Mechanic {
 /// Whether event shop item `i` is bought.
 pub(super) fn event_shop_owned(save: &Save, i: usize) -> bool {
     let owned = save.at("OptLacc", &[311]).and_then(Value::as_str).unwrap_or("");
+    number_to_letter().get(i).is_some_and(|l| owned.contains(l.as_str()))
+}
+
+/// Whether Jade Emporium upgrade `i` is bought. N.js `EmporiumBonus`: its letter (see
+/// [`number_to_letter`]) is in `Ninja[102][9]`.
+pub(super) fn emporium_owned(save: &Save, i: usize) -> bool {
+    let owned = save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or("");
     number_to_letter().get(i).is_some_and(|l| owned.contains(l.as_str()))
 }
 
@@ -469,4 +477,17 @@ fn carry_capacity(save: &Save) -> Mechanic {
     let best = kinds.iter().map(|(_, top, _)| at(&tiers, *top)).fold(0.0, f64::max);
     m.note = Some(format!("Bag tiers reached across the {} item kinds; the best bags hold {} a slot.", kinds.len(), short(best)));
     m
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_next_star_passes_a_half_step() {
+        // Chaotic Chizoar's first star needs more than 1.5 cards: from 1, one more.
+        let m = cards(&Save::parse(r#"{"OptLacc": [0], "Cards0": {"Boss3B": 1}}"#).unwrap());
+        let it = m.items.iter().find(|i| i.name == "Chaotic Chizoar").unwrap();
+        assert_eq!(it.how.as_deref(), Some("1 more card for the next star."));
+    }
 }
