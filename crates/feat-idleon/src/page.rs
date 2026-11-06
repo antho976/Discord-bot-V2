@@ -152,7 +152,9 @@ fn ask(guild: u64, error: Option<&str>) -> Markup {
                 h2 { "Paste your save" }
                 p { "Copy your account's JSON from IdleonToolbox or Idleon Efficiency and paste it here, or open the file. You get how far each mechanic is from the game's max, and what to work on next." }
             }
-            form method="post" action={ "/p/" (guild) "/idleon" } data-full {
+            // Sent as plain text: URL-encoding a save triples its size and was a fifth of the
+            // server's work per check.
+            form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
                 textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
                 @if let Some(e) = error { p.ia-err role="alert" { (e) } }
                 div.ia-ask-actions {

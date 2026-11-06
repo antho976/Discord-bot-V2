@@ -32,12 +32,15 @@ pub use pictures::has as has_picture;
 
 pub const KEY: &str = "idleon";
 
-/// A paste is URL-encoded on the way in, which can triple JSON's size.
+/// The page sends the paste as plain text; a URL-encoded one (older pages, scripts) can be up to
+/// three times the save's size.
 const BODY_LIMIT: usize = save::MAX_BYTES * 3;
 
-/// Reviews read at once. A save is a few MB in memory while it's read; the rest wait their turn
-/// briefly or are told to try again.
-static READING: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
+/// Checks read at once. Each holds a save's worth of memory (about 15 MB at its peak) and a
+/// core for ~14 ms; more wait their turn, up to `WAIT`, then are told to try again. Two keep the
+/// bot's peak where it was before checks moved off the runtime threads.
+static READING: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
+const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Longest problem report, like a suggestion.
 const REPORT_MAX: usize = 1500;
@@ -53,7 +56,8 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { closed: true, testers_role: None }
+        // Open to anyone with the link (owner, 2026-11-06); the dashboard switch can close it.
+        Self { closed: false, testers_role: None }
     }
 }
 
@@ -134,24 +138,70 @@ async fn form(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>)
     Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None }).into_response())
 }
 
-async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>, form: FormData) -> WebResult {
+/// The paste from the request body. The page's form is `text/plain` (`save=<the JSON>`, nothing
+/// escaped), which skips percent-decoding a megabyte; a URL-encoded body still works.
+fn paste(headers: &bot_core::axum::http::HeaderMap, body: &[u8]) -> String {
+    let plain = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|t| t.starts_with("text/plain"));
+    if plain {
+        let raw = String::from_utf8_lossy(body);
+        let raw = raw.strip_prefix("save=").unwrap_or(&raw);
+        return raw.trim().to_string();
+    }
+    FormData::parse(body).get("save").map(str::to_string).unwrap_or_default()
+}
+
+async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>, headers: bot_core::axum::http::HeaderMap, body: bot_core::axum::body::Bytes) -> WebResult {
     open(&ctx, guild)?;
     let a = access(&ctx, guild, &viewer);
     if !a.allowed {
         return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None }).into_response());
     }
-    let Ok(_slot) = READING.try_acquire() else {
+    let Ok(Ok(_slot)) = bot_core::tokio::time::timeout(WAIT, READING.acquire()).await else {
         return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some("A lot of saves are being read right now. Try again in a few seconds.") }).into_response());
     };
-    let text = form.text("save");
+    let text = paste(&headers, &body);
+    drop(body);
     if text.is_empty() {
         return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some("Paste your save first.") }).into_response());
     }
-    let review = match save::Save::parse(&text) {
-        Ok(s) => review::Review::new(&s, checks::all(&s), checks::world_reached(&s)),
-        Err(e) => return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some(e.message()) }).into_response()),
-    };
-    Ok(page::render(&ctx, guild, &a, page::State::Done(&review)).into_response())
+    // About 14 ms of CPU: run it off the bot's two runtime threads, so Discord events and other
+    // pages never wait behind a check (at most two at once, `READING`).
+    let html = bot_core::tokio::task::spawn_blocking(move || {
+        let review = match save::Save::parse(&text) {
+            Ok(s) => review::Review::new(&s, checks::all(&s), checks::world_reached(&s)),
+            Err(e) => return page::render(&ctx, guild, &a, page::State::Ask { error: Some(e.message()) }).into_string(),
+        };
+        drop(text);
+        page::render(&ctx, guild, &a, page::State::Done(&review)).into_string()
+    })
+    .await
+    .map_err(|e| WebError::Internal(e.into()))?;
+    give_back_memory();
+    Ok(bot_core::axum::response::Html(html).into_response())
+}
+
+/// A check reads a megabyte of save into many small pieces and frees them all at once, and
+/// glibc keeps freed memory for later: without this the bot stays ~15-25 MB bigger after its
+/// first checks. Handing it back walks the heap (about 1 ms a time, measured), so it runs once,
+/// two seconds after the last check of a burst, not after every check.
+fn give_back_memory() {
+    static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mine = LAST.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    bot_core::tokio::spawn(async move {
+        bot_core::tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        if LAST.load(std::sync::atomic::Ordering::Relaxed) == mine {
+            trim();
+        }
+    });
+}
+
+fn trim() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: malloc_trim only releases free heap pages back to the system; it touches no live
+    // allocation and is safe to call from any thread.
+    unsafe {
+        libc::malloc_trim(0);
+    }
 }
 
 /// "Report a problem": goes to the server's suggestion box as the signed-in member, marked as an
