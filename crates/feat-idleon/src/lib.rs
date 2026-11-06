@@ -6,7 +6,9 @@
 //! game itself (`tools/idleon-extract`), so they follow game updates.
 
 mod checks;
+pub mod expected;
 mod game;
+mod limit;
 mod page;
 mod pictures;
 pub mod review;
@@ -15,7 +17,9 @@ pub mod save;
 use std::sync::LazyLock;
 
 use bot_core::axum::Router;
-use bot_core::axum::extract::{DefaultBodyLimit, Path, State};
+use bot_core::axum::body::Body;
+use bot_core::axum::extract::{Path, State};
+use bot_core::axum::http::HeaderMap;
 use bot_core::axum::http::header;
 use bot_core::axum::response::IntoResponse;
 use bot_core::axum::routing::{get, post};
@@ -32,8 +36,9 @@ pub use pictures::has as has_picture;
 
 pub const KEY: &str = "idleon";
 
-/// The page sends the paste as plain text; a URL-encoded one (older pages, scripts) can be up to
-/// three times the save's size.
+/// The page sends the paste as plain text (the save plus "save="); a URL-encoded one (older
+/// pages, scripts) can be up to three times the save's size.
+const PLAIN_LIMIT: usize = save::MAX_BYTES + 16;
 const BODY_LIMIT: usize = save::MAX_BYTES * 3;
 
 /// Checks read at once. Each holds a save's worth of memory (about 15 MB at its peak) and a
@@ -73,7 +78,7 @@ impl Feature for Idleon {
     fn routes(&self) -> Router<Ctx> {
         Router::new()
             .route("/g/{guild}/idleon", get(dashboard).post(save_settings))
-            .route("/p/{guild}/idleon", get(form).post(check).layer(DefaultBodyLimit::max(BODY_LIMIT)))
+            .route("/p/{guild}/idleon", get(form).post(check))
             .route("/p/{guild}/idleon/report", post(report))
             .route("/idleon/pic/{id}", get(picture))
     }
@@ -134,7 +139,7 @@ async fn form(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>)
 
 /// The paste from the request body. The page's form is `text/plain` (`save=<the JSON>`, nothing
 /// escaped), which skips percent-decoding a megabyte; a URL-encoded body still works.
-fn paste(headers: &bot_core::axum::http::HeaderMap, body: &[u8]) -> String {
+fn paste(headers: &HeaderMap, body: &[u8]) -> String {
     if plain(headers) {
         let raw = String::from_utf8_lossy(body);
         let raw = raw.strip_prefix("save=").unwrap_or(&raw);
@@ -143,39 +148,60 @@ fn paste(headers: &bot_core::axum::http::HeaderMap, body: &[u8]) -> String {
     FormData::parse(body).get("save").map(str::to_string).unwrap_or_default()
 }
 
-fn plain(headers: &bot_core::axum::http::HeaderMap) -> bool {
+fn plain(headers: &HeaderMap) -> bool {
     headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|t| t.starts_with("text/plain"))
 }
 
-async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>, headers: bot_core::axum::http::HeaderMap, body: bot_core::axum::body::Bytes) -> WebResult {
+/// What the per-address limits count by: the client's address from X-Forwarded-For, as the
+/// proxy in front writes it (Caddy, behind the Cloudflare Tunnel).
+fn address(headers: &HeaderMap) -> String {
+    let forwarded: Vec<&str> = headers.get_all("x-forwarded-for").iter().filter_map(|v| v.to_str().ok()).collect();
+    let ip = feat_connect::domain::client_ip((!forwarded.is_empty()).then(|| forwarded.join(",")).as_deref());
+    feat_connect::domain::limit_key(ip.as_deref())
+}
+
+/// The paste box again, saying what went wrong.
+fn ask_again(ctx: &Ctx, guild: u64, a: &page::Access, error: &str) -> WebResult {
+    Ok(page::render(ctx, guild, a, page::State::Ask { error: Some(error) }).into_response())
+}
+
+async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>, headers: HeaderMap, body: Body) -> WebResult {
     open(&ctx, guild)?;
     let a = access(&ctx, guild, &viewer);
     if !a.allowed {
         return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None }).into_response());
     }
-    // A plain-text paste is the save itself (plus "save="): refuse an oversized one before it is
-    // decoded. Either kind is decoded before it waits in line, so a slot is never held by a paste
-    // that's too big, and what waits is the paste, not its (up to three times bigger) body.
-    if plain(&headers) && body.len() > save::MAX_BYTES + 16 {
-        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some(save::SaveError::TooBig.message()) }).into_response());
-    }
+    // Counted before the paste is read, so pastes still arriving count too (see `limit`). The
+    // pass goes with the work below: a visitor who leaves doesn't end what they started.
+    let pass = match limit::enter(address(&headers)) {
+        Ok(p) => p,
+        Err(why) => return ask_again(&ctx, guild, &a, why.message()),
+    };
+    // Read up to the cap and no further. A plain-text paste is the save itself, so its cap is
+    // the save's. Either kind is decoded before it waits in line, so a slot is never held by a
+    // paste that's too big, and what waits is the paste, not its (up to three times bigger) body.
+    let cap = if plain(&headers) { PLAIN_LIMIT } else { BODY_LIMIT };
+    let Ok(body) = bot_core::axum::body::to_bytes(body, cap).await else {
+        return ask_again(&ctx, guild, &a, save::SaveError::TooBig.message());
+    };
     let text = paste(&headers, &body);
     drop(body);
     if text.is_empty() {
-        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some("Paste your save first.") }).into_response());
+        return ask_again(&ctx, guild, &a, "Paste your save first.");
     }
     if text.len() > save::MAX_BYTES {
-        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some(save::SaveError::TooBig.message()) }).into_response());
+        return ask_again(&ctx, guild, &a, save::SaveError::TooBig.message());
     }
     let Ok(Ok(slot)) = bot_core::tokio::time::timeout(WAIT, READING.acquire()).await else {
-        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some("A lot of saves are being read right now. Try again in a few seconds.") }).into_response());
+        return ask_again(&ctx, guild, &a, limit::Refused::Busy.message());
     };
     // About 14 ms of CPU: run it off the bot's two runtime threads, so Discord events and other
     // pages never wait behind a check (at most two at once, `READING`).
     let html = bot_core::tokio::task::spawn_blocking(move || {
-        // The slot is held by the work, not the request: a visitor who leaves mid-check drops the
-        // request, but the check runs on, and must keep counting against the two.
+        // The slot and the pass are held by the work, not the request: a visitor who leaves
+        // mid-check drops the request, but the check runs on, and must keep counting.
         let _slot = slot;
+        let _pass = pass;
         let review = match save::Save::parse(&text) {
             Ok(s) => review::Review::new(&s, checks::all(&s), checks::world_reached(&s)),
             Err(e) => return page::render(&ctx, guild, &a, page::State::Ask { error: Some(e.message()) }).into_string(),

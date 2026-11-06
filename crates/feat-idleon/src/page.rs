@@ -9,6 +9,7 @@ use bot_core::Ctx;
 use bot_core::maud::{DOCTYPE, Markup, PreEscaped, html};
 use bot_core::web::ui;
 
+use crate::expected::Pace;
 use crate::game::GAME;
 use crate::pictures;
 use crate::review::{Count, Item, Mechanic, Review, State as Step, Tier, Why};
@@ -26,6 +27,9 @@ pub enum State<'a> {
     Ask { error: Option<&'a str> },
     Done(&'a Review),
 }
+
+/// The page in a sentence, for link previews.
+const ABOUT: &str = "Paste your Idleon save and see how far each mechanic is from the game's max, and what to work on next.";
 
 pub const WORLD_NAMES: [&str; 8] = ["Account", "Blunder Hills", "Yum-Yum Desert", "Frostbite Tundra", "Hyperion Nebula", "Smolderin' Plateau", "Spirited Valley", "Shimmerfin Deep"];
 
@@ -46,7 +50,14 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
     html! {
         (DOCTYPE)
         html lang="en" {
-            head { (ui::head(&title)) }
+            head {
+                (ui::head(&title))
+                // What a link to the page shows when it's posted in Discord.
+                meta name="description" content=(ABOUT);
+                meta property="og:title" content={ "Idleon account check · " (name) };
+                meta property="og:description" content=(ABOUT);
+                @if let Some(i) = &icon { meta property="og:image" content=(i); }
+            }
             body.ia-pub data-guild=(guild) data-icon=[icon.as_deref()] data-hue="pets" {
                 style { (PreEscaped(CSS)) }
                 header.ov-hero.ia-hero {
@@ -175,6 +186,7 @@ fn ask(guild: u64, error: Option<&str>) -> Markup {
             form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
                 textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
                 p.ia-err #ia-err role="alert" hidden[error.is_none()] { (error.unwrap_or_default()) }
+                p.ia-note #ia-last hidden { "Filled in with the save you last checked in this tab." }
                 div.ia-ask-actions {
                     label.btn {
                         (ui::icon(bot_core::Icon::Enter))
@@ -201,7 +213,7 @@ fn done(guild: u64, r: &Review) -> Markup {
                 span { "of the maxes this check reads, across " (r.mechanics.iter().filter(|m| m.world <= r.world && m.total() > 0.0).count()) " mechanics" }
                 p.ia-lead-line {
                     "World " (r.world) " · " (r.characters) " characters"
-                    " · " a href={ "/p/" (guild) "/idleon" } { "Check another account" }
+                    " · " a.ia-again href={ "/p/" (guild) "/idleon" } { "Check another account" }
                 }
             }
             div.ia-cols role="img" aria-label="How far each world is from max" {
@@ -277,7 +289,7 @@ fn done(guild: u64, r: &Review) -> Markup {
             @for w in &worlds {
                 div.ia-world data-w=(w) style={ "--w: var(--w" (w) ")" } {
                     div.ia-grid {
-                        @for m in r.mechanics.iter().filter(|m| m.world == *w) { (card(m)) }
+                        @for m in r.mechanics.iter().filter(|m| m.world == *w) { (card(m, r.world)) }
                     }
                 }
             }
@@ -329,7 +341,18 @@ fn item_fig(i: &Item) -> String {
     }
 }
 
-fn card(m: &Mechanic) -> Markup {
+/// Where a mechanic stands against its tiers' worlds, in a line: what world it's at, and the
+/// first tier overdue for the world you're in.
+fn pace_line(p: &Pace, reached: u8) -> Option<String> {
+    let at = p.at.map(|w| format!("Where a World {w} player would be."));
+    match (at, p.due.and_then(|k| p.worlds[k].map(|w| (k, w)))) {
+        (at, Some((k, w))) => Some(format!("{}Tier {} is expected by World {w}, and you're in World {reached}.", at.map(|a| a + " ").unwrap_or_default(), k + 1)),
+        (Some(at), None) => Some(format!("{at} Nothing here is overdue for World {reached}.")),
+        (None, None) => p.worlds.iter().flatten().min().map(|w| format!("Its first tier is expected by World {w}.")),
+    }
+}
+
+fn card(m: &Mechanic, reached: u8) -> Markup {
     let open = m.open_items();
     let tiers = m.tiers();
     let current = tiers.iter().position(|t| !t.complete());
@@ -350,6 +373,13 @@ fn card(m: &Mechanic) -> Markup {
                             None if !tiers.is_empty() => { " · All tiers" },
                             None => {},
                         }
+                        @if let Some(p) = &m.pace {
+                            @match (p.at, p.worlds.iter().flatten().min()) {
+                                (Some(w), _) => { " · World " (w) " level" },
+                                (None, Some(f)) => { " · Under World " (f) " level" },
+                                _ => {},
+                            }
+                        }
                     }
                 }
                 @if m.count == Count::Open {
@@ -364,6 +394,7 @@ fn card(m: &Mechanic) -> Markup {
                     p.ia-hold { b { "Order coming later." } " The numbers here are right, but these tiers aren't in the order you'd really do them yet. That comes in a later update." }
                 }
                 @if let Some(n) = &m.note { p.ia-note { (n) } }
+                @if let Some(line) = m.pace.as_ref().and_then(|p| pace_line(p, reached)) { p.ia-pace { (line) } }
                 @if m.count == Count::Open {
                     @if let Some([avg, median, top, low]) = m.spread() {
                         div.ia-spread {
@@ -381,6 +412,9 @@ fn card(m: &Mechanic) -> Markup {
                                 span.ia-rung-k {
                                     "Tier " (k + 1)
                                     @if current == Some(k) { " · you're here" } @else if t.complete() { " · done" }
+                                    @if let Some(w) = m.pace.as_ref().and_then(|p| p.worlds.get(k).copied().flatten()) {
+                                        span.ia-rung-w style={ "--w: var(--w" (w) ")" } title={ "Expected by World " (w) } { "W" (w) }
+                                    }
                                 }
                                 b { (t.label) }
                                 span.ia-fig { (t.met) " of " (t.need) }
@@ -660,6 +694,20 @@ if(pb&&t&&navigator.clipboard&&navigator.clipboard.readText){
     },function(){say("Your browser didn't let the page read the clipboard. Press and hold in the box and choose Paste instead.")});
   });
 }
+// Results arrive by POST. Made a plain visit, a reload (or a phone bringing a closed tab back)
+// opens the paste box instead of asking to send the form again, and the save you last checked
+// in this tab is filled in, to check again with one tap. It stays in this tab's own storage.
+try{history.replaceState(null,"",location.href)}catch(x){}
+var LAST="ia-last-save";
+function keep(s){try{if(s)sessionStorage.setItem(LAST,s);else sessionStorage.removeItem(LAST)}catch(x){try{sessionStorage.removeItem(LAST)}catch(y){}}}
+if(t){
+  t.form.addEventListener("submit",function(){keep(t.value)});
+  // After a paste that didn't read, there's nothing worth filling back in.
+  if(er&&!er.hidden)keep("");
+  else{var last=null;try{last=sessionStorage.getItem(LAST)}catch(x){}
+    if(last&&!t.value){t.value=last;var ln=document.getElementById("ia-last");if(ln)ln.hidden=false}}
+}
+document.addEventListener("click",function(e){if(e.target.closest("a.ia-again"))keep("")});
 // On a phone the world tabs are one row that scrolls sideways: keep the chosen one in view.
 function showTab(smooth){
   var s=document.querySelector(".ia-tabs"),i=s&&s.querySelector("input:checked");
@@ -890,6 +938,8 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-rung .ia-fig { text-align: left; }
 .ia-rung .ia-meter { height: 4px; margin-top: 2px; }
 .ia-rung-k { font-size: 12px; color: var(--ink-2); }
+.ia-rung-w { float: right; font: 600 11px var(--mono); color: var(--w); }
+.ia-pace { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); }
 .ia-rung.here { background: color-mix(in oklab, var(--w) 12%, var(--raised)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--w) 60%, transparent); }
 .ia-rung.here .ia-rung-k { color: var(--w); }
 .ia-rung.done .ia-rung-k { color: var(--live); }
