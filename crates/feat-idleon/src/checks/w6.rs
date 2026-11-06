@@ -23,24 +23,43 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
 }
 
 /// Crops discovered: the keys in `FarmCrop` (a bean trade resets counts but keeps the keys).
+///
+/// Medal seeds (the last `SeedInfo` row) come from World 7: N.js `MedalSeedsAvailable` is
+/// Spelunking lore 3. So their crops are a World 7 item of their own.
 fn crops(save: &Save) -> Mechanic {
-    let found = save.get("FarmCrop").and_then(Value::as_object).map_or(0, |o| o.len()) as f64;
-    let total = rows("SeedInfo", &[]).last().map_or(0.0, |r| cell(r, 3) + 1.0);
-    let mut it = Item::new("Crops discovered", pic("FarmCrop0".into()), found.min(total), total);
-    // Which seed types still have crops to find: `SeedInfo` cols 2 and 3 are each seed's range.
     let known = save.get("FarmCrop").and_then(Value::as_object);
-    let missing: Vec<String> = rows("SeedInfo", &[])
-        .iter()
-        .filter_map(|r| {
-            let (a, b) = (cell(r, 2) as usize, cell(r, 3) as usize);
-            let left = (a..=b.min(a + 500)).filter(|i| !known.is_some_and(|k| k.contains_key(&i.to_string()))).count();
-            (left > 0).then(|| format!("{} {}", left, label(text(r, 0))))
-        })
-        .collect();
-    if !missing.is_empty() {
-        it.how = Some(format!("Still to find, by seed: {}.", missing.join(", ")));
+    let has = |i: usize| known.is_some_and(|k| k.contains_key(&i.to_string()));
+    let seeds = rows("SeedInfo", &[]);
+    let range = |r: &Value| (cell(r, 2) as usize, cell(r, 3) as usize);
+    // `SeedInfo` cols 2 and 3 are each seed's crop range.
+    let item = |list: &[&Value], name: &str, picture: String| {
+        let mut found = 0.0;
+        let mut total = 0.0;
+        let mut missing = Vec::new();
+        for r in list {
+            let (a, b) = range(r);
+            let n = (a..=b.min(a + 500)).count();
+            let got = (a..=b.min(a + 500)).filter(|&i| has(i)).count();
+            found += got as f64;
+            total += n as f64;
+            if got < n {
+                missing.push(format!("{} {}", n - got, label(text(r, 0))));
+            }
+        }
+        let mut it = Item::new(name, pic(picture), found, total);
+        if !missing.is_empty() {
+            it.how = Some(format!("Crops still to find, by seed type: {}.", missing.join(", ")));
+        }
+        it
+    };
+    let (w6, medal) = seeds.split_at(seeds.len().saturating_sub(1));
+    let mut items = vec![item(w6, "Crops discovered", "FarmCrop0".into())];
+    if let Some(r) = medal.first() {
+        let mut it = item(medal, "Medal crops discovered", format!("FarmCrop{}", range(r).0));
+        it.world = Some(7);
+        items.push(it);
     }
-    mech("crops", 6, "Farming Crops", pic("FarmCrop0".into()), Count::Levels, "crops", vec![it])
+    mech("crops", 6, "Farming Crops", pic("FarmCrop0".into()), Count::Levels, "crops", items)
 }
 
 /// A crop by its index, the way the seed list orders it: "Bulbo crop 3".
@@ -101,14 +120,14 @@ fn markets(save: &Save) -> Mechanic {
                 it.how = Some(format!("Opens at {} crops found. You have {}.", cell(r, 6), found));
                 it.state = State::Locked;
             } else if !matches!(i, 0 | 8 | 13) && lv >= cell(r, 7) + own_raise && node_lv <= 0.0 {
-                it.how = Some(format!("Capped at {} until you level the Day 'N' Nite research node.", cell(r, 7)));
+                it.how = Some(format!("Capped at {} until you level Day 'N' Nite in the World 7 research grid.", cell(r, 7)));
                 it.state = State::Locked;
             } else if lv < max {
                 let step = if i == 0 { lv + 2.0 * (lv / 3.0).floor() + (lv / 4.0).floor() } else { lv };
                 let crop = (cell(r, 2) + cell(r, 3) * step).floor().max(0.0) as usize;
                 let cost = (cell(r, 4) * cell(r, 5).powf(lv)).floor();
                 let held = crop_held(save, crop);
-                it.how = Some(format!("Next level costs {} {} before discounts. You hold {}.", big(cost), crop_name(crop), big(held)));
+                it.how = Some(format!("Next level costs {} {} at most. You hold {}.", big(cost), crop_name(crop), big(held)));
                 // At or past the floor of your own cap, only the game knows the rest of it.
                 if cost.is_finite() && held >= cost && (matches!(i, 0 | 8 | 13) || lv < cell(r, 7) + own_raise) {
                     it.state = State::Ready;
@@ -119,16 +138,19 @@ fn markets(save: &Save) -> Mechanic {
         .collect();
     let mut m = mech("farm-market", 6, "Day and Night Market", None, Count::Levels, "levels", items);
     m.raises = vec![Raise {
-        name: "Day 'N' Nite research node".into(),
-        amount: format!("up to +{raise} on 13 of 16"),
+        name: "Day 'N' Nite, World 7 research grid".into(),
+        amount: format!("up to +{raise} max levels on every upgrade but Land Plots, Overgrowth and Land Rank"),
         owned: save.at("Research", &[0, 171]).map_or(0.0, num) > 0.0,
     }];
-    m.note = Some("Caps include the Day 'N' Nite research node at its max level in its best shape. Research grid multipliers can raise them further.".into());
+    m.note = Some(format!(
+        "Caps include +{raise} max levels from Day 'N' Nite (World 7 research grid) at its max level in its best shape, on every upgrade but Land Plots, Overgrowth and Land Rank. Grid-wide research multipliers add more. Costs are before the Emperor's and the Exotic Market's discounts, so the real cost is lower."
+    ));
     m
 }
 
 /// Exotic Market: `FarmUpg[20 + i]`. The bonus nears its top as levels climb, so no level is
-/// the last one. `NAME_MAGNI` rows are unused. No "how": the shop offers a few at a time, and
+/// the last one. `NAME_MAGNI` rows are unused. World 7: the market opens with a Spelunking
+/// cave bonus (Blushpit). No "how": the shop offers a few at a time, and
 /// which ones is kept outside the save.
 fn exotic_market(save: &Save) -> Mechanic {
     let levels = save.numbers("FarmUpg", &[]);
@@ -138,7 +160,7 @@ fn exotic_market(save: &Save) -> Mechanic {
         .filter(|(_, r)| text(r, 0) != "NAME_MAGNI")
         .map(|(i, r)| Item::new(shout(text(r, 0)), None, at(&levels, i + 20), 0.0))
         .collect();
-    let mut m = mech("exotic-market", 6, "Exotic Market", None, Count::Open, "levels", items);
+    let mut m = mech("exotic-market", 7, "Exotic Market", None, Count::Open, "levels", items);
     m.note = Some("No max: each level adds less, toward the bonus's top.".into());
     m
 }
@@ -178,10 +200,10 @@ fn land_rank(save: &Save) -> Mechanic {
             let mut it = Item::new(label(v.as_str().unwrap_or("")), None, lv, max);
             let need = unlock.get(i).map_or(0.0, |u| num(u));
             if total < need {
-                it.how = Some(format!("Opens at a total land rank of {need}. Yours is {total}."));
+                it.how = Some(format!("Opens at {need} land ranks over all 36 plots. You have {total}."));
                 it.state = State::Locked;
             } else if lv >= now && lv < max {
-                it.how = Some(format!("At your cap of {now}. The raises below lift it."));
+                it.how = Some(format!("At your cap of {now} levels. The raises below lift it."));
                 it.state = State::Locked;
             } else if lv < max {
                 it.how = Some("Next level costs 1 land rank point.".into());
@@ -195,12 +217,12 @@ fn land_rank(save: &Save) -> Mechanic {
     let mut m = mech("land-rank", 6, "Land Rank Database", None, Count::Levels, "levels", items);
     m.have = Some(Have {
         figure: format!("{} land rank points", big(left)),
-        text: if left >= 1.0 { format!("Enough for {} levels across the database.", big(left)) } else { "No points left: plot ranks earn more.".into() },
+        text: if left >= 1.0 { format!("Enough for {} levels across the database.", big(left)) } else { "No points left. Each plot rank gained gives 1.".into() },
     });
     m.raises = vec![
-        Raise { name: "Grimoire: Land Rank Database Maxim".into(), amount: format!("+{grimoire}"), owned: g_lv * per_g >= grimoire && grimoire > 0.0 },
-        Raise { name: "Exotic Market: DATADIGGING".into(), amount: format!("up to +{digging} when organic"), owned: d_lv > 0.0 },
-        Raise { name: "Legend Talent: Extended Database".into(), amount: format!("+{legend}"), owned: t_lv * per_t >= legend && legend > 0.0 },
+        Raise { name: "Grimoire: Land Rank Database Maxim".into(), amount: format!("+{grimoire} max levels on each 5th-column upgrade"), owned: g_lv * per_g >= grimoire && grimoire > 0.0 },
+        Raise { name: "DATADIGGING, Exotic Market (World 7)".into(), amount: format!("up to +{} max levels on each 5th-column upgrade, +{digging} when organic", digging / 2.0), owned: d_lv > 0.0 },
+        Raise { name: "Extended Database, Legend Talent (World 7)".into(), amount: format!("+{legend} max levels on each 5th-column upgrade"), owned: t_lv * per_t >= legend && legend > 0.0 },
     ];
     m.note = Some(format!(
         "Only the 5th column has a cap, raised by a Grimoire upgrade, the DATADIGGING exotic (organic) and a Legend Talent. The rest level up without end. Your cap today is {now}."
@@ -228,6 +250,9 @@ fn jade_emporium(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let have = letters.get(i).is_some_and(|c| bought.contains(*c));
             let mut it = Item::new(label(text(r, 0)), None, f64::from(u8::from(have)), 1.0);
+            if W7_EMPORIUM.contains(&i) {
+                it.world = Some(7);
+            }
             if !have && let Some(p) = order.iter().position(|&k| k == i) {
                 let cost = emporium_cost(p as f64);
                 it.how = Some(format!("Costs {} jade coins.", big(cost)));
@@ -252,6 +277,11 @@ fn jade_emporium(save: &Save) -> Mechanic {
     m.have = Some(Have { figure: format!("{} jade coins", big(jade)), text });
     m
 }
+
+/// Emporium rows whose bonus is World 7 content: Science Fancy Pen (Spelunking), Another
+/// Gallery Podium, Coral Conservationism, Science Chalk (Research), Depth Charge Disposal
+/// (Minehead), Optimal Optometry (research monocles) and Menagerie Maxxing.
+const W7_EMPORIUM: [usize; 7] = [40, 42, 43, 44, 45, 46, 47];
 
 fn emporium_cost(p: f64) -> f64 {
     (300.0 + 500.0 * p + p.powi(3)) * 2.52f64.powf(p) * 3.07f64.powf((p - 28.0).max(0.0)) * 160f64.powf((p - 38.0).max(0.0)) * 300f64.powf((p - 44.0).max(0.0))
@@ -284,6 +314,10 @@ fn ninja_upgrades(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let lv = at(&levels, i);
             let mut it = Item::new(label(text(r, 4)), pic(format!("NjUpgI{i}")), lv, 0.0);
+            // Rows 17 on open through the Coral Reef, World 7.
+            if i >= 17 {
+                it.world = Some(7);
+            }
             let lg = jade_upg_cost_log10(&d, &levels, i, r);
             if let Some(why) = ninja_locked(save, &levels, i, r) {
                 it.how = Some(why);
@@ -303,7 +337,7 @@ fn ninja_upgrades(save: &Save) -> Mechanic {
         figure: format!("{} jade coins", big(jade)),
         text: if ready == 0 { "Not enough for the next level of any upgrade yet.".into() } else { format!("Enough for the next level of {ready} of these, each on its own.") },
     });
-    m.note = Some("No max: these level up without end. Costs count your Ninja discounts, Gold Coupon, Emerald and the Ninja Knowledge talent; extra talent levels from elsewhere make them a little cheaper still.".into());
+    m.note = Some("No max: these level up without end. Costs include Centurion Lineage, Way of Bargain, Gold Coupon, Emerald and the talent that cuts Ninja Knowledge costs per 10 upgrades. Talent levels added by other bonuses, and the bubble on Currency Conduit, lower them further, so each cost is an upper bound.".into());
     m
 }
 
@@ -492,9 +526,9 @@ fn gemstones(save: &Save) -> Mechanic {
         .map(|(i, n)| {
             let mut it = Item::new(label(n), pic(format!("NjGem{i}")), save.option(233 + i), 0.0);
             if let Some(&(floor, need, ww)) = WHERE.get(i) {
-                let ww = if ww { " with a Wind Walker" } else { "" };
+                let ww = if ww { " while one of your characters is a Wind Walker" } else { "" };
                 if mastery < need {
-                    it.how = Some(format!("Found on Sneaking floor {floor}{ww}, from mastery {need}. Yours is {mastery}."));
+                    it.how = Some(format!("Found on Sneaking floor {floor}{ww}, from Sneaking mastery {need}. Yours is {mastery}."));
                     it.state = State::Locked;
                 } else {
                     it.how = Some(format!("Found on Sneaking floor {floor}{ww}. Each one adds a level."));
@@ -526,7 +560,8 @@ fn extra_names(key: &str) -> Vec<&'static str> {
 
 /// Gold Food Beanstalk: `Ninja[104][i]` is 0 to 3 for the food at `NinjaInfo[29][2 + 3i]`. A
 /// 10,000 stack gives 1, 100,000 gives 2 (Supersized Gold Beanstacking), 1,000,000 gives 3
-/// (`OptLacc[475]`, the World 7 upgrade).
+/// (`OptLacc[475]`, set by the beanstalk quest item from Urie in World 7). The first two
+/// stacks are one item per food; the million stacks are one World 7 item for all foods.
 fn beanstalk(save: &Save) -> Mechanic {
     let tiers = save.numbers("Ninja", &[104]);
     let foods = rows("NinjaInfo", &[29]);
@@ -534,20 +569,17 @@ fn beanstalk(save: &Save) -> Mechanic {
     // Jade Emporium 1 and 2 ("a", "b"): the beanstalk itself, then the 100,000 stack.
     let (stalk, supersized) = (bought.contains('a'), bought.contains('b'));
     let w7 = save.option(475) >= 1.0;
-    let items = foods
+    let food_ids: Vec<&str> = foods.iter().skip(2).step_by(3).map(|v| v.as_str().unwrap_or("")).collect();
+    let food_name = |id: &str| GAME.item_name(id).map_or_else(|| label(id), str::to_string);
+    let mut items: Vec<Item> = food_ids
         .iter()
-        .skip(2)
-        .step_by(3)
         .enumerate()
-        .map(|(i, v)| {
-            let id = v.as_str().unwrap_or("");
-            let name = GAME.item_name(id).map_or_else(|| label(id), str::to_string);
+        .map(|(i, &id)| {
             let tier = at(&tiers, i);
-            let mut it = Item::new(name, pic(id.to_string()), tier, 3.0);
+            let mut it = Item::new(food_name(id), pic(id.to_string()), tier.min(2.0), 2.0);
             let (need, gate) = match tier as u8 {
                 0 => (1e4, (!stalk).then_some("Gold Food Beanstalk from the Jade Emporium")),
                 1 => (1e5, (!supersized).then_some("Supersized Gold Beanstacking from the Jade Emporium")),
-                2 => (1e6, (!w7).then_some("the beanstalk upgrade in World 7")),
                 _ => return it,
             };
             let held = item_held(save, id);
@@ -563,12 +595,27 @@ fn beanstalk(save: &Save) -> Mechanic {
             it
         })
         .collect();
+    // The million stacks: one item counting the foods at tier 3.
+    let million = food_ids.iter().enumerate().filter(|(i, _)| at(&tiers, *i) >= 3.0).count() as f64;
+    let mut it = Item::new("1,000,000 stacks", pic("FoodG1".into()), million, food_ids.len() as f64);
+    it.world = Some(7);
+    if !w7 {
+        it.how = Some("Needs the beanstalk upgrade from Urie's quest in World 7.".into());
+        it.state = State::Locked;
+    } else if let Some((id, held)) =
+        food_ids.iter().enumerate().filter(|(i, _)| at(&tiers, *i) == 2.0).map(|(_, &id)| (id, item_held(save, id))).max_by(|a, b| a.1.total_cmp(&b.1))
+    {
+        it.how = Some(format!("Most held among foods at 100,000: {}, {} of 1M.", food_name(id), big(held)));
+        if held >= 1e6 {
+            it.state = State::Ready;
+        }
+    } else if million < food_ids.len() as f64 {
+        it.how = Some("A food takes its 1,000,000 stack after its 100,000 one; none is there yet.".into());
+    }
+    items.push(it);
     let mut m = mech("beanstalk", 6, "Gold Food Beanstalk", pic("FoodG1".into()), Count::Levels, "stacks", items);
-    m.raises = vec![
-        Raise { name: "Supersized Gold Beanstacking".into(), amount: "+1 stack a food".into(), owned: supersized },
-        Raise { name: "Beanstalk upgrade in World 7".into(), amount: "+1 stack a food".into(), owned: w7 },
-    ];
-    m.note = Some("Three stacks a food: 10,000, then 100,000 (Supersized Gold Beanstacking in the Jade Emporium), then 1,000,000 (the beanstalk upgrade in World 7).".into());
+    m.raises = vec![Raise { name: "Supersized Gold Beanstacking, Jade Emporium".into(), amount: "+1 stack on every food (the 100,000 stack)".into(), owned: supersized }];
+    m.note = Some("Stacks a food: 10,000, then 100,000 (Supersized Gold Beanstacking in the Jade Emporium), then 1,000,000 (the beanstalk upgrade from Urie's quest in World 7, counted on its own).".into());
     m
 }
 
@@ -603,7 +650,7 @@ fn emperor(save: &Save) -> Mechanic {
             let mut it = Item::new(name, None, wins[i], 0.0);
             // The next showdown that pays this bonus: within one cycle of 48.
             if let Some(k) = (0..cycle.len()).find(|k| num(cycle[(won + k) % cycle.len()]) as usize == i) {
-                it.how = Some(format!("Next one at showdown {}.", won + k + 1));
+                it.how = Some(format!("Next win for this bonus: showdown {}.", won + k + 1));
             }
             Some(it)
         })
@@ -628,10 +675,14 @@ fn summoning(save: &Save) -> Mechanic {
             let lv = at(&levels, i);
             let mut it = Item::new(label(text(r, 3)), None, lv, cell(r, 8));
             let colour = cell(r, 2) as usize;
+            // Colour 7 (Teal) is World 7's summoning.
+            if colour == 7 {
+                it.world = Some(7);
+            }
             if lv < cell(r, 8) && let Some(c) = COLOURS.get(colour) {
                 let cost = cell(r, 4) * cell(r, 5).powf(lv);
                 let held = at(&essence, colour).max(0.0) + 0.0;
-                it.how = Some(format!("Next level costs {} {} essence before discounts. You hold {}.", big(cost), c.to_lowercase(), big(held)));
+                it.how = Some(format!("Next level costs {} {} essence at most. You hold {}.", big(cost), c.to_lowercase(), big(held)));
                 if cost.is_finite() && held >= cost {
                     it.state = State::Ready;
                 }
@@ -640,7 +691,7 @@ fn summoning(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("summoning", 6, "Summoning Upgrades", None, Count::Levels, "levels", items);
-    m.note = Some("Only the upgrades with a cap, and not Familiar, whose level resets every few days. The rest level up without end.".into());
+    m.note = Some("Only the upgrades with a cap, and not Familiar, whose level resets every few days. The rest level up without end. Costs are before reductions from talents, other Summoning upgrades, Sushi, Jelly, an Arcane upgrade and the Menagerie, so the real cost is lower. Teal upgrades are World 7.".into());
     m
 }
 
@@ -666,6 +717,9 @@ fn summoning_battles(save: &Save) -> Mechanic {
             let won = list.iter().filter(|e| beaten.contains(e)).count() as f64;
             let name = if i == 0 { "White battles".to_string() } else { format!("{} battles (World {i})", COLOURS[i]) };
             let mut it = Item::new(name, pic(format!("SummC{}", i + 1)), won, list.len() as f64);
+            if i == 7 {
+                it.world = Some(7);
+            }
             // The first opponent of the colour not beaten yet, by its name in `SummonEnemies[4]`.
             if let Some(next) = list.iter().find(|e| !beaten.contains(e)) {
                 let who = enemies.iter().position(|e| e == next).and_then(|k| opponents.get(k)).and_then(|v| v.as_str()).filter(|s| s.len() > 1);
