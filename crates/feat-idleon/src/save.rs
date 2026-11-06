@@ -126,11 +126,15 @@ pub fn index(v: &Value, i: usize) -> Option<&Value> {
     }
 }
 
+/// Highest index a numbered object is read up to. Real saves stop under 1,000; a paste with a key
+/// like "4000000000" would otherwise ask for a list billions long and take the bot down.
+const MAX_INDEX: usize = 100_000;
+
 pub fn numbers(v: &Value) -> Vec<f64> {
     match v {
         Value::Array(a) => a.iter().map(num).collect(),
         Value::Object(o) => {
-            let len = o.keys().filter_map(|k| k.parse::<usize>().ok()).max().map_or(0, |m| m + 1);
+            let len = o.keys().filter_map(|k| k.parse::<usize>().ok()).filter(|&k| k < MAX_INDEX).max().map_or(0, |m| m + 1);
             (0..len).map(|i| o.get(&i.to_string()).map(num).unwrap_or(0.0)).collect()
         }
         _ => Vec::new(),
@@ -161,6 +165,12 @@ mod tests {
         assert_eq!(s.server("Nope"), None);
         assert_eq!(s.numbers("CauldronInfo", &[4]), vec![13.0, 0.0, 4.0]);
         assert_eq!(s.names, vec!["x"]);
+    }
+
+    #[test]
+    fn a_huge_numbered_key_is_ignored() {
+        let s = Save::parse(r#"{"OptLacc": [0], "X": {"0": 1, "4000000000": 2, "18446744073709551615": 3}}"#).unwrap();
+        assert_eq!(s.numbers("X", &[]), vec![1.0]);
     }
 
     #[test]

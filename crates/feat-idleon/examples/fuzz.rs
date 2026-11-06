@@ -13,6 +13,8 @@ fn main() {
         json!(null), json!(-1), json!(1e308), json!(-1e308), json!("x"), json!("[1,2"), json!([]), json!({}),
         json!([[-5, "a", null], {"0": -1}]), Value::Array(vec![json!(1e300); 3]), json!({"length": -3, "0": "nan"}), json!(true),
         json!([[[[[[]]]]]]), Value::Array(vec![json!(-1); 700]), json!({"1000000": 5}),
+        // A numbered key far past any real list: must not become a list billions long.
+        json!({"4000000000": 5}), json!([{"4000000000": 5}, {"18446744073709551615": 1}]),
     ];
     panic::set_hook(Box::new(|_| {}));
     let mut failures = 0;
