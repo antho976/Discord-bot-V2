@@ -155,12 +155,13 @@ fn blessing_raises(save: &Save) -> BlessingRaises {
 
 /// What a blessing level is paid in, by god (N.js, the blessing button): Snehebatu, Nobisect,
 /// Goharut and Kattlekruk take gaming bits (`Gaming[0]`), Arctis gold bars (`Sailing[1][0]`),
-/// Harriep and Purrmep coins (a character's own `Money_c`), the rest particles (`Divinity[39]`).
+/// Harriep and Purrmep coins (a character's own `Money_c`, which the storage bank can top up), the
+/// rest particles (`Divinity[39]`).
 fn blessing_purse(save: &Save, god: usize) -> (&'static str, f64) {
     match god {
         0 | 2 | 4 | 8 => ("bits", value(save, "Gaming", &[0])),
         1 => ("gold bars", value(save, "Sailing", &[1, 0])),
-        3 | 6 => ("coins", (0..save.characters().min(12)).map(|c| value(save, &format!("Money_{c}"), &[])).fold(0.0, f64::max)),
+        3 | 6 => ("coins", super::w1::spendable(save)),
         _ => ("particles", value(save, "Divinity", &[39])),
     }
 }

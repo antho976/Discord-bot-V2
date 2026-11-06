@@ -90,13 +90,7 @@ fn list(table: &str, row: usize) -> Vec<&'static str> {
     rows(table, &[row]).iter().map(|v| v.as_str().unwrap_or("")).collect()
 }
 
-/// Whether Jade Emporium upgrade `i` is bought. N.js `EmporiumBonus`: its letter
-/// (`Number2Letter`, "_a..zA..Z" for the first 53) is in `Ninja[102][9]`.
-fn emporium_owned(save: &Save, i: usize) -> bool {
-    const LETTERS: &str = "_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    let owned = save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or("");
-    LETTERS.chars().nth(i).is_some_and(|c| owned.contains(c))
-}
+use super::general::emporium_owned;
 
 /// A Done item: 1 of 1 when `have`.
 fn found(name: impl Into<String>, picture: Option<String>, have: bool) -> Item {
@@ -249,7 +243,8 @@ fn spelunk_depth(save: &Save) -> Mechanic {
 /// (`W7_fishUI`), so the items have none of their own.
 fn advice_fish(save: &Save) -> Mechanic {
     let levels = save.numbers("Spelunk", &[11]);
-    let coins = (0..save.characters().clamp(1, 12)).map(|c| held(save, &format!("Money_{c}"), &[])).fold(0.0, f64::max);
+    // The character you play pays, and can take coins out of the storage bank first.
+    let coins = super::w1::spendable(save);
     let account: f64 = (0..save.characters()).map(|c| at(&save.numbers(&format!("Lv0_{c}"), &[]), 0)).filter(|v| v.is_finite()).map(|v| v.max(0.0)).sum();
     let items = list("Spelunky", 18)
         .into_iter()
@@ -275,7 +270,7 @@ fn advice_fish(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("advice-fish", 7, "Advice Fish", pic("W7_fish".into()), Count::Open, "levels", items);
-    m.note = Some("No level cap. Level 100 gives half of each bonus, level 900 gives 90%. Paid from the coins of the character you play.".into());
+    m.note = Some("No level cap. Level 100 gives half of each bonus, level 900 gives 90%. Paid from the coins of the character you play, which the storage bank can top up.".into());
     m
 }
 
