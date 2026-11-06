@@ -155,14 +155,17 @@ fn ask(guild: u64, error: Option<&str>) -> Markup {
             // Sent as plain text: URL-encoding a save triples its size and was a fifth of the
             // server's work per check.
             form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
-                textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
-                @if let Some(e) = error { p.ia-err role="alert" { (e) } }
+                textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
+                p.ia-err #ia-err role="alert" hidden[error.is_none()] { (error.unwrap_or_default()) }
                 div.ia-ask-actions {
                     label.btn {
                         (ui::icon(bot_core::Icon::Enter))
                         "Open a file"
                         input #ia-file type="file" accept=".json,.txt,application/json" hidden;
                     }
+                    // Shown by the page script where the browser can read the clipboard: on a
+                    // phone, pressing and holding in the box to paste a megabyte is the hard part.
+                    button.btn #ia-paste type="button" hidden { "Paste from clipboard" }
                     button.btn.primary type="submit" { "Check my account" }
                 }
             }
@@ -303,7 +306,15 @@ fn card(m: &Mechanic) -> Markup {
                 (mark(m))
                 span.ia-card-name {
                     b { (m.name) }
-                    span { (fig(m)) @if !tiers.is_empty() { " · Tier " (current.unwrap_or(tiers.len())) "/" (tiers.len()) } }
+                    // The tier you're on, numbered as the ladder numbers it ("Tier 3 · you're here").
+                    span {
+                        (fig(m))
+                        @match current {
+                            Some(k) => { " · Tier " (k + 1) "/" (tiers.len()) },
+                            None if !tiers.is_empty() => { " · All tiers" },
+                            None => {},
+                        }
+                    }
                 }
                 @if m.count == Count::Open {
                     span.ia-pct.open { "No max" }
@@ -386,11 +397,16 @@ fn card(m: &Mechanic) -> Markup {
                             @if !m.raises.is_empty() {
                                 div.ia-side-box {
                                     span.ia-side-k { "Raise the cap" }
-                                    @for r in &m.raises {
+                                    // The ones still to get first: those are the ones to act on.
+                                    @for r in m.raises.iter().filter(|r| !r.owned).chain(m.raises.iter().filter(|r| r.owned)) {
                                         div.ia-raise.owned[r.owned] {
-                                            span.ia-raise-mark { (if r.owned { "✓" } else { "○" }) }
-                                            span { (r.name) }
-                                            span.ia-fig { (r.amount) }
+                                            span.ia-raise-mark title=(if r.owned { "You have it" } else { "Not yet" }) {
+                                                @if r.owned { (ui::icon(bot_core::Icon::Check)) }
+                                            }
+                                            span.ia-raise-text {
+                                                b { (r.name) }
+                                                span { (r.amount) }
+                                            }
                                         }
                                     }
                                 }
@@ -577,8 +593,27 @@ pub(crate) fn num(n: f64) -> String {
 /// their neighbours reads as a double image. Do next and Not
 /// started links switch the world, open the card the same way and scroll to it.
 const JS: &str = r##"(function(){
-var f=document.getElementById("ia-file"),t=document.getElementById("ia-save");
+var f=document.getElementById("ia-file"),t=document.getElementById("ia-save"),pb=document.getElementById("ia-paste"),er=document.getElementById("ia-err");
+function say(s){if(er){er.textContent=s;er.hidden=false}}
 if(f&&t)f.addEventListener("change",function(){var x=f.files&&f.files[0];if(x)x.text().then(function(s){t.value=s;t.form.requestSubmit()})});
+// Paste from clipboard: one tap on a phone, and the megabyte never has to be drawn in the box.
+if(pb&&t&&navigator.clipboard&&navigator.clipboard.readText){
+  pb.hidden=false;
+  pb.addEventListener("click",function(){
+    navigator.clipboard.readText().then(function(s){
+      if(!/^\s*\{/.test(s||"")){say("Your clipboard doesn't hold a save. Copy your account's JSON first, then try again.");return}
+      t.value=s;t.form.requestSubmit();
+    },function(){say("Your browser didn't let the page read the clipboard. Press and hold in the box and choose Paste instead.")});
+  });
+}
+// On a phone the world tabs are one row that scrolls sideways: keep the chosen one in view.
+function showTab(smooth){
+  var s=document.querySelector(".ia-tabs"),i=s&&s.querySelector("input:checked");
+  if(!i||s.scrollWidth<=s.clientWidth)return;
+  var a=s.getBoundingClientRect(),b=i.parentElement.getBoundingClientRect();
+  s.scrollBy({left:b.left+b.width/2-(a.left+a.width/2),behavior:smooth&&!still.matches?"smooth":"auto"});
+}
+document.addEventListener("change",function(e){if(e.target.name==="ia-world")showTab(true)});
 var still=matchMedia("(prefers-reduced-motion: reduce)"),ease="cubic-bezier(.16,1,.3,1)";
 // Bars draw in once, with the page. After that a bar that appears (a card opening, another
 // world's tab) is just there, so nothing regrows while a card moves.
@@ -602,6 +637,13 @@ function settle(cs,was,d){
 }
 function flip(d,open){
   if(d.open===open||busy.has(d))return;
+  // Closed from its sticky head, far down a long card: the card's top is off screen, so fold it
+  // at once and bring its head back into view rather than animating a part you can't see.
+  if(!open&&d.getBoundingClientRect().top<-8){
+    d.open=false;
+    window.scrollBy(0,d.getBoundingClientRect().top-16);
+    return;
+  }
   var cs=[].slice.call(d.parentElement.children);
   if(still.matches||!d.animate){d.open=open;return}
   busy.add(d);d.style.zIndex=2;
@@ -674,14 +716,15 @@ document.addEventListener("click",function(e){
   var w=document.getElementById("w-"+a.dataset.w),m=document.getElementById(a.dataset.go);
   if(!m)return;
   e.preventDefault();
-  if(w)w.checked=true;
+  if(w){w.checked=true;showTab(false)}
   flip(m,true);
   m.scrollIntoView({behavior:still.matches?"auto":"smooth",block:"start"});
 });
+showTab(false);
 })()"##;
 
 const CSS: &str = r#"
-body.ia-pub { background: var(--page);
+body.ia-pub { background: var(--page); -webkit-tap-highlight-color: transparent;
   --w0: var(--ink-2); --w1: #7fd18b; --w2: #e6c36a; --w3: #79c3f0; --w4: #a88bff; --w5: #ff9a5c; --w6: #f297c6; --w7: #46d1c0; }
 .ia-hero { min-height: 280px; border-radius: 0; padding: 20px max(var(--gutter), calc((100% - 1500px) / 2)) 28px; }
 .ia-hero .ov-hello h1 { font-size: 40px; }
@@ -709,7 +752,6 @@ body.ia-pub { background: var(--page);
 .ia-lead-who > span { color: var(--ink-2); font-size: 14px; }
 .ia-lead-line { margin-top: 10px; color: var(--ink-3); font-size: 13px; }
 .ia-lead-line a { color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 3px; }
-.ia-lead-line a:hover { color: var(--ink); }
 .ia-cols { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 10px; height: 150px; }
 .ia-col { display: grid; grid-template-rows: 1fr auto auto; justify-items: center; gap: 5px; min-width: 0; }
 .ia-col-track { position: relative; width: 100%; max-width: 34px; border-radius: 6px; background: color-mix(in oklab, var(--w) 12%, var(--well)); overflow: hidden; }
@@ -728,7 +770,6 @@ body.ia-pub { background: var(--page);
 .ia-next { list-style: none; display: flex; flex-direction: column; padding: 0; margin: 0; }
 .ia-next li + li { border-top: 1px solid var(--edge-1); }
 .ia-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(80px, 22%) auto 34px; align-items: center; gap: 14px; min-height: 54px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; color: var(--ink); transition: background 0.18s; }
-.ia-row:hover { background: var(--hover); }
 .ia-row:active { transform: scale(0.99); }
 .ia-row-text { display: flex; flex-direction: column; min-width: 0; }
 .ia-row-text b { font-size: 14px; font-weight: 500; }
@@ -745,7 +786,6 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 /* Worlds: tabs switched in the page, then one card per mechanic. */
 .ia-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
 .ia-tabs label { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 13px; border-radius: 9px; color: var(--ink-2); font-size: 13.5px; cursor: pointer; transition: background 0.18s, color 0.18s; }
-.ia-tabs label:hover { background: var(--hover); color: var(--ink); }
 .ia-tabs input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 .ia-tabs label:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
 .ia-tabs label:has(input:checked) { background: color-mix(in oklab, var(--w) 14%, var(--control)); color: var(--ink); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--w) 50%, transparent); }
@@ -762,7 +802,6 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-card[open] { grid-column: 1 / -1; }
 .ia-card > summary { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "m n p" "b b b"; align-items: center; gap: 10px 12px; padding: 14px 16px; cursor: pointer; list-style: none; border-radius: 14px; transition: background 0.18s; }
 .ia-card > summary::-webkit-details-marker { display: none; }
-.ia-card > summary:hover { background: var(--hover); }
 .ia-card > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .ia-card > summary .ia-mark { grid-area: m; }
 .ia-card-name { grid-area: n; display: flex; flex-direction: column; min-width: 0; }
@@ -774,7 +813,6 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-pct.open { font: 500 12px var(--sans); color: var(--ink-3); }
 .ia-fresh { display: flex; flex-wrap: wrap; gap: 8px; }
 .ia-fresh-item { display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 8px 0 6px; border-radius: 10px; background: var(--control); color: var(--ink); font-size: 13.5px; transition: background 0.18s; }
-.ia-fresh-item:hover { background: var(--hover); }
 .ia-fresh-item:active { transform: scale(0.97); }
 .ia-fresh-item .ia-mark { width: 26px; height: 26px; }
 .ia-fresh-item .ia-mark.blank { width: 8px; height: 8px; margin: 9px; }
@@ -790,7 +828,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-rung.here { background: color-mix(in oklab, var(--w) 12%, var(--raised)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--w) 60%, transparent); }
 .ia-rung.here .ia-rung-k { color: var(--w); }
 .ia-rung.done .ia-rung-k { color: var(--live); }
-.ia-work { display: grid; gap: 24px; }
+.ia-work { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
 @container col (min-width: 1000px) { .ia-work.with-side { grid-template-columns: minmax(0, 1fr) 400px; } }
 .ia-tasks { min-width: 0; }
 .ia-tasks h3 { font-size: 15px; font-weight: 600; }
@@ -819,21 +857,27 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-side { display: flex; flex-direction: column; gap: 12px; }
 .ia-side-box { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 12px; background: var(--solid); }
 .ia-side-k { font-size: 12px; color: var(--ink-2); }
-.ia-side-big { font: 500 22px var(--mono); }
+.ia-side-big { font: 500 18px/1.3 var(--mono); overflow-wrap: anywhere; }
 .ia-side-box p { font-size: 13.5px; line-height: 1.45; color: var(--ink-2); }
-.ia-raise { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13.5px; }
-.ia-raise-mark { color: var(--waiting); text-align: center; }
-.ia-raise.owned .ia-raise-mark { color: var(--live); }
+/* A raise: what it is, then what it adds, wrapped (some name 30 upgrades). A ring until you have
+   it, then a tick. */
+.ia-raise { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; align-items: start; padding: 4px 0; }
+.ia-raise-mark { width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--waiting); display: grid; place-items: center; }
+.ia-raise.owned .ia-raise-mark { box-shadow: none; color: var(--live); }
+.ia-raise-mark svg { width: 14px; height: 14px; }
+.ia-raise-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ia-raise-text b { font-size: 13.5px; font-weight: 500; }
+.ia-raise-text span { font-size: 13px; line-height: 1.4; color: var(--ink-3); overflow-wrap: anywhere; }
+.ia-raise.owned .ia-raise-text b { color: var(--ink-2); font-weight: 400; }
 .ia-all > summary { display: inline-block; white-space: nowrap; cursor: pointer; font-size: 13px; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 3px; list-style: none; }
 .ia-all > summary::-webkit-details-marker { display: none; }
-.ia-all > summary:hover { color: var(--ink); }
 .ia-all[open] > summary { margin-bottom: 8px; }
 .ia-all[open] .ia-items { animation: ia-in .22s var(--ease); }
 .ia-items { padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 0 28px; }
 .ia-note, .ia-maxed-head { grid-column: 1 / -1; font-size: 13px; color: var(--ink-3); padding: 6px 0 8px; }
 .ia-maxed-head { padding-top: 14px; }
 .ia-maxed { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 0 28px; }
-.ia-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) minmax(50px, 26%) auto; align-items: center; gap: 10px; min-height: 36px; border-bottom: 1px solid var(--edge-1); font-size: 13.5px; }
+.ia-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) minmax(50px, 26%) minmax(9ch, auto); align-items: center; gap: 10px; min-height: 36px; border-bottom: 1px solid var(--edge-1); font-size: 13.5px; }
 .ia-item img { width: 24px; height: 24px; object-fit: contain; image-rendering: pixelated; }
 .ia-item-dot { width: 6px; height: 6px; margin: 9px; border-radius: 50%; background: var(--edge-3); }
 .ia-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -856,22 +900,61 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-report-msg { flex: 1; font-size: 13px; color: var(--ink-2); }
 .ia-foot { padding-top: 16px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 12.5px; }
 
+/* An open card keeps its head in view while you read down it, so closing it is one tap away. */
+.ia-card[open] > summary { position: sticky; top: 0; z-index: 1; background: var(--raised); border-radius: 14px 14px 0 0; }
+
+/* Hover only where there's a pointer to hover with: a tap would leave it stuck on. */
+@media (hover: hover) and (pointer: fine) {
+  .ia-lead-line a:hover { color: var(--ink); }
+  .ia-row:hover { background: var(--hover); }
+  .ia-tabs label:hover { background: var(--hover); color: var(--ink); }
+  .ia-card > summary:hover { background: var(--hover); }
+  .ia-card[open] > summary:hover { background: linear-gradient(var(--hover), var(--hover)), var(--raised); }
+  .ia-fresh-item:hover { background: var(--hover); }
+  .ia-all > summary:hover { color: var(--ink); }
+}
+@media (hover: none) {
+  .ia-row:active, .ia-tabs label:active { background: var(--hover); }
+  .ia-card > summary:active { background: linear-gradient(var(--hover), var(--hover)), var(--raised); }
+}
+/* Under 16 px a phone zooms into the box when you tap it. */
+@media (pointer: coarse) {
+  .ia-ask textarea, .ia-report textarea, .ia-report select { font-size: 16px; }
+}
+
 @media (max-width: 720px) {
-  .ia-hero { min-height: 200px; }
-  .ia-hero .ov-hello h1 { font-size: 28px; }
-  .ia-page { padding: 0 16px 56px; gap: 16px; }
+  .ia-hero { min-height: 180px; }
+  .ia-hero .ov-hello h1 { font-size: 26px; }
+  .ia-page { padding: 0 16px 56px; gap: 14px; }
   .ia-panel { padding: 16px; }
   .ia-big { font-size: 48px; }
-  .ia-cols { height: 120px; gap: 6px; }
-  .ia-row { grid-template-columns: 28px minmax(0, 1fr) auto; }
-  .ia-row .ia-meter, .ia-row .ia-tag { display: none; }
-  .ia-row { padding: 8px 6px; }
+  .ia-cols { height: 112px; gap: 6px; }
+  .ia-ask-actions .btn { flex: 1 1 auto; justify-content: center; }
+  /* Do next: the name and its line get the width; the bar runs under them. */
+  .ia-row { grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "m t g" ". b b"; row-gap: 7px; padding: 10px 6px; }
+  .ia-row > .ia-mark { grid-area: m; } .ia-row > .ia-row-text { grid-area: t; } .ia-row > .ia-tag { grid-area: g; align-self: start; }
+  .ia-row > .ia-meter { grid-area: b; }
+  .ia-row > .ia-fig { display: none; }
   .ia-row-text span { white-space: normal; }
+  /* World tabs: one row that scrolls sideways instead of three rows of tabs. */
+  .ia-tabs { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px 12px; padding: 0 16px 2px; scrollbar-width: none; scroll-padding: 0 16px; overscroll-behavior-x: contain; }
+  .ia-tabs::-webkit-scrollbar { display: none; }
+  .ia-tabs label { flex: none; }
   .ia-grid, .ia-items, .ia-maxed { grid-template-columns: minmax(0, 1fr); }
-  .ia-ladder { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .ia-task { grid-template-columns: 28px minmax(0, 1fr) auto; }
-  .ia-task .ia-fig { display: none; }
+  .ia-card > summary { padding: 12px 14px; }
+  .ia-body { padding: 4px 14px 16px; gap: 16px; }
+  /* The ladder as a short list: a row per tier, the bar under it. */
+  .ia-ladder { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .ia-rung { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "k f" "l l" "m m" "n n"; gap: 2px 10px; padding: 9px 12px; }
+  .ia-rung-k { grid-area: k; } .ia-rung > b { grid-area: l; white-space: normal; } .ia-rung > .ia-fig { grid-area: f; text-align: right; }
+  .ia-rung > .ia-meter { grid-area: m; margin-top: 4px; } .ia-rung-note { grid-area: n; margin-top: 2px; }
+  .ia-rung.done { padding: 7px 12px; } .ia-rung.done > .ia-meter, .ia-rung.done > b { display: none; }
+  /* A task: the step it takes goes under its line rather than off the edge. */
+  .ia-task { grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "i t c" "i f c"; row-gap: 3px; }
+  .ia-task > :first-child { grid-area: i; } .ia-task > .ia-task-text { grid-area: t; } .ia-task > .ia-fig { grid-area: f; text-align: left; font-size: 12px; color: var(--ink-3); }
+  .ia-task > :last-child { grid-area: c; }
   .ia-later { flex-direction: column; gap: 2px; }
-  .ia-later-who { text-align: left; }
+  .ia-later-who { text-align: left; white-space: normal; }
+  .ia-item { grid-template-columns: 24px minmax(0, 1fr) minmax(44px, 22%) minmax(9ch, auto); gap: 8px; }
 }
 "#;
