@@ -295,9 +295,15 @@ pub fn member_sign_in(to: &str) -> String {
     format!("/auth/discord?to={}", encode(to))
 }
 
-/// A public page here, that a member's sign-in may return to: `/p/...`, no further than this site.
+/// A public page here, that a member's sign-in may return to: `/p/...`, no further than this site,
+/// and no `.` or `..` in its path (written or encoded) that a browser would climb out of `/p/` by.
 fn public_path(to: &str) -> bool {
-    local_path(to) && to.starts_with("/p/") && to.len() <= 300
+    let path = to.split(['?', '#']).next().unwrap_or("");
+    local_path(to)
+        && to.starts_with("/p/")
+        && to.len() <= 300
+        && !path.split('/').any(|seg| seg == "." || seg == "..")
+        && !path.to_ascii_lowercase().contains("%2e")
 }
 
 pub fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -377,6 +383,10 @@ async fn preview_member(State(ctx): State<Ctx>, Query(q): Query<PreviewQuery>) -
     Ok(([(header::SET_COOKIE, set_cookie(&ctx, MEMBER_COOKIE, &session, SESSION_DAYS * 86_400))], Redirect::to(&to)).into_response())
 }
 
+/// Member sessions one person keeps at once (their browsers); a new one ends the oldest past it.
+/// Anyone can sign in, so this keeps the table to a few rows per Discord account.
+const MEMBER_SESSIONS_EACH: i64 = 5;
+
 /// A new member session; answers its token for the cookie.
 fn new_member_session(ctx: &Ctx, id: u64, name: &str, avatar: Option<&str>) -> WebResult<String> {
     let session = random_token();
@@ -385,6 +395,11 @@ fn new_member_session(ctx: &Ctx, id: u64, name: &str, avatar: Option<&str>) -> W
         c.execute(
             "INSERT INTO member_sessions (token_hash, user_id, name, avatar, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![hash_token(&session), id as i64, name, avatar, now, now + SESSION_DAYS * 86_400_000],
+        )?;
+        c.execute(
+            "DELETE FROM member_sessions WHERE user_id = ?1 AND token_hash NOT IN
+             (SELECT token_hash FROM member_sessions WHERE user_id = ?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2)",
+            params![id as i64, MEMBER_SESSIONS_EACH],
         )
     })?;
     Ok(session)
@@ -641,7 +656,8 @@ mod tests {
     #[test]
     fn a_member_sign_in_only_returns_to_public_pages() {
         assert!(public_path("/p/1100000000000000001/idleon?from=signin"));
-        for bad in ["/g/1/alerts", "/", "//evil.example/p/", "/p\\evil", "https://evil.example/p/x", &format!("/p/{}", "x".repeat(400))] {
+        assert!(public_path("/p/1/idleon?note=a/../b"), "dots in a query are only text");
+        for bad in ["/g/1/alerts", "/", "//evil.example/p/", "/p\\evil", "https://evil.example/p/x", &format!("/p/{}", "x".repeat(400)), "/p/../g/1/alerts", "/p/./x", "/p/%2e%2e/g/1", "/p/%2E%2E/g/1", "/p/1/.."] {
             assert!(!public_path(bad), "{bad:?}");
         }
         assert_eq!(member_sign_in("/p/1/idleon?from=signin"), "/auth/discord?to=%2Fp%2F1%2Fidleon%3Ffrom%3Dsignin");

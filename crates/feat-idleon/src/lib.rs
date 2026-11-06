@@ -97,40 +97,55 @@ fn open(ctx: &Ctx, guild: u64) -> WebResult<()> {
 
 /// Who may use the page, and how it should say so. Staff are dashboard users with the page;
 /// testers are anyone signed in (a member's Discord sign-in is enough) with the testers role.
+/// The page acts as one person, the one it says is signed in: a dashboard session counts only
+/// when it's that same person (on a shared browser the two can differ).
 async fn access(ctx: &Ctx, guild: u64, viewer: &MaybeUser, member: &MaybeMember) -> page::Access {
     let s = ctx.settings::<Settings>(guild, KEY).map(|s| (*s).clone()).unwrap_or_default();
-    let staff = viewer.0.as_ref().is_some_and(|u| ctx.level(u, guild, KEY) >= Level::View);
+    let me = member.0.as_ref();
+    let staff = viewer.0.as_ref().filter(|u| me.is_none_or(|m| m.id == u.id)).is_some_and(|u| ctx.level(u, guild, KEY) >= Level::View);
     // Only asked while the test is closed, and only of someone signed in who isn't staff.
-    let tester = match (s.closed && !staff, s.testers_role, member.0.as_ref()) {
-        (true, Some(role), Some(m)) => roles_in(ctx, guild, m.id).await.is_some_and(|roles| roles.contains(&role)),
+    let tester = match (s.closed && !staff, s.testers_role, me) {
+        (true, Some(role), Some(m)) => in_server(ctx, guild, m.id).await.is_some_and(|m| m.roles.contains(&role)),
         _ => false,
     };
     page::Access { closed: s.closed, allowed: !s.closed || staff || tester, staff, member: member.0.as_ref().map(|m| m.name.clone()) }
 }
 
-/// Someone's roles in the server, `None` when they aren't in it (or Discord couldn't say). The
-/// cache holds only members the bot has seen since it started, so the rest are asked of Discord,
-/// and the answer kept for ten minutes: a closed page reloaded, or a report sent twice, asks
-/// once.
-async fn roles_in(ctx: &Ctx, guild: u64, user: u64) -> Option<Vec<u64>> {
-    type Asked = std::collections::HashMap<(u64, u64), (std::time::Instant, Option<Vec<u64>>)>;
+/// Someone in the server: their roles, and until when they're timed out.
+#[derive(Clone)]
+struct InServer {
+    roles: Vec<u64>,
+    timed_out_until_ms: Option<i64>,
+}
+
+impl InServer {
+    fn timed_out(&self) -> bool {
+        self.timed_out_until_ms.is_some_and(|t| t > bot_core::now_ms())
+    }
+}
+
+/// Someone as the server has them, `None` when they aren't in it (or Discord couldn't say).
+/// From the cache, else asked of Discord and the answer kept for ten minutes: a closed page
+/// reloaded, or a report sent twice, asks once.
+async fn in_server(ctx: &Ctx, guild: u64, user: u64) -> Option<InServer> {
+    type Asked = std::collections::HashMap<(u64, u64), (std::time::Instant, Option<InServer>)>;
     static ASKED: LazyLock<std::sync::Mutex<Asked>> = LazyLock::new(Default::default);
     const KEEP: std::time::Duration = std::time::Duration::from_secs(600);
     let (Some(g), Some(u)) = (Id::new_checked(guild), Id::new_checked(user)) else { return None };
     if let Some(m) = ctx.cache.member(g, u) {
-        return Some(m.roles().iter().map(|r| r.get()).collect());
+        return Some(InServer { roles: m.roles().iter().map(|r| r.get()).collect(), timed_out_until_ms: m.communication_disabled_until().map(|t| t.as_micros() / 1000) });
     }
     // The preview has no Discord to ask.
     if ctx.cfg.preview {
         return None;
     }
-    if let Some((at, roles)) = ASKED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&(guild, user))
+    if let Some((at, found)) = ASKED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&(guild, user))
         && at.elapsed() < KEEP
     {
-        return roles.clone();
+        return found.clone();
     }
-    let roles = match ctx.http.guild_member(g, u).await {
-        Ok(r) => r.model().await.ok().map(|m| m.roles.iter().map(|r| r.get()).collect()),
+    let found = match ctx.http.guild_member(g, u).await {
+        Ok(r) => r.model().await.ok().map(|m| InServer { roles: m.roles.iter().map(|r| r.get()).collect(), timed_out_until_ms: m.communication_disabled_until.map(|t| t.as_micros() / 1000) }),
         Err(e) if bot_core::discord::is_not_found(&e) => None,
         Err(e) => {
             bot_core::tracing::warn!(guild, user, error = %e, "couldn't look up a member for the account check");
@@ -141,8 +156,8 @@ async fn roles_in(ctx: &Ctx, guild: u64, user: u64) -> Option<Vec<u64>> {
     if asked.len() >= 2048 {
         asked.retain(|_, (at, _)| at.elapsed() < KEEP);
     }
-    asked.insert((guild, user), (std::time::Instant::now(), roles.clone()));
-    roles
+    asked.insert((guild, user), (std::time::Instant::now(), found.clone()));
+    found
 }
 
 /// The dashboard's page: the closed-test switch and who tests, and a link to the page itself.
@@ -315,8 +330,12 @@ async fn report(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, 
     if !limit::report(user.id) {
         return Ok((StatusCode::TOO_MANY_REQUESTS, "You've sent a few reports in the last hour. Send this one later.").into_response());
     }
-    if !a.staff && roles_in(&ctx, guild, user.id).await.is_none() {
-        return Ok((StatusCode::FORBIDDEN, format!("Only members of {} can send reports here. Join the server, then send it again.", ctx.guild_name(guild))).into_response());
+    if !a.staff {
+        match in_server(&ctx, guild, user.id).await {
+            None => return Ok((StatusCode::FORBIDDEN, format!("Only members of {} can send reports here. Join the server, then send it again.", ctx.guild_name(guild))).into_response()),
+            Some(m) if m.timed_out() => return Ok((StatusCode::FORBIDDEN, "You're timed out in the server, so this can't be sent until that ends.").into_response()),
+            Some(_) => {}
+        }
     }
     content.push_str(&what);
     let msg = match feat_community::submit_suggestion(&ctx, guild, user.id, &content).await {

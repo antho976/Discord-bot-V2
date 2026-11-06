@@ -201,6 +201,7 @@ const CORE_MIGRATIONS: &[Migration] = &[
             token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, avatar TEXT,
             created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
         CREATE INDEX member_sessions_expires ON member_sessions(expires_at);
+        CREATE INDEX member_sessions_user ON member_sessions(user_id);
     ",
     },
 ];
