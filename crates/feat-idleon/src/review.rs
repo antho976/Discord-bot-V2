@@ -331,6 +331,10 @@ fn world_avg(mechanics: &[Mechanic], world: u8) -> Option<f64> {
 /// How many the do-next list shows.
 pub const NEXT: usize = 6;
 
+/// Shops paid in gems (mostly bought with money) or in event points (only while an event runs):
+/// never a "do next", however far behind they are. Their cards still show them.
+const NOT_NEXT: &[&str] = &["gem-shop", "event-shop"];
+
 /// Do next: first, mechanics furthest under their own world's average (the ones the rest of
 /// the account has left behind), earlier worlds first when equal since they cost less; then
 /// cheap finishes, mechanics with one to three items left. Worlds you haven't reached,
@@ -339,7 +343,7 @@ fn pick_next(mechanics: &[Mechanic], reached: u8, not_started: &[usize]) -> Vec<
     let mut behind: Vec<(f64, usize, f64)> = Vec::new();
     let mut nearly: Vec<(usize, usize)> = Vec::new();
     for (i, m) in mechanics.iter().enumerate() {
-        if m.world > reached || m.done() || m.total() <= 0.0 || not_started.contains(&i) {
+        if m.world > reached || m.done() || m.total() <= 0.0 || not_started.contains(&i) || NOT_NEXT.contains(&m.key) {
             continue;
         }
         let avg = world_avg(mechanics, m.world).unwrap_or(0.0);
@@ -412,6 +416,12 @@ mod tests {
         let next = pick_next(&ms, 2, &[]);
         assert_eq!(next.first().map(|n| ms[n.mechanic].key), Some("c"));
         assert!(next.iter().all(|n| ms[n.mechanic].key != "a" && ms[n.mechanic].key != "d"));
+    }
+
+    #[test]
+    fn paid_shops_are_never_next() {
+        let ms = vec![mech("stamps", 0, &[(10.0, 10.0), (10.0, 10.0)]), mech("gem-shop", 0, &[(0.0, 10.0), (1.0, 10.0)]), mech("event-shop", 0, &[(1.0, 10.0)])];
+        assert!(pick_next(&ms, 7, &[]).is_empty());
     }
 
     #[test]
