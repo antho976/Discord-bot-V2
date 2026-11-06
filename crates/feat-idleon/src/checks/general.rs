@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use bot_core::serde_json::Value;
 
 use super::*;
-use super::w1::{char_name, characters, class_icon, shop_of};
+use super::w1::{char_name, characters, class_icon, found_where, shop_of};
 use crate::review::{Have, State};
 
 pub fn all(save: &Save) -> Vec<Mechanic> {
@@ -303,10 +303,23 @@ fn secret_path(save: &Save) -> Mechanic {
     m
 }
 
-/// Class levels: `Lv0_i[0]` per character. The game has no level cap.
+/// Class levels: `Lv0_i[0]` per character. The game has no level cap. The EXP toward the next
+/// level is `Exp0_i[0]` and the EXP that level needs is `ExpReq0_i[0]`, which the game works out
+/// and keeps in the save itself (N.js resets it to 15 with Lv 5 on a class redo), so it is
+/// read rather than recomputed.
 fn class_levels(save: &Save) -> Mechanic {
     let items = (0..characters(save))
-        .map(|i| Item::new(char_name(save, i), class_icon(save, i), at(&save.numbers(&format!("Lv0_{i}"), &[]), 0), 0.0))
+        .map(|i| {
+            let level = at(&save.numbers(&format!("Lv0_{i}"), &[]), 0);
+            let mut it = Item::new(char_name(save, i), class_icon(save, i), level, 0.0);
+            let exp = at(&save.numbers(&format!("Exp0_{i}"), &[]), 0).max(0.0);
+            let req = at(&save.numbers(&format!("ExpReq0_{i}"), &[]), 0);
+            if req.is_finite() && req > 0.0 && exp.is_finite() {
+                let left = (req - exp).max(0.0);
+                it.how = Some(format!("{} more class EXP for Lv {}, {:.0}% of the way there.", big(left), big(level + 1.0), (exp / req * 100.0).clamp(0.0, 100.0).floor()));
+            }
+            it
+        })
         .collect();
     let mut m = mech("class-levels", 0, "Class Levels", None, Count::Open, "levels", items);
     m.note = Some("Class levels have no cap.".into());
@@ -333,7 +346,7 @@ fn storage_chests(save: &Save) -> Mechanic {
             let done = has_key(used, &key);
             let mut it = Item::new(name, pic(id.clone()), f64::from(done), 1.0);
             if !done {
-                it.how = shop_of(&id);
+                it.how = found_where(&id);
             }
             it
         })

@@ -173,7 +173,7 @@ fn stamps(save: &Save) -> Mechanic {
             let mut it = Item::new(name, pic(id.clone()), f64::from(lv > 0.0), 1.0);
             it.level_name = Some(if lv > 0.0 { format!("Lv {lv:.0}") } else { "Not found".into() });
             if lv <= 0.0 {
-                it.how = shop_of(&id);
+                it.how = found_where(&id);
             }
             items.push(it);
         }
@@ -236,6 +236,52 @@ pub(super) fn shop_of(id: &str) -> Option<String> {
     let map = rows("ShopLocations", &[]).get(k).map(|v| num(v) as usize)?;
     let town = rows("MapDispName", &[]).get(map).map(|v| label(v.as_str().unwrap_or("")))?;
     Some(format!("Sold at the shop in {town}."))
+}
+
+/// Where a found-once item comes from, per the game data, in this order: a town shop
+/// ([`shop_of`]), monster drops (`extra.general.drops`, most likely first, up to three named), a
+/// quest reward (`extra.general.quests`, the NPC is the quest name without its number), an
+/// Arcade prize or the Fishing Island shop (`extra.general.sources`), or for
+/// storage chests 31 to 42 the gem shop's Storage Chest Space (N.js hands out
+/// `"InvStorage" + min(31 + bought, 42)`).
+pub(super) fn found_where(id: &str) -> Option<String> {
+    if let Some(shop) = shop_of(id) {
+        return Some(shop);
+    }
+    let general = GAME.extra("general");
+    let mobs: Vec<&str> = general.get("drops").and_then(|d| d.get(id)).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    if !mobs.is_empty() {
+        let mut names: Vec<String> = Vec::new();
+        for mob in &mobs {
+            let name = GAME.monster_name(mob).map(str::to_string).unwrap_or_else(|| words(mob));
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        let more = names.len() > 3;
+        names.truncate(3);
+        let list = match names.as_slice() {
+            [a] => a.clone(),
+            [a, b] => format!("{a} and {b}"),
+            [a, b, c] => format!("{a}, {b} and {c}"),
+            _ => String::new(),
+        };
+        return Some(format!("Drops from {list}{}.", if more { ", and others" } else { "" }));
+    }
+    if let Some(quest) = general.get("quests").and_then(|q| q.get(id)).and_then(Value::as_array).and_then(|a| a.first()).and_then(Value::as_str) {
+        let npc = words(quest.trim_end_matches(|c: char| c.is_ascii_digit()));
+        return Some(format!("A quest reward from {npc}."));
+    }
+    match general.get("sources").and_then(|x| x.get(id)).and_then(Value::as_str) {
+        Some("arcade") => return Some("A prize at the Arcade.".into()),
+        Some("fishing_island") => return Some("Sold at the Fishing Island shop.".into()),
+        _ => {}
+    }
+    let n: Option<u32> = id.strip_prefix("InvStorage").and_then(|n| n.parse().ok());
+    if n.is_some_and(|n| (31..=42).contains(&n)) {
+        return Some("From Storage Chest Space in the gem shop.".into());
+    }
+    None
 }
 
 /// The level `budget` takes an item to from `level`, one level at a time, stopping at `max`
