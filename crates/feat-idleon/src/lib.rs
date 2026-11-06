@@ -14,6 +14,7 @@ mod page;
 mod pictures;
 pub mod review;
 pub mod save;
+pub mod steam;
 
 use std::sync::LazyLock;
 
@@ -29,7 +30,7 @@ use bot_core::tokio::sync::Semaphore;
 use bot_core::twilight_model::id::Id;
 use bot_core::web::auth::{MaybeMember, MaybeUser};
 use bot_core::web::{FormData, Level, User, WebError, WebResult, saved, ui};
-use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, NavItem, feature_async};
+use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async};
 use serde::{Deserialize, Serialize};
 
 pub use checks::{all as run_checks, world_reached};
@@ -78,6 +79,16 @@ impl Feature for Idleon {
             group: Group::Pets,
             nav: vec![NavItem { label: "Account check", path: KEY, icon: Icon::Review, about: "Members paste their save and see how far each mechanic is from max." }],
         }
+    }
+
+    fn migrations(&self) -> &'static [Migration] {
+        &[Migration { name: "001_idleon_state", sql: "CREATE TABLE idleon_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);" }]
+    }
+
+    /// IdleOn's Steam announcements, once an hour (see `steam`).
+    async fn tick(&self, ctx: &Ctx) -> bot_core::anyhow::Result<()> {
+        steam::tick(ctx).await;
+        Ok(())
     }
 
     fn routes(&self) -> Router<Ctx> {
