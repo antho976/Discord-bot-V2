@@ -435,13 +435,13 @@ function flip(d,open){
   cards.forEach(function(c,i){
     var a=was[i],b=c.getBoundingClientRect(),dx=a.left-b.left,dy=a.top-b.top;
     if(c===d&&open){
-      c.animate([{transform:"translate("+dx+"px,"+dy+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+"px 0 round 14px)"},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:405,easing:ease});
+      c.animate([{transform:"translate("+dx+"px,"+dy+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+"px 0 round 14px)"},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:420,easing:ease});
       var body=c.querySelector(".ia-body");
-      if(body)body.animate([{opacity:0,transform:"translateY(-6px)"},{opacity:1,transform:"none"}],{duration:300,delay:128,easing:ease,fill:"backwards"});
+      if(body)body.animate([{opacity:0,transform:"translateY(-6px)"},{opacity:1,transform:"none"}],{duration:312,delay:133,easing:ease,fill:"backwards"});
     }else if(c===d){
-      c.animate([{transform:"translate("+dx+"px,"+dy+"px)",opacity:.5},{transform:"none",opacity:1}],{duration:320,easing:ease});
+      c.animate([{transform:"translate("+dx+"px,"+dy+"px)",opacity:.5},{transform:"none",opacity:1}],{duration:333,easing:ease});
     }else if(dx||dy){
-      c.animate([{transform:"translate("+dx+"px,"+dy+"px)"},{transform:"none"}],{duration:405,easing:ease});
+      c.animate([{transform:"translate("+dx+"px,"+dy+"px)"},{transform:"none"}],{duration:420,easing:ease});
     }
   });
 }
