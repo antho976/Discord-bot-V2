@@ -315,7 +315,8 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
                 @if let Some(h) = &i.how { span { (h) } }
             }
             span.ia-fig {
-                @if once { (i.level_name.as_deref().unwrap_or("Not yet")) }
+                // A one-time thing has no level to show; the chip or the line says the rest.
+                @if once { (i.level_name.as_deref().unwrap_or("")) }
                 @else { (level_text(m, i.level)) " → " (level_text(m, target)) }
             }
             @match i.state {
@@ -552,11 +553,11 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
 .ia-card { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; scroll-margin-top: 20px; }
 .ia-card[open] { grid-column: 1 / -1; }
-.ia-card summary { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "m n p" "b b b"; align-items: center; gap: 10px 12px; padding: 14px 16px; cursor: pointer; list-style: none; border-radius: 14px; transition: background 0.18s; }
-.ia-card summary::-webkit-details-marker { display: none; }
-.ia-card summary:hover { background: var(--hover); }
-.ia-card summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
-.ia-card summary .ia-mark { grid-area: m; }
+.ia-card > summary { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "m n p" "b b b"; align-items: center; gap: 10px 12px; padding: 14px 16px; cursor: pointer; list-style: none; border-radius: 14px; transition: background 0.18s; }
+.ia-card > summary::-webkit-details-marker { display: none; }
+.ia-card > summary:hover { background: var(--hover); }
+.ia-card > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.ia-card > summary .ia-mark { grid-area: m; }
 .ia-card-name { grid-area: n; display: flex; flex-direction: column; min-width: 0; }
 .ia-card-name b { font-size: 14px; font-weight: 500; }
 .ia-card-name span { font: 12.5px var(--mono); color: var(--ink-3); }
