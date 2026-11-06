@@ -77,9 +77,37 @@ fn bubble_cost(row: &Value, bubble: usize, s: usize, level: f64) -> Option<(Stri
     Some((mat.to_string(), cost))
 }
 
+const BUBBLE_TIERS: [&str; 5] = ["Half bonus", "75% bonus", "90% bonus", "95% bonus", "Softcap"];
+const BUBBLE_SHARES: [f64; 5] = [0.5, 0.75, 0.9, 0.95, 0.99];
+/// Levels for bubbles whose bonus has no cap, for a World 1 bubble; each later world's bubbles
+/// aim a quarter higher (World 7: 2.5 times).
+const FLAT_STEPS: [f64; 5] = [100.0, 250.0, 500.0, 1000.0, 2000.0];
+
+/// The world a bubble belongs to: each cauldron opens five bubbles per world (N.js
+/// `NumBubblesUnlocked` against `5 * (1 + CauldronInfo[7][c])`), so slot i is world i/5 + 1.
+fn bubble_world(i: usize) -> u8 {
+    (i / 5 + 1).min(7) as u8
+}
+
+/// The five levels a bubble aims for. Its bonus is `AlchemyDescription` col 3 of cols 1 and 2
+/// (N.js `ArbitraryCode5Inputs`): "decay" and "decayMulti" grow as x1 L/(L+x2), reaching a
+/// share p of their cap at L = p x2/(1-p), so 99% (the softcap) is at 99 x2. "bigBase"
+/// (x1 + x2 L) and "addDECAY" (x1 L up to Lv 50,000) add a flat amount per level, so they get
+/// set levels that grow with the bubble's world.
+fn bubble_targets(row: &Value, world: u8) -> ([f64; 5], bool) {
+    let x2 = cell(row, 2);
+    if matches!(text(row, 3), "decay" | "decayMulti") && x2 > 0.0 {
+        (BUBBLE_SHARES.map(|p| (p / (1.0 - p) * x2 - 1e-6).ceil()), true)
+    } else {
+        let scale = 1.0 + 0.25 * f64::from(world.saturating_sub(1));
+        (FLAT_STEPS.map(|l| l * scale), false)
+    }
+}
+
 /// Bubbles: `CauldronInfo[c][i]` for the four cauldrons, matching `AlchemyDescription[c][i]`.
 /// Rows named "BUBBLE" are placeholders, and the save keeps slots past the table; both read Lv 1
-/// in the save and are left out. Bubbles have no level cap.
+/// in the save and are left out. Levels have no cap, so each bubble is counted in tiers of its
+/// own bonus (see `bubble_targets`): level 0 to 5 is how many of its five targets it has passed.
 fn bubbles(save: &Save) -> Mechanic {
     let mut have = held(save);
     have.insert("Bits".into(), save.at("Gaming", &[0]).map(num).unwrap_or(0.0).max(0.0));
@@ -90,25 +118,55 @@ fn bubbles(save: &Save) -> Mechanic {
             if text(r, 0) == "BUBBLE" {
                 continue;
             }
-            let level = at(&levels, i);
-            let mut it = Item::new(label(text(r, 0)), pic(format!("aUpgrades{colour}{i}")), level, 0.0);
+            let level = at(&levels, i).max(0.0);
+            let world = bubble_world(i);
+            let (targets, capped) = bubble_targets(r, world);
+            let reached = targets.iter().filter(|t| level >= **t).count();
+            let mut it = Item::new(label(text(r, 0)), pic(format!("aUpgrades{colour}{i}")), reached as f64, 5.0);
+            it.level_name = Some(if capped && level > 0.0 {
+                let x2 = cell(r, 2);
+                format!("Lv {} · {:.0}% of its bonus", crate::page::num(level), (100.0 * level / (level + x2)).floor())
+            } else {
+                format!("Lv {}", crate::page::num(level))
+            });
+            if world > 2 {
+                it.world = Some(world);
+            }
             let parts: Vec<(String, f64)> = (0..4).filter_map(|s| bubble_cost(r, i, s, level)).collect();
             if level <= 0.0 {
                 it.how = Some(format!("Not found yet: the {} Cauldron finds new bubbles as it brews.", CAULDRONS[c]));
-            } else if parts.iter().any(|(_, n)| !n.is_finite()) {
-                it.how = Some("Next level costs more Bits than the game can count.".into());
-            } else if !parts.is_empty() {
-                let (text, ok) = costs(&parts, &have);
-                it.how = Some(format!("Next level: {text}."));
-                if ok {
-                    it.state = State::Ready;
+            } else if reached < 5 {
+                let target = crate::page::num(targets[reached]);
+                let goal = if capped { format!("{:.0}% of its bonus at Lv {target}", BUBBLE_SHARES[reached] * 100.0) } else { format!("Next target Lv {target} (flat bonus, no cap)") };
+                if parts.iter().any(|(_, n)| !n.is_finite()) {
+                    it.how = Some(format!("{goal}; each level costs more Bits than the game can count."));
+                } else if !parts.is_empty() {
+                    let (text, ok) = costs(&parts, &have);
+                    it.how = Some(format!("{goal}; next level costs {text}."));
+                    if ok {
+                        it.state = State::Ready;
+                    }
                 }
             }
             items.push(it);
         }
     }
-    let mut m = mech("bubbles", 2, "Alchemy Bubbles", pic("aUpgradesO0".into()), Count::Open, "levels", items);
-    m.note = Some("Bubbles level up without end, so these are your levels, lowest first. Costs are before your discounts, and what you hold counts the storage chest only.".into());
+    let mut m = mech("bubbles", 2, "Alchemy Bubbles", pic("aUpgradesO0".into()), Count::Levels, "tiers", items);
+    m.tier_names = Some(BUBBLE_TIERS.iter().map(|s| s.to_string()).collect());
+    let w7 = 1.0 + 0.25 * 6.0;
+    m.tier_notes = BUBBLE_SHARES
+        .iter()
+        .zip(FLAT_STEPS)
+        .map(|(p, l)| {
+            format!(
+                "Bubbles with a capped bonus at {:.0}% of it; bubbles that add a flat amount per level at Lv {} (World 1 bubbles) to Lv {} (World 7).",
+                p * 100.0,
+                crate::page::num(l),
+                crate::page::num(l * w7)
+            )
+        })
+        .collect();
+    m.note = Some("Levels never stop, so each bubble aims for its own bonus: 50, 75, 90, 95 and 99% of its cap, and 99% is its softcap. Bubbles that add a flat amount per level aim for Lv 100, 250, 500, 1,000 and 2,000, a quarter more for each later world. Costs are before your discounts and count the storage chest only.".into());
     m
 }
 
@@ -139,13 +197,13 @@ fn cauldron_upgrades(save: &Save) -> Mechanic {
             let mut it = Item::new(format!("{} Cauldron: {}", CAULDRONS[k / 4], BREW[k % 4]), None, level, 170.0);
             if level < 170.0 {
                 let need = brew_req(level, at(&p2w, 3 * (k / 4) + 2));
-                it.how = Some(format!("Next level at {} brew progress, {} so far. Brewing with it selected fills it.", big(need), big(at(&xp, k).max(0.0))));
+                it.how = Some(format!("Next level at {} brew progress, {} so far. Brewing in this cauldron with it selected fills it.", big(need), big(at(&xp, k).max(0.0))));
             }
             it
         })
         .collect();
     let mut m = mech("cauldron-upgrades", 2, "Cauldron Upgrades", pic("aEmptyCauldronB0".into()), Count::Levels, "levels", items);
-    m.note = Some("Speed, Luck, Cost and Extra on each bubble cauldron, levelled by brewing. The liquid cauldrons' Cap and Rate have no cap, so they are left out.".into());
+    m.note = Some("Speed, Luck, Cost and Extra on each bubble cauldron, levelled by brewing. The liquid cauldrons' Cap and Rate upgrades have no level cap, so they are left out.".into());
     m
 }
 
@@ -207,7 +265,7 @@ fn pay2win(save: &Save) -> Mechanic {
             let mut it = Item::new(name.clone(), None, *level, *max);
             if *kind == 1 && *level < 0.0 {
                 let need = [0.0, 20.0, 35.0, 80.0][(n - 12) / 2];
-                it.how = Some(format!("Opens at Alchemy level {need:.0}; your best is {alchemy:.0}."));
+                it.how = Some(format!("Opens when a character reaches Alchemy level {need:.0}; your highest is {alchemy:.0}."));
                 it.state = State::Locked;
             } else if level < max {
                 let cost = p2w_cost(*kind, *s, *level);
@@ -246,8 +304,23 @@ fn pay2win(save: &Save) -> Mechanic {
             [a, b, ..] => format!("Your richest character has enough to take {a}, or {b}."),
         },
     });
-    m.note = Some("The two Player upgrades cap at your highest Alchemy level, so they open up again each time it goes up.".into());
+    m.note = Some("The two Player upgrades cap at your highest character's Alchemy level, so each Alchemy level up adds 1 to both caps.".into());
     m
+}
+
+/// The world a vial's item comes from, past World 2. The vial table runs in world order:
+/// slots 20 to 40 take World 3 items (and the Liquid2/3 of that world), 41 to 51 World 4
+/// (Galaxy maps, Kraken), 52 to 63 World 5 (lava maps, Marble), 64 to 74 World 6 (Spirited
+/// Valley, Godshard) and 75 on World 7 (Spelunking chapters, `w7` items).
+fn vial_world(i: usize) -> Option<u8> {
+    match i {
+        0..=19 => None,
+        20..=40 => Some(3),
+        41..=51 => Some(4),
+        52..=63 => Some(5),
+        64..=74 => Some(6),
+        _ => Some(7),
+    }
 }
 
 /// Vials: `CauldronInfo[4][i]`, max level 13. A vial is found by tossing its item into the
@@ -263,6 +336,9 @@ fn vials(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let level = at(&levels, i);
             let mut it = Item::new(label(text(r, 0)), pic(text(r, 5).to_string()), level, 13.0);
+            if let Some(w) = vial_world(i) {
+                it.world = Some(w);
+            }
             if level <= 0.0 {
                 it.how = Some(format!("Not found yet: toss {} into the cauldron in World 2 town to roll for it.", item_name(text(r, 5))));
             } else if level < 13.0 {
@@ -280,7 +356,7 @@ fn vials(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("vials", 2, "Vials", pic("aVials13".into()), Count::Levels, "levels", items);
-    m.note = Some("What you hold counts the storage chest and your liquids, not inventories.".into());
+    m.note = Some("Each level is bought with the vial's item and liquid. What you hold counts the storage chest and your liquids, not inventories.".into());
     m
 }
 
@@ -335,14 +411,21 @@ fn sigils(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("sigils", 2, "Sigils", pic("aSiga0".into()), Count::Levels, "tiers", items);
+    let mut m = mech("sigils", 4, "Sigils", pic("aSiga0".into()), Count::Levels, "tiers", items);
     m.tier_names = Some(SIGIL_TIERS[1..].iter().map(|s| s.to_string()).collect());
     m.raises = vec![
-        Raise { name: "Ionized Sigils, Jade Emporium".into(), amount: "Red".into(), owned: ionized },
-        Raise { name: "Spelunking lore boss 7".into(), amount: "Purple".into(), owned: lore },
-        Raise { name: "Eclectic Sigils research".into(), amount: "Green".into(), owned: eclectic },
+        Raise { name: "Ionized Sigils (Jade Emporium)".into(), amount: "Every sigil can go to Red".into(), owned: ionized },
+        Raise { name: "Spelunking lore boss 7 beaten".into(), amount: "Every sigil can go to Purple".into(), owned: lore },
+        Raise { name: "Eclectic Sigils research (and lore boss 7)".into(), amount: "Every sigil can go to Green".into(), owned: eclectic },
     ];
-    m.note = Some("Blue, Yellow, Red, Purple, then Green. Red needs Ionized Sigils in the Jade Emporium, Purple Spelunking lore boss 7, Green also the Eclectic Sigils research.".into());
+    m.tier_notes = vec![
+        "Needs Sigils of Olden Alchemy in the World 4 Lab Mainframe, and the sigil before it unlocked".into(),
+        String::new(),
+        "Needs Ionized Sigils (Jade Emporium)".into(),
+        "Needs Spelunking lore boss 7 beaten".into(),
+        "Needs the Eclectic Sigils research node and lore boss 7".into(),
+    ];
+    m.note = Some("Sigils are charged by characters assigned in the World 4 Lab and go Blue, Yellow, Red, Purple, then Green. Red needs Ionized Sigils in the Jade Emporium, Purple Spelunking lore boss 7, Green also the Eclectic Sigils research.".into());
     m
 }
 
@@ -383,12 +466,12 @@ fn arcade(save: &Save) -> Mechanic {
                     it.state = State::Ready;
                 }
             } else if level < 101.0 {
-                it.how = Some("Cosmic costs 5 Cosmic balls.".into());
+                it.how = Some("Level 101 (Cosmic) costs 5 Cosmic balls.".into());
                 if cosmic >= 5.0 {
                     it.state = State::Ready;
                 }
             } else if level < 102.0 {
-                it.how = Some("Omega costs 2 Omega balls.".into());
+                it.how = Some("Level 102 (Omega) costs 2 Omega balls.".into());
                 if omega >= 2.0 {
                     it.state = State::Ready;
                 }
@@ -429,8 +512,25 @@ fn arcade(save: &Save) -> Mechanic {
             [a, b, ..] => format!("Enough to take {a}, or {b}. Costs here are before your Golden Balls stamp, so you get a little further."),
         },
     });
-    m.note = Some("100 with gold balls, then 101 (Cosmic, 2x) and 102 (Omega, 6x) with their own balls.".into());
+    m.note = Some("Levels 1 to 100 cost gold balls; level 101 (Cosmic) costs 5 Cosmic balls and level 102 (Omega) 2 Omega balls.".into());
     m
+}
+
+/// Boxes the post office only shows once something later is done (N.js, the `UIboxUpg` list):
+/// 15, 19 and 20 need Pet Arena bonuses 4, 7 and 10 (World 4 breeding), 21 to 23 the Silver
+/// Ankh, Billcye Tri and Cloud Urn sailing artifacts (World 5).
+fn box_gate(i: usize) -> Option<(u8, String)> {
+    let arena = |n: u32| (4, format!("Opens once your Pet Arena reaches bonus {n} (World 4 breeding)."));
+    let artifact = |a: &str| (5, format!("Opens once you find the {a} sailing artifact (World 5)."));
+    match i {
+        15 => Some(arena(4)),
+        19 => Some(arena(7)),
+        20 => Some(arena(10)),
+        21 => Some(artifact("Silver Ankh")),
+        22 => Some(artifact("Billcye Tri")),
+        23 => Some(artifact("Cloud Urn")),
+        _ => None,
+    }
 }
 
 /// Post Office: each character's `POu_<i>[box]`. The game only buys a level while it stays
@@ -454,7 +554,13 @@ fn post_office(save: &Save) -> Mechanic {
             let max = cell(r, 15).floor();
             let level = at(&levels, i);
             let mut it = Item::new(format!("{who}: {}", label(text(r, 0))), pic(format!("UIboxUpg{i}")), level, max);
-            if level < max {
+            let gate = box_gate(i);
+            if let Some((w, _)) = gate {
+                it.world = Some(w);
+            }
+            if let Some((_, opens)) = gate.filter(|_| level <= 0.0) {
+                it.how = Some(opens);
+            } else if level < max {
                 it.how = Some(format!("{} levels to go at 1 box point each; {who} has {} free.", big(max - level.max(0.0)), big(free)));
                 if free >= 1.0 {
                     it.state = State::Ready;
@@ -476,7 +582,7 @@ fn post_office(save: &Save) -> Mechanic {
             (n, Some((who, f))) => format!("{n} of your characters have points to spend; the most is {} on {who}.", big(*f)),
         },
     });
-    m.note = Some("Every character has its own boxes, all paid from the same box points. Most cap at 400, the last three at 800 and the Myriad Crate at 100,000.".into());
+    m.note = Some("Every character has its own boxes, each paid from the same box points. 20 boxes cap at 400; Scurvy C'arr'ate, Box of Gosh and Gaming Lootcrate at 800; the Myriad Crate at 100,000.".into());
     m
 }
 
@@ -577,15 +683,16 @@ fn fractal_island(save: &Save) -> Mechanic {
 /// (`OptLacc[466]` at 3), per N.js `RiftStuff("KillroyXtra")`.
 fn killroy(save: &Save) -> Mechanic {
     let fights = ["Timer", "Talent Points", "Skulls", "Respawn", "Dungeon Credits", "Pearls"];
-    let shop: [(usize, usize, &str); 8] = [
-        (11, 228, "Artifact Find Chance"),
-        (13, 229, "Crop Evolution Chance"),
-        (14, 230, "Jade Gain"),
-        (15, 467, "Gallery Grade"),
-        (16, 468, "Masterclass Drops"),
-        (17, 469, "World 7 Skill EXP"),
-        (18, 470, "Daily Coral"),
-        (19, 471, "Mystery Boost"),
+    // (shop row, save slot, name, the world of what it boosts)
+    let shop: [(usize, usize, &str, u8); 8] = [
+        (11, 228, "Artifact Find Chance", 5),
+        (13, 229, "Crop Evolution Chance", 6),
+        (14, 230, "Jade Gain", 6),
+        (15, 467, "Gallery Grade", 7),
+        (16, 468, "Masterclass Drops", 7),
+        (17, 469, "World 7 Skill EXP", 7),
+        (18, 470, "Daily Coral", 7),
+        (19, 471, "Mystery Boost", 7),
     ];
     let total = save.option(112).max(0.0);
     let shades = save.at("Dream", &[4]).map(num).unwrap_or(0.0).max(0.0);
@@ -598,6 +705,10 @@ fn killroy(save: &Save) -> Mechanic {
         .enumerate()
         .map(|(k, n)| {
             let mut it = Item::new(format!("{n} fights"), None, save.option(106 + k), 0.0);
+            // The last three need Shades of K, an Equinox upgrade from World 3.
+            if k >= 3 {
+                it.world = Some(3);
+            }
             let need = if k == 0 { 0.0 } else { ((2 * k) as f64).powi(k.min(2) as i32) };
             if (k as f64) >= 3.0 + shades {
                 it.how = Some(format!("Opens with Shades of K level {} in the Equinox.", k.saturating_sub(2)));
@@ -606,22 +717,23 @@ fn killroy(save: &Save) -> Mechanic {
                 it.how = Some(format!("Opens after {need:.0} Killroy fights in all; you have {total:.0}."));
                 it.state = State::Locked;
             } else {
-                it.how = Some("Pick it at the end of a Killroy run.".into());
+                it.how = Some("Pick this fight at the end of a Killroy run to add 1.".into());
             }
             it
         })
         .collect();
-    items.extend(shop.iter().map(|&(row, opt, n)| {
+    items.extend(shop.iter().map(|&(row, opt, n, world)| {
         let count = save.option(opt);
         let mut it = Item::new(format!("Skull Shop: {n}"), None, count, 0.0);
+        it.world = Some(world);
         let cost = desc.get(row).map_or(0.0, |r| cell(r, 1));
-        let gate = if row >= 15 { "Rift 50 and Billroy's talks" } else { "Rift 50" };
+        let gate = if row >= 15 { "Rift level 50 and once you've finished talking to Billroy" } else { "Rift level 50" };
         let open = rift && (row < 15 || billroy);
         if !open && count <= 0.0 {
-            it.how = Some(format!("Opens with {gate}. Then {cost:.0} skulls each."));
+            it.how = Some(format!("Opens at {gate}. Then {cost:.0} skulls per buy."));
             it.state = State::Locked;
         } else {
-            it.how = Some(format!("{cost:.0} skulls each; you have {skulls:.0}."));
+            it.how = Some(format!("{cost:.0} skulls per buy; you have {skulls:.0}."));
             if skulls >= cost && cost > 0.0 {
                 it.state = State::Ready;
             }
@@ -630,7 +742,7 @@ fn killroy(save: &Save) -> Mechanic {
     }));
     let mut m = mech("killroy", 2, "Killroy", pic("Quest69".into()), Count::Open, "levels", items);
     m.have = Some(Have { figure: format!("{skulls:.0} skulls"), text: "Skulls drop in Killroy runs and buy the skull shop's permanent boosts.".into() });
-    m.note = Some("Fights of each kind and permanent skull shop buys. None has a cap; each bonus grows with diminishing returns.".into());
+    m.note = Some("How many times you've picked each fight, and your permanent skull shop buys. None has a cap: each adds less bonus than the one before.".into());
     m
 }
 

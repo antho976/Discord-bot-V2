@@ -43,6 +43,20 @@ pub(crate) fn menagerie_unlock(save: &Save, i: usize) -> bool {
     save.at("Menagerie", &[2, i]).map(num).unwrap_or(0.0) >= 1.0
 }
 
+/// A Menagerie unlock named by its own text, `Research` row 56: `the Menagerie unlock "Unlock the
+/// Silver Jellyfish within the Menagerie"`. Its index alone is ambiguous (the game shows no
+/// numbers).
+pub(crate) fn menagerie_unlock_name(i: usize) -> String {
+    let text = list("Research", 56).get(i).map(|t| clean(t)).unwrap_or_default();
+    if text.is_empty() { "a Menagerie unlock".into() } else { format!("the Menagerie unlock \"{text}\"") }
+}
+
+/// The first letter in capitals.
+fn capital(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+}
+
 /// Game text read like the game, with its icon glyphs and number stand-ins dropped:
 /// "}x_Research_EXP_gains" is "Research EXP gains", "Go_Go_Secret_Owl_製" is "Go Go Secret Owl",
 /// "+1_Legend_Talent_PTS" stays "+1 Legend Talent PTS". `潤` stands for "&".
@@ -149,17 +163,22 @@ fn have_line(figure: String, items: &[Item], reached: &[(usize, f64)], discounts
 fn spelunk_caves(save: &Save) -> Mechanic {
     let beaten = save.numbers("Spelunk", &[0]);
     let depth = list("Spelunky", 7);
+    let lore = list("Spelunky", 14);
     let items = caves()
         .map(|(i, name)| {
             let mut it = found(format!("{name} boss"), pic(format!("CaveBoss{i}")), at(&beaten, i) >= 1.0);
             if let Some(d) = depth.get(i).and_then(|d| d.parse::<f64>().ok()).filter(|_| !it.done()) {
-                it.how = Some(format!("The lore boss is at depth {} of {name}.", d + 1.0));
+                let gives = lore.get(i).map(|l| clean(&l.replace("!_@_", ";_"))).filter(|l| !l.is_empty());
+                it.how = Some(match gives {
+                    Some(g) => format!("At depth {}. Beating it: {g}.", d + 1.0),
+                    None => format!("The lore boss is at depth {} of {name}.", d + 1.0),
+                });
             }
             it
         })
         .collect();
     let mut m = mech("spelunk-caves", 7, "Spelunking Cave Bosses", pic("CaveBoss0".into()), Count::Done, "beaten", items);
-    m.note = Some("Each boss beaten gives a lore bonus somewhere else in the game.".into());
+    m.note = Some("Each lore boss beaten unlocks the new content its cave's lore names, in another part of the game.".into());
     m
 }
 
@@ -309,7 +328,7 @@ fn clam_upgrades(save: &Save) -> Mechanic {
                     }
                 }
             } else if !page2 && it.level <= 0.0 {
-                it.how = Some("The Musselini page comes with Menagerie unlock 4.".into());
+                it.how = Some(format!("The Musselini page comes with {}.", menagerie_unlock_name(4)));
                 it.state = State::Locked;
             } else if scurge < SCURGE_REQ[i - 9] {
                 it.how = Some(format!("Needs Scurge LV {}.", SCURGE_REQ[i - 9]));
@@ -328,7 +347,7 @@ fn clam_upgrades(save: &Save) -> Mechanic {
         figure: format!("{} pearls", big(pearls)),
         text: if page2 { format!("And {} Scurge points left for the Musselini page.", big(points.max(0.0))) } else { "For the pearl page.".into() },
     });
-    m.note = Some("No caps. The second nine are the Musselini page, opened by a Menagerie unlock. Pearl costs are before your discounts.".into());
+    m.note = Some(format!("No caps. The second nine are the Musselini page, opened by {}. Pearl costs are before your discounts.", menagerie_unlock_name(4)));
     m
 }
 
@@ -337,6 +356,9 @@ fn clam_upgrades(save: &Save) -> Mechanic {
 /// × 1.25^level for upgrade 2, 1e7 × 6^i × 1.1^level for the rest of page one, paid with Divinity
 /// PTS (`Divinity[24]`); on page two (j = i - 6) (5 + 2j)^j × 1.85^level for the last two and
 /// (7 + 2j)^j × 1.13^level otherwise, paid with Singularity Spirals (item `CKsing`).
+/// The total Divinity LV each Coral Kid upgrade opens at, as N.js sets `_GenINFO[118]`.
+const CK_DIVINITY: [u32; 12] = [0, 600, 900, 1200, 1500, 1750, 500, 3000, 5000, 8000, 10000, 12000];
+
 fn coral_kid(save: &Save) -> Mechanic {
     let div = held(save, "Divinity", &[24]);
     let spirals = chest(save, "CKsing");
@@ -356,14 +378,18 @@ fn coral_kid(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let mut it = Item::new(first_sentence(r.split(",_").next().unwrap_or(r)), None, save.option(if i < 6 { 427 + i } else { 616 + i - 6 }), 0.0);
             if i >= 6 && !page2 {
-                it.how = Some("The Singularity page comes with Menagerie unlock 2.".into());
+                it.how = Some(format!("The Singularity page comes with {}.", menagerie_unlock_name(2)));
                 it.state = State::Locked;
             } else {
                 let c = cost(i, it.level);
                 pay(&mut it, c, if i < 6 { div } else { spirals }, if i < 6 { "Divinity PTS" } else { "Singularity Spirals" }, false);
-                // A new one also needs enough total Divinity levels, which isn't read here.
+                // A new one also needs enough total Divinity levels across your characters (N.js
+                // `_GenINFO[118]`), which isn't read here.
                 if it.level < 1.0 && i != 0 {
                     it.state = State::Unknown;
+                    if let Some(need) = CK_DIVINITY.get(i).filter(|&&n| n > 0) {
+                        it.how = it.how.map(|h| format!("{h} Opens at {need} total Divinity LV across your characters."));
+                    }
                 }
             }
             it
@@ -374,7 +400,7 @@ fn coral_kid(save: &Save) -> Mechanic {
         figure: format!("{} Divinity PTS", big(div)),
         text: if page2 { format!("And {} Singularity Spirals in storage for the second page.", big(spirals)) } else { "For the first six upgrades.".into() },
     });
-    m.note = Some("No caps. Each upgrade also needs enough total Divinity levels across your characters before it opens.".into());
+    m.note = Some("No caps. Each upgrade opens at a total Divinity LV across your characters: 0, 600, 900, 1,200, 1,500 and 1,750 on page one, 500, 3,000, 5,000, 8,000, 10,000 and 12,000 on the Singularity page.".into());
     m
 }
 
@@ -524,14 +550,14 @@ fn gallery_podiums(save: &Save) -> Mechanic {
                         it.state = State::Ready;
                     }
                 } else {
-                    it.how = Some("More podiums: Gallery coral every 4 LVs, Lunarheim boss, Deathskull, gem shop, events.".into());
+                    it.how = Some("Not owned yet. The note lists where podiums come from.".into());
                 }
             }
             it
         })
         .collect();
     let mut m = mech("gallery-podiums", 7, "Gallery Podiums", pic("GalleryPodiumA0".into()), Count::Done, "filled", items);
-    m.note = Some("19 podiums is the most the game allows. An empty one is either not owned yet or has no trophy on it.".into());
+    m.note = Some("19 podiums is the most the game allows. You start with 1, then get +1 per 4 levels of the Gallery coral in the Coral Reef, +2 for beating the Lunarheim lore boss, +1 per Deathskull artifact tier up to +2, +1 per gem shop podium, +1 from the Jade Emporium and +1 from the event shop.".into());
     m
 }
 
@@ -629,7 +655,7 @@ fn menagerie_unlocks(save: &Save) -> Mechanic {
             n => format!("Enough for {n} of the unlocks your rank shows, cheapest first."),
         },
     });
-    m.note = Some("Several of these raise caps elsewhere: Pillar coral, Legend Talents, meals, Shiny levels, Atoms.".into());
+    m.note = Some("Some raise caps elsewhere: +3 max levels on the Pillar coral, +3 on nine Legend Talents, +10 max Cooking LV for every meal, +10 max Shiny LV for every pet, a 17th Atom, a 4th statue flair level (Elegant) and Tiny Cogs up to T11.".into());
     m
 }
 
@@ -718,7 +744,7 @@ fn menagerie_jellyfish(save: &Save) -> Mechanic {
             continue;
         }
         if !open {
-            it.how = Some("The Silver Jellyfish comes with Menagerie unlock 10.".into());
+            it.how = Some(format!("Needs {}.", menagerie_unlock_name(10)));
             it.state = State::Locked;
             continue;
         }
@@ -832,7 +858,9 @@ fn glimbo(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("glimbo", 7, "Glimbo Trades", None, Count::Open, "trades", items);
-    m.note = Some("Each trade raises the max level of that vault upgrade. Ready counts only what's in storage.".into());
+    let boosted = list("Research", 29).iter().filter(|v| **v == "1").count();
+    let node = rows("ResGridSquares", &[]).get(169).map(|r| label(text(r, 0))).unwrap_or_default();
+    m.note = Some(format!("Each trade adds 1 max level to its vault upgrade. On {boosted} of the {} slots, each level of the {node} grid node and the event shop's Glimbo bonus add 1 more per trade. Ready counts only what's in storage.", m.items.len()));
     m
 }
 
@@ -1018,7 +1046,7 @@ fn coral_reef(save: &Save) -> Mechanic {
                 it.state = State::Locked;
             } else if level < max {
                 if i == 3 && level >= 12.0 && !menagerie_unlock(save, 9) {
-                    it.how = Some("Levels 13 to 15 need Menagerie unlock 9.".into());
+                    it.how = Some(format!("Levels 13 to 15 need {}.", menagerie_unlock_name(9)));
                     it.state = State::Locked;
                 } else {
                     pay(&mut it, cost(r, level), have, "Reef Coral", false);
@@ -1030,7 +1058,7 @@ fn coral_reef(save: &Save) -> Mechanic {
         .collect();
     let mut m = mech("coral-reef", 7, "Coral Reef", pic("Reefz1".into()), Count::Levels, "levels", items);
     m.have = Some(have_line(format!("{} Reef Coral", big(have)), &m.items, &reached, false));
-    m.raises = vec![Raise { name: "Menagerie unlock 9, on the Pillar coral".into(), amount: "+3".into(), owned: menagerie_unlock(save, 9) }];
+    m.raises = vec![Raise { name: capital(&menagerie_unlock_name(9)), amount: "+3 max levels on the Pillar coral, 12 to 15".into(), owned: menagerie_unlock(save, 9) }];
     m
 }
 
@@ -1096,7 +1124,7 @@ fn legend_talents(save: &Save) -> Mechanic {
             let name = if i >= 40 { runtime_names[i - 40].to_string() } else { label(text(r, 0)) };
             let mut it = Item::new(name, icon_for(i), at(&levels, i), max);
             if i >= 40 && it.level <= 0.0 && !menagerie_unlock(save, 14) {
-                it.how = Some("Added by Menagerie unlock 14.".into());
+                it.how = Some(format!("Added by {}.", menagerie_unlock_name(14)));
                 it.state = State::Locked;
             } else if it.level < it.max {
                 // N.js levels a talent by 1 while available points are above 0 and it's under
@@ -1107,15 +1135,24 @@ fn legend_talents(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("legend-talents", 7, "Legend Talents", pic("LegendTalentIcon0".into()), Count::Levels, "levels", items);
+    let talent_names = |ids: &[usize]| -> String {
+        let names: Vec<String> = ids.iter().filter_map(|&t| m.items.get(t).map(|it| it.name.clone())).collect();
+        names.join(", ")
+    };
     let mut raised: Vec<Raise> = raises
         .iter()
-        .map(|(n, _)| {
+        .map(|(n, talents)| {
             let name = grid.get(*n).map(|r| label(text(r, 0))).unwrap_or_default();
-            Raise { name: format!("Research node {name}, on five talents"), amount: format!("+1 per node level, up to +{}", node_max(*n)), owned: at(&grid_levels, *n) >= 1.0 }
+            let (have, max) = (at(&grid_levels, *n).clamp(0.0, node_max(*n)), node_max(*n));
+            Raise {
+                name: format!("Research node {name} ({have} of {max} levels)"),
+                amount: format!("+1 max level per node level, up to +{max}, on {}", talent_names(talents)),
+                owned: have >= 1.0,
+            }
         })
         .collect();
-    raised.push(Raise { name: "Menagerie unlock 19, on nine talents".into(), amount: "+3".into(), owned: menagerie_unlock(save, 19) });
-    raised.push(Raise { name: "Menagerie unlock 14".into(), amount: "2 more talents".into(), owned: menagerie_unlock(save, 14) });
+    raised.push(Raise { name: capital(&menagerie_unlock_name(19)), amount: format!("+3 max levels on {}", talent_names(&menagerie)), owned: menagerie_unlock(save, 19) });
+    raised.push(Raise { name: capital(&menagerie_unlock_name(14)), amount: format!("Adds two talents: {}", runtime_names.join(" and ")), owned: menagerie_unlock(save, 14) });
     m.raises = raised;
     // Each point earned: one per 100 Class LVs past 400 on each character (N.js
     // `LegendPTS_owned`), plus bonuses from Clam Work, sushi, a companion, the gem shop, sailing and
