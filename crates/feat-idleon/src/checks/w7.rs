@@ -238,7 +238,8 @@ fn advice_fish(save: &Save) -> Mechanic {
 }
 
 /// Clam Work compensations: one more each Worker Class level, `OptLacc[464]`. The twelve are
-/// `Spelunky[30]`; the game shows compensation i once the level is above i.
+/// `Spelunky[30]`; the game shows compensation i once the level is above i. Promotions cost
+/// pearls and can fail (see below), so nothing here is marked Ready.
 fn clam_work(save: &Save) -> Mechanic {
     let level = save.option(464);
     let items = list("Spelunky", 30)
@@ -248,6 +249,12 @@ fn clam_work(save: &Save) -> Mechanic {
             let mut it = found(clean(r), None, level > i as f64);
             if !it.done() {
                 it.how = Some(format!("Comes at Worker Class {}.", i + 1));
+                if (i as f64 - level).abs() < 0.5 {
+                    // N.js: a promotion try costs `Clam_Cost`(9) = 1e5 × 10^W pearls and works with
+                    // chance `ClamPromochance` = 0.5 / (2 + W).
+                    let w = level.clamp(0.0, 1000.0);
+                    it.how = Some(format!("A promotion try costs {} pearls and works 1 time in {}.", big(1e5 * 10f64.powf(w)), big(4.0 + 2.0 * w)));
+                }
             }
             it
         })
@@ -259,26 +266,69 @@ fn clam_work(save: &Save) -> Mechanic {
 /// (Menagerie unlock 4). Names come from the page's own text (tools/idleon-extract/extra_w7.py).
 /// No caps, except that Clam Comrades stops adding clams at 25 (N.js `Clam_Mobs`: min(25, 2 +
 /// level)).
+///
+/// Pearl page (N.js `Clam_Cost`, before discounts, paid with pearls `OptLacc[454]`): slot 0 costs
+/// `Spelunky[29][0]`^L + 3L + L^2.5; slot i costs `Clam_PearlUpgReq`(i) / 5 ×
+/// `Spelunky[29][i]`^L + 2L + L^1.5, where `Clam_PearlUpgReq`(i) = 20 × (10 + 3W)^(i-1) and W is
+/// the Worker Class (`OptLacc[464]`). Slot i opens once `OptLacc[465]` ≥ i, which happens when
+/// you hold `Clam_PearlUpgReq`(i) pearls. Musselini page: each level costs 1 Scurge point; points
+/// are the Scurge LV (`Menagerie[0][8]`) minus levels bought (`ScurgePTS_Left`), and slot i needs
+/// Scurge LV 0, 5, 10, 25, 50, 100, 250, 500, 1000 (`ScurgeUpg_LvREQ`).
 fn clam_upgrades(save: &Save) -> Mechanic {
     let names: Vec<&str> = GAME.extra("w7").get("clam_upgrades").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     let mussel = save.numbers("Menagerie", &[5]);
     let page2 = menagerie_unlock(save, 4);
+    let pearls = save.option(454);
+    let pearls = if pearls.is_finite() { pearls.max(0.0) } else { 0.0 };
+    let opened = save.option(465);
+    let worker = save.option(464).clamp(0.0, 1000.0);
+    let scurge = held(save, "Menagerie", &[0, 8]);
+    let spent: f64 = mussel.iter().take(9).filter(|v| v.is_finite()).sum();
+    let points = scurge - spent;
+    const SCURGE_REQ: [f64; 9] = [0.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0];
+    let scale = list("Spelunky", 29);
+    let req = |i: usize| 20.0 * (10.0 + 3.0 * worker).powf(i as f64 - 1.0);
     let items: Vec<Item> = (0..18)
         .map(|i| {
             let name = names.get(i).map(|n| label(n)).unwrap_or_else(|| format!("Upgrade {}", i + 1));
             let level = if i < 9 { save.option(455 + i) } else { at(&mussel, i - 9) };
             let mut it = Item::new(name, pic(format!("ClamPearl{}", usize::from(i >= 9))), level, 0.0);
-            if i >= 9 && !page2 && it.level <= 0.0 {
+            if i < 9 {
+                if i > 0 && (i as f64) > opened {
+                    it.how = Some(format!("Opens once you hold {} pearls.", big(req(i).ceil())));
+                    it.state = State::Locked;
+                } else if i == 1 && it.level >= 23.0 {
+                    it.how = Some("25 clams, the most the map holds. More levels add nothing.".into());
+                } else {
+                    let k = scale.get(i).and_then(|x| x.parse::<f64>().ok()).unwrap_or(1.0);
+                    let l = it.level;
+                    let cost = if i == 0 { k.powf(l) + 3.0 * l + l.powf(2.5) } else { req(i) / 5.0 * k.powf(l) + 2.0 * l + l.powf(1.5) };
+                    pay(&mut it, cost, pearls, "pearls", true);
+                    if i == 1 && it.how.is_some() {
+                        it.how = it.how.map(|h| format!("{h} Each level adds a clam, up to 25 at level 23."));
+                    }
+                }
+            } else if !page2 && it.level <= 0.0 {
                 it.how = Some("The Musselini page comes with Menagerie unlock 4.".into());
                 it.state = State::Locked;
-            } else if i == 1 {
-                it.how = Some(if it.level >= 23.0 { "25 clams, the most the map holds. More levels add nothing.".into() } else { "Each level adds a clam, up to 25 at level 23.".into() });
+            } else if scurge < SCURGE_REQ[i - 9] {
+                it.how = Some(format!("Needs Scurge LV {}.", SCURGE_REQ[i - 9]));
+                it.state = State::Locked;
+            } else {
+                it.how = Some("Each level costs 1 Scurge point; you get one per Scurge LV.".into());
+                if points >= 1.0 {
+                    it.state = State::Ready;
+                }
             }
             it
         })
         .collect();
     let mut m = mech("clam-upgrades", 7, "Clamworks Upgrades", pic("ClamPearl0".into()), Count::Open, "levels", items);
-    m.note = Some("No caps. The second nine are the Musselini page, opened by a Menagerie unlock.".into());
+    m.have = Some(Have {
+        figure: format!("{} pearls", big(pearls)),
+        text: if page2 { format!("And {} Scurge points left for the Musselini page.", big(points.max(0.0))) } else { "For the pearl page.".into() },
+    });
+    m.note = Some("No caps. The second nine are the Musselini page, opened by a Menagerie unlock. Pearl costs are before your discounts.".into());
     m
 }
 
@@ -385,6 +435,49 @@ fn gallery_slots(save: &Save) -> Vec<f64> {
     save.numbers("Spelunk", &[16])
 }
 
+/// Where a trophy or nametag comes from, when the code gives it plainly (extra_w7.py): a quest
+/// reward, a drop-table row, a gem shop pack, a box, the Darts minigame or the dice buff.
+fn gallery_source(id: &str) -> Option<String> {
+    let first = GAME.extra("w7").get("gallery_sources")?.get(id)?.as_array()?.first()?.as_array()?;
+    let (kind, detail) = (first.first()?.as_str()?, first.get(1)?.as_str()?);
+    Some(match kind {
+        "quest" => format!("A quest reward from {}.", words(detail.trim_end_matches(|c: char| c.is_ascii_digit()))),
+        "drop" if detail.contains("Event") => {
+            let event = match detail.split("Event").next().unwrap_or("") {
+                "xmas" => "the holiday event",
+                "Summer" => "the summer event",
+                "cropfall" => "the Cropfall event",
+                "luck" => "the luck event",
+                _ => "an event",
+            };
+            format!("A rare drop during {event}.")
+        }
+        "drop" => "A rare drop from monsters.".into(),
+        "pack" => "Comes with a gem shop pack.".into(),
+        "open" => format!("Can come out of a {} when you open it.", GAME.item_name(detail).unwrap_or("box")),
+        "darts" => "Comes from the Darts minigame.".into(),
+        // N.js: the dice buff rolls 1 to 10,000 and drops it on a 1.
+        "dice" => "Drops on a roll of 1 from the dice buff, 1 in 10,000.".into(),
+        _ => return None,
+    })
+}
+
+/// The how for a Gallery item not there yet: where it comes from, and a copy in storage (Ready).
+fn gallery_how(it: &mut Item, save: &Save, id: &str, more: &str) {
+    let held = chest(save, id);
+    let mut how = gallery_source(id).unwrap_or_default();
+    if !more.is_empty() {
+        how = if how.is_empty() { more.to_string() } else { format!("{how} {more}") };
+    }
+    if held >= 1.0 {
+        how = format!("{} in storage: bring it to the Gallery. {how}", big(held)).trim_end().to_string();
+        it.state = State::Ready;
+    }
+    if !how.is_empty() {
+        it.how = Some(how);
+    }
+}
+
 /// Gallery trophies: every `TrophyN` the game has, found once it sits anywhere in the Gallery.
 /// "I Made This Game" (Trophy4) is the developer's own and only counts when you have it.
 fn gallery_trophies(save: &Save) -> Mechanic {
@@ -393,7 +486,13 @@ fn gallery_trophies(save: &Save) -> Mechanic {
         .filter_map(|n| GAME.item_name(&format!("Trophy{n}")).map(|name| (n, name)))
         .filter_map(|(n, name)| {
             let have = slots.contains(&(n as f64));
-            (n != 4 || have).then(|| found(name, pic(format!("Trophy{n}")), have))
+            (n != 4 || have).then(|| {
+                let mut it = found(name, pic(format!("Trophy{n}")), have);
+                if !have {
+                    gallery_how(&mut it, save, &format!("Trophy{n}"), "");
+                }
+                it
+            })
         })
         .collect();
     let mut m = mech("gallery-trophies", 7, "Gallery Trophies", pic("Trophy1".into()), Count::Done, "in the Gallery", items);
@@ -401,11 +500,36 @@ fn gallery_trophies(save: &Save) -> Mechanic {
     m
 }
 
-/// Gallery podiums: the slots after the first 48 of `Spelunk[16]`. N.js `PodiumsOwned` caps
-/// them at 19.
+/// Gallery podiums: the slots after the first 48 of `Spelunk[16]`. N.js `PodiumsOwned` is the
+/// smaller of 19 and: 1, plus ceil(Gallery coral `Spelunk[13][4]` / 4), Emporium 42, gem shop
+/// `GemItemsPurchased[40]`, 2 for the Lunarheim boss `Spelunk[0][5]`, min(2, Deathskull
+/// `Sailing[3][33]`) and event shop 26.
+/// The Emporium and event shop aren't read, so the podiums counted as owned are a floor.
 fn gallery_podiums(save: &Save) -> Mechanic {
     let slots = gallery_slots(save);
-    let items = (0..19).map(|i| found(format!("Podium {}", i + 1), None, at(&slots, 48 + i) >= 1.0)).collect();
+    let owned = (1.0
+        + (held(save, "Spelunk", &[13, 4]) / 4.0).ceil()
+        + held(save, "GemItemsPurchased", &[40])
+        + 2.0 * f64::from(u8::from(held(save, "Spelunk", &[0, 5]) >= 1.0))
+        + held(save, "Sailing", &[3, 33]).round().min(2.0))
+    .min(19.0);
+    let spare = slots.iter().take(48).any(|&v| v >= 1.0);
+    let items = (0..19)
+        .map(|i| {
+            let mut it = found(format!("Podium {}", i + 1), None, at(&slots, 48 + i) >= 1.0);
+            if !it.done() {
+                if (i as f64) < owned {
+                    it.how = Some("Owned and empty: put a trophy on it.".into());
+                    if spare {
+                        it.state = State::Ready;
+                    }
+                } else {
+                    it.how = Some("More podiums: Gallery coral every 4 LVs, Lunarheim boss, Deathskull, gem shop, events.".into());
+                }
+            }
+            it
+        })
+        .collect();
     let mut m = mech("gallery-podiums", 7, "Gallery Podiums", pic("GalleryPodiumA0".into()), Count::Done, "filled", items);
     m.note = Some("19 podiums is the most the game allows. An empty one is either not owned yet or has no trophy on it.".into());
     m
@@ -421,7 +545,23 @@ fn gallery_nametags(save: &Save) -> Mechanic {
             let id = if i == 6 { "EquipmentNametag6b".to_string() } else { format!("EquipmentNametag{i}") };
             let name = GAME.item_name(&id)?;
             let level = at(&levels, i);
-            (i != 2 || level >= 1.0).then(|| Item::new(name, pic(id), level.min(5.0), 5.0))
+            (i != 2 || level >= 1.0).then(|| {
+                let mut it = Item::new(name, pic(id.clone()), level.min(5.0), 5.0);
+                if level < 5.0 {
+                    // N.js adds a level for every copy (not a replica) brought to the Gallery.
+                    let more = "Each copy brought to the Gallery adds a level.";
+                    if level >= 1.0 {
+                        gallery_how(&mut it, save, "", more);
+                        if chest(save, &id) >= 1.0 {
+                            it.how = Some(format!("{} in storage. {more}", big(chest(save, &id))));
+                            it.state = State::Ready;
+                        }
+                    } else {
+                        gallery_how(&mut it, save, &id, more);
+                    }
+                }
+                it
+            })
         })
         .collect();
     let mut m = mech("gallery-nametags", 7, "Gallery Nametags", pic("EquipmentNametag1".into()), Count::Levels, "levels", items);
@@ -813,16 +953,23 @@ fn jelly(save: &Save) -> Mechanic {
 
 /// Minehead: `Research[8][t]`, paid with Minehead Currency (`Research[7][5]`). N.js
 /// `Minehead("UpgCost")`: (5 + t + max(0, t-2)^1.3) × 2^max(0, t-4) × A_MineCost^max(0, t-9) ×
-/// col 2^level, then discounts. A_MineCost is a server value the save doesn't carry, so from the
-/// 11th upgrade on only the rest of the cost is shown and nothing is marked Ready.
+/// col 2^level, then discounts. A_MineCost is a server value: IdleonToolbox pastes carry it
+/// (`Save::server`); without it, from the 11th upgrade on only the rest of the cost is shown and
+/// nothing there is marked Ready.
 fn minehead(save: &Save) -> Mechanic {
     let levels = save.numbers("Research", &[8]);
     let have = held(save, "Research", &[7, 5]);
     let data = rows("MineheadUPG", &[]);
+    // IdleonToolbox pastes carry the server values; other sources don't.
+    let server = save.server("A_MineCost").map(|v| v.clamp(1.0, 1e6));
     let cost = |t: usize, lv: f64| {
         let r = data.get(t).copied().unwrap_or(&Value::Null);
-        let t = t as f64;
-        (5.0 + t + (t - 2.0).max(0.0).powf(1.3)) * 2f64.powf((t - 4.0).max(0.0)) * cell(r, 2).powf(lv)
+        let f = t as f64;
+        let mut c = (5.0 + f + (f - 2.0).max(0.0).powf(1.3)) * 2f64.powf((f - 4.0).max(0.0)) * cell(r, 2).powf(lv);
+        if let Some(k) = server {
+            c *= k.powf((f - 9.0).max(0.0));
+        }
+        c
     };
     let mut reached = Vec::new();
     let items: Vec<Item> = capped_items("MineheadUPG", &levels, "MineUpg")
@@ -831,7 +978,7 @@ fn minehead(save: &Save) -> Mechanic {
         .map(|(n, (t, mut it))| {
             if it.level < it.max {
                 let c = cost(t, it.level);
-                if t <= 9 {
+                if t <= 9 || server.is_some() {
                     pay(&mut it, c, have, "Minehead Currency", true);
                     reached.push((n, reach(it.level, it.max, have, |lv| cost(t, lv))));
                 } else if c.is_finite() {
@@ -951,6 +1098,10 @@ fn legend_talents(save: &Save) -> Mechanic {
             if i >= 40 && it.level <= 0.0 && !menagerie_unlock(save, 14) {
                 it.how = Some("Added by Menagerie unlock 14.".into());
                 it.state = State::Locked;
+            } else if it.level < it.max {
+                // N.js levels a talent by 1 while available points are above 0 and it's under
+                // `LegendTalent_MaxLV`: one point a level.
+                it.how = Some("Each level costs 1 Legend Talent PTS.".into());
             }
             it
         })
@@ -966,6 +1117,20 @@ fn legend_talents(save: &Save) -> Mechanic {
     raised.push(Raise { name: "Menagerie unlock 19, on nine talents".into(), amount: "+3".into(), owned: menagerie_unlock(save, 19) });
     raised.push(Raise { name: "Menagerie unlock 14".into(), amount: "2 more talents".into(), owned: menagerie_unlock(save, 14) });
     m.raises = raised;
+    // Each point earned: one per 100 Class LVs past 400 on each character (N.js
+    // `LegendPTS_owned`), plus bonuses from Clam Work, sushi, a companion, the gem shop, sailing and
+    // the event shop. The next one from levels comes on the character closest to their next 100.
+    let next = (0..save.characters().clamp(1, 12))
+        .filter_map(|c| {
+            let lv = at(&save.numbers(&format!("Lv0_{c}"), &[]), 0);
+            let goal = (100.0 * (lv / 100.0).floor() + 100.0).max(500.0);
+            (lv.is_finite() && lv > 0.0).then_some((goal - lv, goal, c))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    if let Some((_, goal, c)) = next {
+        let who = save.names.get(c).cloned().unwrap_or_else(|| format!("character {}", c + 1));
+        m.note = Some(format!("Points come from Class LVs: one per 100 past 400 on each character. Your next is at Class LV {goal} on {who}."));
+    }
     m
 }
 
