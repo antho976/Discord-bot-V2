@@ -206,19 +206,20 @@ def tables(js: str) -> tuple[dict, dict]:
 
 # --- items: ID -> English name ------------------------------------------------------------------
 
-ITEM = re.compile(r'\.addNewQuest\("([^"]+)",e\)')
+ITEM = re.compile(r'\.addNew(?:Quest|Equip|Consumable|Item)\("([^"]+)",e\)')
 DISPLAY = re.compile(r'displayName="([^"]*)"')
 
 
 def item_names(js: str) -> dict[str, str]:
     """`t.h.displayName="Heart_Stamp", ... e.h.common=t, P.addNewQuest("StampA1",e)`: each item's
-    display name is the last one set before it is registered."""
+    display name is the last one set before it is registered (addNewQuest, addNewEquip,
+    addNewConsumable or addNewItem). `|` in a name is a line break."""
     out = {}
     last = 0
     for m in ITEM.finditer(js):
         names = DISPLAY.findall(js, last, m.start())
         if names:
-            out[m.group(1)] = names[-1].replace("_", " ")
+            out[m.group(1)] = names[-1].replace("_", " ").replace("|", " ")
         last = m.end()
     return out
 

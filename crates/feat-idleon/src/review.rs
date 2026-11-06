@@ -128,8 +128,9 @@ pub struct Review {
 }
 
 impl Review {
-    pub fn new(save: &Save, mechanics: Vec<Mechanic>) -> Review {
-        let world = reached(&mechanics);
+    /// `world` is the highest world the account has reached (`checks::world_reached`).
+    pub fn new(save: &Save, mechanics: Vec<Mechanic>, world: u8) -> Review {
+        let world = world.clamp(1, 7);
         let not_started: Vec<usize> = mechanics.iter().enumerate().filter(|(_, m)| m.world > 0 && m.world <= world && m.untouched()).map(|(i, _)| i).collect();
         let next = pick_next(&mechanics, world, &not_started);
         Review {
@@ -155,10 +156,6 @@ impl Review {
 }
 
 /// The highest world with any progress in it.
-fn reached(mechanics: &[Mechanic]) -> u8 {
-    mechanics.iter().filter(|m| m.world > 0 && m.have() > 0.0).map(|m| m.world).max().unwrap_or(1)
-}
-
 fn world_avg(mechanics: &[Mechanic], world: u8) -> Option<f64> {
     let ms: Vec<f64> = mechanics.iter().filter(|m| m.world == world && m.total() > 0.0).map(Mechanic::share).collect();
     (!ms.is_empty()).then(|| ms.iter().sum::<f64>() / ms.len() as f64)

@@ -9,6 +9,9 @@ use bot_core::serde_json::{self, Map, Value};
 
 use crate::game::num;
 
+/// More characters than the game allows, so nothing real is cut.
+pub const MAX_CHARACTERS: usize = 16;
+
 /// Biggest paste accepted. Late-game saves are about 1 MB.
 pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 
@@ -56,6 +59,9 @@ impl Save {
         if names.is_empty() {
             names = string_list(data.get("playerNames")).or_else(|| string_list(data.get("PlayerNames"))).unwrap_or_default();
         }
+        // The game allows 12 characters; a paste claiming thousands would make every
+        // per-character check loop over them.
+        names.truncate(MAX_CHARACTERS);
         // Tidy the save's own JSON-in-text once, so every read after is plain.
         for v in data.values_mut() {
             if let Value::String(s) = v
@@ -96,7 +102,7 @@ impl Save {
         if !self.names.is_empty() {
             return self.names.len();
         }
-        (0..12).take_while(|i| self.data.contains_key(&format!("Lv0_{i}"))).count()
+        (0..MAX_CHARACTERS).take_while(|i| self.data.contains_key(&format!("Lv0_{i}"))).count()
     }
 }
 

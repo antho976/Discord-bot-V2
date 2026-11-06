@@ -23,7 +23,7 @@ use bot_core::web::{FormData, WebError, WebResult};
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, NavItem, feature_async};
 use bot_core::tokio::sync::Semaphore;
 
-pub use checks::all as run_checks;
+pub use checks::{all as run_checks, world_reached};
 pub use pictures::has as has_picture;
 
 pub const KEY: &str = "idleon";
@@ -86,7 +86,7 @@ async fn check(State(ctx): State<Ctx>, Path(guild): Path<u64>, form: FormData) -
         return Ok(page::render(&ctx, guild, page::State::Ask { error: Some("Paste your save first.") }).into_response());
     }
     let review = match save::Save::parse(&text) {
-        Ok(s) => review::Review::new(&s, checks::all(&s)),
+        Ok(s) => review::Review::new(&s, checks::all(&s), checks::world_reached(&s)),
         Err(e) => return Ok(page::render(&ctx, guild, page::State::Ask { error: Some(e.message()) }).into_response()),
     };
     Ok(page::render(&ctx, guild, page::State::Done(&review)).into_response())

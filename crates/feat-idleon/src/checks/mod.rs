@@ -23,6 +23,28 @@ pub(crate) use crate::game::{GAME, num, words};
 pub(crate) use crate::review::{Count, Item, Mechanic};
 pub(crate) use crate::save::Save;
 
+/// The highest world reached: kills on that world's first map by any character (map 51 for
+/// World 2, then every 50), or the account flags World 6 and 7 set when you arrive
+/// (`OptLacc[194]`, `[408]`). Mechanics can't tell: some count things from every world.
+pub fn world_reached(save: &Save) -> u8 {
+    let details = rows("MapDetails", &[]);
+    let chars = save.characters();
+    for w in (2..=7u8).rev() {
+        let flag = match w {
+            7 => save.option(408) > 0.0,
+            6 => save.option(194) > 0.0,
+            _ => false,
+        };
+        let map = 50 * usize::from(w - 1) + 1;
+        let req = details.get(map).and_then(|d| d.get(0)).and_then(|d| d.get(0)).map(num).unwrap_or(0.0);
+        let killed = (0..chars).any(|c| save.at(&format!("KLA_{c}"), &[map, 0]).map(num).is_some_and(|left| left < req));
+        if flag || killed {
+            return w;
+        }
+    }
+    1
+}
+
 pub fn all(save: &Save) -> Vec<Mechanic> {
     let mut v = Vec::new();
     v.extend(w1::all(save));
