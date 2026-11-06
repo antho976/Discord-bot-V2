@@ -81,7 +81,7 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
                             State::Ask { error } => (ask(guild, error)),
                             State::Done(r) => {
                                 (done(guild, r))
-                                (report_box(guild, r))
+                                (report_box(guild, r, access.signed_in))
                             },
                         }
                     }
@@ -112,13 +112,19 @@ fn closed_door(a: &Access) -> Markup {
 }
 
 /// "Report a problem": a note to staff about what looks wrong, sent to the suggestion box.
-fn report_box(guild: u64, r: &Review) -> Markup {
+fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
     html! {
         section.ia-panel.ia-report #ia-report {
             div.ia-ask-text {
                 h2 { "Report a problem" }
                 p { "A number that's wrong, advice that doesn't make sense, something missing: tell staff here. It goes to the suggestion box with your name, and says which account and card it's about." }
             }
+            @if !signed_in {
+                div.ia-door {
+                    p { "Reports go out under your Discord name, so staff can ask you about it. Sign in to send one; your results stay on this page only until you leave it, so copy anything you want to mention first." }
+                    a.btn href="/login" target="_blank" rel="noopener" { "Sign in with Discord" }
+                }
+            } @else {
             form method="post" action={ "/p/" (guild) "/idleon/report" } data-full {
                 input type="hidden" name="account" value=(r.name);
                 label.ia-report-card {
@@ -133,6 +139,7 @@ fn report_box(guild: u64, r: &Review) -> Markup {
                     span.ia-report-msg role="status" {}
                     button.btn.primary type="submit" { "Send to staff" }
                 }
+            }
             }
         }
     }
