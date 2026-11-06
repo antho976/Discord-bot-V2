@@ -227,7 +227,7 @@ fn done(guild: u64, r: &Review) -> Markup {
                                     b { (m.name) }
                                     span { (why(m, &n.why)) }
                                 }
-                                span.ia-meter { span style={ "--s:" (m.share()) } {} }
+                                span.ia-meter { span style={ "--s:" (share3(m.share())) } {} }
                                 span.ia-fig { (fig(m)) }
                                 span.ia-tag { (world_tag(m.world)) }
                             }
@@ -247,6 +247,7 @@ fn done(guild: u64, r: &Review) -> Markup {
                     }
                 }
             }
+            (items_data(r))
             @for w in &worlds {
                 div.ia-world data-w=(w) style={ "--w: var(--w" (w) ")" } {
                     div.ia-grid {
@@ -258,9 +259,37 @@ fn done(guild: u64, r: &Review) -> Markup {
     }
 }
 
+/// Every card's full item list as compact data, for the page script to draw when a "Show
+/// all" opens: per mechanic, the items not at max (in the card's order) and those at max, each
+/// `[name, picture or null, share 0-1, figure text, 1 when it has a max]`. Character names come from the paste, so the
+/// JSON is made safe for a script tag and the script only ever sets text, never HTML.
+fn items_data(r: &Review) -> Markup {
+    use bot_core::serde_json::{Map, Value, json};
+    let row = |i: &Item| {
+        let pic = i.picture.as_deref().filter(|p| pictures::has(p));
+        json!([i.name, pic, (i.share() * 1000.0).round() / 1000.0, item_fig(i), u8::from(i.max > 0.0)])
+    };
+    let mut all = Map::new();
+    for m in &r.mechanics {
+        let open: Vec<Value> = m.open_items().into_iter().map(row).collect();
+        let maxed: Vec<Value> = m.items.iter().filter(|i| i.done()).map(row).collect();
+        all.insert(m.key.to_string(), json!([open, maxed]));
+    }
+    let text = Value::Object(all).to_string().replace('<', "\\u003c").replace('>', "\\u003e").replace('&', "\\u0026");
+    html! { script #ia-items type="application/json" { (PreEscaped(text)) } }
+}
+
+/// What an item's row says on the right: its named level, "17 / 40", or "Lv 17".
+fn item_fig(i: &Item) -> String {
+    match &i.level_name {
+        Some(n) => n.clone(),
+        None if i.max > 0.0 => format!("{} / {}", num(i.level), num(i.max)),
+        None => format!("Lv {}", num(i.level)),
+    }
+}
+
 fn card(m: &Mechanic) -> Markup {
     let open = m.open_items();
-    let maxed: Vec<&Item> = m.items.iter().filter(|i| i.done()).collect();
     let tiers = m.tiers();
     let current = tiers.iter().position(|t| !t.complete());
     // What you hold and what raises the cap only matter while there's a tier to work on.
@@ -278,7 +307,7 @@ fn card(m: &Mechanic) -> Markup {
                     span.ia-pct.open { "No max" }
                 } @else {
                     span.ia-pct.done[m.done()] { (pct(m.share())) }
-                    span.ia-meter.wide { span style={ "--s:" (m.share()) } {} }
+                    span.ia-meter.wide { span style={ "--s:" (share3(m.share())) } {} }
                 }
             }
             div.ia-body {
@@ -306,7 +335,7 @@ fn card(m: &Mechanic) -> Markup {
                                 }
                                 b { (t.label) }
                                 span.ia-fig { (t.met) " of " (t.need) }
-                                span.ia-meter { span style={ "--s:" (t.met as f64 / t.need.max(1) as f64) } {} }
+                                span.ia-meter { span style={ "--s:" (share3(t.met as f64 / t.need.max(1) as f64)) } {} }
                                 @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty()) { span.ia-rung-note { (n) } }
                             }
                         }
@@ -379,15 +408,11 @@ fn card(m: &Mechanic) -> Markup {
                     }
                 }
                 @if !m.items.is_empty() {
+                    // Drawn by the page script from the page's item data when first opened: these
+                    // lists were three quarters of the page and most are never opened.
                     details.ia-all {
                         summary { "Show all " (m.items.len()) }
-                        div.ia-items {
-                            @for i in &open { (item(i)) }
-                            @if !maxed.is_empty() {
-                                p.ia-maxed-head { (maxed.len()) " at max" }
-                                div.ia-maxed { @for i in &maxed { (item(i)) } }
-                            }
-                        }
+                        div.ia-items data-key=(m.key) {}
                     }
                 }
             }
@@ -471,7 +496,7 @@ fn item(i: &Item) -> Markup {
                 img src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy";
             } @else { span.ia-item-dot {} }
             span.ia-item-name { (i.name) }
-            @if i.max > 0.0 { span.ia-meter { span style={ "--s:" (i.share()) } {} } } @else { span {} }
+            @if i.max > 0.0 { span.ia-meter { span style={ "--s:" (share3(i.share())) } {} } } @else { span {} }
             span.ia-fig {
                 @match &i.level_name {
                     Some(n) => (n),
@@ -514,6 +539,11 @@ fn fig(m: &Mechanic) -> String {
             None => format!("{} {}", num(m.have()), m.unit),
         },
     }
+}
+
+/// A share for a bar's width, to three places: the bar can't show more.
+fn share3(s: f64) -> String {
+    format!("{:.3}", s.clamp(0.0, 1.0)).trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 fn pct(s: f64) -> String {
@@ -594,6 +624,35 @@ function flip(d,open){
     },fin);
   }
 }
+// "Show all" lists arrive as data and are drawn the first time each opens.
+var data=null;
+document.addEventListener("toggle",function(e){
+  var d=e.target;
+  if(!d.classList||!d.classList.contains("ia-all")||!d.open)return;
+  var box=d.querySelector(".ia-items");
+  if(!box||box.dataset.drawn)return;
+  if(!data){var el=document.getElementById("ia-items");try{data=JSON.parse(el?el.textContent:"{}")}catch(x){data={}}}
+  var lists=data[box.dataset.key]||[[],[]];
+  function row(r,done){
+    var it=document.createElement("div");it.className="ia-item"+(done?" done":"");
+    if(r[1]){var im=document.createElement("img");im.src="/idleon/pic/"+r[1]+".png";im.alt="";im.loading="lazy";it.appendChild(im)}
+    else{var dot=document.createElement("span");dot.className="ia-item-dot";it.appendChild(dot)}
+    var nm=document.createElement("span");nm.className="ia-item-name";nm.textContent=r[0];it.appendChild(nm);
+    var mt=document.createElement("span");
+    if(r[4]){mt.className="ia-meter";var f=document.createElement("span");f.style.setProperty("--s",r[2]);mt.appendChild(f)}
+    it.appendChild(mt);
+    var fg=document.createElement("span");fg.className="ia-fig";fg.textContent=r[3];it.appendChild(fg);
+    return it;
+  }
+  var frag=document.createDocumentFragment();
+  lists[0].forEach(function(r){frag.appendChild(row(r,false))});
+  if(lists[1].length){
+    var h=document.createElement("p");h.className="ia-maxed-head";h.textContent=lists[1].length+" at max";frag.appendChild(h);
+    var mx=document.createElement("div");mx.className="ia-maxed";
+    lists[1].forEach(function(r){mx.appendChild(row(r,true))});frag.appendChild(mx);
+  }
+  box.appendChild(frag);box.dataset.drawn="1";
+},true);
 // Report a problem without leaving your results.
 var rf=document.querySelector("#ia-report form");
 if(rf)rf.addEventListener("submit",function(e){
