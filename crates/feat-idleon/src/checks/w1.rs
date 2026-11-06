@@ -124,7 +124,8 @@ fn statue_flair(save: &Save) -> Mechanic {
         .enumerate()
         .map(|(i, r)| Item::new(format!("{} Statue", label(text(r, 0))), pic(format!("Statue{}", i + 1)), at(&levels, i), 4.0))
         .collect();
-    let mut m = mech("statue-flair", 1, "Statue Flair", pic("Statue1".into()), Count::Levels, "levels", items);
+    // World 7: flair is unlocked from the W7 armory, so it is weighed against W7 progress.
+    let mut m = mech("statue-flair", 7, "Statue Flair", pic("Statue1".into()), Count::Levels, "levels", items);
     let fourth = if super::w7::menagerie_unlock(save, 17) { "which you have" } else { "which you don't have yet" };
     m.note = Some(format!("Opens with the Statue Flair upgrade in the Armory. Each statue goes to 3, and to 4 with the Menagerie unlock that raises Flair, {fourth}."));
     m

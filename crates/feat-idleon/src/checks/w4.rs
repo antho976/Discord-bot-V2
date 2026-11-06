@@ -264,5 +264,6 @@ fn cape_vine(save: &Save) -> Mechanic {
             Item::new(label(text(c, 1)), pic(id.to_string()), f64::from(deposited.contains(&id)), 1.0)
         })
         .collect();
-    mech("cape-vine", 4, "Cape Vine", pic("EquipmentCape0".into()), Count::Done, "deposited", items)
+    // World 7: the vine is Spelunking content (`Spelunk[54]`), so it is weighed against W7 progress.
+    mech("cape-vine", 7, "Cape Vine", pic("EquipmentCape0".into()), Count::Done, "deposited", items)
 }
