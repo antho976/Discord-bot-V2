@@ -198,24 +198,6 @@ fn done(guild: u64, r: &Review) -> Markup {
                 }
             }
         }
-        @if !r.not_started.is_empty() {
-            section.ia-panel {
-                div.ia-head {
-                    h2 { "Not started yet" }
-                    p { "In worlds you've reached, with no progress at all. New since you last played, or skipped" }
-                }
-                div.ia-fresh {
-                    @for &i in &r.not_started {
-                        @let m = &r.mechanics[i];
-                        a.ia-fresh-item href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
-                            (mark(m))
-                            span { (m.name) }
-                            span.ia-tag { (world_tag(m.world)) }
-                        }
-                    }
-                }
-            }
-        }
         @if !r.next.is_empty() {
             section.ia-panel {
                 div.ia-head {
@@ -241,6 +223,27 @@ fn done(guild: u64, r: &Review) -> Markup {
                 }
             }
         }
+        // After Do next (the page's answer comes first), and only the first few up front: a
+        // returning player can have twenty-odd, one per line on a phone.
+        @if !r.not_started.is_empty() {
+            section.ia-panel {
+                div.ia-head {
+                    h2 { "Not started yet" }
+                    p { "In worlds you've reached, with no progress at all. New since you last played, or skipped" }
+                }
+                div.ia-fresh {
+                    @for &i in r.not_started.iter().take(FRESH) { (fresh(&r.mechanics[i])) }
+                }
+                @if r.not_started.len() > FRESH {
+                    details.ia-fresh-more {
+                        summary { "Show " (r.not_started.len() - FRESH) " more" }
+                        div.ia-fresh {
+                            @for &i in r.not_started.iter().skip(FRESH) { (fresh(&r.mechanics[i])) }
+                        }
+                    }
+                }
+            }
+        }
         section.ia-worlds {
             div.ia-tabs role="tablist" {
                 @for w in &worlds {
@@ -260,6 +263,20 @@ fn done(guild: u64, r: &Review) -> Markup {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Not started chips shown before "Show N more".
+const FRESH: usize = 8;
+
+/// A Not started chip: opens its card.
+fn fresh(m: &Mechanic) -> Markup {
+    html! {
+        a.ia-fresh-item href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
+            (mark(m))
+            span { (m.name) }
+            span.ia-tag { (world_tag(m.world)) }
         }
     }
 }
@@ -878,6 +895,10 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-raise-text b { font-size: 13.5px; font-weight: 500; }
 .ia-raise-text span { font-size: 13px; line-height: 1.4; color: var(--ink-3); overflow-wrap: anywhere; }
 .ia-raise.owned .ia-raise-text b { color: var(--ink-2); font-weight: 400; }
+.ia-fresh-more > summary { display: inline-block; margin-top: 10px; cursor: pointer; font-size: 13px; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 3px; list-style: none; }
+.ia-fresh-more > summary::-webkit-details-marker { display: none; }
+.ia-fresh-more[open] > summary { display: none; }
+.ia-fresh-more .ia-fresh { margin-top: 8px; }
 .ia-all > summary { display: inline-block; white-space: nowrap; cursor: pointer; font-size: 13px; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 3px; list-style: none; }
 .ia-all > summary::-webkit-details-marker { display: none; }
 .ia-all[open] > summary { margin-bottom: 8px; }
@@ -920,7 +941,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
   .ia-card > summary:hover { background: var(--hover); }
   .ia-card[open] > summary:hover { background: linear-gradient(var(--hover), var(--hover)), var(--raised); }
   .ia-fresh-item:hover { background: var(--hover); }
-  .ia-all > summary:hover { color: var(--ink); }
+  .ia-all > summary:hover, .ia-fresh-more > summary:hover { color: var(--ink); }
 }
 @media (hover: none) {
   .ia-row:active, .ia-tabs label:active { background: var(--hover); }
@@ -929,6 +950,10 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 /* Under 16 px a phone zooms into the box when you tap it. */
 @media (pointer: coarse) {
   .ia-ask textarea, .ia-report textarea, .ia-report select { font-size: 16px; }
+  /* Fingers, not a pointer: taps at least 40 px tall. */
+  .ia-tabs label { height: 40px; }
+  .ia-all > summary, .ia-fresh-more > summary { padding: 10px 0; }
+  .ia-all[open] > summary { margin-bottom: 0; }
 }
 
 @media (max-width: 720px) {
@@ -951,6 +976,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
   .ia-tabs label { flex: none; }
   .ia-grid, .ia-items, .ia-maxed { grid-template-columns: minmax(0, 1fr); }
   .ia-card > summary { padding: 12px 14px; }
+  .ia-card-name span { white-space: normal; }
   .ia-body { padding: 4px 14px 16px; gap: 16px; }
   /* The ladder as a short list: a row per tier, the bar under it. */
   .ia-ladder { grid-template-columns: minmax(0, 1fr); gap: 4px; }
