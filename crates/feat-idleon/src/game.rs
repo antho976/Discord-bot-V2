@@ -58,7 +58,8 @@ pub fn words(s: &str) -> String {
 pub fn num(v: &Value) -> f64 {
     match v {
         Value::Number(n) => n.as_f64().unwrap_or(0.0),
-        Value::String(s) => s.trim().parse().unwrap_or(0.0),
+        // Rust reads "inf" and "NaN" as numbers; the game never writes them.
+        Value::String(s) => s.trim().parse::<f64>().ok().filter(|v| v.is_finite()).unwrap_or(0.0),
         Value::Bool(b) => f64::from(u8::from(*b)),
         _ => 0.0,
     }

@@ -12,8 +12,10 @@ use crate::game::num;
 /// More characters than the game allows, so nothing real is cut.
 pub const MAX_CHARACTERS: usize = 16;
 
-/// Biggest paste accepted. Late-game saves are about 1 MB.
-pub const MAX_BYTES: usize = 8 * 1024 * 1024;
+/// Biggest paste accepted. The biggest real saves seen are 1.4 MB (late World 7). A paste costs
+/// up to ~17 times its size in memory while it's read (an 8 MB one of numbers peaked at 136 MB),
+/// so the cap keeps about three times the headroom, not more.
+pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct Save {
     data: Map<String, Value>,

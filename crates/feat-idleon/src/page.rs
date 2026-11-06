@@ -111,6 +111,10 @@ fn closed_door(a: &Access) -> Markup {
     }
 }
 
+/// The longest report text: the suggestion box's limit less the longest header the report gets
+/// ("Account check report (40 characters), 60 characters:").
+const REPORT_TEXT: usize = 1370;
+
 /// "Report a problem": a note to staff about what looks wrong, sent to the suggestion box.
 fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
     html! {
@@ -118,11 +122,25 @@ fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
             div.ia-ask-text {
                 h2 { "Report a problem" }
                 p { "A number that's wrong, advice that doesn't make sense, something missing: tell staff here. It goes to the suggestion box with your name, and says which account and card it's about." }
+                @if !signed_in { p.ia-note { "Staff with dashboard access can " a href="/login" target="_blank" rel="noopener" { "sign in" } " and send it from here." } }
             }
             @if !signed_in {
-                div.ia-door {
-                    p { "Reports go out under your Discord name, so staff can ask you about it. Sign in to send one; your results stay on this page only until you leave it, so copy anything you want to mention first." }
-                    a.btn href="/login" target="_blank" rel="noopener" { "Sign in with Discord" }
+                // Signing in here is for dashboard users, so members send it with /suggest: the
+                // page writes the report for them to paste.
+                form.ia-report-copy data-account=(r.name) {
+                    p.ia-note { "Write it here, copy it, then send it with /suggest in the server." }
+                    label.ia-report-card {
+                        span { "Card (optional)" }
+                        select name="card" {
+                            option value="" { "Anything" }
+                            @for m in &r.mechanics { option value=(m.name) { (m.name) } }
+                        }
+                    }
+                    textarea name="text" rows="4" maxlength=(REPORT_TEXT) required placeholder="What looks wrong, and what you expected" {}
+                    div.ia-ask-actions {
+                        span.ia-report-msg role="status" {}
+                        button.btn.primary type="submit" { "Copy for /suggest" }
+                    }
                 }
             } @else {
             form method="post" action={ "/p/" (guild) "/idleon/report" } data-full {
@@ -134,7 +152,7 @@ fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
                         @for m in &r.mechanics { option value=(m.name) { (m.name) } }
                     }
                 }
-                textarea name="text" rows="4" maxlength="1500" required placeholder="What looks wrong, and what you expected" {}
+                textarea name="text" rows="4" maxlength=(REPORT_TEXT) required placeholder="What looks wrong, and what you expected" {}
                 div.ia-ask-actions {
                     span.ia-report-msg role="status" {}
                     button.btn.primary type="submit" { "Send to staff" }
@@ -161,7 +179,7 @@ fn ask(guild: u64, error: Option<&str>) -> Markup {
                     label.btn {
                         (ui::icon(bot_core::Icon::Enter))
                         "Open a file"
-                        input #ia-file type="file" accept=".json,.txt,application/json" hidden;
+                        input #ia-file type="file" accept=".json,.txt,application/json" data-max=(crate::save::MAX_BYTES) hidden;
                     }
                     // Shown by the page script where the browser can read the clipboard: on a
                     // phone, pressing and holding in the box to paste a megabyte is the hard part.
@@ -596,8 +614,13 @@ fn pct(s: f64) -> String {
     if (99.5..100.0).contains(&p) { "99%".into() } else { format!("{:.0}%", p) }
 }
 
-/// Whole numbers with thousands separators; anything else with one decimal.
+/// Whole numbers with thousands separators; anything else with one decimal. From a quadrillion
+/// on, the game's short form ("1.2Qa", "3.4e21"): past 2^53 the digits aren't real, and past
+/// 2^64 a plain cast reads 18,446,744,073,709,551,615.
 pub(crate) fn num(n: f64) -> String {
+    if !n.is_finite() || n.abs() >= 1e15 {
+        return crate::checks::big(n);
+    }
     if n.fract().abs() > 1e-9 {
         return format!("{n:.1}");
     }
@@ -621,7 +644,9 @@ pub(crate) fn num(n: f64) -> String {
 const JS: &str = r##"(function(){
 var f=document.getElementById("ia-file"),t=document.getElementById("ia-save"),pb=document.getElementById("ia-paste"),er=document.getElementById("ia-err");
 function say(s){if(er){er.textContent=s;er.hidden=false}}
-if(f&&t)f.addEventListener("change",function(){var x=f.files&&f.files[0];if(x)x.text().then(function(s){t.value=s;t.form.requestSubmit()})});
+if(f&&t)f.addEventListener("change",function(){var x=f.files&&f.files[0];if(!x)return;
+  if(x.size>+f.dataset.max){say("That file is bigger than any Idleon save. Pick the JSON you saved from IdleonToolbox or Idleon Efficiency.");f.value="";return}
+  x.text().then(function(s){t.value=s;t.form.requestSubmit()})});
 // Paste from clipboard: one tap on a phone, and the megabyte never has to be drawn in the box.
 if(pb&&t&&navigator.clipboard&&navigator.clipboard.readText){
   pb.hidden=false;
@@ -723,8 +748,17 @@ document.addEventListener("toggle",function(e){
   }
   box.appendChild(frag);box.dataset.drawn="1";
 },true);
+// Signed out: the report as text for /suggest, copied to the clipboard.
+var rc=document.querySelector(".ia-report-copy");
+if(rc)rc.addEventListener("submit",function(e){
+  e.preventDefault();
+  var msg=rc.querySelector(".ia-report-msg"),card=rc.querySelector("select").value,acc=rc.dataset.account;
+  var txt="Account check report"+(acc?" ("+acc+")":"")+(card?", "+card:"")+": "+rc.querySelector("textarea").value.trim();
+  var done=function(){msg.textContent="Copied. Now run /suggest in the server and paste it."},fail=function(){msg.textContent="Couldn't copy it here: select the text in the box and copy it yourself."};
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(done,fail);else fail();
+});
 // Report a problem without leaving your results.
-var rf=document.querySelector("#ia-report form");
+var rf=document.querySelector("#ia-report form[action]");
 if(rf)rf.addEventListener("submit",function(e){
   e.preventDefault();
   var msg=rf.querySelector(".ia-report-msg"),b=rf.querySelector("button");
@@ -923,6 +957,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-report { display: grid; gap: 18px; }
 @container col (min-width: 900px) { .ia-report { grid-template-columns: 320px minmax(0, 1fr); gap: 28px; } }
 .ia-report form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ia-report-copy .ia-note { padding: 0; }
 .ia-report textarea { width: 100%; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 14px/1.5 var(--sans); }
 .ia-report textarea:focus, .ia-report select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 .ia-report-card { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); }

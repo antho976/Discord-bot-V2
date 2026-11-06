@@ -376,7 +376,7 @@ fn islands(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    mech("islands", 5, "Sailing Islands", pic("SailingNewIsle1".into()), Count::Done, "discovered", items)
+    mech("sailing-islands", 5, "Sailing Islands", pic("SailingNewIsle1".into()), Count::Done, "discovered", items)
 }
 
 /// What boat `i` costs in gold bars (N.js `NewCaptBoatSlot` with 1):

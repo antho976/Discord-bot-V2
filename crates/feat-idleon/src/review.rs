@@ -377,7 +377,9 @@ fn pick_next(mechanics: &[Mechanic], reached: u8, not_started: &[usize]) -> Vec<
         if out.len() >= NEXT {
             break;
         }
-        out.push(Next { mechanic: i, why: Why::Behind { world_avg: avg } });
+        if !out.iter().any(|n| n.mechanic == i) {
+            out.push(Next { mechanic: i, why: Why::Behind { world_avg: avg } });
+        }
     }
     out
 }
@@ -416,6 +418,29 @@ mod tests {
         let next = pick_next(&ms, 2, &[]);
         assert_eq!(next.first().map(|n| ms[n.mechanic].key), Some("c"));
         assert!(next.iter().all(|n| ms[n.mechanic].key != "a" && ms[n.mechanic].key != "d"));
+    }
+
+    #[test]
+    fn a_mechanic_is_next_once() {
+        // Four far behind fill the "behind" share; e is both behind and one item from done.
+        let mut e: Vec<(f64, f64)> = vec![(1.0, 1.0); 4];
+        e.push((0.0, 100.0));
+        let ms = vec![
+            mech("x", 2, &[(1.0, 1.0)]),
+            mech("y", 2, &[(1.0, 1.0)]),
+            mech("z", 2, &[(1.0, 1.0)]),
+            mech("a", 2, &[(1.0, 100.0)]),
+            mech("b", 2, &[(1.0, 100.0)]),
+            mech("c", 2, &[(1.0, 100.0)]),
+            mech("d", 2, &[(1.0, 100.0)]),
+            mech("e", 2, &e),
+        ];
+        let next = pick_next(&ms, 2, &[]);
+        let mut seen: Vec<usize> = next.iter().map(|n| n.mechanic).collect();
+        let n = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), n, "{:?}", next.iter().map(|n| ms[n.mechanic].key).collect::<Vec<_>>());
     }
 
     #[test]

@@ -172,6 +172,12 @@ mod tests {
         let s = Save::parse(r#"{"OptLacc": []}"#).unwrap();
         let ms = all(&s);
         assert!(ms.len() >= 25);
+        // The key is the card's id and its Show all data: two cards can't share one.
+        let mut keys: Vec<&str> = ms.iter().map(|m| m.key).collect();
+        keys.sort_unstable();
+        let n = keys.len();
+        keys.dedup();
+        assert_eq!(keys.len(), n, "two mechanics share a key");
         for m in &ms {
             assert!(!m.items.is_empty(), "{} has no items", m.key);
             assert_eq!(m.have(), 0.0, "{} reads progress from nothing", m.key);
