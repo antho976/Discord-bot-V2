@@ -114,6 +114,28 @@ pub fn enter(key: String) -> Result<Pass, Refused> {
     Ok(Pass { key })
 }
 
+/// Reports one person may send in an hour.
+const REPORTS: usize = 5;
+const HOUR: std::time::Duration = std::time::Duration::from_secs(3600);
+static SENT: LazyLock<Mutex<HashMap<u64, Vec<Instant>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Counts a report from `user` and says whether it may go: at most `REPORTS` an hour each.
+/// Every try counts, so someone the server turns away can't make it ask Discord again and again.
+pub fn report(user: u64) -> bool {
+    let now = Instant::now();
+    let mut map = SENT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if map.len() >= KEPT && !map.contains_key(&user) {
+        map.retain(|_, times| times.iter().any(|t| now.saturating_duration_since(*t) < HOUR));
+    }
+    let times = map.entry(user).or_default();
+    times.retain(|t| now.saturating_duration_since(*t) < HOUR);
+    if times.len() >= REPORTS {
+        return false;
+    }
+    times.push(now);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,6 +156,16 @@ mod tests {
         assert_eq!(enter(key.clone()).err(), Some(Refused::TooOften));
         // Another address is untouched.
         assert!(enter("test:other".into()).is_ok());
+    }
+
+    #[test]
+    fn reports_are_a_few_an_hour_each() {
+        let (a, b) = (900_000_000_000_000_001, 900_000_000_000_000_002);
+        for _ in 0..REPORTS {
+            assert!(report(a));
+        }
+        assert!(!report(a));
+        assert!(report(b));
     }
 
     #[test]

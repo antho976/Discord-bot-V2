@@ -2,6 +2,10 @@
 //!
 //! Nobody gets in unless they're on the dashboard's user list. The owner (`OWNER_ID`) is always
 //! an admin. Admins see everything; everyone else gets View or Edit per page, per server.
+//!
+//! Public pages (`/p/...`) also let anyone sign in with Discord, to act as themselves there (a
+//! report sent in their name). That's a [`Member`]: its own session and cookie, never a
+//! [`User`], so it opens nothing on the dashboard.
 
 use axum::Router;
 use axum::extract::{FromRequestParts, Query, State};
@@ -21,6 +25,10 @@ use crate::Ctx;
 const SESSION_COOKIE: &str = "sid";
 const STATE_COOKIE: &str = "oauth_state";
 const SESSION_DAYS: i64 = 30;
+/// A member's session on the public pages.
+const MEMBER_COOKIE: &str = "msid";
+/// The public page a member's sign-in returns to. Its presence makes a sign-in a member's.
+const RETURN_COOKIE: &str = "oauth_to";
 
 /// How much someone can do on a page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -240,6 +248,58 @@ impl FromRequestParts<Ctx> for MaybeUser {
     }
 }
 
+/// Someone signed in with Discord on a public page: who they are, and nothing more. They needn't
+/// be on the dashboard's list, and this never opens a dashboard page. A dashboard user's own
+/// session counts too, so staff don't sign in twice.
+#[derive(Debug, Clone)]
+pub struct Member {
+    pub id: u64,
+    pub name: String,
+    pub avatar: Option<String>,
+}
+
+/// The [`Member`] looking at a public page, if they've signed in.
+pub struct MaybeMember(pub Option<Member>);
+
+impl FromRequestParts<Ctx> for MaybeMember {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, ctx: &Ctx) -> Result<Self, Self::Rejection> {
+        // The one they signed in with on a public page first: it's the one that page's Sign out
+        // is for.
+        if let Some(token) = cookie(&parts.headers, MEMBER_COOKIE) {
+            let member = ctx
+                .db
+                .with(|c| {
+                    c.query_row(
+                        "SELECT user_id, name, avatar FROM member_sessions WHERE token_hash = ?1 AND expires_at > ?2",
+                        params![hash_token(&token), crate::now_ms()],
+                        |r| Ok(Member { id: r.get::<_, i64>(0)? as u64, name: r.get(1)?, avatar: r.get(2)? }),
+                    )
+                    .optional()
+                })
+                .ok()
+                .flatten();
+            if member.is_some() {
+                return Ok(MaybeMember(member));
+            }
+        }
+        let user = User::from_request_parts(parts, ctx).await.ok();
+        Ok(MaybeMember(user.map(|u| Member { id: u.id, name: u.name, avatar: u.avatar })))
+    }
+}
+
+/// Where a public page's "Sign in with Discord" goes: Discord, then back to `to` (a `/p/` path
+/// on this site) signed in as a [`Member`].
+pub fn member_sign_in(to: &str) -> String {
+    format!("/auth/discord?to={}", encode(to))
+}
+
+/// A public page here, that a member's sign-in may return to: `/p/...`, no further than this site.
+fn public_path(to: &str) -> bool {
+    local_path(to) && to.starts_with("/p/") && to.len() <= 300
+}
+
 pub fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
@@ -278,10 +338,13 @@ pub(super) fn routes(preview: bool) -> Router<Ctx> {
     } else {
         r.route("/login", get(login_page))
     };
+    // Preview: a member's sign-in signs in a sample member who isn't on the dashboard's list.
+    let r = if preview { r.route("/dev/member", get(preview_member)) } else { r };
     r
         .route("/auth/discord", get(start))
         .route("/auth/callback", get(callback))
         .route("/logout", post(logout))
+        .route("/auth/signout", post(sign_out))
 }
 
 #[derive(Deserialize)]
@@ -303,6 +366,28 @@ async fn preview_login(State(ctx): State<Ctx>, Query(q): Query<PreviewQuery>) ->
     // would leave it.
     let to = q.to.filter(|t| local_path(t)).unwrap_or_else(|| "/".into());
     Ok(([(header::SET_COOKIE, set_cookie(&ctx, SESSION_COOKIE, &session, 86_400))], Redirect::to(&to)).into_response())
+}
+
+/// Preview only: sign in as a sample member with no dashboard access (juniper.fern), the way a
+/// member's Discord sign-in would, and go back to the public page.
+async fn preview_member(State(ctx): State<Ctx>, Query(q): Query<PreviewQuery>) -> WebResult {
+    let (id, name) = crate::preview::MEMBERS[2];
+    let session = new_member_session(&ctx, id, name, None)?;
+    let to = q.to.filter(|t| public_path(t)).unwrap_or_else(|| "/".into());
+    Ok(([(header::SET_COOKIE, set_cookie(&ctx, MEMBER_COOKIE, &session, SESSION_DAYS * 86_400))], Redirect::to(&to)).into_response())
+}
+
+/// A new member session; answers its token for the cookie.
+fn new_member_session(ctx: &Ctx, id: u64, name: &str, avatar: Option<&str>) -> WebResult<String> {
+    let session = random_token();
+    let now = crate::now_ms();
+    ctx.db.with(|c| {
+        c.execute(
+            "INSERT INTO member_sessions (token_hash, user_id, name, avatar, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![hash_token(&session), id as i64, name, avatar, now, now + SESSION_DAYS * 86_400_000],
+        )
+    })?;
+    Ok(session)
 }
 
 /// A path on this site: starts with one slash, with no backslash or control character a
@@ -349,7 +434,19 @@ async fn login_page() -> Response {
     body.into_response()
 }
 
-async fn start(State(ctx): State<Ctx>) -> Response {
+#[derive(Deserialize)]
+struct StartQuery {
+    /// A public page to come back to: makes this a member's sign-in.
+    to: Option<String>,
+}
+
+async fn start(State(ctx): State<Ctx>, Query(q): Query<StartQuery>) -> Response {
+    let to = q.to.filter(|t| public_path(t));
+    if ctx.cfg.preview
+        && let Some(to) = &to
+    {
+        return Redirect::to(&format!("/dev/member?to={}", encode(to))).into_response();
+    }
     let state = random_token();
     let url = format!(
         "https://discord.com/oauth2/authorize?response_type=code&client_id={}&scope=identify&prompt=none&state={}&redirect_uri={}",
@@ -357,7 +454,24 @@ async fn start(State(ctx): State<Ctx>) -> Response {
         state,
         encode(&redirect_uri(&ctx)),
     );
-    ([(header::SET_COOKIE, set_cookie(&ctx, STATE_COOKIE, &state, 600))], Redirect::to(&url)).into_response()
+    let mut res = Redirect::to(&url).into_response();
+    let h = res.headers_mut();
+    h.append(header::SET_COOKIE, set_cookie(&ctx, STATE_COOKIE, &state, 600).parse().unwrap());
+    // Always set or cleared: a member's sign-in left half done must not turn the next dashboard
+    // sign-in into a member's.
+    let back = match &to {
+        Some(to) => set_cookie(&ctx, RETURN_COOKIE, &encode(to), 600),
+        None => set_cookie(&ctx, RETURN_COOKIE, "", 0),
+    };
+    h.append(header::SET_COOKIE, back.parse().unwrap());
+    res
+}
+
+/// The public page a member's sign-in returns to, from its cookie.
+fn return_to(headers: &HeaderMap) -> Option<String> {
+    let raw = cookie(headers, RETURN_COOKIE).filter(|v| !v.is_empty())?;
+    let to = form_urlencoded::parse(format!("to={raw}").as_bytes()).next().map(|(_, v)| v.into_owned())?;
+    public_path(&to).then_some(to)
 }
 
 fn redirect_uri(ctx: &Ctx) -> String {
@@ -389,7 +503,9 @@ struct DiscordMe {
 
 async fn callback(State(ctx): State<Ctx>, headers: HeaderMap, Query(q): Query<CallbackQuery>) -> WebResult {
     let expected = cookie(&headers, STATE_COOKIE);
-    let (Some(code), Some(state)) = (q.code, q.state) else { return Ok(Redirect::to("/login").into_response()) };
+    let member_to = return_to(&headers);
+    // Cancelled at Discord: back where they started.
+    let (Some(code), Some(state)) = (q.code, q.state) else { return Ok(Redirect::to(member_to.as_deref().unwrap_or("/login")).into_response()) };
     if expected.as_deref() != Some(state.as_str()) {
         return Err(WebError::Bad("The sign-in link expired. Try again.".into()));
     }
@@ -414,6 +530,19 @@ async fn callback(State(ctx): State<Ctx>, headers: HeaderMap, Query(q): Query<Ca
         .await?;
     let id: u64 = me.id.parse().map_err(|_| WebError::Bad("Discord sent an odd account id.".into()))?;
     let name = me.global_name.unwrap_or(me.username);
+
+    // A member signing in on a public page: a member session, whoever they are, and back to the
+    // page. The dashboard's list isn't touched.
+    if let Some(to) = member_to {
+        let session = new_member_session(&ctx, id, &name, me.avatar.as_deref())?;
+        let mut res = Redirect::to(&to).into_response();
+        let h = res.headers_mut();
+        h.append(header::SET_COOKIE, set_cookie(&ctx, MEMBER_COOKIE, &session, SESSION_DAYS * 86_400).parse().unwrap());
+        h.append(header::SET_COOKIE, set_cookie(&ctx, STATE_COOKIE, "", 0).parse().unwrap());
+        h.append(header::SET_COOKIE, set_cookie(&ctx, RETURN_COOKIE, "", 0).parse().unwrap());
+        return Ok(res);
+    }
+
     let is_owner = id == ctx.cfg.owner_id;
 
     let known = ctx.db.with(|c| {
@@ -465,6 +594,31 @@ async fn callback(State(ctx): State<Ctx>, headers: HeaderMap, Query(q): Query<Ca
     Ok(res)
 }
 
+#[derive(Deserialize)]
+struct SignOutForm {
+    to: Option<String>,
+}
+
+/// Sign out from a public page: the member session and, if there is one, the dashboard's, then
+/// back to the page.
+async fn sign_out(State(ctx): State<Ctx>, headers: HeaderMap, axum::Form(f): axum::Form<SignOutForm>) -> Response {
+    let _ = ctx.db.with(|c| {
+        if let Some(token) = cookie(&headers, MEMBER_COOKIE) {
+            c.execute("DELETE FROM member_sessions WHERE token_hash = ?1", [hash_token(&token)])?;
+        }
+        if let Some(token) = cookie(&headers, SESSION_COOKIE) {
+            c.execute("DELETE FROM dash_sessions WHERE token_hash = ?1", [hash_token(&token)])?;
+        }
+        Ok(())
+    });
+    let to = f.to.filter(|t| public_path(t)).unwrap_or_else(|| "/login".into());
+    let mut res = Redirect::to(&to).into_response();
+    let h = res.headers_mut();
+    h.append(header::SET_COOKIE, set_cookie(&ctx, MEMBER_COOKIE, "", 0).parse().unwrap());
+    h.append(header::SET_COOKIE, set_cookie(&ctx, SESSION_COOKIE, "", 0).parse().unwrap());
+    res
+}
+
 async fn logout(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
     if let Some(token) = cookie(&headers, SESSION_COOKIE) {
         let _ = ctx.db.with(|c| c.execute("DELETE FROM dash_sessions WHERE token_hash = ?1", [hash_token(&token)]));
@@ -474,7 +628,7 @@ async fn logout(State(ctx): State<Ctx>, headers: HeaderMap) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{Level, Levels, decode_tz, local_path};
+    use super::{Level, Levels, decode_tz, local_path, member_sign_in, public_path};
 
     #[test]
     fn dev_login_only_goes_to_paths_here() {
@@ -482,6 +636,15 @@ mod tests {
         for bad in ["//evil.example", "/\\evil.example", "/\t/evil.example", "/\n/evil.example", "https://evil.example", ""] {
             assert!(!local_path(bad), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn a_member_sign_in_only_returns_to_public_pages() {
+        assert!(public_path("/p/1100000000000000001/idleon?from=signin"));
+        for bad in ["/g/1/alerts", "/", "//evil.example/p/", "/p\\evil", "https://evil.example/p/x", &format!("/p/{}", "x".repeat(400))] {
+            assert!(!public_path(bad), "{bad:?}");
+        }
+        assert_eq!(member_sign_in("/p/1/idleon?from=signin"), "/auth/discord?to=%2Fp%2F1%2Fidleon%3Ffrom%3Dsignin");
     }
 
     #[test]

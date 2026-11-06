@@ -20,7 +20,10 @@ pub struct Access {
     pub closed: bool,
     /// This viewer may use it (always, when it isn't closed).
     pub allowed: bool,
-    pub signed_in: bool,
+    /// A dashboard user with this page.
+    pub staff: bool,
+    /// The name of whoever signed in with Discord (on this page or the dashboard).
+    pub member: Option<String>,
 }
 
 pub enum State<'a> {
@@ -82,7 +85,7 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
                 }
                 main.ia-page {
                     @if !access.allowed {
-                        (closed_door(access))
+                        (closed_door(guild, access))
                     } @else {
                         @if access.closed {
                             p.ia-test role="note" {
@@ -94,7 +97,7 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
                             State::Ask { error, retry } => (ask(guild, error, retry)),
                             State::Done(r) => {
                                 (done(guild, r))
-                                (report_box(guild, r, access.signed_in))
+                                (report_box(guild, r, access.member.as_deref()))
                             },
                         }
                     }
@@ -108,17 +111,33 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
     }
 }
 
+/// The page itself, for a sign-in to come back to.
+fn here(guild: u64) -> String {
+    format!("/p/{guild}/idleon")
+}
+
+/// "Signed in as Mira · Sign out": the sign-out is a form, so a link elsewhere can't do it.
+fn signed_in_as(guild: u64, name: &str) -> Markup {
+    html! {
+        form.ia-signout method="post" action="/auth/signout" {
+            input type="hidden" name="to" value=(here(guild));
+            span { "Signed in as " b { (name) } }
+            button type="submit" { "Sign out" }
+        }
+    }
+}
+
 /// The page while it's closed, for someone who isn't a tester.
-fn closed_door(a: &Access) -> Markup {
+fn closed_door(guild: u64, a: &Access) -> Markup {
     html! {
         section.ia-panel.ia-door {
             h2 { "The account check is in closed testing" }
-            @if a.signed_in {
+            @if let Some(name) = &a.member {
                 p { "Only staff and testers can use it for now. Ask staff if you'd like to help test it." }
+                (signed_in_as(guild, name))
             } @else {
-                p { "Sign in with Discord to use it. Staff and testers can try it now; everyone else soon." }
-                a.btn.primary href="/login" { "Sign in with Discord" }
-                p.ia-note { "Then come back to this page." }
+                p { "Staff and testers can try it now; everyone else soon. Testers, sign in with Discord to use it." }
+                a.btn.primary href=(bot_core::web::auth::member_sign_in(&here(guild))) { "Sign in with Discord" }
             }
         }
     }
@@ -129,19 +148,19 @@ fn closed_door(a: &Access) -> Markup {
 const REPORT_TEXT: usize = 1370;
 
 /// "Report a problem": a note to staff about what looks wrong, sent to the suggestion box.
-fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
+fn report_box(guild: u64, r: &Review, member: Option<&str>) -> Markup {
     html! {
         section.ia-panel.ia-report #ia-report {
             div.ia-ask-text {
                 h2 { "Report a problem" }
                 p { "A number that's wrong, advice that doesn't make sense, something missing: tell staff here. It goes to the suggestion box with your name, and says which account and card it's about." }
-                @if !signed_in { p.ia-note { "Staff with dashboard access can " a href="/login" target="_blank" rel="noopener" { "sign in" } " and send it from here." } }
+                @if let Some(name) = member { (signed_in_as(guild, name)) }
             }
-            @if !signed_in {
-                // Signing in here is for dashboard users, so members send it with /suggest: the
-                // page writes the report for them to paste.
+            @if member.is_none() {
+                // Sending it needs a name to send it under: sign in with Discord (any member can;
+                // the page comes back with your results), or copy it for /suggest.
                 form.ia-report-copy data-account=(r.name) {
-                    p.ia-note { "Write it here, copy it, then send it with /suggest in the server." }
+                    p.ia-note { "Sign in with Discord to send it from here, or copy it and send it with /suggest in the server." }
                     label.ia-report-card {
                         span { "Card (optional)" }
                         select name="card" {
@@ -152,11 +171,12 @@ fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
                     textarea name="text" rows="4" maxlength=(REPORT_TEXT) required placeholder="What looks wrong, and what you expected" {}
                     div.ia-ask-actions {
                         span.ia-report-msg role="status" {}
-                        button.btn.primary type="submit" { "Copy for /suggest" }
+                        button.btn type="submit" { "Copy for /suggest" }
+                        a.btn.primary.ia-sign-in href=(bot_core::web::auth::member_sign_in(&format!("{}?from=signin", here(guild)))) { "Sign in with Discord to send" }
                     }
                 }
             } @else {
-            form method="post" action={ "/p/" (guild) "/idleon/report" } data-full {
+            form #ia-report-send method="post" action={ "/p/" (guild) "/idleon/report" } data-full {
                 input type="hidden" name="account" value=(r.name);
                 label.ia-report-card {
                     span { "Card (optional)" }
@@ -699,7 +719,10 @@ if(pb&&t&&navigator.clipboard&&navigator.clipboard.readText){
 // Results arrive by POST. Made a plain visit, a reload (or a phone bringing a closed tab back)
 // opens the paste box instead of asking to send the form again, and the save you last checked
 // in this tab is filled in, to check again with one tap. It stays in this tab's own storage.
-try{history.replaceState(null,"",location.href)}catch(x){}
+// Back from signing in to send a report (?from=signin): check the same save again and land on
+// the report, with what you'd written put back.
+var signin=/[?&]from=signin/.test(location.search);
+try{history.replaceState(null,"",location.pathname+location.hash)}catch(x){}
 var LAST="ia-last-save";
 function keep(s){try{if(s)sessionStorage.setItem(LAST,s);else sessionStorage.removeItem(LAST)}catch(x){try{sessionStorage.removeItem(LAST)}catch(y){}}}
 if(t){
@@ -709,8 +732,22 @@ if(t){
   var failed=er&&!er.hidden;
   if(failed&&!er.hasAttribute("data-retry"))keep("");
   else{var last=null;try{last=sessionStorage.getItem(LAST)}catch(x){}
-    if(last&&!t.value){t.value=last;var ln=document.getElementById("ia-last");if(ln&&!failed)ln.hidden=false}}
+    if(last&&!t.value){t.value=last;var ln=document.getElementById("ia-last");if(ln&&!failed)ln.hidden=false}
+    if(signin&&last&&!failed){t.form.action=location.pathname+"#ia-report";t.form.requestSubmit()}}
 }
+var DRAFT="ia-report-draft";
+document.addEventListener("click",function(e){
+  if(!e.target.closest("a.ia-sign-in"))return;
+  var f=e.target.closest("form");
+  try{if(f)sessionStorage.setItem(DRAFT,JSON.stringify({card:f.querySelector("select").value,text:f.querySelector("textarea").value}))}catch(x){}
+});
+(function(){
+  var f=document.getElementById("ia-report-send")||document.querySelector(".ia-report-copy"),d=null;
+  if(!f)return;
+  try{d=JSON.parse(sessionStorage.getItem(DRAFT)||"null");sessionStorage.removeItem(DRAFT)}catch(x){}
+  if(!d)return;
+  f.querySelector("select").value=d.card||"";f.querySelector("textarea").value=d.text||"";
+})();
 document.addEventListener("click",function(e){if(e.target.closest("a.ia-again"))keep("")});
 // On a phone the world tabs are one row that scrolls sideways: keep the chosen one in view.
 function showTab(smooth){
@@ -814,7 +851,7 @@ if(rc)rc.addEventListener("submit",function(e){
   if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt).then(done,fail);else fail();
 });
 // Report a problem without leaving your results.
-var rf=document.querySelector("#ia-report form[action]");
+var rf=document.getElementById("ia-report-send");
 if(rf)rf.addEventListener("submit",function(e){
   e.preventDefault();
   var msg=rf.querySelector(".ia-report-msg"),b=rf.querySelector("button");
@@ -1019,9 +1056,14 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-report textarea { width: 100%; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 14px/1.5 var(--sans); }
 .ia-report textarea:focus, .ia-report select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 .ia-report-card { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); }
+.ia-report-card select { flex: 0 1 auto; min-width: 0; }
 .ia-report select { height: 34px; padding: 0 10px; border-radius: 9px; border: 0; background: var(--control); color: var(--ink); font: 13px var(--sans); box-shadow: inset 0 0 0 1px var(--edge-1); max-width: 100%; }
 .ia-report .ia-ask-actions { align-items: center; }
 .ia-report-msg { flex: 1; font-size: 13px; color: var(--ink-2); }
+form.ia-signout { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 8px; font-size: 13px; color: var(--ink-3); }
+form.ia-signout b { color: var(--ink-2); font-weight: 500; }
+form.ia-signout button { padding: 0; border: 0; background: none; color: var(--ink-2); font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+@media (pointer: coarse) { form.ia-signout button { min-height: 40px; } }
 .ia-foot { padding-top: 16px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 12.5px; }
 
 /* An open card keeps its head in view while you read down it, so closing it is one tap away. */

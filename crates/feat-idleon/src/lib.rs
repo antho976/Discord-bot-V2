@@ -26,7 +26,7 @@ use bot_core::axum::routing::{get, post};
 use bot_core::maud::html;
 use bot_core::tokio::sync::Semaphore;
 use bot_core::twilight_model::id::Id;
-use bot_core::web::auth::MaybeUser;
+use bot_core::web::auth::{MaybeMember, MaybeUser};
 use bot_core::web::{FormData, Level, User, WebError, WebResult, saved, ui};
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, NavItem, feature_async};
 use serde::{Deserialize, Serialize};
@@ -95,20 +95,54 @@ fn open(ctx: &Ctx, guild: u64) -> WebResult<()> {
     Ok(())
 }
 
-/// Who may use the page, and how it should say so.
-fn access(ctx: &Ctx, guild: u64, viewer: &MaybeUser) -> page::Access {
+/// Who may use the page, and how it should say so. Staff are dashboard users with the page;
+/// testers are anyone signed in (a member's Discord sign-in is enough) with the testers role.
+async fn access(ctx: &Ctx, guild: u64, viewer: &MaybeUser, member: &MaybeMember) -> page::Access {
     let s = ctx.settings::<Settings>(guild, KEY).map(|s| (*s).clone()).unwrap_or_default();
-    let user = viewer.0.as_ref();
-    let staff = user.is_some_and(|u| ctx.level(u, guild, KEY) >= Level::View);
-    let tester = user.is_some_and(|u| {
-        s.testers_role.is_some_and(|role| {
-            match (Id::new_checked(guild), Id::new_checked(u.id), Id::new_checked(role)) {
-                (Some(g), Some(m), Some(r)) => ctx.cache.member(g, m).is_some_and(|mem| mem.roles().contains(&r)),
-                _ => false,
-            }
-        })
-    });
-    page::Access { closed: s.closed, allowed: !s.closed || staff || tester, signed_in: user.is_some() }
+    let staff = viewer.0.as_ref().is_some_and(|u| ctx.level(u, guild, KEY) >= Level::View);
+    // Only asked while the test is closed, and only of someone signed in who isn't staff.
+    let tester = match (s.closed && !staff, s.testers_role, member.0.as_ref()) {
+        (true, Some(role), Some(m)) => roles_in(ctx, guild, m.id).await.is_some_and(|roles| roles.contains(&role)),
+        _ => false,
+    };
+    page::Access { closed: s.closed, allowed: !s.closed || staff || tester, staff, member: member.0.as_ref().map(|m| m.name.clone()) }
+}
+
+/// Someone's roles in the server, `None` when they aren't in it (or Discord couldn't say). The
+/// cache holds only members the bot has seen since it started, so the rest are asked of Discord,
+/// and the answer kept for ten minutes: a closed page reloaded, or a report sent twice, asks
+/// once.
+async fn roles_in(ctx: &Ctx, guild: u64, user: u64) -> Option<Vec<u64>> {
+    type Asked = std::collections::HashMap<(u64, u64), (std::time::Instant, Option<Vec<u64>>)>;
+    static ASKED: LazyLock<std::sync::Mutex<Asked>> = LazyLock::new(Default::default);
+    const KEEP: std::time::Duration = std::time::Duration::from_secs(600);
+    let (Some(g), Some(u)) = (Id::new_checked(guild), Id::new_checked(user)) else { return None };
+    if let Some(m) = ctx.cache.member(g, u) {
+        return Some(m.roles().iter().map(|r| r.get()).collect());
+    }
+    // The preview has no Discord to ask.
+    if ctx.cfg.preview {
+        return None;
+    }
+    if let Some((at, roles)) = ASKED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&(guild, user))
+        && at.elapsed() < KEEP
+    {
+        return roles.clone();
+    }
+    let roles = match ctx.http.guild_member(g, u).await {
+        Ok(r) => r.model().await.ok().map(|m| m.roles.iter().map(|r| r.get()).collect()),
+        Err(e) if bot_core::discord::is_not_found(&e) => None,
+        Err(e) => {
+            bot_core::tracing::warn!(guild, user, error = %e, "couldn't look up a member for the account check");
+            return None;
+        }
+    };
+    let mut asked = ASKED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if asked.len() >= 2048 {
+        asked.retain(|_, (at, _)| at.elapsed() < KEEP);
+    }
+    asked.insert((guild, user), (std::time::Instant::now(), roles.clone()));
+    roles
 }
 
 /// The dashboard's page: the closed-test switch and who tests, and a link to the page itself.
@@ -119,7 +153,7 @@ async fn dashboard(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
         (ui::settings_form(&page, &page.path(KEY), html! {
             (ui::section("Closed test", Some("While it's closed, only staff and testers can open the page, and it says it's a test with a way to report problems to the suggestion box."), ui::card(html! {
                 (ui::field_toggle("closed", "Closed test", Some("Off opens the page to anyone with the link."), s.closed))
-                (ui::field_role(&ctx, guild, "testers_role", "Testers", Some("Members with this role can use the page while it's closed. Staff always can. Testers sign in on the page with Discord, so they also need dashboard access (People)."), s.testers_role))
+                (ui::field_role(&ctx, guild, "testers_role", "Testers", Some("Members with this role can use the page while it's closed. Staff always can. Testers sign in on the page with Discord; they don't need dashboard access."), s.testers_role))
             })))
         }))
         p { a.btn href={ "/p/" (guild) "/idleon" } { "Open the account check" (ui::icon(Icon::Enter)) } }
@@ -135,9 +169,9 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
     Ok(saved(&page.path(KEY)))
 }
 
-async fn form(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>) -> WebResult {
+async fn form(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, Path(guild): Path<u64>) -> WebResult {
     open(&ctx, guild)?;
-    let a = access(&ctx, guild, &viewer);
+    let a = access(&ctx, guild, &viewer, &member).await;
     Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None, retry: false }).into_response())
 }
 
@@ -170,9 +204,9 @@ fn ask_again(ctx: &Ctx, guild: u64, a: &page::Access, error: &str, retry: bool) 
     Ok(page::render(ctx, guild, a, page::State::Ask { error: Some(error), retry }).into_response())
 }
 
-async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>, headers: HeaderMap, body: Body) -> WebResult {
+async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, Path(guild): Path<u64>, headers: HeaderMap, body: Body) -> WebResult {
     open(&ctx, guild)?;
-    let a = access(&ctx, guild, &viewer);
+    let a = access(&ctx, guild, &viewer, &member).await;
     if !a.allowed {
         return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None, retry: false }).into_response());
     }
@@ -249,12 +283,16 @@ fn trim() {
 
 /// "Report a problem": goes to the server's suggestion box as the signed-in member, marked as an
 /// account check report. Answers a line of text for the page to show.
-async fn report(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>, form: FormData) -> WebResult {
+async fn report(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, Path(guild): Path<u64>, form: FormData) -> WebResult {
+    use bot_core::axum::http::StatusCode;
     open(&ctx, guild)?;
-    let a = access(&ctx, guild, &viewer);
-    let Some(user) = viewer.0.as_ref().filter(|_| a.allowed) else {
-        return Ok((bot_core::axum::http::StatusCode::FORBIDDEN, "Sign in with Discord first, then send it again.").into_response());
+    let a = access(&ctx, guild, &viewer, &member).await;
+    let Some(user) = member.0.as_ref() else {
+        return Ok((StatusCode::FORBIDDEN, "Sign in with Discord first, then send it again.").into_response());
     };
+    if !a.allowed {
+        return Ok((StatusCode::FORBIDDEN, "While it's in closed testing, only staff and testers can send reports.").into_response());
+    }
     let account: String = form.text("account").trim().chars().take(40).collect();
     let card: String = form.text("card").trim().chars().take(60).collect();
     let mut content = String::from("Account check report");
@@ -270,7 +308,15 @@ async fn report(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64
     let room = REPORT_MAX.saturating_sub(content.chars().count());
     let what: String = form.text("text").trim().chars().take(room).collect();
     if what.is_empty() {
-        return Ok((bot_core::axum::http::StatusCode::BAD_REQUEST, "Write what looks wrong first.").into_response());
+        return Ok((StatusCode::BAD_REQUEST, "Write what looks wrong first.").into_response());
+    }
+    // Anyone with Discord can sign in, so before anything reaches the box: a few an hour each,
+    // and only from the server's own members (staff skip that: some aren't).
+    if !limit::report(user.id) {
+        return Ok((StatusCode::TOO_MANY_REQUESTS, "You've sent a few reports in the last hour. Send this one later.").into_response());
+    }
+    if !a.staff && roles_in(&ctx, guild, user.id).await.is_none() {
+        return Ok((StatusCode::FORBIDDEN, format!("Only members of {} can send reports here. Join the server, then send it again.", ctx.guild_name(guild))).into_response());
     }
     content.push_str(&what);
     let msg = match feat_community::submit_suggestion(&ctx, guild, user.id, &content).await {

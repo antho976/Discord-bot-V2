@@ -191,4 +191,16 @@ const CORE_MIGRATIONS: &[Migration] = &[
             guild_id INTEGER PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL, zoom REAL NOT NULL);
     ",
     },
+    // Members signed in with Discord on a public page (a report sent in their name). Not
+    // dashboard users: their own table, never joined with dash_users. The name and avatar are
+    // Discord's at sign-in.
+    Migration {
+        name: "006_member_sessions",
+        sql: "
+        CREATE TABLE member_sessions (
+            token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, name TEXT NOT NULL, avatar TEXT,
+            created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+        CREATE INDEX member_sessions_expires ON member_sessions(expires_at);
+    ",
+    },
 ];
