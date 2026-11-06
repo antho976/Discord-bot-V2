@@ -71,8 +71,10 @@ pub fn parse(text: &str) -> (Worlds, Vec<String>) {
 pub struct Pace {
     /// Each tier's world, in ladder order (`None`: not set).
     pub worlds: Vec<Option<u8>>,
-    /// The highest world all of whose tiers are done: "where a World N player would be".
-    /// `None` when even the first world's tiers aren't.
+    /// The highest world, up to the one you're in, all of whose tiers are done: "where a
+    /// World N player would be". `None` when even the first world's tiers aren't. Capped at
+    /// your world: an account short of World 7 has a shorter ladder (later worlds' items
+    /// aren't on it), so having all of it done says nothing about later worlds' tiers.
     pub at: Option<u8>,
     /// The first tier not done whose world you've reached: what's overdue. Its world is
     /// `worlds[due]`.
@@ -90,7 +92,7 @@ impl Pace {
         }
         let set = || tiers.iter().zip(&worlds).filter_map(|(t, w)| w.map(|w| (t, w)));
         // The highest world with every tier up to it done, among the worlds tiers belong to.
-        let at = set().map(|(_, w)| w).filter(|&w| set().all(|(t, tw)| tw > w || t.complete())).max();
+        let at = set().map(|(_, w)| w).filter(|&w| w <= reached && set().all(|(t, tw)| tw > w || t.complete())).max();
         let due = (0..tiers.len()).find(|&k| worlds[k].is_some_and(|w| w <= reached) && !tiers[k].complete());
         Some(Pace { worlds, at, due })
     }
@@ -125,6 +127,8 @@ mod tests {
         assert_eq!(Pace::new(&tiers, &worlds, 1).unwrap().due, None);
         let all = [tier(true), tier(true), tier(true), tier(true), tier(false)];
         assert_eq!(Pace::new(&all, &worlds, 7).unwrap(), Pace { worlds: worlds.to_vec(), at: Some(4), due: None });
+        // A World 2 account with its whole (shorter) ladder done is at World 2, not 4.
+        assert_eq!(Pace::new(&all, &worlds, 2).unwrap().at, Some(2));
         let none = [tier(false), tier(false), tier(false), tier(false), tier(false)];
         assert_eq!(Pace::new(&none, &worlds, 7).unwrap().at, None);
         assert_eq!(Pace::new(&none, &[None, None], 7), None);

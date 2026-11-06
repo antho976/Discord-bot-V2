@@ -46,6 +46,10 @@ const BODY_LIMIT: usize = save::MAX_BYTES * 3;
 /// bot's peak where it was before checks moved off the runtime threads.
 static READING: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
 const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Longest a paste may take to arrive. A check counts against the limits while its paste
+/// arrives, so one trickling in must not hold a place for ever. A 1.4 MB save takes about
+/// 20 s at half a megabit.
+const ARRIVE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Longest problem report with its header, the suggestion box's own limit.
 const REPORT_MAX: usize = feat_community::SUGGESTION_MAX;
@@ -134,7 +138,7 @@ async fn save_settings(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64
 async fn form(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>) -> WebResult {
     open(&ctx, guild)?;
     let a = access(&ctx, guild, &viewer);
-    Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None }).into_response())
+    Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None, retry: false }).into_response())
 }
 
 /// The paste from the request body. The page's form is `text/plain` (`save=<the JSON>`, nothing
@@ -160,40 +164,44 @@ fn address(headers: &HeaderMap) -> String {
     feat_connect::domain::limit_key(ip.as_deref())
 }
 
-/// The paste box again, saying what went wrong.
-fn ask_again(ctx: &Ctx, guild: u64, a: &page::Access, error: &str) -> WebResult {
-    Ok(page::render(ctx, guild, a, page::State::Ask { error: Some(error) }).into_response())
+/// The paste box again, saying what went wrong. `retry`: the paste was fine, only sent at a
+/// busy moment, so the page puts it back in the box.
+fn ask_again(ctx: &Ctx, guild: u64, a: &page::Access, error: &str, retry: bool) -> WebResult {
+    Ok(page::render(ctx, guild, a, page::State::Ask { error: Some(error), retry }).into_response())
 }
 
 async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>, headers: HeaderMap, body: Body) -> WebResult {
     open(&ctx, guild)?;
     let a = access(&ctx, guild, &viewer);
     if !a.allowed {
-        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None }).into_response());
+        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None, retry: false }).into_response());
     }
     // Counted before the paste is read, so pastes still arriving count too (see `limit`). The
     // pass goes with the work below: a visitor who leaves doesn't end what they started.
     let pass = match limit::enter(address(&headers)) {
         Ok(p) => p,
-        Err(why) => return ask_again(&ctx, guild, &a, why.message()),
+        Err(why) => return ask_again(&ctx, guild, &a, why.message(), true),
     };
     // Read up to the cap and no further. A plain-text paste is the save itself, so its cap is
     // the save's. Either kind is decoded before it waits in line, so a slot is never held by a
     // paste that's too big, and what waits is the paste, not its (up to three times bigger) body.
     let cap = if plain(&headers) { PLAIN_LIMIT } else { BODY_LIMIT };
-    let Ok(body) = bot_core::axum::body::to_bytes(body, cap).await else {
-        return ask_again(&ctx, guild, &a, save::SaveError::TooBig.message());
+    let body = match bot_core::tokio::time::timeout(ARRIVE, bot_core::axum::body::to_bytes(body, cap)).await {
+        Ok(Ok(body)) => body,
+        // Past the cap (or the visitor left, and nobody reads the answer).
+        Ok(Err(_)) => return ask_again(&ctx, guild, &a, save::SaveError::TooBig.message(), false),
+        Err(_) => return ask_again(&ctx, guild, &a, "Your save took too long to arrive. Check your connection and try again.", true),
     };
     let text = paste(&headers, &body);
     drop(body);
     if text.is_empty() {
-        return ask_again(&ctx, guild, &a, "Paste your save first.");
+        return ask_again(&ctx, guild, &a, "Paste your save first.", false);
     }
     if text.len() > save::MAX_BYTES {
-        return ask_again(&ctx, guild, &a, save::SaveError::TooBig.message());
+        return ask_again(&ctx, guild, &a, save::SaveError::TooBig.message(), false);
     }
     let Ok(Ok(slot)) = bot_core::tokio::time::timeout(WAIT, READING.acquire()).await else {
-        return ask_again(&ctx, guild, &a, limit::Refused::Busy.message());
+        return ask_again(&ctx, guild, &a, limit::Refused::Busy.message(), true);
     };
     // About 14 ms of CPU: run it off the bot's two runtime threads, so Discord events and other
     // pages never wait behind a check (at most two at once, `READING`).
@@ -204,7 +212,7 @@ async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>
         let _pass = pass;
         let review = match save::Save::parse(&text) {
             Ok(s) => review::Review::new(&s, checks::all(&s), checks::world_reached(&s)),
-            Err(e) => return page::render(&ctx, guild, &a, page::State::Ask { error: Some(e.message()) }).into_string(),
+            Err(e) => return page::render(&ctx, guild, &a, page::State::Ask { error: Some(e.message()), retry: false }).into_string(),
         };
         drop(text);
         page::render(&ctx, guild, &a, page::State::Done(&review)).into_string()

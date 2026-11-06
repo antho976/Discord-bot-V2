@@ -19,7 +19,8 @@ const PER_ADDRESS: usize = 3;
 /// Checks one address can start in a burst (an account and its alts), then one per `REFILL`.
 const BURST: f64 = 10.0;
 const REFILL_SECS: f64 = 20.0;
-/// Addresses kept at most. Past it, the ones back to a full burst are forgotten first.
+/// Addresses kept at most. Past it, the ones back to a full burst are forgotten, then the one
+/// idle longest: a flood of new addresses resets its own allowances, never locks others out.
 const KEPT: usize = 4096;
 
 static TOTAL: AtomicUsize = AtomicUsize::new(0);
@@ -90,7 +91,14 @@ pub fn enter(key: String) -> Result<Pass, Refused> {
             a.under_way > 0 || a.tokens < BURST
         });
         if map.len() >= KEPT {
-            return refused(Refused::Busy);
+            // At most `UNDER_WAY` are under way, so there's always an idle one.
+            let oldest = map.iter().filter(|(_, a)| a.under_way == 0).min_by_key(|(_, a)| a.at).map(|(k, _)| k.clone());
+            match oldest {
+                Some(k) => {
+                    map.remove(&k);
+                }
+                None => return refused(Refused::Busy),
+            }
         }
     }
     let a = map.entry(key.clone()).or_insert(Allowance { tokens: BURST, at: now, under_way: 0 });

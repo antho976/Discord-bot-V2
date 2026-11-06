@@ -24,7 +24,9 @@ pub struct Access {
 }
 
 pub enum State<'a> {
-    Ask { error: Option<&'a str> },
+    /// The paste box, with what went wrong. `retry`: the paste was fine and only has to be sent
+    /// again (the page was busy), so the box gets it back.
+    Ask { error: Option<&'a str>, retry: bool },
     Done(&'a Review),
 }
 
@@ -89,7 +91,7 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
                             }
                         }
                         @match state {
-                            State::Ask { error } => (ask(guild, error)),
+                            State::Ask { error, retry } => (ask(guild, error, retry)),
                             State::Done(r) => {
                                 (done(guild, r))
                                 (report_box(guild, r, access.signed_in))
@@ -97,7 +99,7 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
                         }
                     }
                     footer.ia-foot {
-                        span { "Maxes and names come from the game's own data, from " (GAME.updated) ". Your save is read once and not kept." }
+                        span { "Maxes and names come from the game's own data, from " (GAME.updated) ". Your save is read once and not kept. This tab remembers the last one until you close it." }
                     }
                 }
                 script { (PreEscaped(JS)) }
@@ -174,7 +176,7 @@ fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
     }
 }
 
-fn ask(guild: u64, error: Option<&str>) -> Markup {
+fn ask(guild: u64, error: Option<&str>, retry: bool) -> Markup {
     html! {
         section.ia-panel.ia-ask {
             div.ia-ask-text {
@@ -185,7 +187,7 @@ fn ask(guild: u64, error: Option<&str>) -> Markup {
             // server's work per check.
             form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
                 textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
-                p.ia-err #ia-err role="alert" hidden[error.is_none()] { (error.unwrap_or_default()) }
+                p.ia-err #ia-err role="alert" hidden[error.is_none()] data-retry[retry] { (error.unwrap_or_default()) }
                 p.ia-note #ia-last hidden { "Filled in with the save you last checked in this tab." }
                 div.ia-ask-actions {
                     label.btn {
@@ -376,7 +378,7 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                         @if let Some(p) = &m.pace {
                             @match (p.at, p.worlds.iter().flatten().min()) {
                                 (Some(w), _) => { " · World " (w) " level" },
-                                (None, Some(f)) => { " · Under World " (f) " level" },
+                                (None, Some(f)) if *f <= reached => { " · Under World " (f) " level" },
                                 _ => {},
                             }
                         }
@@ -702,10 +704,12 @@ var LAST="ia-last-save";
 function keep(s){try{if(s)sessionStorage.setItem(LAST,s);else sessionStorage.removeItem(LAST)}catch(x){try{sessionStorage.removeItem(LAST)}catch(y){}}}
 if(t){
   t.form.addEventListener("submit",function(){keep(t.value)});
-  // After a paste that didn't read, there's nothing worth filling back in.
-  if(er&&!er.hidden)keep("");
+  // After a paste that didn't read, there's nothing worth filling back in. After "busy, try
+  // again" the paste was fine: it goes back in the box to send again.
+  var failed=er&&!er.hidden;
+  if(failed&&!er.hasAttribute("data-retry"))keep("");
   else{var last=null;try{last=sessionStorage.getItem(LAST)}catch(x){}
-    if(last&&!t.value){t.value=last;var ln=document.getElementById("ia-last");if(ln)ln.hidden=false}}
+    if(last&&!t.value){t.value=last;var ln=document.getElementById("ia-last");if(ln&&!failed)ln.hidden=false}}
 }
 document.addEventListener("click",function(e){if(e.target.closest("a.ia-again"))keep("")});
 // On a phone the world tabs are one row that scrolls sideways: keep the chosen one in view.
