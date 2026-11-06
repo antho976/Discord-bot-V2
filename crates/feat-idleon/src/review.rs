@@ -116,6 +116,9 @@ pub struct Mechanic {
     /// The game's own tier names, for levels 1, 2, 3... ("Gold", "Onyx", "Zenith"). With them
     /// the ladder is the game's tiers; without, it's milestones on the way to each item's max.
     pub tier_names: Option<Vec<String>>,
+    /// A line per named tier saying what it needs beyond levels ("Needs Ionized Sigils"),
+    /// in `tier_names` order; empty strings and a short list mean nothing to add.
+    pub tier_notes: Vec<String>,
     pub raises: Vec<Raise>,
     pub have: Option<Have>,
     /// Items from worlds the account hasn't reached (see `Item::world`), moved out of `items`
@@ -354,6 +357,7 @@ mod tests {
             items: levels.iter().map(|&(l, m)| Item::new("x", None, l, m)).collect(),
             note: None,
             tier_names: None,
+            tier_notes: Vec::new(),
             raises: Vec::new(),
             have: None,
             later: Vec::new(),
