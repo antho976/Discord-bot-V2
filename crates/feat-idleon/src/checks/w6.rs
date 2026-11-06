@@ -96,11 +96,15 @@ fn shout(s: &str) -> String {
 /// Costs: N.js `MarketCostType` (the crop: col 2 + col 3 × level; for Land Plots the level counts
 /// 2 × floor(lv/3) and floor(lv/4) extra) and `MarketCostQTY` (col 4 × col 5 ^ level, before the
 /// Emperor and Exotic discounts). `MarketUpgUnlocked`: a row opens at col 6 crops found.
+///
+/// Before World 7 the caps leave Day 'N' Nite out: it is a World 7 research node.
 fn markets(save: &Save) -> Mechanic {
     let levels = save.numbers("FarmUpg", &[]);
+    let w7 = super::world_reached(save) >= 7;
     let node = rows("ResGridSquares", &[]).get(171).map_or(0.0, |r| cell(r, 1) * cell(r, 2));
     let shape = rows("Research", &[5]).iter().map(|v| num(v)).fold(0.0, f64::max);
-    let raise = (node * (1.0 + shape / 100.0)).floor();
+    let full_raise = (node * (1.0 + shape / 100.0)).floor();
+    let raise = if w7 { full_raise } else { 0.0 };
     let found = save.get("FarmCrop").and_then(Value::as_object).map_or(0, |o| o.len()) as f64;
     // Your own Day 'N' Nite today, before the grid-wide multiplier: 50 a level times your shape
     // (`Research[1][171]` indexes `Research[5]`, -1 for none). A floor on your real raise.
@@ -138,13 +142,16 @@ fn markets(save: &Save) -> Mechanic {
         .collect();
     let mut m = mech("farm-market", 6, "Day and Night Market", None, Count::Levels, "levels", items);
     m.raises = vec![Raise {
-        name: "Day 'N' Nite, World 7 research grid".into(),
-        amount: format!("up to +{raise} max levels on every upgrade but Land Plots, Overgrowth and Land Rank"),
-        owned: save.at("Research", &[0, 171]).map_or(0.0, num) > 0.0,
+        name: "Day 'N' Nite, research grid (World 7)".into(),
+        amount: format!("up to +{full_raise} max levels on every upgrade but Land Plots, Overgrowth and Land Rank"),
+        owned: w7 && node_lv > 0.0,
     }];
-    m.note = Some(format!(
-        "Caps include +{raise} max levels from Day 'N' Nite (World 7 research grid) at its max level in its best shape, on every upgrade but Land Plots, Overgrowth and Land Rank. Grid-wide research multipliers add more. Costs are before the Emperor's and the Exotic Market's discounts, so the real cost is lower."
-    ));
+    let caps = if w7 {
+        format!("Caps include +{full_raise} max levels from Day 'N' Nite (World 7 research grid) at its max level in its best shape, on every upgrade but Land Plots, Overgrowth and Land Rank. Grid-wide research multipliers add more.")
+    } else {
+        format!("Caps are the base ones. Day 'N' Nite in the World 7 research grid adds up to +{full_raise} max levels to every upgrade but Land Plots, Overgrowth and Land Rank, counted once you reach World 7.")
+    };
+    m.note = Some(format!("{caps} Costs are before the Emperor's and the Exotic Market's discounts, so the real cost is lower."));
     m
 }
 
@@ -167,14 +174,16 @@ fn exotic_market(save: &Save) -> Mechanic {
 
 /// Land Rank Database: `FarmRank[2][i]`, names in `NinjaInfo[34]`. Only the 5th column has a cap
 /// (N.js `LandRank5thColumnMaxLV`): 1 + Grimoire upgrade 9 + ceil(Exotic DATADIGGING) + Legend
-/// Talent 3, each at its most. DATADIGGING doubles when it is organic.
+/// Talent 3, each at its most. DATADIGGING doubles when it is organic. DATADIGGING and the Legend
+/// Talent are World 7, so before World 7 the cap is 1 + the Grimoire upgrade.
 fn land_rank(save: &Save) -> Mechanic {
     let levels = save.numbers("FarmRank", &[2]);
+    let w7 = super::world_reached(save) >= 7;
     let grimoire = rows("GrimoireUpg", &[]).get(9).map_or(0.0, |r| cell(r, 4) * cell(r, 5));
     let digging = rows("MarketExoticInfo", &[]).get(15).map_or(0.0, |r| (2.0 * cell(r, 3)).ceil());
     let node = rows("ResGridSquares", &[]).get(130).map_or(0.0, |r| cell(r, 1));
     let legend = rows("LegendTalents", &[]).get(3).map_or(0.0, |r| (cell(r, 1) + node) * cell(r, 2));
-    let max = (1.0 + grimoire + digging + legend).round();
+    let max = (1.0 + grimoire + if w7 { digging + legend } else { 0.0 }).round();
     // N.js `LankRankPTSleft`: the 36 plot ranks added up, less every database level bought. A
     // level costs one point; an upgrade opens at the total rank in `NinjaInfo[37]`.
     let total: f64 = save.numbers("FarmRank", &[0]).iter().take(36).sum();
@@ -221,12 +230,14 @@ fn land_rank(save: &Save) -> Mechanic {
     });
     m.raises = vec![
         Raise { name: "Grimoire: Land Rank Database Maxim".into(), amount: format!("+{grimoire} max levels on each 5th-column upgrade"), owned: g_lv * per_g >= grimoire && grimoire > 0.0 },
-        Raise { name: "DATADIGGING, Exotic Market (World 7)".into(), amount: format!("up to +{} max levels on each 5th-column upgrade, +{digging} when organic", digging / 2.0), owned: d_lv > 0.0 },
-        Raise { name: "Extended Database, Legend Talent (World 7)".into(), amount: format!("+{legend} max levels on each 5th-column upgrade"), owned: t_lv * per_t >= legend && legend > 0.0 },
+        Raise { name: "DATADIGGING, Exotic Market (World 7)".into(), amount: format!("up to +{} max levels on each 5th-column upgrade, +{digging} when organic", digging / 2.0), owned: w7 && d_lv > 0.0 },
+        Raise { name: "Extended Database, Legend Talent (World 7)".into(), amount: format!("+{legend} max levels on each 5th-column upgrade"), owned: w7 && t_lv * per_t >= legend && legend > 0.0 },
     ];
-    m.note = Some(format!(
-        "Only the 5th column has a cap, raised by a Grimoire upgrade, the DATADIGGING exotic (organic) and a Legend Talent. The rest level up without end. Your cap today is {now}."
-    ));
+    m.note = Some(if w7 {
+        format!("Only the 5th column has a cap, raised by a Grimoire upgrade, the DATADIGGING exotic (organic) and a Legend Talent. The rest level up without end. Your cap today is {now}.")
+    } else {
+        format!("Only the 5th column has a cap: {max} with the Grimoire upgrade. DATADIGGING and the Legend Talent raise it in World 7, counted once you reach it. The rest level up without end.")
+    });
     m
 }
 
