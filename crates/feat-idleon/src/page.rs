@@ -419,13 +419,18 @@ pub(crate) fn num(n: f64) -> String {
 }
 
 /// The paste box's file picker, and cards that grow out of their place: when one opens it
-/// spans the grid, so every card is measured before and after and slides from where it was
-/// (FLIP); the opened one is revealed from its old size rather than stretched. Do next and Not
+/// spans the grid, so every card is measured before and after (FLIP). The opened one is
+/// revealed from its old size rather than stretched and draws on top; cards that only moved up
+/// or down slide; cards that changed column fade in where they land, since sliding them across
+/// their neighbours reads as a double image. Do next and Not
 /// started links switch the world, open the card the same way and scroll to it.
 const JS: &str = r#"(function(){
 var f=document.getElementById("ia-file"),t=document.getElementById("ia-save");
 if(f&&t)f.addEventListener("change",function(){var x=f.files&&f.files[0];if(x)x.text().then(function(s){t.value=s;t.form.requestSubmit()})});
 var still=matchMedia("(prefers-reduced-motion: reduce)"),ease="cubic-bezier(.16,1,.3,1)";
+// Bars draw in once, with the page. After that a bar that appears (a card opening, another
+// world's tab) is just there, so nothing regrows while a card moves.
+setTimeout(function(){document.documentElement.classList.add("ia-settled")},1200);
 function flip(d,open){
   if(d.open===open)return;
   var cards=[].slice.call(d.parentElement.children);
@@ -434,14 +439,22 @@ function flip(d,open){
   d.open=open;
   cards.forEach(function(c,i){
     var a=was[i],b=c.getBoundingClientRect(),dx=a.left-b.left,dy=a.top-b.top;
-    if(c===d&&open){
-      c.animate([{transform:"translate("+dx+"px,"+dy+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+"px 0 round 14px)"},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:420,easing:ease});
-      var body=c.querySelector(".ia-body");
-      if(body)body.animate([{opacity:0,transform:"translateY(-6px)"},{opacity:1,transform:"none"}],{duration:312,delay:133,easing:ease,fill:"backwards"});
-    }else if(c===d){
-      c.animate([{transform:"translate("+dx+"px,"+dy+"px)",opacity:.5},{transform:"none",opacity:1}],{duration:333,easing:ease});
-    }else if(dx||dy){
-      c.animate([{transform:"translate("+dx+"px,"+dy+"px)"},{transform:"none"}],{duration:420,easing:ease});
+    if(c===d){
+      // The card you clicked draws over the others while it moves, and stays opaque.
+      c.style.zIndex=2;
+      var done=function(){c.style.zIndex=""};
+      if(open){
+        c.animate([{transform:"translate("+dx+"px,"+dy+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+"px 0 round 14px)"},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:420,easing:ease}).finished.then(done,done);
+        var body=c.querySelector(".ia-body");
+        if(body)body.animate([{opacity:0,transform:"translateY(-6px)"},{opacity:1,transform:"none"}],{duration:312,delay:133,easing:ease,fill:"backwards"});
+      }else{
+        c.animate([{transform:"translate("+dx+"px,"+dy+"px)"},{transform:"none"}],{duration:333,easing:ease}).finished.then(done,done);
+      }
+    }else if(Math.abs(dx)>1){
+      // Moved to another column or row: fade in where it lands rather than cross the others.
+      c.animate([{opacity:0,transform:"scale(.985)"},{opacity:1,transform:"none"}],{duration:260,delay:90,easing:ease,fill:"backwards"});
+    }else if(Math.abs(dy)>1){
+      c.animate([{transform:"translateY("+dy+"px)"},{transform:"none"}],{duration:420,easing:ease});
     }
   });
 }
@@ -517,6 +530,7 @@ body.ia-pub { background: var(--page);
 .ia-meter { display: block; height: 5px; border-radius: 3px; background: color-mix(in oklab, var(--w) 14%, var(--well)); overflow: hidden; }
 .ia-meter > span { display: block; height: 100%; width: calc(var(--s) * 100%); min-width: 2px; border-radius: 3px; background: var(--w); transform-origin: left; animation: ia-fill 0.6s var(--ease) both; }
 @keyframes ia-fill { from { transform: scaleX(0); } }
+html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none; }
 .ia-fig { font: 500 12.5px var(--mono); color: var(--ink-2); text-align: right; white-space: nowrap; }
 .ia-tag { justify-self: end; font: 600 11px var(--mono); color: var(--w); padding: 2px 6px; border-radius: 5px; background: color-mix(in oklab, var(--w) 14%, transparent); }
 
@@ -593,7 +607,7 @@ body.ia-pub { background: var(--page);
 .ia-raise { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13.5px; }
 .ia-raise-mark { color: var(--waiting); text-align: center; }
 .ia-raise.owned .ia-raise-mark { color: var(--live); }
-.ia-all > summary { cursor: pointer; font-size: 13px; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 3px; list-style: none; width: fit-content; }
+.ia-all > summary { display: inline-block; white-space: nowrap; cursor: pointer; font-size: 13px; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 3px; list-style: none; }
 .ia-all > summary::-webkit-details-marker { display: none; }
 .ia-all > summary:hover { color: var(--ink); }
 .ia-all[open] > summary { margin-bottom: 8px; }

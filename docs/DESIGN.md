@@ -230,7 +230,7 @@ The page fills the window; nothing is capped at a fixed width and parked at the 
   for "With what you have" and "Raise the cap". **Motion (owner: "the change of position is quite
   big from small to large"):** opening a card is FLIP: every card in the grid slides from where it
   was, the opened one is revealed from its old size by a clip (not stretched) in 420 ms
-  expo-out, its body fades up after 133 ms (owner slowed it twice: 380, 405, then 420 ms); closing slides back. Off under reduced motion.
+  expo-out, its body fades up after 133 ms (owner slowed it twice: 380, 405, then 420 ms); closing slides back. The moving card draws on top and stays opaque; cards that change column fade in where they land (sliding them across their neighbours read as "seeing double"), cards that only shift up or down slide; bars draw in once with the page and never regrow when a card opens. Off under reduced motion.
 - Shared since then: `.rail` is a plain column of bordered panels (`.rail > .rail-block`), the
   `ui::empty` icon is still and neutral, `[data-count]` numbers no longer count up, and the bell's
   notice icons are neutral with no tint on new ones.
