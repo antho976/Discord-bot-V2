@@ -2,3 +2,15 @@
 table CardStuff
 table RegAchieves
 picture Cards[A-Z]\d+
+table MTXinfo
+table NinjaInfo
+table TournyStuff
+table ClassNames
+table PlayerCapacities
+picture (GemP|GemQ)\d+
+picture Pdaily\d
+picture Quest116
+picture InvBag\d+
+picture InvStorage\w+
+picture EventShopBuy\d+
+table ClassFamilyBonuses

@@ -10,3 +10,12 @@ table SSignInfoUI
 picture Statue[GOZ]?\d+
 picture BribeO.+
 picture Stamp[ABC]\d+
+table UpgradeVault
+table Research
+table ResGridSquares
+table RANDOlist
+picture Feaz\d
+picture HoopShop\d
+picture DartShop\d
+picture VaultUpg\d+
+picture ClassIcons\d+
