@@ -14,7 +14,7 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
         schematics(&h),
         majiks(save, &h),
         measurements(&h),
-        studies(&h),
+        studies(save, &h),
         shallow_caverns(&h),
         glowshroom_tunnels(&h),
         underground_overgrowth(&h),
@@ -148,12 +148,19 @@ fn villagers(save: &Save, h: &Holes) -> Mechanic {
                 it.how = Some("You haven't found Bolaia yet.".into());
                 it.state = State::Locked;
             } else if let Some(next) = (0..studies).find(|&i| at(&study, i) < 1.0) {
-                if h.has(next + 1) {
-                    it.how = Some(format!("Pick {} as Bolaia's study to start it.", cave_name(next)));
-                    it.state = State::Ready;
-                } else {
+                let progress = at(&h.nums(&[27]), next);
+                let req = study_req(next, at(&study, next));
+                if !h.has(next + 1) {
                     it.how = Some(format!("Find {} first, then pick it as Bolaia's study.", cave_name(next)));
                     it.state = State::Locked;
+                } else if progress >= req {
+                    it.how = Some(format!("{} has the progress for level 1. Open Bolaia's page to bank the level.", cave_name(next)));
+                    it.state = State::Ready;
+                } else if studying(save, h, next) {
+                    it.how = Some(format!("{} is being studied: {} of {} to level 1.", cave_name(next), big(progress), big(req)));
+                } else {
+                    it.how = Some(format!("Pick {} as Bolaia's study to start it.", cave_name(next)));
+                    it.state = State::Ready;
                 }
             }
             continue;
@@ -292,13 +299,19 @@ fn majiks(save: &Save, h: &Holes) -> Mechanic {
             it
         })
         .collect();
-    let open = items.iter().filter(|it| it.state == State::Ready).map(|it| it.max - it.level).sum::<f64>();
+    // Levels you could buy now; 0, not the empty sum's -0, when there are none.
+    let open = items.iter().filter(|it| it.state == State::Ready).map(|it| it.max - it.level).fold(0.0, |a, b| a + b);
+    let buy = left.min(open);
     let have = Have {
-        figure: format!("{left} majik points"),
+        figure: format!("{left} majik point{}", if left == 1.0 { "" } else { "s" }),
         text: if left < 1.0 {
             "None unspent. Each Cosmo level gives one more.".into()
+        } else if buy >= 1.0 {
+            format!("Enough for {buy} more majik level{}.", if buy == 1.0 { "" } else { "s" })
+        } else if items.iter().all(Item::done) {
+            "Every majik is at its cap, so these have nothing to buy.".into()
         } else {
-            format!("Enough for {} more majik levels.", left.min(open))
+            format!("Every majik below its cap is at level 1, and past 1 needs the {enhance_name} majik.")
         },
     };
     let mut m = mech("cavern-majiks", 5, "Majiks", pic("HoleUIvillager2".into()), Count::Levels, "levels", items);
@@ -354,11 +367,31 @@ fn measurements(h: &Holes) -> Mechanic {
     m
 }
 
+/// The progress a study needs for its next level (N.js `StudyReqForBolaia`):
+/// `4000 * 1.25^level * 1.5^floor(i / 5)`.
+fn study_req(i: usize, level: f64) -> f64 {
+    4000.0 * 1.25f64.powf(level) * 1.5f64.powf((i / 5) as f64)
+}
+
+/// Bolaia is adding progress to study `i`: it's the one picked (`Holes[11][61]`), or, with gaming
+/// superbit 43, one either side of it (N.js adds the study rate to both, the upper one only
+/// while it's a cavern you've found).
+fn studying(save: &Save, h: &Holes, i: usize) -> bool {
+    // -1 (or anything odd) is no study picked.
+    let cur = h.get(&[11], 61);
+    if cur.is_nan() || cur < 0.0 {
+        return false;
+    }
+    let cur = cur as usize;
+    // `cur` comes from the paste and can be anything: compare without adding to it.
+    i == cur || (super::w5::superbit_owned(save, 43) && (i + 1 == cur || (i.checked_sub(1) == Some(cur) && h.has(i + 1))))
+}
+
 /// Bolaia's studies, one per cavern: `Holes[26][i]`, with progress `Holes[27][i]` toward the
-/// next level at `4000 * 1.25^level * 1.5^floor(i / 5)` (N.js `StudyReqForBolaia`). No max level, except Bravery
-/// Monument's, whose bonus stops at 32% (`StudyBolaiaBonuses`: `min(32, 12 + level *
-/// HolesInfo[70][3])`).
-fn studies(h: &Holes) -> Mechanic {
+/// next level at `study_req`. No max level, except Bravery Monument's, whose bonus stops at 32%
+/// (`StudyBolaiaBonuses`: `min(32, 12 + level * HolesInfo[70][3])`). Progress past the
+/// requirement turns into levels only while Bolaia's page is open.
+fn studies(save: &Save, h: &Holes) -> Mechanic {
     let levels = h.nums(&[26]);
     let progress = h.nums(&[27]);
     let bolaia = h.get(&[1], 4);
@@ -375,8 +408,16 @@ fn studies(h: &Holes) -> Mechanic {
                 it.how = Some(format!("Find {} to study it.", cave_name(i)));
                 it.state = State::Locked;
             } else {
-                let req = 4000.0 * 1.25f64.powf(level) * 1.5f64.powf((i / 5) as f64);
-                it.how = Some(format!("{} of {} study progress to the next level.", big(at(&progress, i)), big(req)));
+                let req = study_req(i, level);
+                let have = at(&progress, i);
+                if have >= req {
+                    it.how = Some("Has the progress for its next level. Open Bolaia's page to bank the level.".into());
+                    it.state = State::Ready;
+                } else if studying(save, h, i) {
+                    it.how = Some(format!("Being studied: {} of {} to the next level.", big(have), big(req)));
+                } else {
+                    it.how = Some(format!("{} of {} study progress to the next level.", big(have), big(req)));
+                }
             }
             it
         })

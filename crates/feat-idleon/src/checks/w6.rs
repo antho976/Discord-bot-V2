@@ -260,11 +260,16 @@ fn land_rank(save: &Save) -> Mechanic {
 /// extra factor only past its threshold. Paid in jade coins, `Ninja[102][1]`.
 ///
 /// Pictures: a row is `NjJupg` + `JadeUpg` col 3; the card shows the first row.
+///
+/// The shop only offers places below your purchases + 3 (`EmporiumOptions`: the bought string's
+/// length + 3); later places show up as you buy.
 fn jade_emporium(save: &Save) -> Mechanic {
     let bought = save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or("");
     let jade = save.at("Ninja", &[102, 1]).map_or(0.0, num).max(0.0) + 0.0;
     let letters: Vec<char> = std::iter::once('_').chain('a'..='z').chain('A'..='Z').collect();
     let order: Vec<usize> = rows("NinjaInfo", &[24]).iter().map(|v| num(v) as usize).collect();
+    let offered = bought.chars().count() + 3;
+    let w7 = super::world_reached(save) >= 7;
     let mut costs: Vec<(f64, String)> = Vec::new();
     let items: Vec<Item> = rows("JadeUpg", &[])
         .iter()
@@ -280,10 +285,19 @@ fn jade_emporium(save: &Save) -> Mechanic {
             }
             if !have && let Some(p) = order.iter().position(|&k| k == i) {
                 let cost = emporium_cost(p as f64);
-                it.how = Some(format!("Costs {} jade coins.", big(cost)));
-                if cost <= jade {
-                    it.state = State::Ready;
-                    costs.push((cost, it.name.clone()));
+                if p >= offered {
+                    let n = p + 1 - offered;
+                    it.how = Some(format!("Shows in the shop after {n} more purchase{}. Costs {} jade coins.", if n == 1 { "" } else { "s" }, big(cost)));
+                    it.state = State::Locked;
+                } else {
+                    it.how = Some(format!("Costs {} jade coins.", big(cost)));
+                    if cost <= jade {
+                        it.state = State::Ready;
+                        // A World 7 row stays out of the count until you're there, as its item does.
+                        if it.world.is_none() || w7 {
+                            costs.push((cost, it.name.clone()));
+                        }
+                    }
                 }
             }
             it
@@ -377,16 +391,23 @@ fn ninja_locked(save: &Save, levels: &[f64], i: usize, row: &Value) -> Option<St
     if i == 13 {
         return None;
     }
+    // (row, highest mastery that repoints it, the row it then needs). Below that mastery these
+    // rows need Centurion Lineage (or, for row 0, themselves), which only opens at mastery 5, so
+    // the mastery is the real way in.
+    const REPOINT: [(usize, f64, usize); 4] = [(6, 1.0, 10), (3, 1.0, 5), (1, 3.0, 4), (0, 5.0, 1)];
     let mastery = save.option(232);
-    let pre = match i {
-        6 if mastery >= 1.0 => 10,
-        3 if mastery >= 1.0 => 5,
-        1 if mastery >= 3.0 => 4,
-        0 if mastery >= 5.0 => 1,
+    let repoint = REPOINT.iter().find(|r| r.0 == i);
+    let pre = match repoint {
+        Some(&(_, need, to)) if mastery >= need => to,
         _ => cell(row, 9) as usize,
     };
     if at(levels, pre) >= 1.0 {
         return None;
+    }
+    if let Some(&(_, need, _)) = repoint
+        && mastery < need
+    {
+        return Some(format!("Opens at Sneaking mastery {need}. Your highest is {mastery}."));
     }
     if pre == i {
         return Some("Opens with a higher Sneaking mastery.".into());
@@ -540,12 +561,14 @@ fn pristine_charms(save: &Save) -> Mechanic {
 /// nears its top without a last level.
 ///
 /// Where: the game adds each to a floor's find list (`NinjaInfo[12 + floor]`) once
-/// `OptLacc[231]` (Sneaking mastery) reaches 1 or 2; Emerald and Firefrost also need a Wind
-/// Walker (`hasClassTypeN` 29).
+/// `OptLacc[231]`, the Sneaking mastery you're playing, reaches 1 or 2; Emerald and Firefrost
+/// also need a Wind Walker (`hasClassTypeN` 29). You can switch back up to any mastery up to the
+/// highest you've reached (`OptLacc[232]`).
 fn gemstones(save: &Save) -> Mechanic {
     // (floor shown in game, mastery needed, needs a Wind Walker), by gemstone index.
     const WHERE: [(u8, f64, bool); 8] = [(2, 1.0, false), (4, 1.0, false), (6, 1.0, false), (9, 1.0, false), (3, 2.0, false), (7, 2.0, false), (5, 1.0, true), (10, 1.0, true)];
     let mastery = save.option(231);
+    let highest = save.option(232).max(mastery);
     let items = extra_names("gems")
         .iter()
         .enumerate()
@@ -553,8 +576,10 @@ fn gemstones(save: &Save) -> Mechanic {
             let mut it = Item::new(label(n), pic(format!("NjGem{i}")), save.option(233 + i), 0.0);
             if let Some(&(floor, need, ww)) = WHERE.get(i) {
                 let ww = if ww { " while one of your characters is a Wind Walker" } else { "" };
-                if mastery < need {
-                    it.how = Some(format!("Found on Sneaking floor {floor}{ww}, from Sneaking mastery {need}. Yours is {mastery}."));
+                if mastery < need && highest >= need {
+                    it.how = Some(format!("Found on Sneaking floor {floor}{ww}, from Sneaking mastery {need}. You're playing mastery {mastery}: switch up to {need} or higher to find it."));
+                } else if mastery < need {
+                    it.how = Some(format!("Found on Sneaking floor {floor}{ww}, from Sneaking mastery {need}. Your highest is {highest}."));
                     it.state = State::Locked;
                 } else {
                     it.how = Some(format!("Found on Sneaking floor {floor}{ww}. Each one adds a level."));
@@ -690,10 +715,16 @@ fn emperor(save: &Save) -> Mechanic {
 /// N.js Summoning `UpgCost`, col 4 × col 5 ^ level before the discounts, paid in the essence of
 /// colour col 2 (`Summon[2][colour]`). Row 2, Familiar, is left out: the game sets
 /// `Summon[0][2]` back to 0 every few days (when `Summon[3][3]` runs out), so it has no lasting level.
+///
+/// An upgrade only shows on the board once the one named in col 9 is level 1 (-1 for none);
+/// row 71, Muddah, names itself and opens with Spelunking lore boss 5 (`DoWeHaveLoreN1(4)`:
+/// `Spelunk[0][4] >= 1`).
 fn summoning(save: &Save) -> Mechanic {
     let levels = save.numbers("Summon", &[0]);
     let essence = save.numbers("Summon", &[2]);
-    let items: Vec<Item> = rows("SummonUPG", &[])
+    let lore5 = at(&save.numbers("Spelunk", &[0]), 4) >= 1.0;
+    let table = rows("SummonUPG", &[]);
+    let items: Vec<Item> = table
         .iter()
         .enumerate()
         .filter(|(i, r)| *i != 2 && cell(r, 8) > 0.0 && cell(r, 8) < 999.0)
@@ -706,7 +737,17 @@ fn summoning(save: &Save) -> Mechanic {
             if colour == 7 {
                 it.world = Some(7);
             }
-            if lv < cell(r, 8) && let Some(c) = COLOURS.get(colour) {
+            let pre = cell(r, 9);
+            let shown = lv >= 1.0 || pre < 0.0 || (i == 71 && lore5) || at(&levels, pre as usize) >= 1.0;
+            if lv < cell(r, 8) && !shown {
+                it.how = Some(if pre as usize == i {
+                    "Opens once you beat Spelunking lore boss 5.".to_string()
+                } else {
+                    let name = table.get(pre as usize).map_or_else(String::new, |p| label(text(p, 3)));
+                    format!("Opens once {name} is level 1.")
+                });
+                it.state = State::Locked;
+            } else if lv < cell(r, 8) && let Some(c) = COLOURS.get(colour) {
                 let cost = cell(r, 4) * cell(r, 5).powf(lv);
                 let held = at(&essence, colour).max(0.0) + 0.0;
                 it.how = Some(format!("Next level costs {} {} essence at most. You hold {}.", big(cost), c.to_lowercase(), big(held)));
