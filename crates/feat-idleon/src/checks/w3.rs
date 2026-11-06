@@ -95,18 +95,70 @@ fn atom_max(save: &Save) -> f64 {
 
 /// Atom Collider: `Atoms[i]`, one cap for every atom. `AtomInfo` lists all 17, the six the game
 /// unlocks later (compass, Jelly, Minehead, Sushi and Menagerie unlock 16) included.
+/// The particles atom `row` costs at `level`, before the player's discounts (N.js `AtomCost`:
+/// `(AtomInfo[3] + AtomInfo[1] * lv) * AtomInfo[2] ^ lv`, then divided by their bonuses).
+fn atom_cost(row: &Value, level: f64) -> f64 {
+    (cell(row, 3) + cell(row, 1) * level) * cell(row, 2).powf(level)
+}
+
+/// The level `particles` would take an atom to on its own, from `level`, up to `max`. Each level
+/// costs more than the last, so this stops within a few hundred steps.
+fn atom_reach(row: &Value, level: f64, max: f64, particles: f64) -> f64 {
+    let (mut lv, mut left) = (level, particles);
+    while lv < max {
+        let c = atom_cost(row, lv);
+        if !(c.is_finite() && c <= left) {
+            break;
+        }
+        left -= c;
+        lv += 1.0;
+    }
+    lv
+}
+
 fn atoms(save: &Save) -> Mechanic {
     let levels = save.numbers("Atoms", &[]);
     let max = atom_max(save);
-    let items = rows("AtomInfo", &[])
+    let particles = save.at("Divinity", &[39]).map(num).unwrap_or(0.0).max(0.0);
+    let table = rows("AtomInfo", &[]);
+    let items: Vec<Item> = table
         .iter()
         .enumerate()
         .map(|(i, r)| {
             let name = text(r, 0).split("_-_").next().unwrap_or("");
-            Item::new(label(name), pic(format!("Atom{i}")), at(&levels, i), max)
+            let level = at(&levels, i);
+            let mut it = Item::new(label(name), pic(format!("Atom{i}")), level, max);
+            // Chlorine, the 17th, comes with Menagerie unlock 16.
+            if i == 16 && level <= 0.0 && !super::w7::menagerie_unlock(save, 16) {
+                it.how = Some("Unlocked by Menagerie unlock 16.".into());
+                it.state = State::Locked;
+            } else if level < max {
+                let cost = atom_cost(r, level);
+                it.how = Some(format!("Next level costs {} particles.", big(cost)));
+                it.state = if cost <= particles { State::Ready } else { State::Unknown };
+            }
+            it
         })
         .collect();
+    // What the particles on hand buy: the two lowest atoms that can move, each on its own.
+    let mut open: Vec<(usize, &Item)> = items.iter().enumerate().filter(|(_, it)| it.state == State::Ready).collect();
+    open.sort_by(|a, b| a.1.level.total_cmp(&b.1.level));
+    let reach: Vec<String> = open
+        .iter()
+        .take(2)
+        .filter_map(|(i, it)| table.get(*i).map(|r| format!("{} to Lv {}", it.name, atom_reach(r, it.level, max, particles))))
+        .collect();
+    let have = Have {
+        figure: format!("{} particles", big(particles)),
+        text: match reach.as_slice() {
+            [] => "Not enough for the next level of any atom yet.".into(),
+            [one] => format!("Enough to take {one}."),
+            [a, b, ..] => format!("Enough to take {a}, or {b}. Costs here are before your discounts, so you get a little further."),
+        },
+    };
     let mut m = mech("atoms", 3, "Atom Collider", pic("Atom0".into()), Count::Levels, "levels", items);
+    m.have = Some(have);
+    m.raises = vec![Raise { name: "Menagerie boost 17".into(), amount: "+1 each".into(), owned: menagerie_boosts(save, 17) > 0.0 }];
     m.note = Some(format!(
         "The cap starts at 20. A gaming superbit, a compass upgrade and an event shop item raise it to 70, and each Menagerie boost adds 1 more (counted here: {max})."
     ));

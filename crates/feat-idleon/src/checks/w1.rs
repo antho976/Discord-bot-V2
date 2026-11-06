@@ -37,6 +37,7 @@ fn statues(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("statues", 1, "Statues", pic("StatueZ1".into()), Count::Levels, "tiers", items);
+    m.tier_names = Some(STATUE_TIERS[1..].iter().map(|s| s.to_string()).collect());
     m.note = Some("Each statue goes Normal, Gold, Onyx, then Zenith. Levels keep going, so Zenith counts as done.".into());
     m
 }

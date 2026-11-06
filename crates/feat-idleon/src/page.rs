@@ -11,7 +11,7 @@ use bot_core::web::ui;
 
 use crate::game::GAME;
 use crate::pictures;
-use crate::review::{Count, Item, Mechanic, Review, Why};
+use crate::review::{Count, Item, Mechanic, Review, State as Step, Tier, Why};
 
 pub enum State<'a> {
     Ask { error: Option<&'a str> },
@@ -189,11 +189,14 @@ fn done(guild: u64, r: &Review) -> Markup {
 fn card(m: &Mechanic) -> Markup {
     let open = m.open_items();
     let maxed: Vec<&Item> = m.items.iter().filter(|i| i.done()).collect();
+    let tiers = m.tiers();
+    let current = tiers.iter().position(|t| !t.complete());
+    let side = m.have.is_some() || !m.raises.is_empty();
     html! {
         details.ia-card #{ "m-" (m.key) } {
             summary {
                 (mark(m))
-                span.ia-card-name { b { (m.name) } span { (fig(m)) } }
+                span.ia-card-name { b { (m.name) } span { (fig(m)) @if !tiers.is_empty() { " · Tier " (current.unwrap_or(tiers.len())) " of " (tiers.len()) } } }
                 @if m.count == Count::Open {
                     span.ia-pct.open { "No max" }
                 } @else {
@@ -201,14 +204,145 @@ fn card(m: &Mechanic) -> Markup {
                     span.ia-meter.wide { span style={ "--s:" (m.share()) } {} }
                 }
             }
-            div.ia-items {
+            div.ia-body {
                 @if let Some(n) = &m.note { p.ia-note { (n) } }
-                @if open.is_empty() && !m.items.is_empty() { p.ia-note { "Everything here is at max." } }
-                @for i in &open { (item(i)) }
-                @if !maxed.is_empty() {
-                    p.ia-maxed-head { (maxed.len()) " at max" }
-                    div.ia-maxed { @for i in &maxed { (item(i)) } }
+                @if !tiers.is_empty() {
+                    ol.ia-ladder style={ "--n:" (tiers.len()) } {
+                        @for (k, t) in tiers.iter().enumerate() {
+                            li.ia-rung.done[t.complete()].here[current == Some(k)] {
+                                span.ia-rung-k {
+                                    "Tier " (k + 1)
+                                    @if current == Some(k) { " · you're here" } @else if t.complete() { " · done" }
+                                }
+                                b { (t.label) }
+                                span.ia-fig { (t.met) " of " (t.targets.len()) }
+                                span.ia-meter { span style={ "--s:" (t.met as f64 / t.targets.len().max(1) as f64) } {} }
+                            }
+                        }
+                    }
                 }
+                div.ia-work.with-side[side] {
+                    div.ia-tasks {
+                        @match current {
+                            Some(k) => {
+                                @let tasks = m.tasks(&tiers[k]);
+                                @let ready = tasks.iter().filter(|(i, _)| i.state == Step::Ready).count();
+                                h3 { "To reach Tier " (k + 1) }
+                                p.ia-note {
+                                    (tasks.len()) " left."
+                                    @if ready == tasks.len() && ready > 0 { " You can do all of them now." }
+                                    @else if ready > 0 { " " (ready) " you can do right now." }
+                                }
+                                div.ia-task-list {
+                                    @for (i, target) in tasks.iter().take(TASKS) { (task(m, i, *target)) }
+                                }
+                                @if tasks.len() > TASKS { p.ia-note { "And " (tasks.len() - TASKS) " more, in the full list below." } }
+                                @if k + 1 < tiers.len() {
+                                    p.ia-later-head { "After that" }
+                                    @for (j, t) in tiers.iter().enumerate().skip(k + 1) { (later(m, j, t)) }
+                                }
+                            }
+                            None if !tiers.is_empty() => { p.ia-note { "Every tier done." } }
+                            None => {
+                                h3 { "Lowest first" }
+                                p.ia-note { "Nothing here has a max, so these are the ones furthest behind." }
+                                div.ia-task-list { @for i in open.iter().take(TASKS) { (item(i)) } }
+                            }
+                        }
+                    }
+                    @if side {
+                        aside.ia-side {
+                            @if let Some(h) = &m.have {
+                                div.ia-side-box {
+                                    span.ia-side-k { "With what you have" }
+                                    b.ia-side-big { (h.figure) }
+                                    p { (h.text) }
+                                }
+                            }
+                            @if !m.raises.is_empty() {
+                                div.ia-side-box {
+                                    span.ia-side-k { "Raise the cap" }
+                                    @for r in &m.raises {
+                                        div.ia-raise.owned[r.owned] {
+                                            span.ia-raise-mark { (if r.owned { "✓" } else { "○" }) }
+                                            span { (r.name) }
+                                            span.ia-fig { (r.amount) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                @if !m.items.is_empty() {
+                    details.ia-all {
+                        summary { "Show all " (m.items.len()) }
+                        div.ia-items {
+                            @for i in &open { (item(i)) }
+                            @if !maxed.is_empty() {
+                                p.ia-maxed-head { (maxed.len()) " at max" }
+                                div.ia-maxed { @for i in &maxed { (item(i)) } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Tasks shown under the current tier before "and N more".
+const TASKS: usize = 8;
+
+/// A level as the mechanic names it: "Gold" for a statue, "Lv 17" otherwise.
+fn level_text(m: &Mechanic, level: f64) -> String {
+    match &m.tier_names {
+        Some(names) if level >= 1.0 => names.get(level as usize - 1).cloned().unwrap_or_else(|| format!("Lv {}", num(level))),
+        Some(_) => "None".into(),
+        None => format!("Lv {}", num(level)),
+    }
+}
+
+fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
+    let once = i.max <= 1.0 && m.tier_names.is_none();
+    html! {
+        div.ia-task {
+            @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {
+                img src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy" style=[(i.state == Step::Locked).then_some("opacity:.55")];
+            } @else { span.ia-item-dot {} }
+            span.ia-task-text {
+                b { (i.name) }
+                @if let Some(h) = &i.how { span { (h) } }
+            }
+            span.ia-fig {
+                @if once { (i.level_name.as_deref().unwrap_or("Not yet")) }
+                @else { (level_text(m, i.level)) " → " (level_text(m, target)) }
+            }
+            @match i.state {
+                Step::Ready => span.ia-chip.ok { "Do now" },
+                Step::Locked => span.ia-chip.lock { "Locked" },
+                Step::Unknown => span {},
+            }
+        }
+    }
+}
+
+/// A later tier, folded to one line: what it is and who holds it back.
+fn later(m: &Mechanic, j: usize, t: &Tier) -> Markup {
+    let behind: Vec<String> = m
+        .items
+        .iter()
+        .zip(&t.targets)
+        .filter(|(i, tg)| i.level < **tg)
+        .map(|(i, _)| if i.max <= 1.0 && m.tier_names.is_none() { i.name.clone() } else { format!("{} {}", i.name, level_text(m, i.level)) })
+        .collect();
+    let shown = behind.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+    html! {
+        div.ia-later {
+            span { "Tier " (j + 1) " · " (t.label) }
+            span.ia-later-who {
+                (shown)
+                @if behind.len() > 3 { " and " (behind.len() - 3) " more" }
             }
         }
     }
@@ -269,7 +403,7 @@ fn pct(s: f64) -> String {
 }
 
 /// Whole numbers with thousands separators; anything else with one decimal.
-fn num(n: f64) -> String {
+pub(crate) fn num(n: f64) -> String {
     if n.fract().abs() > 1e-9 {
         return format!("{n:.1}");
     }
@@ -284,10 +418,45 @@ fn num(n: f64) -> String {
     if n < 0.0 { format!("-{out}") } else { out }
 }
 
+/// The paste box's file picker, and cards that grow out of their place: when one opens it
+/// spans the grid, so every card is measured before and after and slides from where it was
+/// (FLIP); the opened one is revealed from its old size rather than stretched. Do next and Not
+/// started links switch the world, open the card the same way and scroll to it.
 const JS: &str = r#"(function(){
 var f=document.getElementById("ia-file"),t=document.getElementById("ia-save");
 if(f&&t)f.addEventListener("change",function(){var x=f.files&&f.files[0];if(x)x.text().then(function(s){t.value=s;t.form.requestSubmit()})});
-document.querySelectorAll("a[data-go]").forEach(function(a){a.addEventListener("click",function(){var w=document.getElementById("w-"+a.dataset.w);if(w)w.checked=true;var m=document.getElementById(a.dataset.go);if(m)m.open=true})});
+var still=matchMedia("(prefers-reduced-motion: reduce)"),ease="cubic-bezier(.16,1,.3,1)";
+function flip(d,open){
+  if(d.open===open)return;
+  var cards=[].slice.call(d.parentElement.children);
+  if(still.matches||!d.animate){d.open=open;return}
+  var was=cards.map(function(c){return c.getBoundingClientRect()});
+  d.open=open;
+  cards.forEach(function(c,i){
+    var a=was[i],b=c.getBoundingClientRect(),dx=a.left-b.left,dy=a.top-b.top;
+    if(c===d&&open){
+      c.animate([{transform:"translate("+dx+"px,"+dy+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+"px 0 round 14px)"},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:380,easing:ease});
+      var body=c.querySelector(".ia-body");
+      if(body)body.animate([{opacity:0,transform:"translateY(-6px)"},{opacity:1,transform:"none"}],{duration:280,delay:120,easing:ease,fill:"backwards"});
+    }else if(c===d){
+      c.animate([{transform:"translate("+dx+"px,"+dy+"px)",opacity:.5},{transform:"none",opacity:1}],{duration:300,easing:ease});
+    }else if(dx||dy){
+      c.animate([{transform:"translate("+dx+"px,"+dy+"px)"},{transform:"none"}],{duration:380,easing:ease});
+    }
+  });
+}
+document.addEventListener("click",function(e){
+  var s=e.target.closest(".ia-card > summary");
+  if(s){e.preventDefault();flip(s.parentElement,!s.parentElement.open);return}
+  var a=e.target.closest("a[data-go]");
+  if(!a)return;
+  var w=document.getElementById("w-"+a.dataset.w),m=document.getElementById(a.dataset.go);
+  if(!m)return;
+  e.preventDefault();
+  if(w)w.checked=true;
+  flip(m,true);
+  m.scrollIntoView({behavior:still.matches?"auto":"smooth",block:"start"});
+});
 })()"#;
 
 const CSS: &str = r#"
@@ -387,7 +556,49 @@ body.ia-pub { background: var(--page);
 .ia-fresh-item .ia-mark { width: 26px; height: 26px; }
 .ia-fresh-item .ia-mark.blank { width: 8px; height: 8px; margin: 9px; }
 .ia-meter.wide { grid-area: b; }
-.ia-items { padding: 2px 16px 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 0 28px; }
+.ia-body { padding: 4px 16px 18px; display: flex; flex-direction: column; gap: 18px; }
+.ia-body .ia-note { padding: 0; }
+.ia-ladder { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 8px; }
+.ia-rung { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 11px 13px; border-radius: 10px; background: var(--well); }
+.ia-rung b { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-rung .ia-fig { text-align: left; }
+.ia-rung .ia-meter { height: 4px; margin-top: 2px; }
+.ia-rung-k { font-size: 12px; color: var(--ink-2); }
+.ia-rung.here { background: color-mix(in oklab, var(--w) 12%, var(--raised)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--w) 60%, transparent); }
+.ia-rung.here .ia-rung-k { color: var(--w); }
+.ia-rung.done .ia-rung-k { color: var(--live); }
+.ia-work { display: grid; gap: 24px; }
+@container col (min-width: 1000px) { .ia-work.with-side { grid-template-columns: minmax(0, 1fr) 400px; } }
+.ia-tasks { min-width: 0; }
+.ia-tasks h3 { font-size: 15px; font-weight: 600; }
+.ia-task-list { margin-top: 8px; }
+.ia-task { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; min-height: 50px; padding: 6px 0; border-bottom: 1px solid var(--edge-1); }
+.ia-task:last-child { border-bottom: 0; }
+.ia-task img { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; }
+.ia-task-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ia-task-text b { font-size: 14px; font-weight: 500; }
+.ia-task-text span { font-size: 13px; color: var(--ink-3); }
+.ia-chip { font: 600 12px var(--sans); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+.ia-chip.ok { color: var(--live); background: color-mix(in oklab, var(--live) 14%, transparent); }
+.ia-chip.lock { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
+.ia-later-head { margin-top: 18px; font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
+.ia-later { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--edge-1); font-size: 13.5px; }
+.ia-later:last-child { border-bottom: 0; }
+.ia-later-who { color: var(--ink-3); font-size: 13px; text-align: right; min-width: 0; }
+.ia-side { display: flex; flex-direction: column; gap: 12px; }
+.ia-side-box { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 12px; background: var(--solid); }
+.ia-side-k { font-size: 12px; color: var(--ink-2); }
+.ia-side-big { font: 500 22px var(--mono); }
+.ia-side-box p { font-size: 13.5px; line-height: 1.45; color: var(--ink-2); }
+.ia-raise { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13.5px; }
+.ia-raise-mark { color: var(--waiting); text-align: center; }
+.ia-raise.owned .ia-raise-mark { color: var(--live); }
+.ia-all > summary { cursor: pointer; font-size: 13px; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 3px; list-style: none; width: fit-content; }
+.ia-all > summary::-webkit-details-marker { display: none; }
+.ia-all > summary:hover { color: var(--ink); }
+.ia-all[open] > summary { margin-bottom: 8px; }
+.ia-all[open] .ia-items { animation: ia-in .22s var(--ease); }
+.ia-items { padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 0 28px; }
 .ia-note, .ia-maxed-head { grid-column: 1 / -1; font-size: 13px; color: var(--ink-3); padding: 6px 0 8px; }
 .ia-maxed-head { padding-top: 14px; }
 .ia-maxed { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 0 28px; }
@@ -412,5 +623,10 @@ body.ia-pub { background: var(--page);
   .ia-row { padding: 8px 6px; }
   .ia-row-text span { white-space: normal; }
   .ia-grid, .ia-items, .ia-maxed { grid-template-columns: minmax(0, 1fr); }
+  .ia-ladder { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .ia-task { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .ia-task .ia-fig { display: none; }
+  .ia-later { flex-direction: column; gap: 2px; }
+  .ia-later-who { text-align: left; }
 }
 "#;

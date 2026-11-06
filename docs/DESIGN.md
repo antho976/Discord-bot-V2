@@ -223,6 +223,14 @@ The page fills the window; nothing is capped at a fixed width and parked at the 
   of mechanic cards that open to their items, least done first, maxed folded under. **Each world
   has its own data colour** (`--w1`..`--w7`, `--w0` neutral for account-wide), used only on the
   columns, meters, dots and tags. Game pictures draw pixelated at 24-28 px.
+  **What to do (2026-11-05, owner approved Relay design 20):** an opened card shows a tier ladder
+  (the game's own tiers where it has them, otherwise started / a quarter / half / three quarters /
+  maxed of each item's own max), the current tier's tasks with how to do each in the player's own
+  numbers and a Do now / Locked chip, later tiers folded to who holds them back, and side panels
+  for "With what you have" and "Raise the cap". **Motion (owner: "the change of position is quite
+  big from small to large"):** opening a card is FLIP: every card in the grid slides from where it
+  was, the opened one is revealed from its old size by a clip (not stretched) in 380 ms
+  expo-out, its body fades up after 120 ms; closing slides back. Off under reduced motion.
 - Shared since then: `.rail` is a plain column of bordered panels (`.rail > .rail-block`), the
   `ui::empty` icon is still and neutral, `[data-count]` numbers no longer count up, and the bell's
   notice icons are neutral with no tint on new ones.

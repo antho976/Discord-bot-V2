@@ -114,6 +114,7 @@ fn sigils(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("sigils", 2, "Sigils", pic("aSiga0".into()), Count::Levels, "tiers", items);
+    m.tier_names = Some(SIGIL_TIERS[1..].iter().map(|s| s.to_string()).collect());
     m.note = Some("Blue, Yellow, Red, Purple, then Green. Red needs Ionized Sigils in the Emporium, Purple a Spelunking lore boss, Green the Eclectic Sigils research.".into());
     m
 }

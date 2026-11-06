@@ -20,7 +20,7 @@ mod w7;
 pub(crate) use bot_core::serde_json::Value;
 
 pub(crate) use crate::game::{GAME, num, words};
-pub(crate) use crate::review::{Count, Item, Mechanic};
+pub(crate) use crate::review::{Count, Have, Item, Mechanic, Raise, State};
 pub(crate) use crate::save::Save;
 
 /// The highest world reached: kills on that world's first map by any character (map 51 for
@@ -103,7 +103,27 @@ pub(crate) fn pic(p: String) -> Option<String> {
 }
 
 pub(crate) fn mech(key: &'static str, world: u8, name: &'static str, picture: Option<String>, count: Count, unit: &'static str, items: Vec<Item>) -> Mechanic {
-    Mechanic { key, world, name, picture, count, unit, items, note: None }
+    Mechanic { key, world, name, picture, count, unit, items, note: None, tier_names: None, raises: Vec::new(), have: None }
+}
+
+/// A big number the way the game writes it: 400K, 1.5M, 96 Qa. Past the names, 1.2e45.
+pub(crate) fn big(n: f64) -> String {
+    const NAMES: [&str; 11] = ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "O", "N"];
+    if !n.is_finite() {
+        return "∞".into();
+    }
+    if n.abs() < 1000.0 {
+        return format!("{}", n.round());
+    }
+    let k = ((n.abs().log10() / 3.0).floor() as usize).min(NAMES.len());
+    if k >= NAMES.len() {
+        return format!("{n:.1e}");
+    }
+    let v = n / 1000f64.powi(k as i32);
+    let digits = if v.abs() >= 10.0 { 0 } else { 1 };
+    let s = format!("{v:.digits$}");
+    let s = s.trim_end_matches(".0");
+    format!("{s}{}", NAMES[k])
 }
 
 pub(crate) fn at(v: &[f64], i: usize) -> f64 {
@@ -115,6 +135,14 @@ pub(crate) fn at(v: &[f64], i: usize) -> f64 {
 mod tests {
     use super::*;
     use super::general::card_stars;
+
+    #[test]
+    fn big_numbers_read_like_the_game() {
+        assert_eq!(big(400_000.0), "400K");
+        assert_eq!(big(1_500_000.0), "1.5M");
+        assert_eq!(big(9.64e16), "96Qa");
+        assert_eq!(big(512.0), "512");
+    }
 
     #[test]
     fn labels_read_like_the_game() {

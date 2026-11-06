@@ -69,6 +69,7 @@ fn cards(save: &Save) -> Mechanic {
         }
     }
     let mut m = mech("cards", 0, "Cards", pic("CardsA0".into()), Count::Levels, "stars", items);
+    m.tier_names = Some(["Found", "1 star", "2 stars", "3 stars", "4 stars", "5 stars", "6 stars"].iter().map(|s| s.to_string()).collect());
     m.note = Some("4 stars at first, 5 with the Rift unlock, 6 with Spelunking's.".into());
     m
 }
