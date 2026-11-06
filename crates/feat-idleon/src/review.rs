@@ -58,19 +58,21 @@ pub struct Have {
     pub text: String,
 }
 
-/// One rung of a mechanic's ladder: a target level for every item.
+/// One rung of a mechanic's ladder.
 #[derive(Debug, Clone)]
 pub struct Tier {
     pub label: String,
-    /// The level each item needs, in item order.
-    pub targets: Vec<f64>,
-    /// Items at or past their target.
+    /// The level each item needs, in item order; `None` for a count ("any 32 of 80"), where
+    /// which items you have doesn't matter.
+    pub targets: Option<Vec<f64>>,
+    /// How many of `need` are there.
     pub met: usize,
+    pub need: usize,
 }
 
 impl Tier {
     pub fn complete(&self) -> bool {
-        self.met >= self.targets.len()
+        self.met >= self.need
     }
 }
 
@@ -124,6 +126,9 @@ pub struct Mechanic {
     /// Items from worlds the account hasn't reached (see `Item::world`), moved out of `items`
     /// by `Review::new` so they count nowhere until then.
     pub later: Vec<Item>,
+    /// For a mechanic with no max: keep the check's own item order and show this heading
+    /// ("Soonest rank-up first") instead of sorting lowest first.
+    pub open_order: Option<&'static str>,
 }
 
 impl Mechanic {
@@ -155,6 +160,9 @@ impl Mechanic {
     /// Items not at their max, least done first (lowest level first when there's no max).
     pub fn open_items(&self) -> Vec<&Item> {
         let mut v: Vec<&Item> = self.items.iter().filter(|i| !i.done()).collect();
+        if self.open_order.is_some() {
+            return v;
+        }
         v.sort_by(|a, b| a.share().total_cmp(&b.share()).then(a.level.total_cmp(&b.level)));
         v
     }
@@ -170,18 +178,27 @@ impl Mechanic {
             return Vec::new();
         }
         let n = self.items.len();
+        // Things you get once: a count of how many, in fifths. Which ones doesn't matter, so one
+        // rare item never holds every later tier back.
+        if self.tier_names.is_none() && (self.count == Count::Done || self.items.iter().all(|i| i.max <= 1.0)) {
+            let done = self.items.iter().filter(|i| i.done()).count();
+            let steps = n.min(5);
+            let mut out: Vec<Tier> = Vec::new();
+            for k in 1..=steps {
+                let need = (n * k).div_ceil(steps);
+                if out.last().is_some_and(|t| t.need == need) {
+                    continue;
+                }
+                let label = if need == n { format!("All {n}") } else { format!("Any {need} of {n}") };
+                out.push(Tier { label, targets: None, met: done.min(need), need });
+            }
+            return out;
+        }
         let mut rungs: Vec<(String, Vec<f64>)> = Vec::new();
         if let Some(names) = &self.tier_names {
             for (k, name) in names.iter().enumerate() {
                 let lv = (k + 1) as f64;
                 rungs.push((format!("All at {name}"), self.items.iter().map(|i| lv.min(i.max)).collect()));
-            }
-        } else if self.count == Count::Done || self.items.iter().all(|i| i.max <= 1.0) {
-            let steps = n.min(5);
-            for k in 1..=steps {
-                let m = (n * k).div_ceil(steps);
-                let label = if m == n { format!("All {n}") } else { format!("The first {m} of {n}") };
-                rungs.push((label, self.items.iter().enumerate().map(|(j, i)| if j < m { i.max.max(1.0) } else { 0.0 }).collect()));
             }
         } else {
             let same = self.items.iter().all(|i| i.max == self.items[0].max);
@@ -202,21 +219,40 @@ impl Mechanic {
             .into_iter()
             .map(|(label, targets)| {
                 let met = self.items.iter().zip(&targets).filter(|(i, t)| i.level >= **t).count();
-                Tier { label, targets, met }
+                Tier { label, need: targets.len(), targets: Some(targets), met }
             })
             .collect()
     }
 
     /// The items a tier still waits on, the ones you can take now first, then the furthest off.
+    /// For a count tier, every item you don't have yet, in the game's order after the ready ones.
     pub fn tasks<'a>(&'a self, tier: &Tier) -> Vec<(&'a Item, f64)> {
-        let mut v: Vec<(&Item, f64)> = self.items.iter().zip(&tier.targets).filter(|(i, t)| i.level < **t).map(|(i, t)| (i, *t)).collect();
         let rank = |s: State| match s {
             State::Ready => 0,
             State::Unknown => 1,
             State::Locked => 2,
         };
+        let Some(targets) = &tier.targets else {
+            let mut v: Vec<(&Item, f64)> = self.items.iter().filter(|i| !i.done()).map(|i| (i, i.max.max(1.0))).collect();
+            v.sort_by_key(|(i, _)| rank(i.state));
+            return v;
+        };
+        let mut v: Vec<(&Item, f64)> = self.items.iter().zip(targets).filter(|(i, t)| i.level < **t).map(|(i, t)| (i, *t)).collect();
         v.sort_by(|a, b| rank(a.0.state).cmp(&rank(b.0.state)).then((a.0.level / a.1).total_cmp(&(b.0.level / b.1))));
         v
+    }
+
+    /// For a mechanic with no max: average, median, highest and lowest level.
+    pub fn spread(&self) -> Option<[f64; 4]> {
+        let mut v: Vec<f64> = self.items.iter().map(|i| i.level).collect();
+        if v.is_empty() {
+            return None;
+        }
+        v.sort_by(f64::total_cmp);
+        let avg = v.iter().sum::<f64>() / v.len() as f64;
+        let mid = v.len() / 2;
+        let median = if v.len() % 2 == 0 { (v[mid - 1] + v[mid]) / 2.0 } else { v[mid] };
+        Some([avg, median, v[v.len() - 1], v[0]])
     }
 
     /// Nothing at all yet: no level anywhere, no item found.
@@ -361,6 +397,7 @@ mod tests {
             raises: Vec::new(),
             have: None,
             later: Vec::new(),
+            open_order: None,
         }
     }
 
@@ -394,16 +431,20 @@ mod tests {
         let m = mech("atoms", 3, &[(70.0, 70.0), (17.0, 70.0), (0.0, 70.0)]);
         let t = m.tiers();
         assert_eq!(t.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["All started", "All to Lv 18", "All to Lv 35", "All to Lv 53", "All at the max, 70"]);
+        assert_eq!(t[0].need, 3);
         assert_eq!(t[0].met, 2);
         assert_eq!(t[1].met, 1);
         assert_eq!(m.tasks(&t[1]).len(), 2);
-        // Found-once things climb in game order.
-        let mut d = mech("bribes", 1, &[(1.0, 1.0); 10]);
+        // Found-once things count how many, whichever: one missing early item doesn't hold
+        // the later tiers back, and a tier reads "31 of 32", not "79 of 80".
+        let mut d = mech("star-signs", 1, &[(1.0, 1.0); 10]);
         d.count = Count::Done;
-        d.items[9].level = 0.0;
+        d.items[0].level = 0.0;
         let t = d.tiers();
         assert_eq!(t.len(), 5);
         assert!(t[3].complete() && !t[4].complete());
+        assert_eq!((t[4].met, t[4].need), (9, 10));
+        assert_eq!(d.tasks(&t[4]).len(), 1);
     }
 
     #[test]

@@ -191,12 +191,17 @@ fn card(m: &Mechanic) -> Markup {
     let maxed: Vec<&Item> = m.items.iter().filter(|i| i.done()).collect();
     let tiers = m.tiers();
     let current = tiers.iter().position(|t| !t.complete());
-    let side = m.have.is_some() || !m.raises.is_empty();
+    // What you hold and what raises the cap only matter while there's a tier to work on.
+    let side = current.is_some() && (m.have.is_some() || !m.raises.is_empty());
+    let hold = ON_HOLD.contains(&m.key);
     html! {
         details.ia-card #{ "m-" (m.key) } {
             summary {
                 (mark(m))
-                span.ia-card-name { b { (m.name) } span { (fig(m)) @if !tiers.is_empty() { " · Tier " (current.unwrap_or(tiers.len())) " of " (tiers.len()) } } }
+                span.ia-card-name {
+                    b { (m.name) }
+                    span { (fig(m)) @if !tiers.is_empty() { " · Tier " (current.unwrap_or(tiers.len())) "/" (tiers.len()) } }
+                }
                 @if m.count == Count::Open {
                     span.ia-pct.open { "No max" }
                 } @else {
@@ -205,7 +210,20 @@ fn card(m: &Mechanic) -> Markup {
                 }
             }
             div.ia-body {
+                @if hold {
+                    p.ia-hold { b { "Order coming later." } " The numbers here are right, but these tiers aren't in the order you'd really do them yet. That comes in a later update." }
+                }
                 @if let Some(n) = &m.note { p.ia-note { (n) } }
+                @if m.count == Count::Open {
+                    @if let Some([avg, median, top, low]) = m.spread() {
+                        div.ia-spread {
+                            div { b { (num(avg.round())) } span { "Average" } }
+                            div { b { (num(median.round())) } span { "Median" } }
+                            div { b { (num(top)) } span { "Highest" } }
+                            div { b { (num(low)) } span { "Lowest" } }
+                        }
+                    }
+                }
                 @if !tiers.is_empty() {
                     ol.ia-ladder style={ "--n:" (tiers.len()) } {
                         @for (k, t) in tiers.iter().enumerate() {
@@ -215,8 +233,9 @@ fn card(m: &Mechanic) -> Markup {
                                     @if current == Some(k) { " · you're here" } @else if t.complete() { " · done" }
                                 }
                                 b { (t.label) }
-                                span.ia-fig { (t.met) " of " (t.targets.len()) }
-                                span.ia-meter { span style={ "--s:" (t.met as f64 / t.targets.len().max(1) as f64) } {} }
+                                span.ia-fig { (t.met) " of " (t.need) }
+                                span.ia-meter { span style={ "--s:" (t.met as f64 / t.need.max(1) as f64) } {} }
+                                @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty()) { span.ia-rung-note { (n) } }
                             }
                         }
                     }
@@ -227,8 +246,10 @@ fn card(m: &Mechanic) -> Markup {
                             Some(k) => {
                                 @let tasks = m.tasks(&tiers[k]);
                                 @let ready = tasks.iter().filter(|(i, _)| i.state == Step::Ready).count();
+                                @let short = tiers[k].need - tiers[k].met;
                                 h3 { "To reach Tier " (k + 1) }
                                 p.ia-note {
+                                    @if tiers[k].targets.is_none() { (short) " more, any of these. " }
                                     (tasks.len()) " left."
                                     @if ready == tasks.len() && ready > 0 { " You can do all of them now." }
                                     @else if ready > 0 { " " (ready) " you can do right now." }
@@ -244,8 +265,8 @@ fn card(m: &Mechanic) -> Markup {
                             }
                             None if !tiers.is_empty() => { p.ia-note { "Every tier done." } }
                             None => {
-                                h3 { "Lowest first" }
-                                p.ia-note { "Nothing here has a max, so these are the ones furthest behind." }
+                                h3 { (m.open_order.unwrap_or("Lowest first")) }
+                                @if m.open_order.is_none() { p.ia-note { "Nothing here has a max, so these are the ones furthest behind." } }
                                 div.ia-task-list { @for i in open.iter().take(TASKS) { (item(i)) } }
                             }
                         }
@@ -274,6 +295,17 @@ fn card(m: &Mechanic) -> Markup {
                         }
                     }
                 }
+                @if !m.later.is_empty() {
+                    p.ia-note.ia-later-worlds {
+                        "Not counted until you get there: "
+                        @for (n, i) in m.later.iter().take(6).enumerate() {
+                            @if n > 0 { ", " }
+                            (i.name) " (World " (i.world.unwrap_or(0)) ")"
+                        }
+                        @if m.later.len() > 6 { " and " (m.later.len() - 6) " more" }
+                        "."
+                    }
+                }
                 @if !m.items.is_empty() {
                     details.ia-all {
                         summary { "Show all " (m.items.len()) }
@@ -290,6 +322,12 @@ fn card(m: &Mechanic) -> Markup {
         }
     }
 }
+
+/// Mechanics whose tiers aren't in a real order yet (owner, 2026-11-06): their cards say so.
+const ON_HOLD: &[&str] = &[
+    "arcade", "sigils", "post-office", "equinox-upgrades", "sampling", "meals", "lab-chips", "breeding-upgrades", "shiny",
+    "breeding-pets", "artifacts", "slab",
+];
 
 /// Tasks shown under the current tier before "and N more".
 const TASKS: usize = 8;
@@ -330,20 +368,25 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
 
 /// A later tier, folded to one line: what it is and who holds it back.
 fn later(m: &Mechanic, j: usize, t: &Tier) -> Markup {
-    let behind: Vec<String> = m
-        .items
-        .iter()
-        .zip(&t.targets)
-        .filter(|(i, tg)| i.level < **tg)
-        .map(|(i, _)| if i.max <= 1.0 && m.tier_names.is_none() { i.name.clone() } else { format!("{} {}", i.name, level_text(m, i.level)) })
-        .collect();
-    let shown = behind.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+    let behind: Vec<String> = match &t.targets {
+        Some(targets) => m
+            .items
+            .iter()
+            .zip(targets)
+            .filter(|(i, tg)| i.level < **tg)
+            .map(|(i, _)| if i.max <= 1.0 && m.tier_names.is_none() { i.name.clone() } else { format!("{} {}", i.name, level_text(m, i.level)) })
+            .collect(),
+        None => Vec::new(),
+    };
     html! {
         div.ia-later {
-            span { "Tier " (j + 1) " · " (t.label) }
+            span.ia-later-k { "Tier " (j + 1) " · " (t.label) }
             span.ia-later-who {
-                (shown)
-                @if behind.len() > 3 { " and " (behind.len() - 3) " more" }
+                @if t.targets.is_none() { (t.need - t.met) " more" }
+                @else {
+                    (behind.iter().take(3).cloned().collect::<Vec<_>>().join(", "))
+                    @if behind.len() > 3 { " and " (behind.len() - 3) " more" }
+                }
             }
         }
     }
@@ -393,7 +436,11 @@ fn fig(m: &Mechanic) -> String {
     match m.count {
         Count::Levels => format!("{} / {} {}", num(m.have()), num(m.total()), m.unit),
         Count::Done => format!("{} of {} {}", num(m.have()), num(m.total()), m.unit),
-        Count::Open => format!("{} {}", num(m.have()), m.unit),
+        // A sum of levels with no max says little: the middle one says more.
+        Count::Open => match m.spread() {
+            Some([_, median, top, _]) => format!("median {} · highest {}", num(median.round()), num(top)),
+            None => format!("{} {}", num(m.have()), m.unit),
+        },
     }
 }
 
@@ -432,32 +479,48 @@ var still=matchMedia("(prefers-reduced-motion: reduce)"),ease="cubic-bezier(.16,
 // Bars draw in once, with the page. After that a bar that appears (a card opening, another
 // world's tab) is just there, so nothing regrows while a card moves.
 setTimeout(function(){document.documentElement.classList.add("ia-settled")},1200);
-function flip(d,open){
-  if(d.open===open)return;
-  var cards=[].slice.call(d.parentElement.children);
-  if(still.matches||!d.animate){d.open=open;return}
-  var was=cards.map(function(c){return c.getBoundingClientRect()});
-  d.open=open;
-  cards.forEach(function(c,i){
-    var a=was[i],b=c.getBoundingClientRect(),dx=a.left-b.left,dy=a.top-b.top;
-    if(c===d){
-      // The card you clicked draws over the others while it moves, and stays opaque.
-      c.style.zIndex=2;
-      var done=function(){c.style.zIndex=""};
-      if(open){
-        c.animate([{transform:"translate("+dx+"px,"+dy+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+"px 0 round 14px)"},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:420,easing:ease}).finished.then(done,done);
-        var body=c.querySelector(".ia-body");
-        if(body)body.animate([{opacity:0,transform:"translateY(-6px)"},{opacity:1,transform:"none"}],{duration:312,delay:133,easing:ease,fill:"backwards"});
-      }else{
-        c.animate([{transform:"translate("+dx+"px,"+dy+"px)"},{transform:"none"}],{duration:333,easing:ease}).finished.then(done,done);
-      }
-    }else if(Math.abs(dx)>1){
-      // Moved to another column or row: fade in where it lands rather than cross the others.
-      c.animate([{opacity:0,transform:"scale(.985)"},{opacity:1,transform:"none"}],{duration:260,delay:90,easing:ease,fill:"backwards"});
-    }else if(Math.abs(dy)>1){
-      c.animate([{transform:"translateY("+dy+"px)"},{transform:"none"}],{duration:420,easing:ease});
-    }
+var busy=new Set(),easeIn="cubic-bezier(.4,0,1,1)";
+function rects(cs){return cs.map(function(c){return c.getBoundingClientRect()})}
+// After the grid changes shape: keep the clicked card where your eye is (scroll by however far
+// the layout moved it), slide cards that only moved up or down, and let cards that changed
+// column come up where they land (sliding them across their neighbours reads as a double image).
+function settle(cs,was,d){
+  var i=cs.indexOf(d),a=was[i],b=d.getBoundingClientRect(),shift=b.top-a.top;
+  if(Math.abs(shift)>1)window.scrollBy(0,shift);
+  cs.forEach(function(c,k){
+    if(c===d)return;
+    // Both rects are on screen, so dy also carries the scroll: cards slide from where you saw them.
+    var q=c.getBoundingClientRect(),dx=was[k].left-q.left,dy=was[k].top-q.top;
+    if(Math.abs(dx)>1)c.animate([{opacity:.25},{opacity:1}],{duration:260,easing:ease});
+    else if(Math.abs(dy)>1)c.animate([{transform:"translateY("+dy+"px)"},{transform:"none"}],{duration:420,easing:ease});
   });
+  return d.getBoundingClientRect();
+}
+function flip(d,open){
+  if(d.open===open||busy.has(d))return;
+  var cs=[].slice.call(d.parentElement.children);
+  if(still.matches||!d.animate){d.open=open;return}
+  busy.add(d);d.style.zIndex=2;
+  var fin=function(){d.style.zIndex="";busy.delete(d)},body=d.querySelector(".ia-body"),r="px 0 round 14px)";
+  if(open){
+    var was=rects(cs),a=was[cs.indexOf(d)];
+    d.open=true;
+    var b=settle(cs,was,d);
+    d.animate([{transform:"translate("+(a.left-b.left)+"px,"+(a.top-b.top)+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+r},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:420,easing:ease}).finished.then(fin,fin);
+    if(body)body.animate([{opacity:0,transform:"translateY(-4px)"},{opacity:1,transform:"none"}],{duration:300,delay:140,easing:ease,fill:"backwards"});
+  }else{
+    // Fold into the size it will have, then let the grid close up around it.
+    var big=d.getBoundingClientRect();
+    d.open=false;var small=d.getBoundingClientRect();d.open=true;
+    var fade=body&&body.animate([{opacity:1},{opacity:0}],{duration:150,easing:easeIn,fill:"forwards"});
+    var fold=d.animate([{clipPath:"inset(0 0 0 0 round 14px)"},{clipPath:"inset(0 "+Math.max(0,big.width-small.width)+"px "+Math.max(0,big.height-small.height)+r}],{duration:260,easing:ease,fill:"forwards"});
+    fold.finished.then(function(){
+      var was=rects(cs);
+      d.open=false;fold.cancel();if(fade)fade.cancel();
+      var b=settle(cs,was,d);
+      d.animate([{transform:"translate("+(big.left-b.left)+"px,0)"},{transform:"none"}],{duration:360,easing:ease}).finished.then(fin,fin);
+    },fin);
+  }
 }
 document.addEventListener("click",function(e){
   var s=e.target.closest(".ia-card > summary");
@@ -550,7 +613,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-worlds:has(#w-4:checked) .ia-world[data-w="4"], .ia-worlds:has(#w-5:checked) .ia-world[data-w="5"],
 .ia-worlds:has(#w-6:checked) .ia-world[data-w="6"], .ia-worlds:has(#w-7:checked) .ia-world[data-w="7"] { display: block; animation: ia-in 0.18s var(--ease); }
 @keyframes ia-in { from { opacity: 0; } }
-.ia-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: start; }
+.ia-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: stretch; }
 .ia-card { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; scroll-margin-top: 20px; }
 .ia-card[open] { grid-column: 1 / -1; }
 .ia-card > summary { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "m n p" "b b b"; align-items: center; gap: 10px 12px; padding: 14px 16px; cursor: pointer; list-style: none; border-radius: 14px; transition: background 0.18s; }
@@ -559,6 +622,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-card > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .ia-card > summary .ia-mark { grid-area: m; }
 .ia-card-name { grid-area: n; display: flex; flex-direction: column; min-width: 0; }
+.ia-card-name b, .ia-card-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ia-card-name b { font-size: 14px; font-weight: 500; }
 .ia-card-name span { font: 12.5px var(--mono); color: var(--ink-3); }
 .ia-pct { grid-area: p; font: 600 15px var(--mono); }
@@ -597,9 +661,17 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-chip.ok { color: var(--live); background: color-mix(in oklab, var(--live) 14%, transparent); }
 .ia-chip.lock { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
 .ia-later-head { margin-top: 18px; font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
-.ia-later { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--edge-1); font-size: 13.5px; }
+.ia-later { display: flex; align-items: baseline; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--edge-1); font-size: 13.5px; }
+.ia-later-k { flex: none; white-space: nowrap; }
 .ia-later:last-child { border-bottom: 0; }
-.ia-later-who { color: var(--ink-3); font-size: 13px; text-align: right; min-width: 0; }
+.ia-later-who { flex: 1; color: var(--ink-3); font-size: 13px; text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-rung-note { font-size: 12px; color: var(--ink-3); line-height: 1.35; }
+.ia-hold { padding: 10px 14px; border-radius: 10px; background: color-mix(in oklab, var(--waiting) 10%, transparent); color: var(--ink-2); font-size: 13px; line-height: 1.45; }
+.ia-hold b { color: var(--waiting); font-weight: 600; }
+.ia-spread { display: flex; flex-wrap: wrap; gap: 8px 32px; }
+.ia-spread div { display: flex; flex-direction: column; gap: 1px; }
+.ia-spread b { font: 600 18px var(--mono); }
+.ia-spread span { font-size: 12px; color: var(--ink-3); }
 .ia-side { display: flex; flex-direction: column; gap: 12px; }
 .ia-side-box { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 12px; background: var(--solid); }
 .ia-side-k { font-size: 12px; color: var(--ink-2); }
