@@ -17,6 +17,9 @@ pub const MAX_BYTES: usize = 8 * 1024 * 1024;
 
 pub struct Save {
     data: Map<String, Value>,
+    /// The game server's live values that IdleonToolbox copies alongside the save
+    /// (`serverVars`: cost multipliers like `A_MineCost`). Empty for other sources.
+    server: Map<String, Value>,
     /// Character names in save order.
     pub names: Vec<String>,
 }
@@ -48,6 +51,10 @@ impl Save {
             return Err(SaveError::NotJson);
         };
         let mut names = string_list(root.get("charNames")).or_else(|| string_list(root.get("playerNames"))).unwrap_or_default();
+        let server = match root.remove("serverVars") {
+            Some(Value::Object(m)) => m,
+            _ => Map::new(),
+        };
         let mut data = match root.remove("data") {
             Some(Value::Object(d)) => d,
             Some(_) => return Err(SaveError::NotASave),
@@ -71,7 +78,7 @@ impl Save {
                 *v = parsed;
             }
         }
-        Ok(Save { data, names })
+        Ok(Save { data, server, names })
     }
 
     pub fn get(&self, key: &str) -> Option<&Value> {
@@ -90,6 +97,11 @@ impl Save {
     /// The numbers in a list or a numbered object, in order. Gaps in a numbered object are 0.
     pub fn numbers(&self, key: &str, path: &[usize]) -> Vec<f64> {
         self.at(key, path).map(numbers).unwrap_or_default()
+    }
+
+    /// A server value from the copy (`serverVars`), when it's there and a number.
+    pub fn server(&self, key: &str) -> Option<f64> {
+        self.server.get(key).map(num).filter(|v| v.is_finite())
     }
 
     /// A value in the account options list, `OptLacc[i]`.
@@ -143,8 +155,10 @@ mod tests {
         assert_eq!(s.option(2), 3.0);
         assert_eq!(s.names, vec!["a", "b"]);
 
-        let toolbox = r#"{"data": {"OptLacc": [0], "CauldronInfo": [{}, {}, {}, {}, {"0": 13, "2": 4}]}, "charNames": ["x"]}"#;
+        let toolbox = r#"{"data": {"OptLacc": [0], "CauldronInfo": [{}, {}, {}, {}, {"0": 13, "2": 4}]}, "charNames": ["x"], "serverVars": {"A_MineCost": 1.31}}"#;
         let s = Save::parse(toolbox).unwrap();
+        assert_eq!(s.server("A_MineCost"), Some(1.31));
+        assert_eq!(s.server("Nope"), None);
         assert_eq!(s.numbers("CauldronInfo", &[4]), vec![13.0, 0.0, 4.0]);
         assert_eq!(s.names, vec!["x"]);
     }
