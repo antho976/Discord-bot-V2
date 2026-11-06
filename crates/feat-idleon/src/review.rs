@@ -251,7 +251,7 @@ impl Mechanic {
         v.sort_by(f64::total_cmp);
         let avg = v.iter().sum::<f64>() / v.len() as f64;
         let mid = v.len() / 2;
-        let median = if v.len() % 2 == 0 { (v[mid - 1] + v[mid]) / 2.0 } else { v[mid] };
+        let median = if v.len().is_multiple_of(2) { (v[mid - 1] + v[mid]) / 2.0 } else { v[mid] };
         Some([avg, median, v[v.len() - 1], v[0]])
     }
 

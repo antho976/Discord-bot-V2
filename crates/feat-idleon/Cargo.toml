@@ -6,5 +6,6 @@ publish.workspace = true
 
 [dependencies]
 bot-core.workspace = true
+feat-community = { path = "../feat-community" }
 maud.workspace = true
 serde.workspace = true

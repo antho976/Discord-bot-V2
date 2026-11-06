@@ -13,6 +13,15 @@ use crate::game::GAME;
 use crate::pictures;
 use crate::review::{Count, Item, Mechanic, Review, State as Step, Tier, Why};
 
+/// Who's looking, as the closed test sees it.
+pub struct Access {
+    /// The page is in closed testing.
+    pub closed: bool,
+    /// This viewer may use it (always, when it isn't closed).
+    pub allowed: bool,
+    pub signed_in: bool,
+}
+
 pub enum State<'a> {
     Ask { error: Option<&'a str> },
     Done(&'a Review),
@@ -24,7 +33,7 @@ fn world_tag(w: u8) -> String {
     if w == 0 { "All".into() } else { format!("W{w}") }
 }
 
-pub fn render(ctx: &Ctx, guild: u64, state: State) -> Markup {
+pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
     let name = ctx.guild_name(guild);
     let icon = ctx.guild_icon_large(guild);
     let banner = ctx.guild_banner_url(guild);
@@ -59,15 +68,71 @@ pub fn render(ctx: &Ctx, guild: u64, state: State) -> Markup {
                     }
                 }
                 main.ia-page {
-                    @match state {
-                        State::Ask { error } => (ask(guild, error)),
-                        State::Done(r) => (done(guild, r)),
+                    @if !access.allowed {
+                        (closed_door(access))
+                    } @else {
+                        @if access.closed {
+                            p.ia-test role="note" {
+                                b { "Closed test." }
+                                " This is a test version: some numbers or advice may be off. If something looks wrong, use Report a problem at the bottom of your results."
+                            }
+                        }
+                        @match state {
+                            State::Ask { error } => (ask(guild, error)),
+                            State::Done(r) => {
+                                (done(guild, r))
+                                (report_box(guild, r))
+                            },
+                        }
                     }
                     footer.ia-foot {
                         span { "Maxes and names come from the game's own data, from " (GAME.updated) ". Your save is read once and not kept." }
                     }
                 }
                 script { (PreEscaped(JS)) }
+            }
+        }
+    }
+}
+
+/// The page while it's closed, for someone who isn't a tester.
+fn closed_door(a: &Access) -> Markup {
+    html! {
+        section.ia-panel.ia-door {
+            h2 { "The account check is in closed testing" }
+            @if a.signed_in {
+                p { "Only staff and testers can use it for now. Ask staff if you'd like to help test it." }
+            } @else {
+                p { "Sign in with Discord to use it. Staff and testers can try it now; everyone else soon." }
+                a.btn.primary href="/login" { "Sign in with Discord" }
+                p.ia-note { "Then come back to this page." }
+            }
+        }
+    }
+}
+
+/// "Report a problem": a note to staff about what looks wrong, sent to the suggestion box.
+fn report_box(guild: u64, r: &Review) -> Markup {
+    html! {
+        section.ia-panel.ia-report #ia-report {
+            div.ia-ask-text {
+                h2 { "Report a problem" }
+                p { "A number that's wrong, advice that doesn't make sense, something missing: tell staff here. It goes to the suggestion box with your name, and says which account and card it's about." }
+            }
+            form method="post" action={ "/p/" (guild) "/idleon/report" } data-full {
+                input type="hidden" name="account" value=(r.name);
+                label.ia-report-card {
+                    span { "Card (optional)" }
+                    select name="card" {
+                        option value="" { "Anything" }
+                        @for m in &r.mechanics { option value=(m.name) { (m.name) } }
+                    }
+                }
+                textarea name="text" rows="4" maxlength="1500" required placeholder="What looks wrong, and what you expected" {}
+                div.ia-ask-actions {
+                    span.ia-report-msg role="status" {}
+                    button.btn.primary type="submit" { "Send to staff" }
+                }
             }
         }
     }
@@ -472,7 +537,7 @@ pub(crate) fn num(n: f64) -> String {
 /// or down slide; cards that changed column fade in where they land, since sliding them across
 /// their neighbours reads as a double image. Do next and Not
 /// started links switch the world, open the card the same way and scroll to it.
-const JS: &str = r#"(function(){
+const JS: &str = r##"(function(){
 var f=document.getElementById("ia-file"),t=document.getElementById("ia-save");
 if(f&&t)f.addEventListener("change",function(){var x=f.files&&f.files[0];if(x)x.text().then(function(s){t.value=s;t.form.requestSubmit()})});
 var still=matchMedia("(prefers-reduced-motion: reduce)"),ease="cubic-bezier(.16,1,.3,1)";
@@ -522,6 +587,17 @@ function flip(d,open){
     },fin);
   }
 }
+// Report a problem without leaving your results.
+var rf=document.querySelector("#ia-report form");
+if(rf)rf.addEventListener("submit",function(e){
+  e.preventDefault();
+  var msg=rf.querySelector(".ia-report-msg"),b=rf.querySelector("button");
+  b.disabled=true;msg.textContent="Sending…";
+  fetch(rf.action,{method:"POST",body:new URLSearchParams(new FormData(rf)),headers:{"content-type":"application/x-www-form-urlencoded"}})
+    .then(function(r){return r.text().then(function(t){msg.textContent=t;if(r.ok)rf.querySelector("textarea").value=""})})
+    .catch(function(){msg.textContent="Couldn't send it. Check your connection and try again."})
+    .finally(function(){b.disabled=false});
+});
 document.addEventListener("click",function(e){
   var s=e.target.closest(".ia-card > summary");
   if(s){e.preventDefault();flip(s.parentElement,!s.parentElement.open);return}
@@ -534,7 +610,7 @@ document.addEventListener("click",function(e){
   flip(m,true);
   m.scrollIntoView({behavior:still.matches?"auto":"smooth",block:"start"});
 });
-})()"#;
+})()"##;
 
 const CSS: &str = r#"
 body.ia-pub { background: var(--page);
@@ -696,6 +772,20 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-item.done { color: var(--ink-3); }
 .ia-item.done .ia-meter > span { background: color-mix(in oklab, var(--w) 45%, var(--well)); }
 
+.ia-test { padding: 12px 16px; border-radius: 12px; background: color-mix(in oklab, var(--waiting) 10%, var(--raised)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 35%, transparent); color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
+.ia-test b { color: var(--waiting); font-weight: 600; }
+.ia-door { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.ia-door h2 { font-size: 17px; font-weight: 600; }
+.ia-door p { color: var(--ink-2); font-size: 14px; }
+.ia-report { display: grid; gap: 18px; }
+@container col (min-width: 900px) { .ia-report { grid-template-columns: 320px minmax(0, 1fr); gap: 28px; } }
+.ia-report form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ia-report textarea { width: 100%; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 14px/1.5 var(--sans); }
+.ia-report textarea:focus, .ia-report select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ia-report-card { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); }
+.ia-report select { height: 34px; padding: 0 10px; border-radius: 9px; border: 0; background: var(--control); color: var(--ink); font: 13px var(--sans); box-shadow: inset 0 0 0 1px var(--edge-1); max-width: 100%; }
+.ia-report .ia-ask-actions { align-items: center; }
+.ia-report-msg { flex: 1; font-size: 13px; color: var(--ink-2); }
 .ia-foot { padding-top: 16px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 12.5px; }
 
 @media (max-width: 720px) {

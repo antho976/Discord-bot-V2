@@ -212,6 +212,22 @@ pub async fn on_command(ctx: &Ctx, call: &CommandCall) -> Result<()> {
     ctx.edit_original(&call.interaction, Reply::text(msg)).await
 }
 
+/// A suggestion sent from another feature's page (the Idleon account check's "Report a
+/// problem"): stored and posted exactly like `/suggest`, by `author`. Returns its number, or
+/// None when suggestions are off here (the feature is switched off or has no channel).
+pub async fn submit(ctx: &Ctx, guild: u64, author: u64, content: &str) -> Result<Option<i64>> {
+    if !ctx.enabled(guild, KEY) {
+        return Ok(None);
+    }
+    let settings = ctx.settings::<Settings>(guild, KEY)?;
+    let Some(channel) = settings.suggestions_channel else { return Ok(None) };
+    let content: String = content.trim().chars().take(MAX_TEXT).collect();
+    if content.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(post(ctx, &settings, guild, channel, author, &content).await?.0))
+}
+
 /// Store a suggestion and post it. Returns its number and a link to the message.
 async fn post(ctx: &Ctx, settings: &Settings, guild: u64, channel: u64, author: u64, content: &str) -> Result<(i64, String)> {
     let content = text::clip(content, MAX_TEXT);

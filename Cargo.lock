@@ -621,6 +621,7 @@ name = "feat-idleon"
 version = "0.1.0"
 dependencies = [
  "bot-core",
+ "feat-community",
  "maud",
  "serde",
 ]
