@@ -371,7 +371,8 @@ fn territories(save: &Save) -> Mechanic {
         .filter(|(row, r)| *row != 14 && !text(r, 4).starts_with("Filler"))
         .enumerate()
         .map(|(i, (_, r))| {
-            let mut it = Item::new(label(text(r, 4)), pic(format!("PetTerritory{}", i + 2)), f64::from((i as f64) < beaten), 1.0);
+            // `PetTerritory{i + 2}` is the whole territory panel, with no icon in it: none reads small.
+            let mut it = Item::new(label(text(r, 4)), None, f64::from((i as f64) < beaten), 1.0);
             let world = territory_world(i);
             if world > 4 {
                 it.world = Some(world);
@@ -387,7 +388,7 @@ fn territories(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    mech("territories", 4, "Breeding Territories", pic("PetTerritory2".into()), Count::Done, "beaten", items)
+    mech("territories", 4, "Breeding Territories", None, Count::Done, "beaten", items)
 }
 
 /// The last rift: the first one whose task (`RiftStuff[4][rift]`, text in `RiftStuff[0]`) is
@@ -411,15 +412,18 @@ fn rift_task(s: &str) -> String {
 /// `RiftStuff[4][rift % 100]` (N.js `RiftStuff` "Task"), its goal `RiftStuff[5][task]`, done
 /// once progress reaches it (`RiftCompleted`).
 fn rift(save: &Save) -> Mechanic {
-    let level = save.at("Rift", &[0]).map(num).unwrap_or(0.0);
+    // `Rift[0]` counts the rifts done: the game greets you in the next one ("WELCOME_TO_RIFT_" +
+    // (Rift[0] + 1)), so it reads as rifts done, not the rift you're in.
+    let raw = save.at("Rift", &[0]).map(num).unwrap_or(0.0);
+    let level = raw;
     let last = last_rift();
-    let mut it = Item::new("Rift reached", None, level, last);
+    let mut it = Item::new("Rifts done", None, level, last);
     if level > 0.0 && level < last {
-        let task = rows("RiftStuff", &[4]).get((level.clamp(0.0, 1e6) as usize) % 100).map_or(0, |v| num(v) as usize);
+        let task = rows("RiftStuff", &[4]).get((raw.clamp(0.0, 1e6) as usize) % 100).map_or(0, |v| num(v) as usize);
         let goal = rows("RiftStuff", &[5]).get(task).map_or(0.0, |v| num(v));
         let progress = save.at("Rift", &[1]).map(num).unwrap_or(0.0);
         let text = rows("RiftStuff", &[0]).get(task).and_then(|v| v.as_str()).map(rift_task).unwrap_or_default();
-        it.how = Some(format!("{text}: {} of {} so far.", big(progress.floor()), big(goal)));
+        it.how = Some(format!("Rift {}: {text}, {} of {} so far.", raw + 1.0, big(progress.floor()), big(goal)));
         if goal > 0.0 && progress >= goal {
             it.state = State::Ready;
         }
@@ -429,10 +433,10 @@ fn rift(save: &Save) -> Mechanic {
     mech("rift", 4, "Rift", None, Count::Levels, "rifts", vec![it])
 }
 
-/// Rift bonuses: `RiftStuff[1]` in fives (x, y, name, ..); bonus t is on from rift 5(t+1)
-/// (N.js `riftBonus`). The last entry, Rift Guy, isn't a bonus.
+/// Rift bonuses: `RiftStuff[1]` in fives (x, y, name, ..); bonus t is on once 5(t+1) rifts are
+/// done (N.js `riftBonus`: `Rift[0]` >= 5(t+1)). The last entry, Rift Guy, isn't a bonus.
 fn rift_bonuses(save: &Save) -> Mechanic {
-    let level = save.at("Rift", &[0]).map(num).unwrap_or(0.0);
+    let raw = save.at("Rift", &[0]).map(num).unwrap_or(0.0).max(0.0);
     let list = rows("RiftStuff", &[1]);
     let items = list
         .chunks(5)
@@ -440,9 +444,9 @@ fn rift_bonuses(save: &Save) -> Mechanic {
         .filter_map(|(t, c)| {
             let name = c.get(2)?.as_str()?;
             let at_rift = 5.0 * (t as f64 + 1.0);
-            let mut it = Item::new(label(name), None, f64::from(level >= at_rift), 1.0);
+            let mut it = Item::new(label(name), None, f64::from(raw >= at_rift), 1.0);
             if !it.done() {
-                it.how = Some(format!("Opens at rift {at_rift}; you're at rift {level}."));
+                it.how = Some(format!("Opens once rift {at_rift} is done; you've done {raw}."));
                 it.state = State::Locked;
             }
             (name != "Rift_Guy").then_some(it)

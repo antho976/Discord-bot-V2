@@ -461,7 +461,7 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
     html! {
         div.ia-task {
             @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {
-                img src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy" style=[(i.state == Step::Locked).then_some("opacity:.55")];
+                img.left[left_square(p)] src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy" style=[(i.state == Step::Locked).then_some("opacity:.55")];
             } @else { span.ia-item-dot {} }
             span.ia-task-text {
                 b { (i.name) }
@@ -511,7 +511,7 @@ fn item(i: &Item) -> Markup {
     html! {
         div.ia-item.done[i.done()] {
             @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {
-                img src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy";
+                img.left[left_square(p)] src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy";
             } @else { span.ia-item-dot {} }
             span.ia-item-name { (i.name) }
             @if i.max > 0.0 { span.ia-meter { span style={ "--s:" (share3(i.share())) } {} } } @else { span {} }
@@ -530,10 +530,18 @@ fn item(i: &Item) -> Markup {
 fn mark(m: &Mechanic) -> Markup {
     html! {
         @match m.picture.as_deref().filter(|p| pictures::has(p)) {
-            Some(p) => img.ia-mark src={ "/idleon/pic/" (p) ".png" } alt="";,
+            Some(p) => img.ia-mark.left[left_square(p)] src={ "/idleon/pic/" (p) ".png" } alt="";,
             None => span.ia-mark.blank {},
         }
     }
+}
+
+/// Pictures that are a portrait at the left end of a wide name plate (the cavern villagers):
+/// drawn as their left square, which is the portrait. The page script knows the same prefixes.
+const LEFT_SQUARE: &[&str] = &["HoleUIvillager"];
+
+fn left_square(id: &str) -> bool {
+    LEFT_SQUARE.iter().any(|p| id.starts_with(p))
 }
 
 fn why(m: &Mechanic, w: &Why) -> String {
@@ -679,7 +687,7 @@ document.addEventListener("toggle",function(e){
   var lists=data[box.dataset.key]||[[],[]];
   function row(r,done){
     var it=document.createElement("div");it.className="ia-item"+(done?" done":"");
-    if(r[1]){var im=document.createElement("img");im.src="/idleon/pic/"+r[1]+".png";im.alt="";im.loading="lazy";it.appendChild(im)}
+    if(r[1]){var im=document.createElement("img");im.src="/idleon/pic/"+r[1]+".png";im.alt="";im.loading="lazy";if(/^HoleUIvillager/.test(r[1]))im.className="left";it.appendChild(im)}
     else{var dot=document.createElement("span");dot.className="ia-item-dot";it.appendChild(dot)}
     var nm=document.createElement("span");nm.className="ia-item-name";nm.textContent=r[0];it.appendChild(nm);
     var mt=document.createElement("span");
@@ -775,6 +783,7 @@ body.ia-pub { background: var(--page); -webkit-tap-highlight-color: transparent;
 .ia-row-text b { font-size: 14px; font-weight: 500; }
 .ia-row-text span { font-size: 13px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ia-mark { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; }
+body.ia-pub img.left { object-fit: cover; object-position: left center; }
 .ia-mark.blank { display: block; width: 10px; height: 10px; margin: 9px; border-radius: 50%; background: var(--w); }
 .ia-meter { display: block; height: 5px; border-radius: 3px; background: color-mix(in oklab, var(--w) 14%, var(--well)); overflow: hidden; }
 .ia-meter > span { display: block; height: 100%; width: calc(var(--s) * 100%); min-width: 2px; border-radius: 3px; background: var(--w); transform-origin: left; animation: ia-fill 0.6s var(--ease) both; }

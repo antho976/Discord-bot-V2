@@ -4,7 +4,7 @@ table HolesBuildings
 table CosmoUpgrades
 table LampWishes
 picture HoleUIbuildUpg\d+
-picture HoleUItab[0-4]
+picture HoleUIvillager[0-4]  # villager portraits, drawn as their left square (page.rs LEFT_SQUARE)
 picture HolePOI\d+
 picture HolePOI10_0
 picture HoleHarpNote0

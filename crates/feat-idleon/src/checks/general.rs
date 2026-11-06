@@ -247,12 +247,17 @@ pub(super) fn event_shop_owned(save: &Save, i: usize) -> bool {
     number_to_letter().get(i).is_some_and(|l| owned.contains(l.as_str()))
 }
 
-/// "2.4M", "380K": a stack size as the storage chest shows it.
+/// "2.4M", "380K": a stack size as the storage chest shows it. Rounded down, so 9.98M never
+/// reads as the 10M that makes a stack green.
 fn short(n: f64) -> String {
+    let down = |v: f64, places: i32| {
+        let p = 10f64.powi(places);
+        (v * p).floor() / p
+    };
     match n {
-        n if n >= 1e9 => format!("{:.1}B", n / 1e9),
-        n if n >= 1e6 => format!("{:.1}M", n / 1e6),
-        n if n >= 1e3 => format!("{:.0}K", n / 1e3),
+        n if n >= 1e9 => format!("{:.1}B", down(n / 1e9, 1)),
+        n if n >= 1e6 => format!("{:.1}M", down(n / 1e6, 1)),
+        n if n >= 1e3 => format!("{:.0}K", down(n / 1e3, 0)),
         n => format!("{n:.0}"),
     }
 }

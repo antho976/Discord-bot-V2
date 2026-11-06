@@ -115,11 +115,16 @@ pub(crate) fn big(n: f64) -> String {
     if n.abs() < 1000.0 {
         return format!("{}", n.round());
     }
-    let k = ((n.abs().log10() / 3.0).floor() as usize).min(NAMES.len());
+    let mut k = ((n.abs().log10() / 3.0).floor() as usize).min(NAMES.len());
+    let mut v = n / 1000f64.powi(k as i32);
+    // 999,960 rounds to 1000K: that's 1M.
+    if v.abs().round() >= 1000.0 {
+        k += 1;
+        v /= 1000.0;
+    }
     if k >= NAMES.len() {
         return format!("{n:.1e}");
     }
-    let v = n / 1000f64.powi(k as i32);
     let digits = if v.abs() >= 10.0 { 0 } else { 1 };
     let s = format!("{v:.digits$}");
     let s = s.trim_end_matches(".0");
@@ -142,6 +147,8 @@ mod tests {
         assert_eq!(big(1_500_000.0), "1.5M");
         assert_eq!(big(9.64e16), "96Qa");
         assert_eq!(big(512.0), "512");
+        assert_eq!(big(999_960.0), "1M");
+        assert_eq!(big(999.6), "1000");
     }
 
     #[test]

@@ -101,7 +101,9 @@ fn bribes(save: &Save) -> Mechanic {
         .enumerate()
         .map(|(i, r)| {
             let st = at(&status, i);
-            let mut it = Item::new(label(text(r, 0)), pic(format!("BribeO{}", text(r, 3))), f64::from(st >= 1.0), 1.0);
+            // A bribe's own picture (`BribeO*`) is an empty envelope with a faint stamp: none reads at
+            // this size, so bribes go without.
+            let mut it = Item::new(label(text(r, 0)), None, f64::from(st >= 1.0), 1.0);
             let cost = cell(r, 2);
             if st >= 1.0 {
             } else if st < 0.0 {
@@ -124,7 +126,7 @@ fn bribes(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("bribes", 1, "Bribes", pic("BribeOpigbank".into()), Count::Done, "bought", items);
+    let mut m = mech("bribes", 1, "Bribes", None, Count::Done, "bought", items);
     m.have = Some(coin_have(coins, if affordable == 0 { "Not enough for any bribe open to you yet.".into() } else { format!("Enough for {affordable} of the bribes open to you.") }));
     m
 }

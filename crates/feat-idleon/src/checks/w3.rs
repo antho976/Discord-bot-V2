@@ -761,6 +761,9 @@ fn sampling(save: &Save) -> Mechanic {
 
 /// Worship: `TotemInfo[0][i]` is totem i's best wave; `WorshipBASEinfos` lists the totems and
 /// `RANDOlist[10]` names them. Waves have no cap.
+/// Totems 6 to 8, named only on their banners.
+const LATE_TOTEMS: [&str; 3] = ["Citric Conflict", "Breezy Battle", "Pufferblob Brawl"];
+
 fn worship(save: &Save) -> Mechanic {
     let waves = save.numbers("TotemInfo", &[0]);
     let prayers = save.numbers("PrayOwned", &[]);
@@ -769,7 +772,12 @@ fn worship(save: &Save) -> Mechanic {
         .iter()
         .enumerate()
         .map(|(i, _)| {
-            let name = names.get(i).and_then(|v| v.as_str()).map_or_else(|| format!("Tower Defence {}", i + 1), label);
+            // The game's list still has placeholders ("Tower_Defence_6") past the fifth totem; its
+            // banners (`WorshipTop5`..`7`) say Citric Conflict, Breezy Battle, Pufferblob Brawl.
+            let name = match names.get(i).and_then(|v| v.as_str()) {
+                Some(n) if !n.starts_with("Tower_Defence") => label(n),
+                _ => LATE_TOTEMS.get(i.wrapping_sub(5)).map_or_else(|| format!("Totem {}", i + 1), |n| (*n).to_string()),
+            };
             let best = at(&waves, i);
             let mut it = Item::new(name, None, best, 0.0);
             it.world = totem_world(i);

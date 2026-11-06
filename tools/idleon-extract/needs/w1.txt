@@ -9,7 +9,6 @@ table BribeDescriptions
 table StarSigns
 table SSignInfoUI
 picture Statue[GOZ]?\d+
-picture BribeO.+
 picture Stamp[ABC]\d+
 table UpgradeVault
 table Research

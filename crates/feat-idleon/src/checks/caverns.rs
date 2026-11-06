@@ -1,7 +1,7 @@
 //! The Caverns (World 5 underground): Holes and villagers.
 //!
 //! Everything is in the save's `Holes` list. `Holes[1][v]` is villager v's level (Polonai,
-//! Kaipu, Cosmos, Minau, Bolaia); Polonai's level is the number of caverns found, capped at 18
+//! Kaipu, Cosmo, Minau, Bolaia); Polonai's level is the number of caverns found, capped at 18
 //! by the game (`CavernsOwned`). Before Polonai's first level nothing here counts, since the
 //! game fills `Holes` with defaults for every account.
 
@@ -122,7 +122,7 @@ fn villagers(save: &Save, h: &Holes) -> Mechanic {
     let exp = h.nums(&[2]);
     let version = save.get("DoOnceREAL").map(num).unwrap_or(0.0);
     let kaipu = at(&lv, 1);
-    // Majik points: Cosmos' level plus the gem shop's Conjuror Pts (`CosmoPtsLeft`).
+    // Majik points: Cosmo's level plus the gem shop's Conjuror Pts (`CosmoPtsLeft`).
     let cosmos = at(&lv, 2);
     let points = if cosmos < 1.0 { 0.0 } else { cosmos + at(&save.numbers("GemItemsPurchased", &[]), 4) };
     let measurements = info(54).len() as f64;
@@ -131,11 +131,11 @@ fn villagers(save: &Save, h: &Holes) -> Mechanic {
     let studied = study.iter().take(studies).filter(|&&v| v >= 1.0).count() as f64;
     let total = majik_total();
     let mut items = vec![
-        Item::new("Polonai: caverns found", pic("HoleUItab0".into()), h.caverns, CAVERNS),
-        Item::new("Kaipu: schematics unlocked", pic("HoleUItab1".into()), schematics_unlocked(kaipu), SCHEMATICS as f64),
-        Item::new("Cosmos: majik points", pic("HoleUItab2".into()), points.min(total), total),
-        Item::new("Minau: measurements unlocked", pic("HoleUItab3".into()), at(&lv, 3).clamp(0.0, measurements), measurements),
-        Item::new("Bolaia: caverns studied", pic("HoleUItab4".into()), studied, studies as f64),
+        Item::new("Polonai: caverns found", pic("HoleUIvillager0".into()), h.caverns, CAVERNS),
+        Item::new("Kaipu: schematics unlocked", pic("HoleUIvillager1".into()), schematics_unlocked(kaipu), SCHEMATICS as f64),
+        Item::new("Cosmo: majik points", pic("HoleUIvillager2".into()), points.min(total), total),
+        Item::new("Minau: measurements unlocked", pic("HoleUIvillager3".into()), at(&lv, 3).clamp(0.0, measurements), measurements),
+        Item::new("Bolaia: caverns studied", pic("HoleUIvillager4".into()), studied, studies as f64),
     ];
     for (v, it) in items.iter_mut().enumerate() {
         if it.done() {
@@ -159,7 +159,7 @@ fn villagers(save: &Save, h: &Holes) -> Mechanic {
             continue;
         }
         if level < 1.0 {
-            it.how = Some(format!("You haven't found {} yet.", ["Polonai", "Kaipu", "Cosmos", "Minau", "Bolaia"][v]));
+            it.how = Some(format!("You haven't found {} yet.", ["Polonai", "Kaipu", "Cosmo", "Minau", "Bolaia"][v]));
             it.state = State::Locked;
             continue;
         }
@@ -174,8 +174,8 @@ fn villagers(save: &Save, h: &Holes) -> Mechanic {
         it.how = Some(format!("Next level {what}: {} of {} EXP.", big(have), big(req)));
         it.state = if req.is_finite() && have >= req { State::Ready } else { State::Unknown };
     }
-    let mut m = mech("cavern-villagers", 5, "Villagers", pic("HoleUItab0".into()), Count::Levels, "unlocked", items);
-    m.note = Some(format!("Villager levels have no cap, so this is what they unlock: Kaipu has every schematic at level {}, Minau every measurement at 17, Polonai every cavern at 18. Cosmos' majik points are his level plus the Conjuror Pts bought in the gem shop, against the {total} levels all majiks add up to.", kaipu_level_for(SCHEMATICS - 1)));
+    let mut m = mech("cavern-villagers", 5, "Villagers", pic("HoleUIvillager0".into()), Count::Levels, "unlocked", items);
+    m.note = Some(format!("Villager levels have no cap, so this is what they unlock: Kaipu has every schematic at level {}, Minau every measurement at 17, Polonai every cavern at 18. Cosmo's majik points are his level plus the Conjuror Pts bought in the gem shop, against the {total} levels all majiks add up to.", kaipu_level_for(SCHEMATICS - 1)));
     m
 }
 
@@ -264,8 +264,8 @@ fn majik_total() -> f64 {
     majik_rows().iter().map(|r| r.3).sum()
 }
 
-/// Cosmos' majiks: `Holes[4 + type][i]` is the level. Every level costs one majik point; the
-/// points are Cosmos' level plus gem shop Conjuror Pts, less every level bought (`CosmoPtsLeft`).
+/// Cosmo's majiks: `Holes[4 + type][i]` is the level. Every level costs one majik point; the
+/// points are Cosmo's level plus gem shop Conjuror Pts, less every level bought (`CosmoPtsLeft`).
 /// Going past level 1 needs Cosmo, Enhance (`CanWeEnhanceCosmo`: `Holes[5][2] >= 1`).
 fn majiks(save: &Save, h: &Holes) -> Mechanic {
     let levels: Vec<Vec<f64>> = (0..3).map(|t| h.nums(&[4 + t])).collect();
@@ -296,12 +296,12 @@ fn majiks(save: &Save, h: &Holes) -> Mechanic {
     let have = Have {
         figure: format!("{left} majik points"),
         text: if left < 1.0 {
-            "None unspent. Each Cosmos level gives one more.".into()
+            "None unspent. Each Cosmo level gives one more.".into()
         } else {
             format!("Enough for {} more majik levels.", left.min(open))
         },
     };
-    let mut m = mech("cavern-majiks", 5, "Majiks", pic("HoleUItab2".into()), Count::Levels, "levels", items);
+    let mut m = mech("cavern-majiks", 5, "Majiks", pic("HoleUIvillager2".into()), Count::Levels, "levels", items);
     m.note = Some(format!("Every majik stops at level 1 until you have the {enhance_name} majik; the caps shown are with it."));
     m.have = Some(have);
     m.raises = vec![Raise { name: enhance_name, amount: "lets every majik go past level 1".into(), owned: enhance }];
@@ -349,7 +349,7 @@ fn measurements(h: &Holes) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("cavern-measurements", 5, "Measurements", pic("HoleUItab3".into()), Count::Open, "levels", items);
+    let mut m = mech("cavern-measurements", 5, "Measurements", pic("HoleUIvillager3".into()), Count::Open, "levels", items);
     m.note = Some("Measurements level up without end. Costs shown are before the Fountain's measurement discount, so yours can be lower.".into());
     m
 }
@@ -383,7 +383,7 @@ fn studies(h: &Holes) -> Mechanic {
         .collect();
     let per = info(70).get(3).map_or(0.0, |v| num(v));
     let bravery = if per > 0.0 { ((32.0 - 12.0) / per).ceil() } else { 0.0 };
-    let mut m = mech("cavern-studies", 5, "Studies", pic("HoleUItab4".into()), Count::Open, "levels", items);
+    let mut m = mech("cavern-studies", 5, "Studies", pic("HoleUIvillager4".into()), Count::Open, "levels", items);
     m.note = Some(format!("Studies level up without end, but the Bravery Monument study's bonus stops growing at level {bravery} (32%)."));
     m
 }

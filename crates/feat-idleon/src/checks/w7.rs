@@ -117,7 +117,8 @@ fn pay(it: &mut Item, cost: f64, have: f64, what: &str, discounts: bool) {
         return;
     }
     let tail = if discounts { " before your discounts" } else { "" };
-    it.how = Some(format!("Next level costs {} {what}{tail}.", big(cost.ceil())));
+    // The game makes some first levels free (the first Jelly Operator upgrade, `0==t?0`).
+    it.how = Some(if cost <= 0.0 { "The next level is free.".to_string() } else { format!("Next level costs {} {what}{tail}.", big(cost.ceil())) });
     if cost <= have {
         it.state = State::Ready;
     }
@@ -281,7 +282,7 @@ fn clam_work(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    mech("clam-work", 7, "Clam Work Compensations", pic("ClamW".into()), Count::Done, "earned", items)
+    mech("clam-work", 7, "Clam Work Compensations", pic("Clam".into()), Count::Done, "earned", items)
 }
 
 /// The Clamworks pearl upgrades, `OptLacc[455 + i]`, and the Musselini page, `Menagerie[5][i]`
@@ -854,9 +855,12 @@ fn glimbo(save: &Save) -> Mechanic {
         .into_iter()
         .enumerate()
         .map(|(t, v)| {
-            let name = v.parse::<usize>().ok().and_then(|v| vault.get(v)).map(|r| clean(text(r, 0))).unwrap_or_default();
+            let upgrade = v.parse::<usize>().ok();
+            let name = upgrade.and_then(|v| vault.get(v)).map(|r| clean(text(r, 0))).unwrap_or_default();
             let id = pay_with.get(t).copied().unwrap_or("");
-            let mut it = Item::new(name, (!id.is_empty()).then(|| id.to_string()), at(&trades, t), 0.0);
+            // The row is named for the vault upgrade a trade raises, so it wears that upgrade's
+            // picture; the item you pay with is named in the how.
+            let mut it = Item::new(name, upgrade.map(|v| format!("VaultUpg{v}")), at(&trades, t), 0.0);
             let k = scale.get(t).and_then(|x| x.parse::<f64>().ok()).unwrap_or(1.0);
             let cost = ((1.0 + 2.5 * it.level) * k.powf(it.level)).floor().max(1.0);
             if cost.is_finite() && !id.is_empty() {

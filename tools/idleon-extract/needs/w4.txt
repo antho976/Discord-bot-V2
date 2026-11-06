@@ -13,5 +13,4 @@ picture ConsoleJwl\d+
 picture ConsoleChip\d+
 picture CookingM\d+
 picture PetUpg\d+
-picture PetTerritory\d+
 picture EquipmentCape\d+

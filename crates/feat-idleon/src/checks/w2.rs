@@ -407,12 +407,15 @@ fn sigils(save: &Save) -> Mechanic {
                         it.how = Some(g);
                         it.state = State::Locked;
                     }
-                    None => {
-                        it.how = Some(format!("{next} at {} lab progress, {} so far.", big(need), big(progress)));
-                        if progress >= need {
-                            it.state = State::Ready;
-                        }
+                    // The game moves a sigil up only while its page is drawn (N.js sets the tier
+                    // in the Sigils tab's drawing code), so progress past the mark waits for that.
+                    None if progress >= need => {
+                        let goes = if t == 0 { "it unlocks".to_string() } else { format!("it goes {next}") };
+                        let what = if t == 0 { "to unlock".to_string() } else { format!("{next} needs") };
+                        it.how = Some(format!("Has the {} lab progress {what} ({} so far): open the Sigils page in Alchemy and {goes}.", big(need), big(progress)));
+                        it.state = State::Ready;
                     }
+                    None => it.how = Some(format!("{next} at {} lab progress, {} so far.", big(need), big(progress))),
                 }
             }
             it
@@ -734,10 +737,10 @@ fn killroy(save: &Save) -> Mechanic {
         let mut it = Item::new(format!("Skull Shop: {n}"), None, count, 0.0);
         it.world = Some(world);
         let cost = desc.get(row).map_or(0.0, |r| cell(r, 1));
-        let gate = if row >= 15 { "Rift level 50 and once you've finished talking to Billroy" } else { "Rift level 50" };
+        let gate = if row >= 15 { "rift 50 is done and you've finished talking to Billroy" } else { "rift 50 is done" };
         let open = rift && (row < 15 || billroy);
         if !open && count <= 0.0 {
-            it.how = Some(format!("Opens at {gate}. Then {cost:.0} skulls per buy."));
+            it.how = Some(format!("Opens once {gate}. Then {cost:.0} skulls per buy."));
             it.state = State::Locked;
         } else {
             it.how = Some(format!("{cost:.0} skulls per buy; you have {skulls:.0}."));
