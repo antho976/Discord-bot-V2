@@ -7,7 +7,6 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
         artifacts(save),
         gods(save),
         blessings(save),
-        god_links(save),
         slab(save),
         superbits(save),
         snail(save),
@@ -65,7 +64,7 @@ fn artifacts(save: &Save) -> Mechanic {
             4 if !letter_in(emporium, 35) => Some("Sovereign forms come with the Jade Emporium's Sovereign Artifacts.".into()),
             5 if !lore(save, 0) => Some("Omnipotent forms come with Spelunking's first lore bonus.".into()),
             6 if !grid_node(save, 109) => Some(format!("Transcendent forms come with research node {}.", grid_name(109))),
-            7 if !super::w7::menagerie_unlock(save, 0) => Some("Verisimilitude forms come with Menagerie unlock 1.".into()),
+            7 if !super::w7::menagerie_unlock(save, 0) => Some(format!("Verisimilitude forms come with {}.", super::w7::menagerie_unlock_name(0))),
             _ => None,
         }
     };
@@ -180,7 +179,7 @@ fn blessings(save: &Save) -> Mechanic {
                 it.how = Some(format!("Unlock {} first.", label(text(g, 0))));
                 it.state = State::Locked;
             } else if level >= cap && level < max {
-                it.how = Some(format!("At your cap of {cap}. The raises below lift it."));
+                it.how = Some(format!("At your blessing cap of {cap}. The raises listed below lift it."));
                 it.state = State::Locked;
             } else if level < max {
                 let cost = cell(g, 4) * cell(g, 5).powf(level);
@@ -195,46 +194,19 @@ fn blessings(save: &Save) -> Mechanic {
         .collect();
     let mut m = mech("blessings", 5, "Divinity Blessings", pic("DivGod0".into()), Count::Levels, "levels", items);
     m.raises = vec![
-        Raise { name: "Coral Kid upgrade".into(), amount: "+2 each".into(), owned: r.coral > 0.0 },
-        Raise { name: "Minehead bonus".into(), amount: format!("+{}", r.minehead.0), owned: r.minehead.1 },
-        Raise { name: "Big Blessings (Upgrade Vault)".into(), amount: format!("+1 each, up to +{}", r.vault.0), owned: r.vault.1 > 0.0 },
-        Raise { name: "Jelly Operator bonus".into(), amount: format!("+{}", r.jelly[0].0), owned: r.jelly[0].1 },
-        Raise { name: "Jelly Operator bonus".into(), amount: format!("+{}", r.jelly[1].0), owned: r.jelly[1].1 },
+        Raise { name: "Coral Kid's second upgrade".into(), amount: "+2 max levels on every blessing per upgrade level, no limit".into(), owned: r.coral > 0.0 },
+        Raise { name: "Minehead reward: beat 10 opponents in Mr. Minehead's Depth Charge".into(), amount: format!("+{} max levels on every blessing", r.minehead.0), owned: r.minehead.1 },
+        Raise { name: "Big Blessings (Upgrade Vault)".into(), amount: format!("+1 max level on every blessing per vault level, up to +{}", r.vault.0), owned: r.vault.1 > 0.0 },
+        Raise { name: "Jelly Operator reward: 50 successful operations".into(), amount: format!("+{} max levels on every blessing", r.jelly[0].0), owned: r.jelly[0].1 },
+        Raise { name: "Jelly Operator reward: 64 successful operations".into(), amount: format!("+{} max levels on every blessing", r.jelly[1].0), owned: r.jelly[1].1 },
     ];
     m.note = Some(format!(
-        "The cap is 100, raised by {} from a Minehead bonus, {} from the Big Blessings vault upgrade, {} from two Jelly Operator bonuses, and 2 per Coral Kid upgrade level. That last one has no cap, so the max here counts the levels you have. Your cap now is {cap}. Each god's blessing is paid in bits, gold bars, coins or particles.",
+        "Every blessing caps at 100, raised by {} from a Minehead reward, {} from the Big Blessings vault upgrade, {} from two Jelly Operator rewards, and 2 per level of Coral Kid's second upgrade. The Coral Kid raise has no limit, so the max here counts the levels you have. Your cap now is {cap}. Snehebatu, Nobisect, Goharut and Kattlekruk take gaming bits; Arctis gold bars; Harriep and Purrmep coins; the rest particles.",
         r.minehead.0,
         r.vault.0,
         r.jelly[0].0 + r.jelly[1].0
     ));
     m
-}
-
-/// God links: `Divinity[12 + character]` is the god a character is linked to, -1 for none.
-/// An unlinked character gets no link bonus at all.
-fn god_links(save: &Save) -> Mechanic {
-    let gods = rows("GodsInfo", &[]);
-    let n = save.characters().max(1);
-    let any_god = value(save, "Divinity", &[25]) >= 1.0;
-    let items = (0..n)
-        .map(|c| {
-            let god = save.at("Divinity", &[12 + c]).map(num).unwrap_or(-1.0);
-            let linked = save.get("Divinity").is_some() && god >= 0.0 && (god as usize) < gods.len();
-            let who = save.names.get(c).cloned().unwrap_or_else(|| format!("Character {}", c + 1));
-            let mut it = Item::new(format!("{who}: god link"), linked.then(|| format!("DivGod{}", god as usize)), f64::from(linked), 1.0);
-            it.level_name = Some(if linked { label(text(gods[god as usize], 0)) } else { "None".into() });
-            if !linked {
-                if any_god {
-                    it.how = Some("Link this character to a god at the Divinity altar.".into());
-                } else {
-                    it.how = Some("Unlock a god first.".into());
-                    it.state = State::Locked;
-                }
-            }
-            it
-        })
-        .collect();
-    mech("god-links", 5, "God Links", pic("DivGod0".into()), Count::Done, "linked", items)
 }
 
 /// The Slab: items ever looted (`Cards1`) against every item it lists.
@@ -257,7 +229,10 @@ fn superbit_cost(row: &Value) -> f64 {
 /// `Gaming[12]`. They sit 24 to a page in rows of six; one can be bought once a neighbour above,
 /// left or right on its page is (the first of each page is always open). The second page needs
 /// Spelunking lore bonus 1 (`DuperBits`), the third research node 87 (`ZuperBitsUnlocked`).
-/// Rows costing 10^150 bits say they can't be bought, so they aren't counted.
+/// The game's rule for buying one (the superbit page's click handler) is only that: not owned,
+/// a neighbour bought (or first on its page), and bits at least the cost. The last two rows
+/// ("No Way", "No How") cost 2 x 10^150 bits and say they won't be sold, so they can't be
+/// bought and aren't counted. Pages two and three are World 7 content (their unlocks are).
 fn superbits(save: &Save) -> Mechanic {
     let bits = value(save, "Gaming", &[0]);
     let table = rows("GamingUpg", &[]);
@@ -274,6 +249,9 @@ fn superbits(save: &Save) -> Mechanic {
             let name = if repeat == 0 { base } else { format!("{base} {}", ["II", "III", "IV", "V", "VI", "VII"][(repeat - 1).min(5)]) };
             let has = superbit_owned(save, i);
             let mut it = Item::new(name, None, f64::from(has), 1.0);
+            if i >= 24 {
+                it.world = Some(7);
+            }
             if !has {
                 let (page, slot) = (i / 24, i % 24);
                 let neighbour = slot == 0
@@ -291,7 +269,9 @@ fn superbits(save: &Save) -> Mechanic {
                     it.how = Some(format!("Buy a superbit next to it first. It costs {} bits.", big(cost)));
                     it.state = State::Locked;
                 } else {
-                    it.how = Some(format!("Costs {} bits.", big(cost)));
+                    // Two say they do nothing until a World 7 skill comes out; buyable all the same.
+                    let later = text(r, 0).contains("W7_Skill_3") || text(r, 0).contains("W7_skill_3");
+                    it.how = Some(if later { format!("Costs {} bits. Does nothing until World 7's third skill comes out.", big(cost)) } else { format!("Costs {} bits.", big(cost)) });
                     if cost <= bits {
                         it.state = State::Ready;
                     }
@@ -307,9 +287,9 @@ fn superbits(save: &Save) -> Mechanic {
     let have = Have {
         figure: format!("{} bits", big(bits)),
         text: match names.as_slice() {
-            [] => "Not enough for any superbit you can reach yet.".into(),
-            [one] => format!("Enough for {one}."),
-            [a, b, ..] => format!("Enough for {a}, or {b}."),
+            [] => "Not enough bits for any superbit you can buy now.".into(),
+            [one] => format!("Enough bits for {one}."),
+            [a, b, ..] => format!("Enough bits for {a} or {b}, the two cheapest you can buy now."),
         },
     };
     let mut m = mech("superbits", 5, "Gaming Superbits", None, Count::Done, "bought", items);
@@ -332,7 +312,7 @@ fn snail(save: &Save) -> Mechanic {
     if level < 49.0 {
         if level >= cap {
             let missing: Vec<String> = raises.iter().filter(|(i, _)| !superbit_owned(save, *i)).map(|(i, _)| bit(*i)).collect();
-            it.how = Some(format!("At your cap of {cap}. Superbits raise it: {}.", missing.join(", ")));
+            it.how = Some(format!("At your snail cap of {cap}. These superbits raise it: {}.", missing.join(", ")));
             it.state = State::Locked;
         } else {
             let chance = if level > 24.0 {
@@ -340,12 +320,12 @@ fn snail(save: &Save) -> Mechanic {
             } else {
                 (1.0 - 0.1 * level.powf(0.71)) * (1.0 + 110.0 * enc / (25.0 + enc) / 100.0)
             };
-            it.how = Some(format!("Next level: {:.1}% a try, before your Cavern bonus.", (chance.clamp(0.0, 1.0) * 100.0)));
+            it.how = Some(format!("Next level: {:.1}% chance each try, before your Cavern bonus.", (chance.clamp(0.0, 1.0) * 100.0)));
         }
     }
     let mut m = mech("snail", 5, "Immortal Snail", None, Count::Levels, "levels", vec![it]);
-    m.raises = raises.iter().map(|(i, a)| Raise { name: format!("Superbit {}", bit(*i)), amount: format!("+{a}"), owned: superbit_owned(save, *i) }).collect();
-    m.note = Some("The cap starts at 25. Three superbits raise it to 50, but no snail can level past 49: the chance at 49 is zero.".into());
+    m.raises = raises.iter().map(|(i, a)| Raise { name: format!("Superbit {}", bit(*i)), amount: format!("+{a} max snail levels"), owned: superbit_owned(save, *i) }).collect();
+    m.note = Some("The snail's cap starts at 25. Three superbits raise it to 50, but the snail can't level past 49: the chance of a level at 49 is zero.".into());
     m
 }
 
@@ -369,6 +349,10 @@ fn islands(save: &Save) -> Mechanic {
             let name = ISLANDS.get(i).map_or_else(|| format!("Island {}", i + 1), |s| (*s).to_string());
             let found = state.len() > i && at(&state, i) == -1.0;
             let mut it = Item::new(name, None, f64::from(found), 1.0);
+            // World's End and The Maw open with World 7 content.
+            if i == 15 || i == 16 {
+                it.world = Some(7);
+            }
             if !found {
                 let progress = at(&state, i).max(0.0);
                 let need = cell(r, 5);
@@ -426,7 +410,7 @@ fn boats(save: &Save) -> Mechanic {
         text: if bought >= max {
             "Every boat is bought.".into()
         } else if n > bought.min(max) {
-            format!("Enough for {} more boats.", n - bought.min(max))
+            format!("Enough gold bars for {} more boats.", n - bought.min(max))
         } else {
             "Not enough for the next boat yet.".into()
         },

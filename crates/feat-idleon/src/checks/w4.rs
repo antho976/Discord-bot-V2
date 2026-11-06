@@ -20,8 +20,12 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
     ]
 }
 
-fn menagerie_unlock(save: &Save, i: usize) -> bool {
-    save.at("Menagerie", &[2, i]).map(num).unwrap_or(0.0) >= 1.0
+use super::w7::{menagerie_unlock, menagerie_unlock_name};
+
+/// The first letter in capitals.
+fn capital(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
 /// A Jade Emporium upgrade is bought when `Ninja[102][9]` holds its letter (N.js
@@ -45,22 +49,22 @@ fn meal_cap(save: &Save) -> (f64, Vec<Raise>) {
     let art_base = rows("ArtifactInfo", &[]).get(17).map_or(10.0, |r| cell(r, 3));
     let tier = save.at("Sailing", &[3, 17]).map(num).unwrap_or(0.0).clamp(0.0, 7.0);
     cap += art_base * tier;
-    raises.push(Raise { name: "Causticolumn artifact".into(), amount: format!("+{art_base} per tier, +{} at Verisimilitude", art_base * 7.0), owned: tier >= 7.0 });
+    raises.push(Raise { name: "Causticolumn artifact".into(), amount: format!("+{art_base} max levels on every meal per artifact tier, +{} at Verisimilitude", art_base * 7.0), owned: tier >= 7.0 });
     for (i, name) in [(20, "Papa Blob's Quality Guarantee (Jade Emporium)"), (21, "Chef Geustloaf's Cutting Edge Philosophy (Jade Emporium)")] {
         let owned = emporium(save, i);
         cap += if owned { 10.0 } else { 0.0 };
-        raises.push(Raise { name: name.into(), amount: "+10".into(), owned });
+        raises.push(Raise { name: name.into(), amount: "+10 max levels on every meal".into(), owned });
     }
     let lore = save.at("Spelunk", &[0, 5]).map(num).unwrap_or(0.0) >= 1.0;
     cap += if lore { 30.0 } else { 0.0 };
-    raises.push(Raise { name: "Lunarheim lore bonus (Spelunking)".into(), amount: "+30".into(), owned: lore });
+    raises.push(Raise { name: "Lunarheim lore bonus (Spelunking)".into(), amount: "+30 max levels on every meal".into(), owned: lore });
     let per = rows("GrimoireUpg", &[]).get(26).map_or(1.0, |r| cell(r, 5));
     let grimoire = (save.at("Grimoire", &[26]).map(num).unwrap_or(0.0) * per).clamp(0.0, 20.0);
     cap += grimoire;
-    raises.push(Raise { name: "Supreme Head Chef Status (Grimoire)".into(), amount: "+1 a level, up to +20".into(), owned: grimoire >= 20.0 });
+    raises.push(Raise { name: "Supreme Head Chef Status (Grimoire)".into(), amount: "+1 max level on every meal per upgrade level, up to +20".into(), owned: grimoire >= 20.0 });
     let men = menagerie_unlock(save, 20);
     cap += if men { 10.0 } else { 0.0 };
-    raises.push(Raise { name: "Menagerie unlock 21".into(), amount: "+10".into(), owned: men });
+    raises.push(Raise { name: capital(&menagerie_unlock_name(20)), amount: "+10 max levels on every meal".into(), owned: men });
     (cap, raises)
 }
 
@@ -88,7 +92,7 @@ fn meals(save: &Save) -> Mechanic {
             if level <= 0.0 {
                 it.how = Some("Found by cooking new recipes in a kitchen.".into());
             } else if level >= cap && level < MEAL_MAX {
-                it.how = Some(format!("At your cap of {cap}. The raises below lift it."));
+                it.how = Some(format!("At your meal cap of {cap}. The raises listed below lift it."));
                 it.state = State::Locked;
             } else if level < MEAL_MAX {
                 let cost = meal_cost(level);
@@ -113,7 +117,7 @@ fn cost_name(id: &str) -> String {
         return rows("MealINFO", &[]).get(n).map_or_else(|| id.to_string(), |r| label(text(r, 0)));
     }
     if let Some(n) = id.strip_prefix("Spice").and_then(|n| n.parse::<usize>().ok()) {
-        return format!("territory {} spice", n + 1);
+        return format!("spice from breeding territory {}", n + 1);
     }
     GAME.item_name(id).map_or_else(|| label(id), str::to_string)
 }
@@ -160,6 +164,10 @@ fn jewels(save: &Save) -> Mechanic {
             let mut it = Item::new(label(text(r, 11)), pic(format!("ConsoleJwl{i}")), f64::from(at(&owned, i) >= 1.0), 1.0);
             if !it.done() {
                 it.how = Some(costs(r, 5));
+            }
+            // Jewels paid for with Spelunking items ("SpiA1") are World 7 content.
+            if text(r, 5).starts_with("Spi") {
+                it.world = Some(7);
             }
             it
         })
@@ -260,7 +268,7 @@ fn shiny(save: &Save) -> Mechanic {
             if lv <= 0.0 {
                 it.how = Some("Breed a shiny one first.".into());
             } else if lv >= cap && lv < 30.0 {
-                it.how = Some("At 20 until Menagerie unlock 12.".into());
+                it.how = Some(format!("At the shiny cap of 20 until {}.", menagerie_unlock_name(11)));
                 it.state = State::Locked;
             } else if lv < 30.0 {
                 it.how = Some(format!("Next level past {} shiny days; it has {}.", big(shiny_req(lv)), big(days.floor())));
@@ -269,8 +277,8 @@ fn shiny(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("shiny", 4, "Shiny Pets", pic("PetUpg8".into()), Count::Levels, "levels", items);
-    m.note = Some("Shiny levels stop at 20. Menagerie unlock 12 raises that to 30. Shiny days add up while the pet is in the Fenceyard.".into());
-    m.raises = vec![Raise { name: "Menagerie unlock 12".into(), amount: "+10".into(), owned: unlocked }];
+    m.note = Some(format!("Shiny levels stop at 20; {} raises that to 30 for every pet. Shiny days add up while the pet is in the Fenceyard.", menagerie_unlock_name(11)));
+    m.raises = vec![Raise { name: capital(&menagerie_unlock_name(11)), amount: "+10 max shiny levels on every pet".into(), owned: unlocked }];
     m
 }
 
@@ -318,21 +326,39 @@ fn breeding_upgrades(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("breeding-upgrades", 4, "Breeding Upgrades", pic("PetUpg0".into()), Count::Levels, "levels", items);
-    m.note = Some(format!("Blooming Axe's cap includes the +{minehead} a Minehead bonus adds."));
+    m.note = Some(format!("Blooming Axe's cap includes +{minehead} max levels from a Minehead reward (beating 4 Minehead opponents)."));
     m.raises = vec![Raise {
-        name: "Minehead bonus (Blooming Axe)".into(),
-        amount: format!("+{minehead}"),
+        name: "Minehead reward: beat 4 opponents in Mr. Minehead's Depth Charge".into(),
+        amount: format!("+{minehead} max levels on Blooming Axe"),
         owned: save.at("Research", &[7, 4]).map(num).unwrap_or(0.0) > 3.0,
     }];
     m.have = Some(Have {
         figure: format!("{} dead cells", big(cells)),
         text: match ready.as_slice() {
-            [] => "Not enough for the next level of any upgrade yet.".into(),
-            [one] => format!("Enough for the next level of {one}."),
-            more => format!("Enough for the next level of {}, each on its own.", more.join(", ")),
+            [] => "With your dead cells and meals, no upgrade's next level is paid for yet.".into(),
+            [one] => format!("With your dead cells and meals you can pay for the next level of {one}."),
+            more => format!("With your dead cells and meals you can pay for the next level of any one of: {}.", more.join(", ")),
         },
     });
     m
+}
+
+/// Breeding territories per world, in order (each is a world's area, as its picture
+/// `PetTerritory{i + 2}` names it: Grasslands to Stinky Sewers in World 1, Desert Oasis to The
+/// Crypt in World 2, Frosty Peaks to Pristalle Lake in World 3, Nebulon Mantle to Shores of
+/// Eternity in World 4, Molten Bay to Wurm Catacombs in World 5, Spirit Fields to Dharma Mesa in
+/// World 6, Shallow Shoals and Murky Trenches in World 7).
+const TERRITORIES_PER_WORLD: [usize; 7] = [5, 5, 4, 3, 3, 4, 2];
+
+fn territory_world(i: usize) -> u8 {
+    let mut end = 0;
+    for (w, n) in TERRITORIES_PER_WORLD.iter().enumerate() {
+        end += n;
+        if i < end {
+            return w as u8 + 1;
+        }
+    }
+    7
 }
 
 /// Territories: `OptLacc[85]` counts the ones beaten. Territory i is `TerritoryInfo` row i,
@@ -346,6 +372,10 @@ fn territories(save: &Save) -> Mechanic {
         .enumerate()
         .map(|(i, (_, r))| {
             let mut it = Item::new(label(text(r, 4)), pic(format!("PetTerritory{}", i + 2)), f64::from((i as f64) < beaten), 1.0);
+            let world = territory_world(i);
+            if world > 4 {
+                it.world = Some(world);
+            }
             if !it.done() {
                 if i as f64 == beaten.floor() {
                     it.how = Some("Next: beat them with your Fenceyard mobs to open the territory.".into());
@@ -440,7 +470,7 @@ fn cape_vine(save: &Save) -> Mechanic {
                     it.how = Some("You've looted one: open the vine with it out of your inventory.".into());
                     it.state = State::Ready;
                 } else if looted.contains(&id) {
-                    it.how = Some("You've looted one; the vine takes it once you start using the vine.".into());
+                    it.how = Some("You've looted one; it goes on the vine when you open the vine.".into());
                 } else {
                     it.how = Some("Loot one; the vine takes it once it's in the Slab.".into());
                 }
