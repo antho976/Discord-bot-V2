@@ -164,6 +164,7 @@ fn star_signs(save: &Save) -> Mechanic {
 /// beside each.
 fn stamps(save: &Save) -> Mechanic {
     let mut items = Vec::new();
+    let mut gone = 0;
     for (tab, letter) in ["A", "B", "C"].iter().enumerate() {
         let levels = save.numbers("StampLv", &[tab]);
         for i in 0..rows("StampDescriptions", &[tab]).len() {
@@ -174,12 +175,21 @@ fn stamps(save: &Save) -> Mechanic {
             it.level_name = Some(if lv > 0.0 { format!("Lv {lv:.0}") } else { "Not found".into() });
             if lv <= 0.0 {
                 it.how = found_where(&id);
+                // No shop, drop, quest or prize gives it: an event stamp that's gone or one not
+                // out yet. It counts only for the accounts that already have it.
+                if it.how.is_none() {
+                    gone += 1;
+                    continue;
+                }
             }
             items.push(it);
         }
     }
     let mut m = mech("stamps", 1, "Stamps", pic("StampA1".into()), Count::Done, "collected", items);
-    m.note = Some("Stamps have no level cap, so this counts the ones you have.".into());
+    m.note = Some(match gone {
+        0 => "Stamps have no level cap, so this counts the ones you have.".into(),
+        n => format!("Stamps have no level cap, so this counts the ones you have. {n} more exist that nothing in the game gives now (past events, or not out yet), so they aren't counted."),
+    });
     m
 }
 

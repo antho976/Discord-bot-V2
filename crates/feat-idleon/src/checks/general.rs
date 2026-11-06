@@ -339,19 +339,29 @@ fn has_key(v: Option<&Value>, key: &str) -> bool {
 /// `PlayerCapacities[1]`, without the two the game marks as no longer obtainable.
 fn storage_chests(save: &Save) -> Mechanic {
     let used = save.get("InvStorageUsed");
+    let mut gone = 0;
     let items = obtainable(1)
         .into_iter()
-        .map(|(key, id)| {
+        .filter_map(|(key, id)| {
             let name = GAME.item_name(&id).map(str::to_string).unwrap_or_else(|| id.clone());
             let done = has_key(used, &key);
             let mut it = Item::new(name, pic(id.clone()), f64::from(done), 1.0);
             if !done {
                 it.how = found_where(&id);
+                // Nothing gives it now (a past event's chest): it counts only for those who have it.
+                if it.how.is_none() {
+                    gone += 1;
+                    return None;
+                }
             }
-            it
+            Some(it)
         })
         .collect();
-    mech("storage-chests", 0, "Storage Chests", pic("InvStorage1".into()), Count::Done, "used", items)
+    let mut m = mech("storage-chests", 0, "Storage Chests", pic("InvStorage1".into()), Count::Done, "used", items);
+    if gone > 0 {
+        m.note = Some(format!("{gone} more chests came from past events and nothing gives them now, so they aren't counted."));
+    }
+    m
 }
 
 /// Inventory bags: `InvBagsUsed_i` has a key per bag a character has used; the bags are
