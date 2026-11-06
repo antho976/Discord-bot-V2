@@ -67,10 +67,27 @@ fn sushi_bonus(save: &Save, i: usize) -> f64 {
 /// (min(.1, .1 * floor((cc + 999) / 1000)) + max(0, cc - 1) * TowerInfo[5][2] / 100))`. Then it
 /// builds (N.js `TowerBuildReq`): `RANDOlist[13][i] * col 9 ^ lv`, or `2 (lv+1)^2 1.3^(lv+1)` for
 /// the 3D printer. Ready means the salts are in storage; the build time still follows.
+///
+/// The build button only works below the cap the account has now (`TowerInfo[i] < col 8 +
+/// ExtraMaxLvAtom`), so that cap is worked out too: Carbon counts its own level (`Atoms[5]`), a
+/// shrine's Spelunking +100 is its own (`Spelunk[4][6] > i - 18`), and Construct Mastery
+/// (`ConstMasteryBonus`) is in once 40 rifts are done and every building's levels add up to 500
+/// (trapper drone), 1,000 (library), 1,500 (shrines) or 2,500 (wizard towers). The Gambit
+/// cavern's +100 isn't in the save, so a wizard tower within 100 of it is never called Ready.
 fn buildings(save: &Save) -> Mechanic {
     let levels = save.numbers("Tower", &[]);
     let carbon = atom_max(save);
-    let shrine_boosts = research(58, 5) * menagerie_boosts(save, 5);
+    let carbon_now = at(&save.numbers("Atoms", &[]), 5).max(0.0);
+    let shrine_boosts = research(58, 5) * menagerie_boosts(save, 5).max(0.0);
+    let sushi = sushi_bonus(save, 58);
+    let spelunk = save.at("Spelunk", &[4, 6]).map(num).unwrap_or(0.0);
+    // N.js `ConstMasteryBonus`: `Rift[0]` at least 40, and the levels of all 27 buildings (the
+    // construction actor's `_GenINFO[111]`) past `_GenINFO[112][k]`, which is 250, 500, 750, 1,000,
+    // 1,250, 1,500, 2,500.
+    let total: f64 = (0..27).map(|k| at(&levels, k).max(0.0)).sum();
+    let rifts = at(&save.numbers("Rift", &[]), 0);
+    let mastery = |need: f64| rifts >= 40.0 && total >= need;
+    let mastery_lift = |amount: f64, need: f64| format!("Construct Mastery adds {amount} once 40 rifts are done and your buildings total {} levels.", crate::page::num(need));
     let table = rows("TowerInfo", &[]);
     let cc = at(&levels, 5);
     let cc_per = table.get(5).map_or(0.0, |r| cell(r, 2));
@@ -81,16 +98,53 @@ fn buildings(save: &Save) -> Mechanic {
         .enumerate()
         .map(|(i, r)| {
             let base = cell(r, 8);
-            let extra = match base as i64 {
-                50 => 2.0 * carbon + 30.0 + 100.0,
-                101 => 100.0,
-                100 => 100.0 + research(37, 58) + 100.0 + shrine_boosts,
-                15 => 35.0,
-                _ => 0.0,
+            let shrine_spelunk = i >= 18 && spelunk > (i - 18) as f64;
+            // (the full cap's extra, the extra the account has now, what isn't known, what lifts it)
+            let (extra, now, unknown, lift): (f64, f64, f64, Option<String>) = match base as i64 {
+                50 => {
+                    let m = mastery(2500.0);
+                    let lift = if carbon_now < carbon {
+                        Some("Each Carbon atom level adds 2.".to_string())
+                    } else if !m {
+                        Some(mastery_lift(30.0, 2500.0))
+                    } else {
+                        None
+                    };
+                    (2.0 * carbon + 30.0 + 100.0, 2.0 * carbon_now + if m { 30.0 } else { 0.0 }, 100.0, lift)
+                }
+                101 => {
+                    let m = mastery(1000.0);
+                    (100.0, if m { 100.0 } else { 0.0 }, 0.0, (!m).then(|| mastery_lift(100.0, 1000.0)))
+                }
+                100 => {
+                    let m = mastery(1500.0);
+                    let now = if m { 100.0 } else { 0.0 } + sushi + shrine_boosts + if shrine_spelunk { 100.0 } else { 0.0 };
+                    let lift = if !m {
+                        mastery_lift(100.0, 1500.0)
+                    } else if !shrine_spelunk {
+                        "Its Spelunking shrine unlock adds 100.".to_string()
+                    } else if sushi <= 0.0 {
+                        format!("Sushi Station bonus 59 adds {}.", research(37, 58))
+                    } else {
+                        format!("Each Menagerie boost 5 adds {}.", research(58, 5))
+                    };
+                    (100.0 + research(37, 58) + 100.0 + shrine_boosts, now, 0.0, Some(lift))
+                }
+                15 => {
+                    let m = mastery(500.0);
+                    (35.0, if m { 35.0 } else { 0.0 }, 0.0, (!m).then(|| mastery_lift(35.0, 500.0)))
+                }
+                _ => (0.0, 0.0, 0.0, None),
             };
             let level = at(&levels, i);
             let mut it = Item::new(label(text(r, 0)), pic(format!("ConTower{i}")), level, base + extra);
-            if level < it.max {
+            // The cap now: known for sure at `low`, at most `low + unknown`.
+            let low = (base + now).min(it.max);
+            let high = (low + unknown).min(it.max);
+            if level >= high && level < it.max {
+                it.how = Some(format!("At its cap of {high}. {}", lift.unwrap_or_default()).trim_end().to_string());
+                it.state = State::Locked;
+            } else if level < it.max {
                 let lv = level;
                 let salt = (discount * cell(r, 6) * (lv + 1.0)).floor();
                 let s9 = cell(r, 9);
@@ -101,8 +155,9 @@ fn buildings(save: &Save) -> Mechanic {
                 }
                 let line: Vec<String> = parts.iter().map(|(id, n)| format!("{} {}", big(*n), item_name(id))).collect();
                 let build = if i == 0 { 2.0 * (lv + 1.0).powi(2) * 1.3f64.powf(lv + 1.0) } else { at(&build_base, i) * s9.powf(lv) };
-                it.how = Some(format!("Next level costs {}, then {} build progress.", line.join(" and "), big(build)));
-                if parts.iter().all(|(id, n)| n.is_finite() && stored(save, id) >= *n) {
+                let gambit = if level >= low { ", if your Gambit cavern +100 is in" } else { "" };
+                it.how = Some(format!("Next level costs {}, then {} build progress{gambit}.", line.join(" and "), big(build)));
+                if level < low && parts.iter().all(|(id, n)| n.is_finite() && stored(save, id) >= *n) {
                     it.state = State::Ready;
                 }
             }
@@ -110,15 +165,16 @@ fn buildings(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("construction", 3, "Construction Buildings", pic("ConTowerA0".into()), Count::Levels, "levels", items);
-    let spelunk = save.at("Spelunk", &[4, 6]).map(num).unwrap_or(0.0);
     m.raises = vec![
-        Raise { name: "Carbon atom, per level".into(), amount: "+2 max levels on each of the 9 wizard towers".into(), owned: at(&save.numbers("Atoms", &[]), 5) > 0.0 },
-        Raise { name: "Sushi Station bonus 59 (59 unique sushi)".into(), amount: format!("+{} max levels on all 9 shrines", research(37, 58)), owned: sushi_bonus(save, 58) > 0.0 },
+        Raise { name: "Carbon atom, per level".into(), amount: "+2 max levels on each of the 9 wizard towers".into(), owned: carbon_now > 0.0 },
+        Raise { name: "Construct Mastery (40 rifts, then building levels)".into(), amount: "+35 on the trapper drone at 500 total levels, +100 on the library at 1,000, +100 on every shrine at 1,500, +30 on every wizard tower at 2,500".into(), owned: mastery(2500.0) },
+        Raise { name: "Sushi Station bonus 59 (59 unique sushi)".into(), amount: format!("+{} max levels on all 9 shrines", research(37, 58)), owned: sushi > 0.0 },
         Raise { name: format!("Spelunking shrine unlocks, {} of 9 done", spelunk.clamp(0.0, 9.0)), amount: "+100 max levels on that shrine, one shrine each".into(), owned: spelunk >= 9.0 },
         Raise { name: "Menagerie boost 5, per boost".into(), amount: format!("+{} max levels on all 9 shrines", research(58, 5)), owned: menagerie_boosts(save, 5) > 0.0 },
     ];
     m.note = Some(format!(
-        "Caps include every raise: wizard towers get 2 per Carbon atom level ({carbon} at the atom cap), 30 from Construct Mastery and 100 from the Gambit cavern; shrines get 100 from Construct Mastery, 10 from a Sushi Station bonus, 100 from Spelunking and 10 per Menagerie boost, so more boosts raise them further. Costs count your Cost Cruncher and only what's in storage."
+        "Caps include every raise: wizard towers get 2 per Carbon atom level ({carbon} at the atom cap), 30 from Construct Mastery and 100 from the Gambit cavern; shrines get 100 from Construct Mastery, 10 from a Sushi Station bonus, 100 from Spelunking and 10 per Menagerie boost, so more boosts raise them further. Your buildings total {} levels. The Gambit cavern's raise isn't in a save, so a wizard tower close to it is never marked ready. Costs count your Cost Cruncher and only what's in storage.",
+        crate::page::num(total)
     ));
     m
 }
@@ -134,7 +190,7 @@ fn salt_lick(save: &Save) -> Mechanic {
         .enumerate()
         .map(|(i, r)| {
             let level = at(&levels, i);
-            let mut it = Item::new(label(text(r, 1)), pic(text(r, 0).to_string()), level, cell(r, 4));
+            let mut it = Item::new(salt_lick_name(text(r, 1)), pic(text(r, 0).to_string()), level, cell(r, 4));
             if (i as f64) >= built && level <= 0.0 {
                 it.how = Some(format!("Opens at Salt Lick building Lv {}.", i + 1));
                 it.state = State::Locked;
@@ -151,6 +207,19 @@ fn salt_lick(save: &Save) -> Mechanic {
     let mut m = mech("salt-lick", 3, "Salt Lick", pic("Refinery1".into()), Count::Levels, "levels", items);
     m.note = Some("Costs count only the salt in storage.".into());
     m
+}
+
+/// A Salt Lick bonus named by its text up to the first sentence or clause, with the game's
+/// number stand-ins dropped: "+{%_Refinery_Speed_for_all_cycle_types._In_other_words,..." is
+/// "Refinery Speed for all cycle types", "Samples_taken_..._are_+{%_bigger!" is "Samples taken
+/// for the 3D printer are bigger".
+fn salt_lick_name(s: &str) -> String {
+    let end = ["._", "!_", ",_"].iter().filter_map(|p| s.find(p)).min().unwrap_or(s.len());
+    let mut s = s[..end].to_string();
+    for stand_in in ["+{%", "+{", "{%", "{", "}"] {
+        s = s.replace(stand_in, "");
+    }
+    label(&s)
 }
 
 fn salt_cost(r: &Value, level: f64) -> f64 {
@@ -222,11 +291,40 @@ fn totem_name(i: usize) -> String {
     }
 }
 
-/// The atom cap (N.js `AtomMaxLv`): 20, +10 (gaming superbit), +20 (compass), +20 (event shop),
-/// plus `Research[58][17]` per Menagerie boost 17. Boosts have no end, so the cap counts the
-/// boosts bought, and at least one.
+/// The atom cap with every raise in (N.js `AtomMaxLv`): 20, +10 (gaming superbit), +20 (compass),
+/// +20 (event shop), plus `Research[58][17]` per Menagerie boost 17. Boosts have no end, so the
+/// cap counts the boosts bought, and at least one.
 fn atom_max(save: &Save) -> f64 {
     70.0 + research(58, 17) * menagerie_boosts(save, 17).max(1.0)
+}
+
+/// Levels of the compass's Atomic Potential, `Compass[0][53]`: its `CompassUpg` row gives +1 max
+/// atom level each, 20 levels at most (N.js `CompassBonus` 53).
+fn atomic_potential(save: &Save) -> f64 {
+    at(&save.numbers("Compass", &[0]), 53).clamp(0.0, 20.0)
+}
+
+/// The account's atom cap now, exactly as N.js `AtomMaxLv` adds it up: 20, +10 with the Isotope
+/// Discovery superbit (23), the compass's Atomic Potential, +20 with the event shop's Higgs Boson
+/// (item 28), and `Research[58][17]` per Menagerie boost 17 bought.
+fn atom_cap(save: &Save) -> f64 {
+    let superbit = if super::w5::superbit_owned(save, 23) { 10.0 } else { 0.0 };
+    let higgs = if super::general::event_shop_owned(save, 28) { 20.0 } else { 0.0 };
+    20.0 + superbit + atomic_potential(save) + higgs + research(58, 17) * menagerie_boosts(save, 17).max(0.0)
+}
+
+/// What lifts the atom cap next, for an atom sitting at it.
+fn atom_cap_lift(save: &Save) -> String {
+    let compass = atomic_potential(save);
+    if !super::w5::superbit_owned(save, 23) {
+        format!("The {} superbit adds 10.", super::w5::superbit_name(23))
+    } else if compass < 20.0 {
+        format!("The compass's Atomic Potential adds 1 a level, {} levels to go.", 20.0 - compass)
+    } else if !super::general::event_shop_owned(save, 28) {
+        "The event shop's Higgs Boson adds 20.".into()
+    } else {
+        format!("Each Menagerie boost 17 adds {}.", research(58, 17))
+    }
 }
 
 /// Atom Collider: `Atoms[i]`, one cap for every atom. `AtomInfo` lists all 17, the six the game
@@ -283,6 +381,9 @@ fn atoms_available(save: &Save) -> usize {
 fn atoms(save: &Save) -> Mechanic {
     let levels = save.numbers("Atoms", &[]);
     let max = atom_max(save);
+    // The atom page shows a cost and takes particles only below the cap the account has now.
+    let cap = atom_cap(save).min(max);
+    let at_cap = format!("At your atom cap of {cap}. {}", atom_cap_lift(save));
     let particles = save.at("Divinity", &[39]).map(num).unwrap_or(0.0).max(0.0);
     let table = rows("AtomInfo", &[]);
     let available = atoms_available(save);
@@ -303,6 +404,9 @@ fn atoms(save: &Save) -> Mechanic {
                 let source = LATE_ATOMS.get(i.wrapping_sub(11)).copied().unwrap_or("another atom unlock");
                 it.how = Some(format!("Opens with one more atom unlock, such as {source}."));
                 it.state = State::Locked;
+            } else if level >= cap && level < max {
+                it.how = Some(at_cap.clone());
+                it.state = State::Locked;
             } else if level < max {
                 let cost = atom_cost(r, level);
                 it.how = Some(format!("Next level costs {} particles.", big(cost)));
@@ -311,13 +415,14 @@ fn atoms(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    // What the particles on hand buy: the two lowest atoms that can move, each on its own.
+    // What the particles on hand buy: the two lowest atoms that can move, each on its own, up to
+    // the cap the account has now.
     let mut open: Vec<(usize, &Item)> = items.iter().enumerate().filter(|(_, it)| it.state == State::Ready).collect();
     open.sort_by(|a, b| a.1.level.total_cmp(&b.1.level));
     let reach: Vec<String> = open
         .iter()
         .take(2)
-        .filter_map(|(i, it)| table.get(*i).map(|r| format!("{} to Lv {}", it.name, atom_reach(r, it.level, max, particles))))
+        .filter_map(|(i, it)| table.get(*i).map(|r| format!("{} to Lv {}", it.name, atom_reach(r, it.level, cap, particles))))
         .collect();
     let have = Have {
         figure: format!("{} particles", big(particles)),
@@ -329,9 +434,15 @@ fn atoms(save: &Save) -> Mechanic {
     };
     let mut m = mech("atoms", 3, "Atom Collider", pic("Atom0".into()), Count::Levels, "levels", items);
     m.have = Some(have);
-    m.raises = vec![Raise { name: "Menagerie boost 17, per boost".into(), amount: "+1 max level on every atom".into(), owned: menagerie_boosts(save, 17) > 0.0 }];
+    let compass = atomic_potential(save);
+    m.raises = vec![
+        Raise { name: format!("{} (gaming superbit)", super::w5::superbit_name(23)), amount: "+10 max levels on every atom".into(), owned: super::w5::superbit_owned(save, 23) },
+        Raise { name: format!("Atomic Potential (compass), {compass} of 20 levels"), amount: "+1 max level on every atom per level".into(), owned: compass >= 20.0 },
+        Raise { name: "Higgs Boson (event shop)".into(), amount: "+20 max levels on every atom".into(), owned: super::general::event_shop_owned(save, 28) },
+        Raise { name: "Menagerie boost 17, per boost".into(), amount: format!("+{} max level on every atom", research(58, 17)), owned: menagerie_boosts(save, 17) > 0.0 },
+    ];
     m.note = Some(format!(
-        "The cap starts at 20. A gaming superbit, a compass upgrade and an event shop item raise it to 70, and each Menagerie boost adds 1 more (counted here: {max})."
+        "The cap starts at 20. A gaming superbit, a compass upgrade and an event shop item raise it to 70, and each Menagerie boost adds 1 more (counted here: {max}). Your cap now is {cap}."
     ));
     m
 }
@@ -529,20 +640,27 @@ fn summoning_equinox(save: &Save) -> f64 {
 }
 
 /// Equinox upgrades: `Dream[2 + i]`; `DreamUpg` col 2 is the base max. N.js `UpgMaxLV` adds the
-/// dreams' raises, +10 from a gaming superbit and Summoning wins for upgrades 4, 5 and 7 to 11,
-/// and Summoning alone for 12. Rows marked "Filler" aren't upgrades.
+/// dreams' raises, +10 from a gaming superbit (35, Equinox Unending) and Summoning wins for
+/// upgrades 4, 5 and 7 to 11, and Summoning alone for 12. Rows marked "Filler" aren't upgrades.
 fn equinox_upgrades(save: &Save) -> Mechanic {
     let levels = save.numbers("Dream", &[]);
     let raises = dream_raises();
     let list = dream_raise_list();
     let summon = summoning_equinox(save);
+    let unending = super::w5::superbit_owned(save, 35);
+    let unending_name = super::w5::superbit_name(35);
     // A level costs one full bar (N.js the upgrade button: `IsBarFULL`, then `Dream[0] = 0`); the
     // bar needs `(120 + 40 L) * 1.02 ^ L`, L the levels bought across `Dream[2..16]` (`BarFillReq`).
     let bought: f64 = (2..16).map(|k| at(&levels, k).max(0.0)).sum();
     let bar_req = (120.0 + 40.0 * bought) * 1.02f64.powf(bought);
     let bar = at(&levels, 0).max(0.0);
-    // Upgrade i opens with the i-th "Unlock next Equinox upgrade" dream (N.js `UpgUnlocked`).
+    // The game fills the bar to exactly `BarFillReq`, and saves round it: a hair short is full.
+    let full = bar >= bar_req * (1.0 - 1e-9);
+    // N.js `UpgUnlocked`: 1 plus the "Unlock next Equinox upgrade" dreams done, in any order;
+    // upgrade i opens once that count passes i.
     let unlockers: Vec<usize> = rows("DreamChallenge", &[]).iter().enumerate().filter(|(_, r)| text(r, 2) == "Unlock_next_Equinox_upgrade").map(|(i, _)| i).collect();
+    let unlocked = 1 + unlockers.iter().filter(|&&d| dream_done(save, d)).count();
+    let next_unlock = unlockers.iter().copied().find(|&d| !dream_done(save, d));
     let dream_name = |d: usize| rows("DreamChallenge", &[]).get(d).map(|r| challenge(text(r, 0))).unwrap_or_default();
     let items = rows("DreamUpg", &[])
         .iter()
@@ -550,26 +668,37 @@ fn equinox_upgrades(save: &Save) -> Mechanic {
         .filter(|(_, r)| text(r, 3) != "Filler")
         .map(|(i, r)| {
             let mut max = cell(r, 2) + raises.get(text(r, 0)).copied().unwrap_or(0.0);
-            if matches!(i, 4 | 5 | 7..=11) {
+            let takes_unending = matches!(i, 4 | 5 | 7..=11);
+            if takes_unending {
                 max += 10.0 + summon;
             } else if i == 12 {
                 max += summon;
             }
             let level = at(&levels, i + 2);
             let mut it = Item::new(label(text(r, 0)), None, level, max);
-            let opener = i.checked_sub(1).and_then(|k| unlockers.get(k)).copied();
-            // The cap as it stands: the full one less the raises from dreams not done yet.
-            let pending: f64 = list.iter().filter(|(d, name, _)| *name == text(r, 0) && !dream_done(save, *d)).map(|(_, _, n)| n).sum();
-            if let Some(d) = opener.filter(|&d| level <= 0.0 && !dream_done(save, d)) {
-                it.how = Some(clip(&format!("Opens with dream {}: {}.", d + 1, dream_name(d))));
+            // The cap as it stands: the full one less the raises from dreams not done yet, and
+            // less the superbit's 10 without it.
+            let mut pending: f64 = list.iter().filter(|(d, name, _)| *name == text(r, 0) && !dream_done(save, *d)).map(|(_, _, n)| n).sum();
+            if takes_unending && !unending {
+                pending += 10.0;
+            }
+            if i >= unlocked && level <= 0.0 {
+                it.how = next_unlock.map(|d| {
+                    let more = i + 1 - unlocked;
+                    let lead = if more == 1 { "Opens with".to_string() } else { format!("Opens after {more} more unlock dreams, the next") };
+                    clip(&format!("{lead} dream {}: {}.", d + 1, dream_name(d)))
+                });
                 it.state = State::Locked;
             } else if level < max - pending {
-                it.how = Some(format!("Each level takes a full Equinox bar: {} of {} now.", big(bar), big(bar_req)));
-                if bar >= bar_req {
+                it.how = Some(format!("Each level takes a full Equinox bar: {} of {} now.", big(bar.min(bar_req)), big(bar_req)));
+                if full {
                     it.state = State::Ready;
                 }
             } else if let Some((d, _, n)) = list.iter().find(|(d, name, _)| *name == text(r, 0) && !dream_done(save, *d)) {
                 it.how = Some(clip(&format!("Dream {} raises the cap by {n}: {}.", d + 1, dream_name(*d))));
+            } else if level < max && takes_unending && !unending {
+                it.how = Some(format!("At its cap for now. The {unending_name} superbit adds 10."));
+                it.state = State::Locked;
             }
             it
         })
@@ -577,10 +706,15 @@ fn equinox_upgrades(save: &Save) -> Mechanic {
     let mut m = mech("equinox-upgrades", 3, "Equinox Upgrades", pic("Dream_Cloud".into()), Count::Levels, "levels", items);
     m.have = Some(Have {
         figure: format!("{} of {} Equinox bar", big(bar.min(bar_req)), big(bar_req)),
-        text: if bar >= bar_req { "The bar is full: enough for one level of any open upgrade.".into() } else { "Not full yet. Each level bought makes the next bar a little longer.".into() },
+        text: if full { "The bar is full: enough for one level of any open upgrade.".into() } else { "Not full yet. Each level bought makes the next bar a little longer.".into() },
     });
     let upg = |name: &str| label(name);
     m.raises = list.iter().map(|(d, name, n)| Raise { name: format!("Dream {}", d + 1), amount: format!("+{n} max levels on {}", upg(name)), owned: dream_done(save, *d) }).collect();
+    m.raises.push(Raise {
+        name: format!("{unending_name} (gaming superbit)"),
+        amount: "+10 max levels on Matching Scims, Slow Roast Wiz and Metal Detector to Voter Rights".into(),
+        owned: unending,
+    });
     m.note = Some(format!(
         "Caps include every dream's raise and a gaming superbit. Endless Summoning wins keep adding to most of them (+{summon} from your wins so far)."
     ));

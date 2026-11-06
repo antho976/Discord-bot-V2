@@ -134,14 +134,16 @@ fn costs(row: &Value, from: usize) -> String {
     format!("Costs {}.", parts.join(", "))
 }
 
-/// Kitchens: `Cooking[i][0]` is 2 once bought. The game prices kitchens 2 to 10 (N.js
+/// Kitchens: `Cooking[i][0]` is 1 or more once bought. The game prices kitchens 2 to 10 (N.js
 /// `CookingNewKitchenCoinCost`); kitchen upgrade levels have no cap.
 fn kitchens(save: &Save) -> Mechanic {
     // N.js `CookingNewKitchenCoinCost`, by kitchen index.
     const COINS: [f64; 10] = [0.0, 82e5, 75e6, 4e8, 8e9, 5e10, 213e10, 6e13, 2e15, 1e17];
     let items = (0..10)
         .map(|i| {
-            let owned = save.at("Cooking", &[i, 0]).map(num).unwrap_or(0.0) >= 2.0;
+            // 0 is not bought; buying sets 1 (idle), cooking 2, a new recipe 3, and stopping
+            // goes back to 1 (N.js, the kitchen's click handler).
+            let owned = save.at("Cooking", &[i, 0]).map(num).unwrap_or(0.0) >= 1.0;
             let mut it = Item::new(format!("Kitchen {}", i + 1), None, f64::from(owned), 1.0);
             if !owned {
                 it.how = Some(if i == 0 { "Comes with the Cooking skill.".into() } else { format!("Costs {} coins at the kitchen sign.", big(COINS[i])) });
@@ -165,9 +167,10 @@ fn jewels(save: &Save) -> Mechanic {
             if !it.done() {
                 it.how = Some(costs(r, 5));
             }
-            // Jewels paid for with Spelunking items ("SpiA1") are World 7 content.
+            // Jewels paid for with World 6 drops ("SpiA1" is Leafy Droplet, "SpiB2b" Dark Lantern,
+            // with World 6 territory spices) are World 6 content; a World 6 account can own them.
             if text(r, 5).starts_with("Spi") {
-                it.world = Some(7);
+                it.world = Some(6);
             }
             it
         })

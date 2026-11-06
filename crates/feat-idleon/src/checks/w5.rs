@@ -25,8 +25,13 @@ fn letter_in(s: &str, i: usize) -> bool {
     NUMBER_TO_LETTER.chars().nth(i).is_some_and(|c| s.contains(c))
 }
 
-fn superbit_owned(save: &Save, i: usize) -> bool {
+pub(crate) fn superbit_owned(save: &Save, i: usize) -> bool {
     letter_in(save.at("Gaming", &[12]).and_then(Value::as_str).unwrap_or(""), i)
+}
+
+/// A superbit's name as its page shows it, `GamingUpg` col 3 ("Isotope|Discovery").
+pub(crate) fn superbit_name(i: usize) -> String {
+    rows("GamingUpg", &[]).get(i).map_or_else(|| format!("superbit {i}"), |r| label(&text(r, 3).replace('|', "_")))
 }
 
 /// A research grid node has at least one level (`Research[0][i]`), which is what the game's
@@ -304,8 +309,7 @@ fn superbits(save: &Save) -> Mechanic {
 fn snail(save: &Save) -> Mechanic {
     let level = value(save, "GamingSprout", &[32, 1]);
     let enc = value(save, "GamingSprout", &[32, 2]);
-    let table = rows("GamingUpg", &[]);
-    let bit = |i: usize| table.get(i).map_or_else(|| format!("superbit {i}"), |r| label(&text(r, 3).replace('|', "_")));
+    let bit = superbit_name;
     let raises = [(29, 10.0), (30, 5.0), (40, 10.0)];
     let cap = 25.0 + raises.iter().filter(|(i, _)| superbit_owned(save, *i)).map(|(_, a)| a).sum::<f64>();
     // The snail is gaming item 7 (`GamingSprout[25 + 7]`), drawn as `GamingItem7`.
