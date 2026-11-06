@@ -218,6 +218,7 @@ fn stamps(save: &Save) -> Mechanic {
             let name = GAME.item_name(&id).map(str::to_string).unwrap_or_else(|| id.clone());
             let mut it = Item::new(name, pic(id.clone()), f64::from(lv > 0.0), 1.0);
             it.level_name = Some(if lv > 0.0 { format!("Lv {lv:.0}") } else { "Not found".into() });
+            it.raw = Some(lv.max(0.0));
             it.world = source_world(&id).and_then(|w| later(f64::from(w), 1));
             if lv <= 0.0 {
                 it.how = found_where(&id);

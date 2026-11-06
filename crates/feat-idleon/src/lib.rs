@@ -6,6 +6,7 @@
 //! game itself (`tools/idleon-extract`), so they follow game updates.
 
 mod checks;
+pub mod crowd;
 pub mod expected;
 mod game;
 mod limit;

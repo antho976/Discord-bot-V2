@@ -6,6 +6,7 @@
 //! behind the rest of your account in the same world, and cheap finishes (one or two steps from
 //! done).
 
+use crate::crowd::Ladder;
 use crate::expected::Pace;
 use crate::save::Save;
 
@@ -27,6 +28,10 @@ pub struct Item {
     /// mechanic's item that only exists once you reach W7). Items in a world the account hasn't
     /// reached leave the ladder and the shares, and show as "Opens in World N".
     pub world: Option<u8>,
+    /// The item's real level when `level` counts something else: a stamp is 1 once found
+    /// (stamps have no cap), a bubble's `level` is how many of its bonus targets it has passed.
+    /// Tiers from other players' saves (`crowd.txt`) compare this.
+    pub raw: Option<f64>,
 }
 
 /// Whether an item's next step is open to the player right now.
@@ -79,7 +84,7 @@ impl Tier {
 
 impl Item {
     pub fn new(name: impl Into<String>, picture: Option<String>, level: f64, max: f64) -> Item {
-        Item { name: name.into(), picture, level: level.max(0.0), max: max.max(0.0), level_name: None, how: None, state: State::Unknown, world: None }
+        Item { name: name.into(), picture, level: level.max(0.0), max: max.max(0.0), level_name: None, how: None, state: State::Unknown, world: None, raw: None }
     }
 
     pub fn done(&self) -> bool {
@@ -88,6 +93,11 @@ impl Item {
 
     pub fn share(&self) -> f64 {
         if self.max <= 0.0 { 0.0 } else { (self.level / self.max).clamp(0.0, 1.0) }
+    }
+
+    /// The level other players' saves are compared on: `raw` when there is one.
+    pub fn crowd_level(&self) -> f64 {
+        self.raw.unwrap_or(self.level)
     }
 }
 
@@ -133,6 +143,9 @@ pub struct Mechanic {
     /// Where it stands against the worlds its tiers belong to (`expected.txt`), set by
     /// `Review::new`; `None` until its tiers have worlds.
     pub pace: Option<Pace>,
+    /// The ladder from other players' saves (`crowd.txt`), set by `Review::new` when the
+    /// mechanic has a table there. With it, `tiers` is a tier per stage of the game.
+    pub crowd: Option<Ladder>,
 }
 
 impl Mechanic {
@@ -178,6 +191,9 @@ impl Mechanic {
     /// - levels: every item started, then a quarter, half, three quarters of its own max, then
     ///   maxed. Per item, so one expensive item holds back only its own share.
     pub fn tiers(&self) -> Vec<Tier> {
+        if let Some(l) = &self.crowd {
+            return self.crowd_tiers(l).into_iter().map(|(t, _)| t).collect();
+        }
         if self.count == Count::Open || self.items.is_empty() {
             return Vec::new();
         }
@@ -228,6 +244,32 @@ impl Mechanic {
             .collect()
     }
 
+    /// The ladder from other players' saves, each tier with the world it belongs to: a tier per
+    /// stage (only the items asked for count toward it), then everything at its max, which
+    /// belongs to no world.
+    fn crowd_tiers(&self, l: &Ladder) -> Vec<(Tier, Option<u8>)> {
+        let tier = |label: String, targets: Vec<f64>| {
+            let asked = || self.items.iter().zip(&targets).filter(|(_, t)| **t > 0.0);
+            let need = asked().count();
+            let met = asked().filter(|(i, t)| i.crowd_level() >= **t).count();
+            Tier { label, targets: Some(targets), met, need }
+        };
+        let mut out: Vec<(Tier, Option<u8>)> = l.rungs.iter().map(|(label, w, t)| (tier(label.clone(), t.clone()), Some(*w))).collect();
+        // Items with a real level of their own have no max in those units (stamps, bubbles).
+        if self.count != Count::Open && self.items.iter().any(|i| i.max > 0.0) && self.items.iter().all(|i| i.raw.is_none()) {
+            let max: Vec<f64> = self.items.iter().map(|i| i.max).collect();
+            if l.rungs.last().is_none_or(|r| r.2 != max) {
+                out.push((tier("Everything maxed".to_string(), max), None));
+            }
+        }
+        out
+    }
+
+    /// The level a tier compares an item on: its real level under a crowd ladder.
+    pub fn tier_level(&self, i: &Item) -> f64 {
+        if self.crowd.is_some() { i.crowd_level() } else { i.level }
+    }
+
     /// The items a tier still waits on, the ones you can take now first, then the furthest off.
     /// For a count tier, every item you don't have yet, in the game's order after the ready ones.
     pub fn tasks<'a>(&'a self, tier: &Tier) -> Vec<(&'a Item, f64)> {
@@ -241,8 +283,8 @@ impl Mechanic {
             v.sort_by_key(|(i, _)| rank(i.state));
             return v;
         };
-        let mut v: Vec<(&Item, f64)> = self.items.iter().zip(targets).filter(|(i, t)| i.level < **t).map(|(i, t)| (i, *t)).collect();
-        v.sort_by(|a, b| rank(a.0.state).cmp(&rank(b.0.state)).then((a.0.level / a.1).total_cmp(&(b.0.level / b.1))));
+        let mut v: Vec<(&Item, f64)> = self.items.iter().zip(targets).filter(|(i, t)| self.tier_level(i) < **t).map(|(i, t)| (i, *t)).collect();
+        v.sort_by(|a, b| rank(a.0.state).cmp(&rank(b.0.state)).then((self.tier_level(a.0) / a.1).total_cmp(&(self.tier_level(b.0) / b.1))));
         v
     }
 
@@ -302,9 +344,22 @@ impl Review {
             m.items = now;
             m.later = later;
         }
+        crate::crowd::with(|table| {
+            for m in &mut mechanics {
+                // Only when the table has a tier for your world or an earlier one: until there are
+                // saves from earlier worlds, an account short of World 7 keeps the game-max ladder.
+                m.crowd = table.get(m.key).and_then(|b| Ladder::new(b, &m.items)).filter(|l| l.rungs.iter().any(|r| r.1 <= world));
+            }
+        });
         crate::expected::with(|worlds| {
             for m in &mut mechanics {
-                m.pace = worlds.get(m.key).and_then(|ws| Pace::new(&m.tiers(), ws, world));
+                m.pace = match &m.crowd {
+                    Some(l) => {
+                        let (tiers, ws): (Vec<Tier>, Vec<Option<u8>>) = m.crowd_tiers(l).into_iter().unzip();
+                        Pace::new(&tiers, &ws, world)
+                    }
+                    None => worlds.get(m.key).and_then(|ws| Pace::new(&m.tiers(), ws, world)),
+                };
             }
         });
         let not_started: Vec<usize> = mechanics.iter().enumerate().filter(|(_, m)| m.world > 0 && m.world <= world && m.untouched()).map(|(i, _)| i).collect();
@@ -429,6 +484,7 @@ mod tests {
             later: Vec::new(),
             open_order: None,
             pace: None,
+            crowd: None,
         }
     }
 

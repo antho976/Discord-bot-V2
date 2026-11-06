@@ -441,7 +441,7 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                                 b { (t.label) }
                                 span.ia-fig { (t.met) " of " (t.need) }
                                 span.ia-meter { span style={ "--s:" (share3(t.met as f64 / t.need.max(1) as f64)) } {} }
-                                @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty()) { span.ia-rung-note { (n) } }
+                                @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty() && m.crowd.is_none()) { span.ia-rung-note { (n) } }
                             }
                         }
                     }
@@ -561,7 +561,8 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
             }
             span.ia-fig {
                 // A one-time thing has no level to show; the chip or the line says the rest.
-                @if once { (i.level_name.as_deref().unwrap_or("")) }
+                @if m.crowd.is_some() && !(once && i.raw.is_none()) { "Lv " (num(m.tier_level(i))) " → Lv " (num(target)) }
+                @else if once { (i.level_name.as_deref().unwrap_or("")) }
                 @else { (level_text(m, i.level)) " → " (level_text(m, target)) }
             }
             @match i.state {
@@ -580,8 +581,13 @@ fn later(m: &Mechanic, j: usize, t: &Tier) -> Markup {
             .items
             .iter()
             .zip(targets)
-            .filter(|(i, tg)| i.level < **tg)
-            .map(|(i, _)| if i.max <= 1.0 && m.tier_names.is_none() { i.name.clone() } else { format!("{} {}", i.name, level_text(m, i.level)) })
+            .filter(|(i, tg)| m.tier_level(i) < **tg)
+            .map(|(i, _)| match () {
+                _ if m.crowd.is_some() && i.raw.is_some() => format!("{} Lv {}", i.name, num(m.tier_level(i))),
+                _ if i.max <= 1.0 && m.tier_names.is_none() => i.name.clone(),
+                _ if m.crowd.is_some() => format!("{} Lv {}", i.name, num(i.level)),
+                _ => format!("{} {}", i.name, level_text(m, i.level)),
+            })
             .collect(),
         None => Vec::new(),
     };

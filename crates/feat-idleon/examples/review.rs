@@ -30,7 +30,7 @@ fn main() {
                 let Some(k) = tiers.iter().position(|t| !t.complete()) else { continue };
                 println!("  {} · tier {} of {}: {}", m.name, k + 1, tiers.len(), tiers[k].label);
                 for (it, target) in m.tasks(&tiers[k]).iter().take(3) {
-                    println!("      {} {} -> {} [{:?}] {}", it.name, it.level, target, it.state, it.how.as_deref().unwrap_or("-"));
+                    println!("      {} {} -> {} [{:?}] {}", it.name, m.tier_level(it), target, it.state, it.how.as_deref().unwrap_or("-"));
                 }
                 if let Some(h) = &m.have {
                     println!("      have: {} · {}", h.figure, h.text);
