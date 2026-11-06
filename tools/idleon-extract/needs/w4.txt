@@ -1,0 +1,17 @@
+# World 4. Format: see w1.txt.
+table JewelDesc
+table MealINFO
+table ChipDesc
+table PetStats
+table PetUpgradeINFO
+table TerritoryInfo
+table RiftStuff
+table ArtifactInfo
+table GrimoireUpg
+table Research
+picture ConsoleJwl\d+
+picture ConsoleChip\d+
+picture CookingM\d+
+picture PetUpg\d+
+picture PetTerritory\d+
+picture EquipmentCape\d+

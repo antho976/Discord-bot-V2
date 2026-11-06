@@ -4,6 +4,9 @@ mod giveaways;
 mod overview;
 mod polls;
 mod suggestions;
+
+/// Other features file suggestions through this (the Idleon account check's problem reports).
+pub use suggestions::submit as submit_suggestion;
 mod web;
 
 use bot_core::anyhow::Result;

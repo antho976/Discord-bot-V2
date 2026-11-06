@@ -1,0 +1,26 @@
+# World 6. Format: see w1.txt.
+table SeedInfo
+table SummonUPG
+table SummonEnemies
+table DeathNoteMobs
+table MarketInfo
+table MarketExoticInfo
+table NinjaInfo
+table NinjaUpg
+table JadeUpg
+table EmperorBon
+table GrimoireUpg
+table LegendTalents
+table ResGridSquares
+table Research
+picture FarmCrop0
+picture NjTrP\d+
+picture NjGem\d+
+picture NjUpgI\d+
+picture PeanutG
+picture ButterBar
+picture FoodG\d+
+picture Boss6A
+picture SummC\d
+picture SummSt\d
+picture FarmCrop230

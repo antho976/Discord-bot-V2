@@ -1,0 +1,16 @@
+# World 2. Format: see w1.txt.
+table AlchemyDescription
+table SigilDesc
+table ArcadeShopInfo
+table PostOffUpgradeInfo
+picture aVials\d+
+picture aSiga\d+
+picture PachiShopICON\d+
+picture aUpgrades[OGPY]\d+
+picture aEmptyCauldronB[0-3]
+picture UIboxUpg\d+
+picture IslandSail[0-5]
+picture Quest69
+cell AlchemyDescription 4 5
+table AlchemyVialQTYreq
+table SkullShopDesc

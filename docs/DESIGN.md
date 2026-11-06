@@ -216,6 +216,21 @@ The page fills the window; nothing is capped at a fixed width and parked at the 
   memory scales to all the memory there is; CPU scales to its peak but never under 10% (1% for the
   bot). The bot's numbers are its container's (Caddy and Relay share it) and say so. One quiet line
   at the end points to Beszel for per-container detail and alerts. Not a Beszel clone.
+- **Idleon account check** (2026-11-05, owner: AutoReview "looks pretty safe and boring", picked
+  "do-next first"): public page `/p/{guild}/idleon` in the pets' public frame. Paste box, then the
+  answer: one big share with a column per world, then Do next (28 px game picture, name, the why
+  line, a meter, the figure, a world tag), then world tabs (radio + `:has`, no reload) over a grid
+  of mechanic cards that open to their items, least done first, maxed folded under. **Each world
+  has its own data colour** (`--w1`..`--w7`, `--w0` neutral for account-wide), used only on the
+  columns, meters, dots and tags. Game pictures draw pixelated at 24-28 px.
+  **What to do (2026-11-05, owner approved Relay design 20):** an opened card shows a tier ladder
+  (the game's own tiers where it has them, otherwise started / a quarter / half / three quarters /
+  maxed of each item's own max), the current tier's tasks with how to do each in the player's own
+  numbers and a Do now / Locked chip, later tiers folded to who holds them back, and side panels
+  for "With what you have" and "Raise the cap". **Motion (owner: "the change of position is quite
+  big from small to large"):** opening a card is FLIP: every card in the grid slides from where it
+  was, the opened one is revealed from its old size by a clip (not stretched) in 420 ms
+  expo-out, its body fades up after 133 ms (owner slowed it twice: 380, 405, then 420 ms); closing slides back. The moving card draws on top and stays opaque; cards that change column fade in where they land (sliding them across their neighbours read as "seeing double"), cards that only shift up or down slide; bars draw in once with the page and never regrow when a card opens. Off under reduced motion.
 - Shared since then: `.rail` is a plain column of bordered panels (`.rail > .rail-block`), the
   `ui::empty` icon is still and neutral, `[data-count]` numbers no longer count up, and the bell's
   notice icons are neutral with no tint on new ones.

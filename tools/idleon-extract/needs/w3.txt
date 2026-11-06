@@ -1,0 +1,34 @@
+# World 3. Format: see w1.txt.
+table PrayerInfo
+table SaltLicks
+table AtomInfo
+table TowerInfo
+table Research
+table DeathNoteMobs
+table MapAFKtarget
+table MapDetails
+table NinjaInfo
+table DreamUpg
+table DreamChallenge
+table SummonEnemies
+table RefineryInfo
+table ArtifactInfo
+table TaskShopDesc
+table RANDOlist
+table WorshipBASEinfos
+picture Refinery\d+
+picture Prayer\d+
+picture Atom\d+
+picture ConTower\d+
+picture ConTowerA0
+picture Mface\d+
+picture Dream_Cloud
+picture Arti21
+picture TaskSc3
+picture WorshipSkull1
+# Armor sets: the hat of each set (extra_w3.py "sets").
+picture EquipmentHats(17|18|19|22|28|52|53|54|61|68|70|71|74|77|83|105|106|119|123)
+# 3D printer samples: ores, logs, fish, bugs, monster drops.
+picture (Copper|Iron|Gold|Plat|Dementia|Void|Lustre|Starfire|Marble|Dreadlo|Godshard|Prehistrium)
+picture (Oak|Birch|Jungle|Forest|Toilet|Palm|Stump|Alien)Tree|Tree\d+|SaharanFoal|Fish\d+|Bug\d+|Quest15
+picture (Grasslands|Jungle|Forest|Sewers|Desert[ABC]|Snow[ABC]|Galaxy[ABC]|Lava[ABC]|Spi[ABC]|w7[AB])\d+

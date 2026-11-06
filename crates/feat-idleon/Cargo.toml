@@ -1,0 +1,12 @@
+[package]
+name = "feat-idleon"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+bot-core.workspace = true
+feat-community = { path = "../feat-community" }
+libc = "0.2"
+maud.workspace = true
+serde.workspace = true

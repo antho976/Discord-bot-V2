@@ -193,6 +193,7 @@ dependencies = [
  "feat-connect",
  "feat-embeds",
  "feat-guard",
+ "feat-idleon",
  "feat-levels",
  "feat-modmail",
  "feat-pets",
@@ -611,6 +612,17 @@ name = "feat-guard"
 version = "0.1.0"
 dependencies = [
  "bot-core",
+ "maud",
+ "serde",
+]
+
+[[package]]
+name = "feat-idleon"
+version = "0.1.0"
+dependencies = [
+ "bot-core",
+ "feat-community",
+ "libc",
  "maud",
  "serde",
 ]

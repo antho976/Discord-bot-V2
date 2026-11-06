@@ -1,0 +1,13 @@
+# World 5. Format: see w1.txt.
+table ArtifactInfo
+table SlabItemSort
+table GodsInfo
+table Research
+table UpgradeVault
+table GamingUpg
+table IslandInfo
+table BoatsInHarbor
+table ResGridSquares
+picture Arti\d+
+picture DivGod\d+
+picture SailingNewIsle1

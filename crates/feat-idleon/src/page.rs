@@ -1,0 +1,877 @@
+//! The public page: the paste box, then the review.
+//!
+//! The review leads with the answer: how far the account is overall with one bar per world,
+//! then "Do next", then every mechanic by world (tabs switched in the page, no reload), each a
+//! card that opens to its items, least done first. Worlds wear their own colour (data colour,
+//! not decoration): the bars, the meters and the world tags.
+
+use bot_core::Ctx;
+use bot_core::maud::{DOCTYPE, Markup, PreEscaped, html};
+use bot_core::web::ui;
+
+use crate::game::GAME;
+use crate::pictures;
+use crate::review::{Count, Item, Mechanic, Review, State as Step, Tier, Why};
+
+/// Who's looking, as the closed test sees it.
+pub struct Access {
+    /// The page is in closed testing.
+    pub closed: bool,
+    /// This viewer may use it (always, when it isn't closed).
+    pub allowed: bool,
+    pub signed_in: bool,
+}
+
+pub enum State<'a> {
+    Ask { error: Option<&'a str> },
+    Done(&'a Review),
+}
+
+pub const WORLD_NAMES: [&str; 8] = ["Account", "Blunder Hills", "Yum-Yum Desert", "Frostbite Tundra", "Hyperion Nebula", "Smolderin' Plateau", "Spirited Valley", "Shimmerfin Deep"];
+
+fn world_tag(w: u8) -> String {
+    if w == 0 { "All".into() } else { format!("W{w}") }
+}
+
+pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
+    let name = ctx.guild_name(guild);
+    let icon = ctx.guild_icon_large(guild);
+    let banner = ctx.guild_banner_url(guild);
+    let frame = bot_core::web::banner::frame(ctx, guild);
+    let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+    let title = match &state {
+        State::Done(r) if !r.name.is_empty() => format!("{}'s account", r.name),
+        _ => "Account check".to_string(),
+    };
+    html! {
+        (DOCTYPE)
+        html lang="en" {
+            head { (ui::head(&title)) }
+            body.ia-pub data-guild=(guild) data-icon=[icon.as_deref()] data-hue="pets" {
+                style { (PreEscaped(CSS)) }
+                header.ov-hero.ia-hero {
+                    div.ov-bg {
+                        @match (&banner, &icon) {
+                            (Some(b), _) => img src=(b) alt="" style=[frame.map(|f| f.style())];,
+                            (None, i) => (ui::art(i.as_deref(), false)),
+                        }
+                    }
+                    div.ov-hello {
+                        @match &icon {
+                            Some(i) => img.ov-icon src=(i) alt="";,
+                            None => span.ov-icon.letter { (initial) },
+                        }
+                        div {
+                            h1 { (title) }
+                            p { span { (name) } span { "Idleon account check" } }
+                        }
+                    }
+                }
+                main.ia-page {
+                    @if !access.allowed {
+                        (closed_door(access))
+                    } @else {
+                        @if access.closed {
+                            p.ia-test role="note" {
+                                b { "Closed test." }
+                                " This is a test version: some numbers or advice may be off. If something looks wrong, use Report a problem at the bottom of your results."
+                            }
+                        }
+                        @match state {
+                            State::Ask { error } => (ask(guild, error)),
+                            State::Done(r) => {
+                                (done(guild, r))
+                                (report_box(guild, r, access.signed_in))
+                            },
+                        }
+                    }
+                    footer.ia-foot {
+                        span { "Maxes and names come from the game's own data, from " (GAME.updated) ". Your save is read once and not kept." }
+                    }
+                }
+                script { (PreEscaped(JS)) }
+            }
+        }
+    }
+}
+
+/// The page while it's closed, for someone who isn't a tester.
+fn closed_door(a: &Access) -> Markup {
+    html! {
+        section.ia-panel.ia-door {
+            h2 { "The account check is in closed testing" }
+            @if a.signed_in {
+                p { "Only staff and testers can use it for now. Ask staff if you'd like to help test it." }
+            } @else {
+                p { "Sign in with Discord to use it. Staff and testers can try it now; everyone else soon." }
+                a.btn.primary href="/login" { "Sign in with Discord" }
+                p.ia-note { "Then come back to this page." }
+            }
+        }
+    }
+}
+
+/// "Report a problem": a note to staff about what looks wrong, sent to the suggestion box.
+fn report_box(guild: u64, r: &Review, signed_in: bool) -> Markup {
+    html! {
+        section.ia-panel.ia-report #ia-report {
+            div.ia-ask-text {
+                h2 { "Report a problem" }
+                p { "A number that's wrong, advice that doesn't make sense, something missing: tell staff here. It goes to the suggestion box with your name, and says which account and card it's about." }
+            }
+            @if !signed_in {
+                div.ia-door {
+                    p { "Reports go out under your Discord name, so staff can ask you about it. Sign in to send one; your results stay on this page only until you leave it, so copy anything you want to mention first." }
+                    a.btn href="/login" target="_blank" rel="noopener" { "Sign in with Discord" }
+                }
+            } @else {
+            form method="post" action={ "/p/" (guild) "/idleon/report" } data-full {
+                input type="hidden" name="account" value=(r.name);
+                label.ia-report-card {
+                    span { "Card (optional)" }
+                    select name="card" {
+                        option value="" { "Anything" }
+                        @for m in &r.mechanics { option value=(m.name) { (m.name) } }
+                    }
+                }
+                textarea name="text" rows="4" maxlength="1500" required placeholder="What looks wrong, and what you expected" {}
+                div.ia-ask-actions {
+                    span.ia-report-msg role="status" {}
+                    button.btn.primary type="submit" { "Send to staff" }
+                }
+            }
+            }
+        }
+    }
+}
+
+fn ask(guild: u64, error: Option<&str>) -> Markup {
+    html! {
+        section.ia-panel.ia-ask {
+            div.ia-ask-text {
+                h2 { "Paste your save" }
+                p { "Copy your account's JSON from IdleonToolbox or Idleon Efficiency and paste it here, or open the file. You get how far each mechanic is from the game's max, and what to work on next." }
+            }
+            // Sent as plain text: URL-encoding a save triples its size and was a fifth of the
+            // server's work per check.
+            form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
+                textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
+                @if let Some(e) = error { p.ia-err role="alert" { (e) } }
+                div.ia-ask-actions {
+                    label.btn {
+                        (ui::icon(bot_core::Icon::Enter))
+                        "Open a file"
+                        input #ia-file type="file" accept=".json,.txt,application/json" hidden;
+                    }
+                    button.btn.primary type="submit" { "Check my account" }
+                }
+            }
+        }
+    }
+}
+
+fn done(guild: u64, r: &Review) -> Markup {
+    let worlds: Vec<u8> = (1..=7).chain([0]).filter(|w| r.mechanics.iter().any(|m| m.world == *w)).collect();
+    let start = worlds.iter().copied().find(|w| *w == r.next.first().map_or(r.world, |n| r.mechanics[n.mechanic].world)).unwrap_or(1);
+    html! {
+        section.ia-panel.ia-lead {
+            div.ia-lead-who {
+                b.ia-big { (pct(r.share())) }
+                span { "of the maxes this check reads, across " (r.mechanics.iter().filter(|m| m.world <= r.world && m.total() > 0.0).count()) " mechanics" }
+                p.ia-lead-line {
+                    "World " (r.world) " · " (r.characters) " characters"
+                    " · " a href={ "/p/" (guild) "/idleon" } { "Check another account" }
+                }
+            }
+            div.ia-cols role="img" aria-label="How far each world is from max" {
+                @for w in (1..=7u8).chain([0]) {
+                    @let share = r.world_share(w);
+                    @let reached = w == 0 || w <= r.world;
+                    div.ia-col.off[!reached || share.is_none()] style={ "--w: var(--w" (w) ")" } data-tip={ (WORLD_NAMES[w as usize]) ": " (share.filter(|_| reached).map_or("not reached".into(), pct)) } {
+                        span.ia-col-track { span.ia-col-fill style={ "--s:" (share.filter(|_| reached).unwrap_or(0.0)) } {} }
+                        b { (share.filter(|_| reached).map_or("·".into(), |s| format!("{:.0}", s * 100.0))) }
+                        span { (world_tag(w)) }
+                    }
+                }
+            }
+        }
+        @if !r.not_started.is_empty() {
+            section.ia-panel {
+                div.ia-head {
+                    h2 { "Not started yet" }
+                    p { "In worlds you've reached, with no progress at all. New since you last played, or skipped" }
+                }
+                div.ia-fresh {
+                    @for &i in &r.not_started {
+                        @let m = &r.mechanics[i];
+                        a.ia-fresh-item href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
+                            (mark(m))
+                            span { (m.name) }
+                            span.ia-tag { (world_tag(m.world)) }
+                        }
+                    }
+                }
+            }
+        }
+        @if !r.next.is_empty() {
+            section.ia-panel {
+                div.ia-head {
+                    h2 { "Do next" }
+                    p { "What the rest of your account has left behind, then the quick finishes" }
+                }
+                ol.ia-next {
+                    @for n in &r.next {
+                        @let m = &r.mechanics[n.mechanic];
+                        li {
+                            a.ia-row href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
+                                (mark(m))
+                                span.ia-row-text {
+                                    b { (m.name) }
+                                    span { (why(m, &n.why)) }
+                                }
+                                span.ia-meter { span style={ "--s:" (share3(m.share())) } {} }
+                                span.ia-fig { (fig(m)) }
+                                span.ia-tag { (world_tag(m.world)) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        section.ia-worlds {
+            div.ia-tabs role="tablist" {
+                @for w in &worlds {
+                    label style={ "--w: var(--w" (w) ")" } {
+                        input #{ "w-" (w) } type="radio" name="ia-world" value=(w) checked[*w == start];
+                        span.dot {}
+                        (if *w == 0 { "Account".to_string() } else { format!("World {w}") })
+                        @if *w > r.world && *w != 0 { span.ia-tab-note { "not reached" } }
+                    }
+                }
+            }
+            (items_data(r))
+            @for w in &worlds {
+                div.ia-world data-w=(w) style={ "--w: var(--w" (w) ")" } {
+                    div.ia-grid {
+                        @for m in r.mechanics.iter().filter(|m| m.world == *w) { (card(m)) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Every card's full item list as compact data, for the page script to draw when a "Show
+/// all" opens: per mechanic, the items not at max (in the card's order) and those at max, each
+/// `[name, picture or null, share 0-1, figure text, 1 when it has a max]`. Character names come from the paste, so the
+/// JSON is made safe for a script tag and the script only ever sets text, never HTML.
+fn items_data(r: &Review) -> Markup {
+    use bot_core::serde_json::{Map, Value, json};
+    let row = |i: &Item| {
+        let pic = i.picture.as_deref().filter(|p| pictures::has(p));
+        json!([i.name, pic, (i.share() * 1000.0).round() / 1000.0, item_fig(i), u8::from(i.max > 0.0)])
+    };
+    let mut all = Map::new();
+    for m in &r.mechanics {
+        let open: Vec<Value> = m.open_items().into_iter().map(row).collect();
+        let maxed: Vec<Value> = m.items.iter().filter(|i| i.done()).map(row).collect();
+        all.insert(m.key.to_string(), json!([open, maxed]));
+    }
+    let text = Value::Object(all).to_string().replace('<', "\\u003c").replace('>', "\\u003e").replace('&', "\\u0026");
+    html! { script #ia-items type="application/json" { (PreEscaped(text)) } }
+}
+
+/// What an item's row says on the right: its named level, "17 / 40", or "Lv 17".
+fn item_fig(i: &Item) -> String {
+    match &i.level_name {
+        Some(n) => n.clone(),
+        None if i.max > 0.0 => format!("{} / {}", num(i.level), num(i.max)),
+        None => format!("Lv {}", num(i.level)),
+    }
+}
+
+fn card(m: &Mechanic) -> Markup {
+    let open = m.open_items();
+    let tiers = m.tiers();
+    let current = tiers.iter().position(|t| !t.complete());
+    // What you hold and what raises the cap only matter while there's a tier to work on.
+    let side = current.is_some() && (m.have.is_some() || !m.raises.is_empty());
+    let hold = ON_HOLD.contains(&m.key);
+    html! {
+        details.ia-card #{ "m-" (m.key) } {
+            summary {
+                (mark(m))
+                span.ia-card-name {
+                    b { (m.name) }
+                    span { (fig(m)) @if !tiers.is_empty() { " · Tier " (current.unwrap_or(tiers.len())) "/" (tiers.len()) } }
+                }
+                @if m.count == Count::Open {
+                    span.ia-pct.open { "No max" }
+                } @else {
+                    span.ia-pct.done[m.done()] { (pct(m.share())) }
+                    span.ia-meter.wide { span style={ "--s:" (share3(m.share())) } {} }
+                }
+            }
+            div.ia-body {
+                @if hold {
+                    p.ia-hold { b { "Order coming later." } " The numbers here are right, but these tiers aren't in the order you'd really do them yet. That comes in a later update." }
+                }
+                @if let Some(n) = &m.note { p.ia-note { (n) } }
+                @if m.count == Count::Open {
+                    @if let Some([avg, median, top, low]) = m.spread() {
+                        div.ia-spread {
+                            div { b { (num(avg.round())) } span { "Average" } }
+                            div { b { (num(median.round())) } span { "Median" } }
+                            div { b { (num(top)) } span { "Highest" } }
+                            div { b { (num(low)) } span { "Lowest" } }
+                        }
+                    }
+                }
+                @if !tiers.is_empty() {
+                    ol.ia-ladder style={ "--n:" (tiers.len()) } {
+                        @for (k, t) in tiers.iter().enumerate() {
+                            li.ia-rung.done[t.complete()].here[current == Some(k)] {
+                                span.ia-rung-k {
+                                    "Tier " (k + 1)
+                                    @if current == Some(k) { " · you're here" } @else if t.complete() { " · done" }
+                                }
+                                b { (t.label) }
+                                span.ia-fig { (t.met) " of " (t.need) }
+                                span.ia-meter { span style={ "--s:" (share3(t.met as f64 / t.need.max(1) as f64)) } {} }
+                                @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty()) { span.ia-rung-note { (n) } }
+                            }
+                        }
+                    }
+                }
+                div.ia-work.with-side[side] {
+                    div.ia-tasks {
+                        @match current {
+                            Some(k) => {
+                                @let tasks = m.tasks(&tiers[k]);
+                                @let ready = tasks.iter().filter(|(i, _)| i.state == Step::Ready).count();
+                                @let short = tiers[k].need - tiers[k].met;
+                                h3 { "To reach Tier " (k + 1) }
+                                p.ia-note {
+                                    @if tiers[k].targets.is_none() { (short) " more, any of these. " }
+                                    (tasks.len()) " left."
+                                    @if ready == tasks.len() && ready > 0 { " You can do all of them now." }
+                                    @else if ready > 0 { " " (ready) " you can do right now." }
+                                }
+                                div.ia-task-list {
+                                    @for (i, target) in tasks.iter().take(TASKS) { (task(m, i, *target)) }
+                                }
+                                @if tasks.len() > TASKS { p.ia-note { "And " (tasks.len() - TASKS) " more, in the full list below." } }
+                                @if k + 1 < tiers.len() {
+                                    p.ia-later-head { "After that" }
+                                    @for (j, t) in tiers.iter().enumerate().skip(k + 1) { (later(m, j, t)) }
+                                }
+                            }
+                            None if !tiers.is_empty() => { p.ia-note { "Every tier done." } }
+                            None => {
+                                h3 { (m.open_order.unwrap_or("Lowest first")) }
+                                @if m.open_order.is_none() { p.ia-note { "Nothing here has a max, so these are the ones furthest behind." } }
+                                div.ia-task-list { @for i in open.iter().take(TASKS) { (item(i)) } }
+                            }
+                        }
+                    }
+                    @if side {
+                        aside.ia-side {
+                            @if let Some(h) = &m.have {
+                                div.ia-side-box {
+                                    span.ia-side-k { "With what you have" }
+                                    b.ia-side-big { (h.figure) }
+                                    p { (h.text) }
+                                }
+                            }
+                            @if !m.raises.is_empty() {
+                                div.ia-side-box {
+                                    span.ia-side-k { "Raise the cap" }
+                                    @for r in &m.raises {
+                                        div.ia-raise.owned[r.owned] {
+                                            span.ia-raise-mark { (if r.owned { "✓" } else { "○" }) }
+                                            span { (r.name) }
+                                            span.ia-fig { (r.amount) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                @if !m.later.is_empty() {
+                    p.ia-note.ia-later-worlds {
+                        "Not counted until you get there: "
+                        @for (n, i) in m.later.iter().take(6).enumerate() {
+                            @if n > 0 { ", " }
+                            (i.name) " (World " (i.world.unwrap_or(0)) ")"
+                        }
+                        @if m.later.len() > 6 { " and " (m.later.len() - 6) " more" }
+                        "."
+                    }
+                }
+                @if !m.items.is_empty() {
+                    // Drawn by the page script from the page's item data when first opened: these
+                    // lists were three quarters of the page and most are never opened.
+                    details.ia-all {
+                        summary { "Show all " (m.items.len()) }
+                        div.ia-items data-key=(m.key) {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Mechanics whose tiers aren't in a real order yet (owner, 2026-11-06): their cards say so.
+const ON_HOLD: &[&str] = &[
+    "arcade", "sigils", "post-office", "equinox-upgrades", "sampling", "meals", "lab-chips", "breeding-upgrades", "shiny",
+    "breeding-pets", "artifacts", "slab",
+];
+
+/// Tasks shown under the current tier before "and N more".
+const TASKS: usize = 8;
+
+/// A level as the mechanic names it: "Gold" for a statue, "Lv 17" otherwise.
+fn level_text(m: &Mechanic, level: f64) -> String {
+    match &m.tier_names {
+        Some(names) if level >= 1.0 => names.get(level as usize - 1).cloned().unwrap_or_else(|| format!("Lv {}", num(level))),
+        Some(_) => "None".into(),
+        None => format!("Lv {}", num(level)),
+    }
+}
+
+fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
+    let once = i.max <= 1.0 && m.tier_names.is_none();
+    html! {
+        div.ia-task {
+            @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {
+                img src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy" style=[(i.state == Step::Locked).then_some("opacity:.55")];
+            } @else { span.ia-item-dot {} }
+            span.ia-task-text {
+                b { (i.name) }
+                @if let Some(h) = &i.how { span { (h) } }
+            }
+            span.ia-fig {
+                // A one-time thing has no level to show; the chip or the line says the rest.
+                @if once { (i.level_name.as_deref().unwrap_or("")) }
+                @else { (level_text(m, i.level)) " → " (level_text(m, target)) }
+            }
+            @match i.state {
+                Step::Ready => span.ia-chip.ok { "Do now" },
+                Step::Locked => span.ia-chip.lock { "Locked" },
+                Step::Unknown => span {},
+            }
+        }
+    }
+}
+
+/// A later tier, folded to one line: what it is and who holds it back.
+fn later(m: &Mechanic, j: usize, t: &Tier) -> Markup {
+    let behind: Vec<String> = match &t.targets {
+        Some(targets) => m
+            .items
+            .iter()
+            .zip(targets)
+            .filter(|(i, tg)| i.level < **tg)
+            .map(|(i, _)| if i.max <= 1.0 && m.tier_names.is_none() { i.name.clone() } else { format!("{} {}", i.name, level_text(m, i.level)) })
+            .collect(),
+        None => Vec::new(),
+    };
+    html! {
+        div.ia-later {
+            span.ia-later-k { "Tier " (j + 1) " · " (t.label) }
+            span.ia-later-who {
+                @if t.targets.is_none() { (t.need - t.met) " more" }
+                @else {
+                    (behind.iter().take(3).cloned().collect::<Vec<_>>().join(", "))
+                    @if behind.len() > 3 { " and " (behind.len() - 3) " more" }
+                }
+            }
+        }
+    }
+}
+
+fn item(i: &Item) -> Markup {
+    html! {
+        div.ia-item.done[i.done()] {
+            @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {
+                img src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy";
+            } @else { span.ia-item-dot {} }
+            span.ia-item-name { (i.name) }
+            @if i.max > 0.0 { span.ia-meter { span style={ "--s:" (share3(i.share())) } {} } } @else { span {} }
+            span.ia-fig {
+                @match &i.level_name {
+                    Some(n) => (n),
+                    None if i.max > 0.0 => { (num(i.level)) " / " (num(i.max)) },
+                    None => { "Lv " (num(i.level)) },
+                }
+            }
+        }
+    }
+}
+
+/// The mechanic's picture, or a dot in its world's colour.
+fn mark(m: &Mechanic) -> Markup {
+    html! {
+        @match m.picture.as_deref().filter(|p| pictures::has(p)) {
+            Some(p) => img.ia-mark src={ "/idleon/pic/" (p) ".png" } alt="";,
+            None => span.ia-mark.blank {},
+        }
+    }
+}
+
+fn why(m: &Mechanic, w: &Why) -> String {
+    match w {
+        Why::Behind { world_avg } => {
+            let place = if m.world == 0 { "account".to_string() } else { format!("W{}", m.world) };
+            format!("{} done, your {place} average is {}", pct(m.share()), pct(*world_avg))
+        }
+        Why::NearlyDone { left: 1 } => "One left to max".into(),
+        Why::NearlyDone { left } => format!("{left} left to max"),
+    }
+}
+
+fn fig(m: &Mechanic) -> String {
+    match m.count {
+        Count::Levels => format!("{} / {} {}", num(m.have()), num(m.total()), m.unit),
+        Count::Done => format!("{} of {} {}", num(m.have()), num(m.total()), m.unit),
+        // A sum of levels with no max says little: the middle one says more.
+        Count::Open => match m.spread() {
+            Some([_, median, top, _]) => format!("median {} · highest {}", num(median.round()), num(top)),
+            None => format!("{} {}", num(m.have()), m.unit),
+        },
+    }
+}
+
+/// A share for a bar's width, to three places: the bar can't show more.
+fn share3(s: f64) -> String {
+    format!("{:.3}", s.clamp(0.0, 1.0)).trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+fn pct(s: f64) -> String {
+    let p = s * 100.0;
+    // 99.6% shouldn't read as done.
+    if (99.5..100.0).contains(&p) { "99%".into() } else { format!("{:.0}%", p) }
+}
+
+/// Whole numbers with thousands separators; anything else with one decimal.
+pub(crate) fn num(n: f64) -> String {
+    if n.fract().abs() > 1e-9 {
+        return format!("{n:.1}");
+    }
+    let s = format!("{}", n.abs() as u64);
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if n < 0.0 { format!("-{out}") } else { out }
+}
+
+/// The paste box's file picker, and cards that grow out of their place: when one opens it
+/// spans the grid, so every card is measured before and after (FLIP). The opened one is
+/// revealed from its old size rather than stretched and draws on top; cards that only moved up
+/// or down slide; cards that changed column fade in where they land, since sliding them across
+/// their neighbours reads as a double image. Do next and Not
+/// started links switch the world, open the card the same way and scroll to it.
+const JS: &str = r##"(function(){
+var f=document.getElementById("ia-file"),t=document.getElementById("ia-save");
+if(f&&t)f.addEventListener("change",function(){var x=f.files&&f.files[0];if(x)x.text().then(function(s){t.value=s;t.form.requestSubmit()})});
+var still=matchMedia("(prefers-reduced-motion: reduce)"),ease="cubic-bezier(.16,1,.3,1)";
+// Bars draw in once, with the page. After that a bar that appears (a card opening, another
+// world's tab) is just there, so nothing regrows while a card moves.
+setTimeout(function(){document.documentElement.classList.add("ia-settled")},1200);
+var busy=new Set(),easeIn="cubic-bezier(.4,0,1,1)";
+function rects(cs){return cs.map(function(c){return c.getBoundingClientRect()})}
+// After the grid changes shape: keep the clicked card where your eye is (scroll by however far
+// the layout moved it), slide cards that only moved up or down, and let cards that changed
+// column come up where they land (sliding them across their neighbours reads as a double image).
+function settle(cs,was,d){
+  var i=cs.indexOf(d),a=was[i],b=d.getBoundingClientRect(),shift=b.top-a.top;
+  if(Math.abs(shift)>1)window.scrollBy(0,shift);
+  cs.forEach(function(c,k){
+    if(c===d)return;
+    // Both rects are on screen, so dy also carries the scroll: cards slide from where you saw them.
+    var q=c.getBoundingClientRect(),dx=was[k].left-q.left,dy=was[k].top-q.top;
+    if(Math.abs(dx)>1)c.animate([{opacity:.25},{opacity:1}],{duration:260,easing:ease});
+    else if(Math.abs(dy)>1)c.animate([{transform:"translateY("+dy+"px)"},{transform:"none"}],{duration:420,easing:ease});
+  });
+  return d.getBoundingClientRect();
+}
+function flip(d,open){
+  if(d.open===open||busy.has(d))return;
+  var cs=[].slice.call(d.parentElement.children);
+  if(still.matches||!d.animate){d.open=open;return}
+  busy.add(d);d.style.zIndex=2;
+  var fin=function(){d.style.zIndex="";busy.delete(d)},body=d.querySelector(".ia-body"),r="px 0 round 14px)";
+  if(open){
+    var was=rects(cs),a=was[cs.indexOf(d)];
+    d.open=true;
+    var b=settle(cs,was,d);
+    d.animate([{transform:"translate("+(a.left-b.left)+"px,"+(a.top-b.top)+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+r},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:420,easing:ease}).finished.then(fin,fin);
+    if(body)body.animate([{opacity:0,transform:"translateY(-4px)"},{opacity:1,transform:"none"}],{duration:300,delay:140,easing:ease,fill:"backwards"});
+  }else{
+    // Fold into the size it will have, then let the grid close up around it.
+    var big=d.getBoundingClientRect();
+    d.open=false;var small=d.getBoundingClientRect();d.open=true;
+    var fade=body&&body.animate([{opacity:1},{opacity:0}],{duration:150,easing:easeIn,fill:"forwards"});
+    var fold=d.animate([{clipPath:"inset(0 0 0 0 round 14px)"},{clipPath:"inset(0 "+Math.max(0,big.width-small.width)+"px "+Math.max(0,big.height-small.height)+r}],{duration:260,easing:ease,fill:"forwards"});
+    fold.finished.then(function(){
+      var was=rects(cs);
+      d.open=false;fold.cancel();if(fade)fade.cancel();
+      var b=settle(cs,was,d);
+      d.animate([{transform:"translate("+(big.left-b.left)+"px,0)"},{transform:"none"}],{duration:360,easing:ease}).finished.then(fin,fin);
+    },fin);
+  }
+}
+// "Show all" lists arrive as data and are drawn the first time each opens.
+var data=null;
+document.addEventListener("toggle",function(e){
+  var d=e.target;
+  if(!d.classList||!d.classList.contains("ia-all")||!d.open)return;
+  var box=d.querySelector(".ia-items");
+  if(!box||box.dataset.drawn)return;
+  if(!data){var el=document.getElementById("ia-items");try{data=JSON.parse(el?el.textContent:"{}")}catch(x){data={}}}
+  var lists=data[box.dataset.key]||[[],[]];
+  function row(r,done){
+    var it=document.createElement("div");it.className="ia-item"+(done?" done":"");
+    if(r[1]){var im=document.createElement("img");im.src="/idleon/pic/"+r[1]+".png";im.alt="";im.loading="lazy";it.appendChild(im)}
+    else{var dot=document.createElement("span");dot.className="ia-item-dot";it.appendChild(dot)}
+    var nm=document.createElement("span");nm.className="ia-item-name";nm.textContent=r[0];it.appendChild(nm);
+    var mt=document.createElement("span");
+    if(r[4]){mt.className="ia-meter";var f=document.createElement("span");f.style.setProperty("--s",r[2]);mt.appendChild(f)}
+    it.appendChild(mt);
+    var fg=document.createElement("span");fg.className="ia-fig";fg.textContent=r[3];it.appendChild(fg);
+    return it;
+  }
+  var frag=document.createDocumentFragment();
+  lists[0].forEach(function(r){frag.appendChild(row(r,false))});
+  if(lists[1].length){
+    var h=document.createElement("p");h.className="ia-maxed-head";h.textContent=lists[1].length+" at max";frag.appendChild(h);
+    var mx=document.createElement("div");mx.className="ia-maxed";
+    lists[1].forEach(function(r){mx.appendChild(row(r,true))});frag.appendChild(mx);
+  }
+  box.appendChild(frag);box.dataset.drawn="1";
+},true);
+// Report a problem without leaving your results.
+var rf=document.querySelector("#ia-report form");
+if(rf)rf.addEventListener("submit",function(e){
+  e.preventDefault();
+  var msg=rf.querySelector(".ia-report-msg"),b=rf.querySelector("button");
+  b.disabled=true;msg.textContent="Sending…";
+  fetch(rf.action,{method:"POST",body:new URLSearchParams(new FormData(rf)),headers:{"content-type":"application/x-www-form-urlencoded"}})
+    .then(function(r){return r.text().then(function(t){msg.textContent=t;if(r.ok)rf.querySelector("textarea").value=""})})
+    .catch(function(){msg.textContent="Couldn't send it. Check your connection and try again."})
+    .finally(function(){b.disabled=false});
+});
+document.addEventListener("click",function(e){
+  var s=e.target.closest(".ia-card > summary");
+  if(s){e.preventDefault();flip(s.parentElement,!s.parentElement.open);return}
+  var a=e.target.closest("a[data-go]");
+  if(!a)return;
+  var w=document.getElementById("w-"+a.dataset.w),m=document.getElementById(a.dataset.go);
+  if(!m)return;
+  e.preventDefault();
+  if(w)w.checked=true;
+  flip(m,true);
+  m.scrollIntoView({behavior:still.matches?"auto":"smooth",block:"start"});
+});
+})()"##;
+
+const CSS: &str = r#"
+body.ia-pub { background: var(--page);
+  --w0: var(--ink-2); --w1: #7fd18b; --w2: #e6c36a; --w3: #79c3f0; --w4: #a88bff; --w5: #ff9a5c; --w6: #f297c6; --w7: #46d1c0; }
+.ia-hero { min-height: 280px; border-radius: 0; padding: 20px max(var(--gutter), calc((100% - 1500px) / 2)) 28px; }
+.ia-hero .ov-hello h1 { font-size: 40px; }
+.ia-page { max-width: calc(1500px + 2 * var(--gutter)); margin: 0 auto; padding: 0 var(--gutter) 72px; display: flex; flex-direction: column; gap: 22px; container: col / inline-size; }
+.ia-panel { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 20px 22px; min-width: 0; }
+.ia-head { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 14px; flex-wrap: wrap; margin-bottom: 10px; }
+.ia-head h2, .ia-ask h2 { font-size: 15px; font-weight: 600; }
+.ia-head p { font-size: 13px; color: var(--ink-3); }
+
+/* The paste box. */
+.ia-ask { display: grid; gap: 18px; }
+@container col (min-width: 900px) { .ia-ask { grid-template-columns: 320px minmax(0, 1fr); gap: 28px; } }
+.ia-ask-text p { margin-top: 6px; color: var(--ink-2); font-size: 14px; line-height: 1.55; }
+.ia-ask form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ia-ask textarea { width: 100%; min-height: 150px; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 12.5px/1.5 var(--mono); }
+.ia-ask textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ia-ask-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.ia-err { color: var(--held); font-size: 13.5px; }
+
+/* The answer: the big share and one column per world. */
+.ia-lead { display: grid; gap: 22px; align-items: end; }
+@container col (min-width: 820px) { .ia-lead { grid-template-columns: minmax(0, 1fr) minmax(360px, 46%); } }
+.ia-lead-who { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ia-big { font: 650 64px/1 var(--sans); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.ia-lead-who > span { color: var(--ink-2); font-size: 14px; }
+.ia-lead-line { margin-top: 10px; color: var(--ink-3); font-size: 13px; }
+.ia-lead-line a { color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 3px; }
+.ia-lead-line a:hover { color: var(--ink); }
+.ia-cols { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 10px; height: 150px; }
+.ia-col { display: grid; grid-template-rows: 1fr auto auto; justify-items: center; gap: 5px; min-width: 0; }
+.ia-col-track { position: relative; width: 100%; max-width: 34px; border-radius: 6px; background: color-mix(in oklab, var(--w) 12%, var(--well)); overflow: hidden; }
+.ia-col-fill { position: absolute; inset: auto 0 0 0; height: calc(var(--s) * 100%); min-height: 3px; background: var(--w); border-radius: 6px 6px 0 0; transform-origin: bottom; animation: ia-grow 0.6s var(--ease) both; }
+.ia-col:nth-child(2) .ia-col-fill { animation-delay: 30ms; } .ia-col:nth-child(3) .ia-col-fill { animation-delay: 60ms; }
+.ia-col:nth-child(4) .ia-col-fill { animation-delay: 90ms; } .ia-col:nth-child(5) .ia-col-fill { animation-delay: 120ms; }
+.ia-col:nth-child(6) .ia-col-fill { animation-delay: 150ms; } .ia-col:nth-child(7) .ia-col-fill { animation-delay: 180ms; }
+.ia-col:nth-child(8) .ia-col-fill { animation-delay: 210ms; }
+@keyframes ia-grow { from { transform: scaleY(0); } }
+.ia-col b { font: 600 13px var(--mono); color: var(--ink); }
+.ia-col > span:last-child { font-size: 12px; color: var(--ink-3); }
+.ia-col.off .ia-col-track { background: var(--well); }
+.ia-col.off b { color: var(--ink-3); }
+
+/* Rows: do next and the items. A 28 px mark, the name and its line, a meter, the figure. */
+.ia-next { list-style: none; display: flex; flex-direction: column; padding: 0; margin: 0; }
+.ia-next li + li { border-top: 1px solid var(--edge-1); }
+.ia-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(80px, 22%) auto 34px; align-items: center; gap: 14px; min-height: 54px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; color: var(--ink); transition: background 0.18s; }
+.ia-row:hover { background: var(--hover); }
+.ia-row:active { transform: scale(0.99); }
+.ia-row-text { display: flex; flex-direction: column; min-width: 0; }
+.ia-row-text b { font-size: 14px; font-weight: 500; }
+.ia-row-text span { font-size: 13px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ia-mark { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; }
+.ia-mark.blank { display: block; width: 10px; height: 10px; margin: 9px; border-radius: 50%; background: var(--w); }
+.ia-meter { display: block; height: 5px; border-radius: 3px; background: color-mix(in oklab, var(--w) 14%, var(--well)); overflow: hidden; }
+.ia-meter > span { display: block; height: 100%; width: calc(var(--s) * 100%); min-width: 2px; border-radius: 3px; background: var(--w); transform-origin: left; animation: ia-fill 0.6s var(--ease) both; }
+@keyframes ia-fill { from { transform: scaleX(0); } }
+html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none; }
+.ia-fig { font: 500 12.5px var(--mono); color: var(--ink-2); text-align: right; white-space: nowrap; }
+.ia-tag { justify-self: end; font: 600 11px var(--mono); color: var(--w); padding: 2px 6px; border-radius: 5px; background: color-mix(in oklab, var(--w) 14%, transparent); }
+
+/* Worlds: tabs switched in the page, then one card per mechanic. */
+.ia-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 14px; }
+.ia-tabs label { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 13px; border-radius: 9px; color: var(--ink-2); font-size: 13.5px; cursor: pointer; transition: background 0.18s, color 0.18s; }
+.ia-tabs label:hover { background: var(--hover); color: var(--ink); }
+.ia-tabs input { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.ia-tabs label:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+.ia-tabs label:has(input:checked) { background: color-mix(in oklab, var(--w) 14%, var(--control)); color: var(--ink); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--w) 50%, transparent); }
+.ia-tabs .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--w); }
+.ia-tab-note { font-size: 11.5px; color: var(--ink-3); }
+.ia-world { display: none; }
+.ia-worlds:has(#w-0:checked) .ia-world[data-w="0"], .ia-worlds:has(#w-1:checked) .ia-world[data-w="1"],
+.ia-worlds:has(#w-2:checked) .ia-world[data-w="2"], .ia-worlds:has(#w-3:checked) .ia-world[data-w="3"],
+.ia-worlds:has(#w-4:checked) .ia-world[data-w="4"], .ia-worlds:has(#w-5:checked) .ia-world[data-w="5"],
+.ia-worlds:has(#w-6:checked) .ia-world[data-w="6"], .ia-worlds:has(#w-7:checked) .ia-world[data-w="7"] { display: block; animation: ia-in 0.18s var(--ease); }
+@keyframes ia-in { from { opacity: 0; } }
+.ia-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: stretch; }
+.ia-card { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; scroll-margin-top: 20px; }
+.ia-card[open] { grid-column: 1 / -1; }
+.ia-card > summary { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "m n p" "b b b"; align-items: center; gap: 10px 12px; padding: 14px 16px; cursor: pointer; list-style: none; border-radius: 14px; transition: background 0.18s; }
+.ia-card > summary::-webkit-details-marker { display: none; }
+.ia-card > summary:hover { background: var(--hover); }
+.ia-card > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.ia-card > summary .ia-mark { grid-area: m; }
+.ia-card-name { grid-area: n; display: flex; flex-direction: column; min-width: 0; }
+.ia-card-name b, .ia-card-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-card-name b { font-size: 14px; font-weight: 500; }
+.ia-card-name span { font: 12.5px var(--mono); color: var(--ink-3); }
+.ia-pct { grid-area: p; font: 600 15px var(--mono); }
+.ia-pct.done { color: var(--live); }
+.ia-pct.open { font: 500 12px var(--sans); color: var(--ink-3); }
+.ia-fresh { display: flex; flex-wrap: wrap; gap: 8px; }
+.ia-fresh-item { display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 8px 0 6px; border-radius: 10px; background: var(--control); color: var(--ink); font-size: 13.5px; transition: background 0.18s; }
+.ia-fresh-item:hover { background: var(--hover); }
+.ia-fresh-item:active { transform: scale(0.97); }
+.ia-fresh-item .ia-mark { width: 26px; height: 26px; }
+.ia-fresh-item .ia-mark.blank { width: 8px; height: 8px; margin: 9px; }
+.ia-meter.wide { grid-area: b; }
+.ia-body { padding: 4px 16px 18px; display: flex; flex-direction: column; gap: 18px; }
+.ia-body .ia-note { padding: 0; }
+.ia-ladder { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 8px; }
+.ia-rung { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 11px 13px; border-radius: 10px; background: var(--well); }
+.ia-rung b { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-rung .ia-fig { text-align: left; }
+.ia-rung .ia-meter { height: 4px; margin-top: 2px; }
+.ia-rung-k { font-size: 12px; color: var(--ink-2); }
+.ia-rung.here { background: color-mix(in oklab, var(--w) 12%, var(--raised)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--w) 60%, transparent); }
+.ia-rung.here .ia-rung-k { color: var(--w); }
+.ia-rung.done .ia-rung-k { color: var(--live); }
+.ia-work { display: grid; gap: 24px; }
+@container col (min-width: 1000px) { .ia-work.with-side { grid-template-columns: minmax(0, 1fr) 400px; } }
+.ia-tasks { min-width: 0; }
+.ia-tasks h3 { font-size: 15px; font-weight: 600; }
+.ia-task-list { margin-top: 8px; }
+.ia-task { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; min-height: 50px; padding: 6px 0; border-bottom: 1px solid var(--edge-1); }
+.ia-task:last-child { border-bottom: 0; }
+.ia-task img { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; }
+.ia-task-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ia-task-text b { font-size: 14px; font-weight: 500; }
+.ia-task-text span { font-size: 13px; color: var(--ink-3); }
+.ia-chip { font: 600 12px var(--sans); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
+.ia-chip.ok { color: var(--live); background: color-mix(in oklab, var(--live) 14%, transparent); }
+.ia-chip.lock { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
+.ia-later-head { margin-top: 18px; font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
+.ia-later { display: flex; align-items: baseline; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--edge-1); font-size: 13.5px; }
+.ia-later-k { flex: none; white-space: nowrap; }
+.ia-later:last-child { border-bottom: 0; }
+.ia-later-who { flex: 1; color: var(--ink-3); font-size: 13px; text-align: right; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-rung-note { font-size: 12px; color: var(--ink-3); line-height: 1.35; }
+.ia-hold { padding: 10px 14px; border-radius: 10px; background: color-mix(in oklab, var(--waiting) 10%, transparent); color: var(--ink-2); font-size: 13px; line-height: 1.45; }
+.ia-hold b { color: var(--waiting); font-weight: 600; }
+.ia-spread { display: flex; flex-wrap: wrap; gap: 8px 32px; }
+.ia-spread div { display: flex; flex-direction: column; gap: 1px; }
+.ia-spread b { font: 600 18px var(--mono); }
+.ia-spread span { font-size: 12px; color: var(--ink-3); }
+.ia-side { display: flex; flex-direction: column; gap: 12px; }
+.ia-side-box { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 12px; background: var(--solid); }
+.ia-side-k { font-size: 12px; color: var(--ink-2); }
+.ia-side-big { font: 500 22px var(--mono); }
+.ia-side-box p { font-size: 13.5px; line-height: 1.45; color: var(--ink-2); }
+.ia-raise { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: 13.5px; }
+.ia-raise-mark { color: var(--waiting); text-align: center; }
+.ia-raise.owned .ia-raise-mark { color: var(--live); }
+.ia-all > summary { display: inline-block; white-space: nowrap; cursor: pointer; font-size: 13px; color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--edge-3); text-underline-offset: 3px; list-style: none; }
+.ia-all > summary::-webkit-details-marker { display: none; }
+.ia-all > summary:hover { color: var(--ink); }
+.ia-all[open] > summary { margin-bottom: 8px; }
+.ia-all[open] .ia-items { animation: ia-in .22s var(--ease); }
+.ia-items { padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 0 28px; }
+.ia-note, .ia-maxed-head { grid-column: 1 / -1; font-size: 13px; color: var(--ink-3); padding: 6px 0 8px; }
+.ia-maxed-head { padding-top: 14px; }
+.ia-maxed { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 0 28px; }
+.ia-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) minmax(50px, 26%) auto; align-items: center; gap: 10px; min-height: 36px; border-bottom: 1px solid var(--edge-1); font-size: 13.5px; }
+.ia-item img { width: 24px; height: 24px; object-fit: contain; image-rendering: pixelated; }
+.ia-item-dot { width: 6px; height: 6px; margin: 9px; border-radius: 50%; background: var(--edge-3); }
+.ia-item-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-item.done { color: var(--ink-3); }
+.ia-item.done .ia-meter > span { background: color-mix(in oklab, var(--w) 45%, var(--well)); }
+
+.ia-test { padding: 12px 16px; border-radius: 12px; background: color-mix(in oklab, var(--waiting) 10%, var(--raised)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--waiting) 35%, transparent); color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
+.ia-test b { color: var(--waiting); font-weight: 600; }
+.ia-door { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.ia-door h2 { font-size: 17px; font-weight: 600; }
+.ia-door p { color: var(--ink-2); font-size: 14px; }
+.ia-report { display: grid; gap: 18px; }
+@container col (min-width: 900px) { .ia-report { grid-template-columns: 320px minmax(0, 1fr); gap: 28px; } }
+.ia-report form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ia-report textarea { width: 100%; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 14px/1.5 var(--sans); }
+.ia-report textarea:focus, .ia-report select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ia-report-card { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); }
+.ia-report select { height: 34px; padding: 0 10px; border-radius: 9px; border: 0; background: var(--control); color: var(--ink); font: 13px var(--sans); box-shadow: inset 0 0 0 1px var(--edge-1); max-width: 100%; }
+.ia-report .ia-ask-actions { align-items: center; }
+.ia-report-msg { flex: 1; font-size: 13px; color: var(--ink-2); }
+.ia-foot { padding-top: 16px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 12.5px; }
+
+@media (max-width: 720px) {
+  .ia-hero { min-height: 200px; }
+  .ia-hero .ov-hello h1 { font-size: 28px; }
+  .ia-page { padding: 0 16px 56px; gap: 16px; }
+  .ia-panel { padding: 16px; }
+  .ia-big { font-size: 48px; }
+  .ia-cols { height: 120px; gap: 6px; }
+  .ia-row { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .ia-row .ia-meter, .ia-row .ia-tag { display: none; }
+  .ia-row { padding: 8px 6px; }
+  .ia-row-text span { white-space: normal; }
+  .ia-grid, .ia-items, .ia-maxed { grid-template-columns: minmax(0, 1fr); }
+  .ia-ladder { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .ia-task { grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .ia-task .ia-fig { display: none; }
+  .ia-later { flex-direction: column; gap: 2px; }
+  .ia-later-who { text-align: left; }
+}
+"#;

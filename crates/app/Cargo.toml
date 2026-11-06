@@ -25,6 +25,7 @@ feat-modmail = { path = "../feat-modmail" }
 feat-rules = { path = "../feat-rules" }
 feat-commands = { path = "../feat-commands" }
 feat-reviews = { path = "../feat-reviews" }
+feat-idleon = { path = "../feat-idleon" }
 feat-rpg = { path = "../feat-rpg" }
 feat-server = { path = "../feat-server" }
 anyhow.workspace = true

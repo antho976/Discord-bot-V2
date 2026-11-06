@@ -23,6 +23,7 @@ fn features() -> Vec<Arc<dyn Feature>> {
         Arc::new(feat_rules::Rules::default()),
         Arc::new(feat_commands::Commands::default()),
         Arc::new(feat_reviews::Reviews),
+        Arc::new(feat_idleon::Idleon),
         Arc::new(feat_rpg::Rpg::default()),
         Arc::new(feat_server::Server::default()),
     ]
