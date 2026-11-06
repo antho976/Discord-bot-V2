@@ -508,6 +508,11 @@ fn equinox_upgrades(save: &Save) -> Mechanic {
     let raises = dream_raises();
     let list = dream_raise_list();
     let summon = summoning_equinox(save);
+    // A level costs one full bar (N.js the upgrade button: `IsBarFULL`, then `Dream[0] = 0`); the
+    // bar needs `(120 + 40 L) * 1.02 ^ L`, L the levels bought across `Dream[2..16]` (`BarFillReq`).
+    let bought: f64 = (2..16).map(|k| at(&levels, k).max(0.0)).sum();
+    let bar_req = (120.0 + 40.0 * bought) * 1.02f64.powf(bought);
+    let bar = at(&levels, 0).max(0.0);
     // Upgrade i opens with the i-th "Unlock next Equinox upgrade" dream (N.js `UpgUnlocked`).
     let unlockers: Vec<usize> = rows("DreamChallenge", &[]).iter().enumerate().filter(|(_, r)| text(r, 2) == "Unlock_next_Equinox_upgrade").map(|(i, _)| i).collect();
     let dream_name = |d: usize| rows("DreamChallenge", &[]).get(d).map(|r| challenge(text(r, 0))).unwrap_or_default();
@@ -525,9 +530,16 @@ fn equinox_upgrades(save: &Save) -> Mechanic {
             let level = at(&levels, i + 2);
             let mut it = Item::new(label(text(r, 0)), None, level, max);
             let opener = i.checked_sub(1).and_then(|k| unlockers.get(k)).copied();
+            // The cap as it stands: the full one less the raises from dreams not done yet.
+            let pending: f64 = list.iter().filter(|(d, name, _)| *name == text(r, 0) && !dream_done(save, *d)).map(|(_, _, n)| n).sum();
             if let Some(d) = opener.filter(|&d| level <= 0.0 && !dream_done(save, d)) {
                 it.how = Some(clip(&format!("Opens with dream {}: {}.", d + 1, dream_name(d))));
                 it.state = State::Locked;
+            } else if level < max - pending {
+                it.how = Some(format!("Each level takes a full Equinox bar: {} of {} now.", big(bar), big(bar_req)));
+                if bar >= bar_req {
+                    it.state = State::Ready;
+                }
             } else if let Some((d, _, n)) = list.iter().find(|(d, name, _)| *name == text(r, 0) && !dream_done(save, *d)) {
                 it.how = Some(clip(&format!("Dream {} raises the cap by {n}: {}.", d + 1, dream_name(*d))));
             }
@@ -535,6 +547,10 @@ fn equinox_upgrades(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("equinox-upgrades", 3, "Equinox Upgrades", pic("Dream_Cloud".into()), Count::Levels, "levels", items);
+    m.have = Some(Have {
+        figure: format!("{} of {} Equinox bar", big(bar.min(bar_req)), big(bar_req)),
+        text: if bar >= bar_req { "The bar is full: enough for one level of any open upgrade.".into() } else { "Not full yet. Each level bought makes the next bar a little longer.".into() },
+    });
     let upg = |name: &str| label(name);
     m.raises = list.iter().map(|(d, name, n)| Raise { name: format!("Dream {} ({})", d + 1, upg(name)), amount: format!("+{n}"), owned: dream_done(save, *d) }).collect();
     m.note = Some(format!(
@@ -593,19 +609,57 @@ fn library(save: &Save) -> Mechanic {
 
 /// Refinery: `Refinery[3 + i][1]` is salt i's rank; salts from `Refinery[0][0]` on aren't unlocked.
 /// Ranks have no max.
+///
+/// A salt ranks up when its power, `Refinery[3 + i][0]`, reaches `PowerCAP(rank) = max(RANDOlist[18]
+/// [min(rank, len - 2)], 25)` and you claim it; each cycle adds `PowerPerCycle = floor(min(250K,
+/// rank ^ 1.3))` before the Companion bonus. Salt k opens (raising `Refinery[0][0]` from k) by
+/// paying `extra_w3 salt_unlocks[1 + k]` of salt k from storage.
 fn refinery(save: &Save) -> Mechanic {
-    let unlocked = save.at("Refinery", &[0, 0]).map(num).unwrap_or(0.0);
-    let items = rows("RefineryInfo", &[])
+    let unlocked = save.at("Refinery", &[0, 0]).map(num).unwrap_or(0.0).max(0.0);
+    let caps = rows("RANDOlist", &[18]);
+    let power_cap = |rank: f64| -> f64 {
+        let k = (rank.max(0.0) as usize).min(caps.len().saturating_sub(2));
+        caps.get(k).map_or(25.0, |v| num(v)).max(25.0)
+    };
+    let unlock_costs = GAME.extra("w3").get("salt_unlocks").map(crate::save::numbers).unwrap_or_default();
+    let table = rows("RefineryInfo", &[]);
+    let items = table
         .iter()
         .enumerate()
         .map(|(i, r)| {
             let id = text(r, 12);
-            let rank = if (i as f64) < unlocked { save.at("Refinery", &[3 + i, 1]).map(num).unwrap_or(0.0) } else { 0.0 };
-            Item::new(GAME.item_name(id).unwrap_or(id), pic(id.to_string()), rank, 0.0)
+            let open = (i as f64) < unlocked;
+            let rank = if open { save.at("Refinery", &[3 + i, 1]).map(num).unwrap_or(0.0) } else { 0.0 };
+            let mut it = Item::new(item_name(id), pic(id.to_string()), rank, 0.0);
+            if open {
+                let power = save.at("Refinery", &[3 + i, 0]).map(num).unwrap_or(0.0).max(0.0);
+                let cap = power_cap(rank);
+                let per = rank.max(1.0).powf(1.3).min(25e4).floor().max(1.0);
+                if power >= cap {
+                    it.how = Some(format!("Full power ({}): claim it for the next rank.", big(cap)));
+                    it.state = State::Ready;
+                } else {
+                    let cycles = ((cap - power) / per).ceil();
+                    let unit = if cycles == 1.0 { "cycle" } else { "cycles" };
+                    it.how = Some(format!("Next rank at {} power, {} now: about {} {unit}.", big(cap), big(power), big(cycles)));
+                }
+            } else if i == unlocked as usize && i > 0 {
+                let pay = format!("Refinery{i}");
+                let cost = at(&unlock_costs, i + 1);
+                it.how = Some(format!("Unlocks for {} {} from storage.", big(cost), item_name(&pay)));
+                if cost > 0.0 && stored(save, &pay) >= cost {
+                    it.state = State::Ready;
+                }
+            } else if i > 0 {
+                let prev = table.get(i - 1).map_or("", |p| item_name(text(p, 12)));
+                it.how = Some(format!("Opens after {prev} is unlocked."));
+                it.state = State::Locked;
+            }
+            it
         })
         .collect();
     let mut m = mech("refinery", 3, "Refinery", pic("Refinery1".into()), Count::Open, "ranks", items);
-    m.note = Some("Refinery ranks have no cap.".into());
+    m.note = Some("Refinery ranks have no cap. Cycle counts are before your Companion bonus.".into());
     m
 }
 
@@ -645,13 +699,25 @@ fn sampling(save: &Save) -> Mechanic {
 /// `RANDOlist[10]` names them. Waves have no cap.
 fn worship(save: &Save) -> Mechanic {
     let waves = save.numbers("TotemInfo", &[0]);
+    let prayers = save.numbers("PrayOwned", &[]);
     let names = rows("RANDOlist", &[10]);
     let items = rows("WorshipBASEinfos", &[])
         .iter()
         .enumerate()
         .map(|(i, _)| {
             let name = names.get(i).and_then(|v| v.as_str()).map_or_else(|| format!("Tower Defence {}", i + 1), label);
-            Item::new(name, None, at(&waves, i), 0.0)
+            let best = at(&waves, i);
+            let mut it = Item::new(name, None, best, 0.0);
+            // The next prayer this totem finds (PrayerInfo col 7 wave, col 8 totem).
+            let next = rows("PrayerInfo", &[])
+                .into_iter()
+                .enumerate()
+                .filter(|(k, p)| !text(p, 0).starts_with("Some_Prayer") && cell(p, 8) as usize == i && cell(p, 7) > best && at(&prayers, *k) <= 0.0)
+                .min_by(|a, b| cell(a.1, 7).total_cmp(&cell(b.1, 7)));
+            if let Some((_, p)) = next {
+                it.how = Some(format!("Wave {} finds the prayer {}.", cell(p, 7), label(text(p, 0))));
+            }
+            it
         })
         .collect();
     let mut m = mech("worship", 3, "Worship Totems", pic("WorshipSkull1".into()), Count::Open, "best wave", items);
