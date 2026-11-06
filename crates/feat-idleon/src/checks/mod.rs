@@ -103,7 +103,7 @@ pub(crate) fn pic(p: String) -> Option<String> {
 }
 
 pub(crate) fn mech(key: &'static str, world: u8, name: &'static str, picture: Option<String>, count: Count, unit: &'static str, items: Vec<Item>) -> Mechanic {
-    Mechanic { key, world, name, picture, count, unit, items, note: None, tier_names: None, raises: Vec::new(), have: None }
+    Mechanic { key, world, name, picture, count, unit, items, note: None, tier_names: None, raises: Vec::new(), have: None, later: Vec::new() }
 }
 
 /// A big number the way the game writes it: 400K, 1.5M, 96 Qa. Past the names, 1.2e45.

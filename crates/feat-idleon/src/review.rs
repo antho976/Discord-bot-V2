@@ -22,6 +22,10 @@ pub struct Item {
     pub how: Option<String>,
     /// Whether the next step can be taken now, as far as the check can tell.
     pub state: State,
+    /// The world this item opens in, when that's later than its mechanic's own world (a W1
+    /// mechanic's item that only exists once you reach W7). Items in a world the account hasn't
+    /// reached leave the ladder and the shares, and show as "Opens in World N".
+    pub world: Option<u8>,
 }
 
 /// Whether an item's next step is open to the player right now.
@@ -72,7 +76,7 @@ impl Tier {
 
 impl Item {
     pub fn new(name: impl Into<String>, picture: Option<String>, level: f64, max: f64) -> Item {
-        Item { name: name.into(), picture, level: level.max(0.0), max: max.max(0.0), level_name: None, how: None, state: State::Unknown }
+        Item { name: name.into(), picture, level: level.max(0.0), max: max.max(0.0), level_name: None, how: None, state: State::Unknown, world: None }
     }
 
     pub fn done(&self) -> bool {
@@ -114,6 +118,9 @@ pub struct Mechanic {
     pub tier_names: Option<Vec<String>>,
     pub raises: Vec<Raise>,
     pub have: Option<Have>,
+    /// Items from worlds the account hasn't reached (see `Item::world`), moved out of `items`
+    /// by `Review::new` so they count nowhere until then.
+    pub later: Vec<Item>,
 }
 
 impl Mechanic {
@@ -246,6 +253,12 @@ impl Review {
     /// `world` is the highest world the account has reached (`checks::world_reached`).
     pub fn new(save: &Save, mechanics: Vec<Mechanic>, world: u8) -> Review {
         let world = world.clamp(1, 7);
+        let mut mechanics = mechanics;
+        for m in &mut mechanics {
+            let (now, later): (Vec<Item>, Vec<Item>) = std::mem::take(&mut m.items).into_iter().partition(|i| i.world.is_none_or(|w| w <= world));
+            m.items = now;
+            m.later = later;
+        }
         let not_started: Vec<usize> = mechanics.iter().enumerate().filter(|(_, m)| m.world > 0 && m.world <= world && m.untouched()).map(|(i, _)| i).collect();
         let next = pick_next(&mechanics, world, &not_started);
         Review {
@@ -343,6 +356,7 @@ mod tests {
             tier_names: None,
             raises: Vec::new(),
             have: None,
+            later: Vec::new(),
         }
     }
 
