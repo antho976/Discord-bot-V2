@@ -258,20 +258,205 @@ fn emporium_cost(p: f64) -> f64 {
 }
 
 /// Ninja upgrades and Ninja Knowledge: `Ninja[103][i]`; `NinjaUpg` col 4 is the name. Costs
-/// climb without a cap. Row 9 is a filler named "Name". No "how": N.js `JadeUpgCost` divides by
-/// several discounts (Centurion Lineage per 100 levels, Way of Bargain, Emerald, a talent) that
-/// a base figure would miss by many orders of magnitude.
+/// climb without a cap. Row 9 is a filler named "Name".
+///
+/// Cost: N.js `JadeUpgCost`, worked in powers of ten since levels in the thousands overflow:
+/// base (10^45 for row 0, 10^floor(2(t-15)) past row 16, 10^55 for row 31, else 1) × col 7 ×
+/// col 8^lv × Centurion Lineage (1 / (1 + NLbonuses 0)^floor(lv/100)), divided by Gold Coupon
+/// (`NinjaBonus` 11), Way of Bargain (`NLbonuses` 1), Emerald (`GemstoneBonus` 6) and talent 430
+/// (its level × floor(all Ninja levels / 10)). Rows 3 and 4 also divide by `NLbonuses` 24 / 25;
+/// rows 1 and 13 soften col 8 by `NLbonuses` 26 / 18. Left out, each of which only lowers the
+/// cost: extra talent levels from other sources, and the bubble on row 8. So the figure is an
+/// upper bound, and Ready (jade covers it) is certain.
+///
+/// Open: rows 17 on need the Coral Reef's Ninja Knowledge upgrade (`Spelunk[13][3]`) above
+/// row - 17. Rows up to 16 need the row named in col 9 at level 1 (row 13 is always open); your
+/// highest mastery (`OptLacc[232]`) repoints rows 6, 3, 1 and 0 at 1, 3 and 5.
 fn ninja_upgrades(save: &Save) -> Mechanic {
     let levels = save.numbers("Ninja", &[103]);
-    let items = rows("NinjaUpg", &[])
+    let table = rows("NinjaUpg", &[]);
+    let jade = save.at("Ninja", &[102, 1]).map_or(0.0, num).max(0.0) + 0.0;
+    let d = ninja_discounts(save, &levels);
+    let items: Vec<Item> = table
         .iter()
         .enumerate()
         .filter(|(_, r)| text(r, 4) != "Name")
-        .map(|(i, r)| Item::new(label(text(r, 4)), pic(format!("NjUpgI{i}")), at(&levels, i), 0.0))
+        .map(|(i, r)| {
+            let lv = at(&levels, i);
+            let mut it = Item::new(label(text(r, 4)), pic(format!("NjUpgI{i}")), lv, 0.0);
+            let lg = jade_upg_cost_log10(&d, &levels, i, r);
+            if let Some(why) = ninja_locked(save, &levels, i, r) {
+                it.how = Some(why);
+                it.state = State::Locked;
+            } else if lg.is_finite() {
+                it.how = Some(format!("Next level costs {} jade coins at most.", big_log10(lg)));
+                if jade > 0.0 && lg <= jade.log10() {
+                    it.state = State::Ready;
+                }
+            }
+            it
+        })
         .collect();
+    let ready = items.iter().filter(|it| it.state == State::Ready).count();
     let mut m = mech("ninja-upgrades", 6, "Sneaking Upgrades", pic("NjUpgI0".into()), Count::Open, "levels", items);
-    m.note = Some("No max: these level up without end.".into());
+    m.have = Some(Have {
+        figure: format!("{} jade coins", big(jade)),
+        text: if ready == 0 { "Not enough for the next level of any upgrade yet.".into() } else { format!("Enough for the next level of {ready} of these, each on its own.") },
+    });
+    m.note = Some("No max: these level up without end. Costs count your Ninja discounts, Gold Coupon, Emerald and the Ninja Knowledge talent; extra talent levels from elsewhere make them a little cheaper still.".into());
     m
+}
+
+/// Why a Sneaking upgrade can't be picked yet, if it can't (see `ninja_upgrades`).
+fn ninja_locked(save: &Save, levels: &[f64], i: usize, row: &Value) -> Option<String> {
+    if i >= 17 {
+        let reef = save.at("Spelunk", &[13, 3]).map_or(0.0, num);
+        let need = (i - 16) as f64;
+        return (reef < need).then(|| format!("Needs the Coral Reef's Ninja Knowledge upgrade at level {need}. Yours is {reef}."));
+    }
+    if i == 13 {
+        return None;
+    }
+    let mastery = save.option(232);
+    let pre = match i {
+        6 if mastery >= 1.0 => 10,
+        3 if mastery >= 1.0 => 5,
+        1 if mastery >= 3.0 => 4,
+        0 if mastery >= 5.0 => 1,
+        _ => cell(row, 9) as usize,
+    };
+    if at(levels, pre) >= 1.0 {
+        return None;
+    }
+    if pre == i {
+        return Some("Opens with a higher Sneaking mastery.".into());
+    }
+    let name = rows("NinjaUpg", &[]).get(pre).map(|r| label(text(r, 4))).unwrap_or_default();
+    Some(format!("Opens once {name} is level 1."))
+}
+
+/// The discounts `JadeUpgCost` reads that don't depend on the row.
+struct NinjaDiscounts {
+    /// Ninja upgrade bonuses by index (`NLbonuses`), for the rows the cost uses.
+    nl: [f64; 27],
+    /// log10 of the shared divisor: Gold Coupon × Way of Bargain × Emerald × talent 430.
+    shared_log: f64,
+}
+
+/// `NLbonuses(n)`: (level + Menagerie[7][n]) × col 5 under row 17; rows 6, 7, 10 and 12 add
+/// (row 3's level + Menagerie[7][n]) × `OptLacc[231]`; from row 17 on, level × col 5.
+fn nl_bonus(save: &Save, levels: &[f64], n: usize) -> f64 {
+    let per = rows("NinjaUpg", &[]).get(n).map_or(0.0, |r| cell(r, 5));
+    let men = at(&save.numbers("Menagerie", &[7]), n);
+    let lv = at(levels, n);
+    match n {
+        6 | 7 | 10 | 12 => (lv + men) * per + (at(levels, 3) + men) * save.option(231),
+        _ if n < 17 => (lv + men) * per,
+        _ => lv * per,
+    }
+}
+
+/// `GemstoneBonus(t)`: base + scale × lv / (lv + 1000) once found; all but Moissanite (5) are
+/// then × (1 + Moissanite / 100) × the best Generational Gemstones talent (432, decayMulti 3/300).
+fn gem_bonus(save: &Save, t: usize) -> f64 {
+    let lv = save.option(233 + t);
+    if lv <= 0.5 {
+        return 0.0;
+    }
+    let vals = GAME.extra("w6").get("gem_values").and_then(|v| v.get(t));
+    let (base, scale) = (vals.and_then(|v| v.get(0)).map_or(0.0, num), vals.and_then(|v| v.get(1)).map_or(0.0, num));
+    let v = base + scale * lv / (lv + 1000.0);
+    if t == 5 {
+        return v;
+    }
+    let t432 = best_talent(save, 432).map_or(1.0, |l| 1.0 + 3.0 * l / (l + 300.0));
+    v * (1.0 + gem_bonus(save, 5) / 100.0) * t432.max(1.0)
+}
+
+/// A talent's level over your characters (`SL_c`): the highest, or with `lowest`, the lowest
+/// among those that have it.
+fn character_talent(save: &Save, talent: usize, lowest: bool) -> Option<f64> {
+    let key = talent.to_string();
+    let lv = (0..save.characters().min(12)).filter_map(|c| save.get(&format!("SL_{c}")).and_then(|m| m.get(&key)).map(num)).filter(|l| *l > 0.0);
+    if lowest { lv.reduce(f64::min) } else { lv.reduce(f64::max) }
+}
+
+fn best_talent(save: &Save, talent: usize) -> Option<f64> {
+    character_talent(save, talent, false)
+}
+
+/// Gold Coupon and the other Gold_ charms (N.js `NinjaBonus` with -1): over the 40 Sneaking
+/// inventory slots (`Ninja[60 + e]`, [id, level]) in order, a Gold_ charm whose `ItemStat` beats
+/// what its type holds sets it to that stat × (1 + Starite) × (1 + Legend Talent 6) × (1 + the
+/// slot's symbol, 50 × `Spelunk[14][24 + e]`). Returns type 11.
+fn gold_coupon(save: &Save) -> f64 {
+    let gold = GAME.extra("w6").get("gold");
+    let starite = gem_bonus(save, 3);
+    let legend = rows("LegendTalents", &[]).get(6).map_or(0.0, |r| (save.at("Spelunk", &[18, 6]).map_or(0.0, num) * cell(r, 2)).round());
+    let symbols = save.numbers("Spelunk", &[14]);
+    let mut held: std::collections::HashMap<i64, f64> = std::collections::HashMap::new();
+    for e in 0..40 {
+        let Some(slot) = save.at("Ninja", &[60 + e]) else { continue };
+        let Some(info) = slot.get(0).and_then(Value::as_str).and_then(|id| gold.and_then(|g| g.get(id))) else { continue };
+        let f = |k: usize| info.get(k).map_or(0.0, num);
+        let lv = slot.get(1).map_or(0.0, num).max(0.0);
+        let (base, cap) = (f(2), f(3));
+        let stat = (base + cap * lv / (lv + 50.0)).min(cap) + (cap * lv / (lv + 900.0)).min(cap);
+        let kind = f(1) as i64;
+        if f(0) == 2.0 && stat > held.get(&kind).copied().unwrap_or(0.0) {
+            let mult = (1.0 + starite / 100.0) * (1.0 + legend / 100.0) * (1.0 + 50.0 * at(&symbols, 24 + e) / 100.0);
+            held.insert(kind, stat * mult);
+        }
+    }
+    held.get(&11).copied().unwrap_or(0.0)
+}
+
+fn ninja_discounts(save: &Save, levels: &[f64]) -> NinjaDiscounts {
+    let mut nl = [0.0; 27];
+    for (n, v) in nl.iter_mut().enumerate() {
+        *v = nl_bonus(save, levels, n);
+    }
+    let total: f64 = levels.iter().take(64).sum();
+    // The lowest level among characters with talent 430, so the discount is never overstated.
+    let t430 = character_talent(save, 430, true).unwrap_or(0.0) * (total / 10.0).floor();
+    let shared = (1.0 + gold_coupon(save) / 100.0) * (1.0 + nl[1] / 100.0) * (1.0 + gem_bonus(save, 6) / 100.0) * (1.0 + t430 / 100.0);
+    NinjaDiscounts { nl, shared_log: shared.max(1.0).log10() }
+}
+
+/// log10 of `JadeUpgCost(t)` (see `ninja_upgrades`).
+fn jade_upg_cost_log10(d: &NinjaDiscounts, levels: &[f64], t: usize, row: &Value) -> f64 {
+    let lv = at(levels, t);
+    let base = match t {
+        31 => 55.0,
+        0 => 45.0,
+        _ if t > 16 => (2.0 * (t as f64 - 15.0)).floor(),
+        _ => 0.0,
+    };
+    let growth = match t {
+        13 => 1.0 + (cell(row, 8) - 1.0) / (1.0 + d.nl[18] / 1500.0),
+        1 => 1.0 + (cell(row, 8) - 1.0) / (1.0 + d.nl[26] / 1500.0),
+        _ => cell(row, 8),
+    };
+    let extra = match t {
+        3 => (1.0 + d.nl[24] / 100.0).log10(),
+        4 => (1.0 + d.nl[25] / 100.0).log10(),
+        _ => 0.0,
+    };
+    let centurion = (lv / 100.0).floor() * (1.0 + d.nl[0] / 100.0).log10();
+    let col7 = cell(row, 7);
+    if col7 <= 0.0 || growth <= 0.0 {
+        return f64::NAN;
+    }
+    base + col7.log10() + lv * growth.log10() - centurion - d.shared_log - extra
+}
+
+/// A number given as its log10, the way the game writes it: 400K, 96Qa, past that 1.2e345.
+fn big_log10(lg: f64) -> String {
+    if lg < 300.0 {
+        return big(10f64.powf(lg));
+    }
+    let e = lg.floor();
+    format!("{:.1}e{}", 10f64.powf(lg - e), e)
 }
 
 /// Pristine Charms: `Ninja[107][i]` is 1 when found; names from `NjEQ` `NjTrP{i}`.
@@ -292,12 +477,31 @@ fn pristine_charms(save: &Save) -> Mechanic {
 }
 
 /// Gemstones: level in `OptLacc[233 + i]`. The bonus is base + scale × lv / (lv + 1000), so it
-/// nears its top without a last level. No "how": the save doesn't say where each one drops.
+/// nears its top without a last level.
+///
+/// Where: the game adds each to a floor's find list (`NinjaInfo[12 + floor]`) once
+/// `OptLacc[231]` (Sneaking mastery) reaches 1 or 2; Emerald and Firefrost also need a Wind
+/// Walker (`hasClassTypeN` 29).
 fn gemstones(save: &Save) -> Mechanic {
+    // (floor shown in game, mastery needed, needs a Wind Walker), by gemstone index.
+    const WHERE: [(u8, f64, bool); 8] = [(2, 1.0, false), (4, 1.0, false), (6, 1.0, false), (9, 1.0, false), (3, 2.0, false), (7, 2.0, false), (5, 1.0, true), (10, 1.0, true)];
+    let mastery = save.option(231);
     let items = extra_names("gems")
         .iter()
         .enumerate()
-        .map(|(i, n)| Item::new(label(n), pic(format!("NjGem{i}")), save.option(233 + i), 0.0))
+        .map(|(i, n)| {
+            let mut it = Item::new(label(n), pic(format!("NjGem{i}")), save.option(233 + i), 0.0);
+            if let Some(&(floor, need, ww)) = WHERE.get(i) {
+                let ww = if ww { " with a Wind Walker" } else { "" };
+                if mastery < need {
+                    it.how = Some(format!("Found on Sneaking floor {floor}{ww}, from mastery {need}. Yours is {mastery}."));
+                    it.state = State::Locked;
+                } else {
+                    it.how = Some(format!("Found on Sneaking floor {floor}{ww}. Each one adds a level."));
+                }
+            }
+            it
+        })
         .collect();
     let mut m = mech("gemstones", 6, "Gemstones", pic("NjGem0".into()), Count::Open, "levels", items);
     m.note = Some("No max: each level adds less, toward the gemstone's top.".into());
@@ -478,16 +682,29 @@ fn summoning_battles(save: &Save) -> Mechanic {
 
 /// Summoning stones and Endless Summoning: stone wins in `KRbest["SummzTrz{i}"]` (N.js
 /// `SumStoneTrialz`; seven stones, no save has an eighth), endless wins in `OptLacc[319]`.
-/// Neither ends. No "how": each win makes the next fight stronger, and the check can't read
-/// how strong your deck is.
+/// Neither ends. Opponents: a stone's is `SummonEnemies[4]` from `babaMummy` on; the next
+/// endless one is `rift1` + min(4, floor(wins / 20)) (N.js, `_GenINFO[132]` for type 9).
 fn summoning_stones(save: &Save) -> Mechanic {
+    let ids = rows("SummonEnemies", &[0]);
+    let names = rows("SummonEnemies", &[4]);
+    let name_at = |k: usize| names.get(k).and_then(|v| v.as_str()).filter(|s| s.len() > 1).map(label);
+    let first = ids.iter().position(|v| v.as_str() == Some("babaMummy"));
     let mut items: Vec<Item> = (0..7)
         .map(|i| {
             let wins = save.get("KRbest").and_then(|k| k.get(format!("SummzTrz{i}"))).map_or(0.0, num);
-            Item::new(format!("{} stone", COLOURS[i]), pic(format!("SummSt{i}")), wins, 0.0)
+            let mut it = Item::new(format!("{} stone", COLOURS[i]), pic(format!("SummSt{i}")), wins, 0.0);
+            if let Some(who) = first.and_then(|f| name_at(f + i)) {
+                it.how = Some(format!("Opponent: {who}. Win {} is next.", wins.max(0.0) + 1.0));
+            }
+            it
         })
         .collect();
-    items.push(Item::new("Endless battles won", None, save.option(319), 0.0));
+    let endless = save.option(319).max(0.0);
+    let mut it = Item::new("Endless battles won", None, endless, 0.0);
+    if let Some(who) = ids.iter().position(|v| v.as_str() == Some("rift1")).and_then(|f| name_at(f + (endless / 20.0).floor().min(4.0) as usize)) {
+        it.how = Some(format!("Next opponent: {who}."));
+    }
+    items.push(it);
     let mut m = mech("summoning-stones", 6, "Summoning Stones and Endless", pic("SummSt0".into()), Count::Open, "wins", items);
     m.note = Some("No max: stones and endless battles keep getting harder.".into());
     m
