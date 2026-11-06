@@ -1,0 +1,4 @@
+# Account-wide. Format: see w1.txt.
+table CardStuff
+table RegAchieves
+picture Cards[A-Z]\d+

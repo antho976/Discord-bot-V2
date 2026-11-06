@@ -1,0 +1,8 @@
+# World 2. Format: see w1.txt.
+table AlchemyDescription
+table SigilDesc
+table ArcadeShopInfo
+picture aVials\d+
+picture aSiga\d+
+picture PachiShopICON\d+
+cell AlchemyDescription 4 5

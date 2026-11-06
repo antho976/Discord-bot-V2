@@ -21,6 +21,9 @@ pub struct Game {
     items: HashMap<String, String>,
     /// Monster ID ("mushG") to its name ("Green Mushroom").
     monsters: HashMap<String, String>,
+    /// Data that isn't a plain table, by area: what `tools/idleon-extract/extra_<area>.py` wrote.
+    #[serde(default)]
+    extra: HashMap<String, Value>,
 }
 
 pub static GAME: LazyLock<Game> = LazyLock::new(|| serde_json::from_str(RAW).expect("data/game.json is written by the extractor"));
@@ -34,6 +37,11 @@ impl Game {
 
     pub fn item_name(&self, id: &str) -> Option<&str> {
         self.items.get(id).map(String::as_str)
+    }
+
+    /// An area's extra data (see `extra`), or null when it has none.
+    pub fn extra(&self, area: &str) -> &Value {
+        self.extra.get(area).unwrap_or(&Value::Null)
     }
 
     pub fn monster_name(&self, id: &str) -> Option<&str> {

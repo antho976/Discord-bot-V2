@@ -1,0 +1,12 @@
+# World 1. One entry per line:
+#   table <Name>                  a data table the checks read (N.js `X.Name=function(){return [...]}`)
+#   picture <regex>               pictures whose game ID fully matches (copied into the crate)
+#   cell <Table> <path|-> <col>   pictures named by a table cell; path is row indexes like 4 or 2,1
+table StampDescriptions
+table StatueInfo
+table BribeDescriptions
+table StarSigns
+table SSignInfoUI
+picture Statue[GOZ]?\d+
+picture BribeO.+
+picture Stamp[ABC]\d+

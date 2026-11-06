@@ -1,0 +1,6 @@
+# World 5. Format: see w1.txt.
+table ArtifactInfo
+table SlabItemSort
+table GodsInfo
+picture Arti\d+
+picture DivGod\d+

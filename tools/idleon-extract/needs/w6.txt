@@ -1,0 +1,4 @@
+# World 6. Format: see w1.txt.
+table SeedInfo
+table SummonUPG
+picture FarmCrop0

@@ -1,0 +1,7 @@
+# World 3. Format: see w1.txt.
+table PrayerInfo
+table SaltLicks
+table AtomInfo
+picture Refinery\d+
+picture Prayer\d+
+picture Atom\d+

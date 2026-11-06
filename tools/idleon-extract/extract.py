@@ -33,44 +33,42 @@ from urllib.parse import unquote
 STEAM = Path.home() / ".local/share/Steam/steamapps/common/Legends of Idleon"
 CRATE = Path(__file__).resolve().parents[2] / "crates/feat-idleon"
 
-# The tables the crate reads. Everything else stays out of the repo (--all-tables dumps them all).
-TABLES = [
-    # World 1
-    "StampDescriptions", "StatueInfo", "BribeDescriptions", "StarSigns", "SSignInfoUI",
-    # World 2
-    "AlchemyDescription", "SigilDesc", "ArcadeShopInfo",
-    # World 3
-    "PrayerInfo", "SaltLicks", "AtomInfo",
-    # World 4
-    "JewelDesc",
-    # World 5
-    "ArtifactInfo", "SlabItemSort", "GodsInfo",
-    # World 6
-    "SeedInfo", "SummonUPG",
-    # World 7
-    "ResGridSquares", "SushiUPG", "JellyUPG", "MineheadUPG", "CoralReef", "ZenithMarket",
-    "LegendTalents", "Spelunky", "SpelunkUpg",
-    # General
-    "CardStuff", "RegAchieves",
-]
+HERE = Path(__file__).resolve().parent
 
-# The pictures the crate serves, by game ID. Each is a regular expression matched against the
-# whole ID; only matching pictures are copied into the crate (they're built into the binary).
-PICTURES: list[str] = [
-    r"Statue[GOZ]?\d+", r"BribeO.+", r"Stamp[ABC]\d+",           # World 1
-    r"aVials\d+", r"aSiga\d+", r"PachiShopICON\d+",               # World 2
-    r"Refinery\d+", r"Prayer\d+", r"Atom\d+",                     # World 3
-    r"ConsoleJwl\d+",                                              # World 4
-    r"Arti\d+", r"DivGod\d+",                                      # World 5
-    r"FarmCrop0",                                                  # World 6
-    r"SushiUpg\d+", r"JellyUpg\d+", r"MineUpg\d+", r"Reef[zA-E]1", r"LegendTalentIcon\d+", r"CaveShopUpg\d+",  # World 7
-    r"Cards[A-Z]\d+",                                              # General
-]
 
-# Pictures named by a table cell rather than a pattern: (table, path to the rows, column).
-PICTURE_CELLS = [
-    ("AlchemyDescription", [4], 5),   # each vial's ingredient
-]
+def needs() -> tuple[list[str], list[str], list[tuple[str, list[int], int]]]:
+    """What the checks need, one file per area in needs/: tables, picture patterns, and pictures
+    named by a table cell. See needs/w1.txt for the format."""
+    tables, pictures, cells = [], [], []
+    for f in sorted((HERE / "needs").glob("*.txt")):
+        for n, line in enumerate(f.read_text().splitlines(), 1):
+            line = line.split(" #")[0].strip()
+            if not line or line.startswith("#"):
+                continue
+            kind, _, rest = line.partition(" ")
+            if kind == "table":
+                tables.append(rest.strip())
+            elif kind == "picture":
+                pictures.append(rest.strip())
+            elif kind == "cell":
+                t, path, col = rest.split()
+                cells.append((t, [] if path == "-" else [int(x) for x in path.split(",")], int(col)))
+            else:
+                sys.exit(f"{f.name}:{n}: unknown entry {kind!r}")
+    return list(dict.fromkeys(tables)), list(dict.fromkeys(pictures)), cells
+
+
+def extras(js: str, found: dict) -> dict:
+    """Data that isn't a plain table: each extra_<area>.py next to this file has
+    `extract(js, tables) -> JSON-able value`, kept under game.json "extra"/<area>."""
+    import importlib.util
+    out = {}
+    for f in sorted(HERE.glob("extra_*.py")):
+        spec = importlib.util.spec_from_file_location(f.stem, f)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        out[f.stem.removeprefix("extra_")] = mod.extract(js, found)
+    return out
 
 
 # --- app.asar -----------------------------------------------------------------------------------
@@ -309,6 +307,7 @@ def main():
     js = asar.read("distBuild/static/game/N.js").decode("utf-8", "replace")
 
     found, failed = tables(js)
+    TABLES, PICTURES, PICTURE_CELLS = needs()
     missing = [t for t in TABLES if t not in found]
     if missing:
         sys.exit(f"tables not found or unreadable: {', '.join(missing)}")
@@ -321,6 +320,7 @@ def main():
         "tables": {t: found[t] for t in TABLES},
         "items": names,
         "monsters": monster_names(js),
+        "extra": extras(js, found),
     }
     out_data = args.out / "data/game.json"
     out_data.parent.mkdir(parents=True, exist_ok=True)
@@ -335,7 +335,7 @@ def main():
         for i in path:
             rows = rows[i]
         cells |= {r[col] for r in rows if len(r) > col}
-    write_pictures(args.out, pak, images, cells)
+    write_pictures(args.out, pak, images, cells, PICTURES)
 
     if args.all_tables:
         args.all_tables.write_text(json.dumps(found, ensure_ascii=False))
@@ -348,9 +348,9 @@ def main():
         print(f"{args.all_pictures}: {len(images)} pictures")
 
 
-def write_pictures(crate: Path, pak: bytes, images: list[dict], names: set[str]):
+def write_pictures(crate: Path, pak: bytes, images: list[dict], names: set[str], patterns: list[str]):
     """Copy the pictures PICTURES names into crate/pictures and list them in src/pictures.rs."""
-    wanted = [re.compile(p) for p in PICTURES]
+    wanted = [re.compile(p) for p in patterns]
     chosen = {}
     for e in images:
         path = Path(e["id"])

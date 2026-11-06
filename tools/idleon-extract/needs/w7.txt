@@ -1,0 +1,16 @@
+# World 7. Format: see w1.txt.
+table ResGridSquares
+table SushiUPG
+table JellyUPG
+table MineheadUPG
+table CoralReef
+table ZenithMarket
+table LegendTalents
+table Spelunky
+table SpelunkUpg
+picture SushiUpg\d+
+picture JellyUpg\d+
+picture MineUpg\d+
+picture Reef[zA-E]1
+picture LegendTalentIcon\d+
+picture CaveShopUpg\d+

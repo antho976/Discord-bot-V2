@@ -1,0 +1,3 @@
+# World 4. Format: see w1.txt.
+table JewelDesc
+picture ConsoleJwl\d+

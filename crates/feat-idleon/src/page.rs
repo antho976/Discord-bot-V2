@@ -103,7 +103,7 @@ fn done(guild: u64, r: &Review) -> Markup {
         section.ia-panel.ia-lead {
             div.ia-lead-who {
                 b.ia-big { (pct(r.share())) }
-                span { "of the maxes this check reads, across " (r.mechanics.iter().filter(|m| m.world <= r.world).count()) " mechanics" }
+                span { "of the maxes this check reads, across " (r.mechanics.iter().filter(|m| m.world <= r.world && m.total() > 0.0).count()) " mechanics" }
                 p.ia-lead-line {
                     "World " (r.world) " · " (r.characters) " characters"
                     " · " a href={ "/p/" (guild) "/idleon" } { "Check another account" }
@@ -117,6 +117,24 @@ fn done(guild: u64, r: &Review) -> Markup {
                         span.ia-col-track { span.ia-col-fill style={ "--s:" (share.filter(|_| reached).unwrap_or(0.0)) } {} }
                         b { (share.filter(|_| reached).map_or("·".into(), |s| format!("{:.0}", s * 100.0))) }
                         span { (world_tag(w)) }
+                    }
+                }
+            }
+        }
+        @if !r.not_started.is_empty() {
+            section.ia-panel {
+                div.ia-head {
+                    h2 { "Not started yet" }
+                    p { "In worlds you've reached, with no progress at all. New since you last played, or skipped" }
+                }
+                div.ia-fresh {
+                    @for &i in &r.not_started {
+                        @let m = &r.mechanics[i];
+                        a.ia-fresh-item href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
+                            (mark(m))
+                            span { (m.name) }
+                            span.ia-tag { (world_tag(m.world)) }
+                        }
                     }
                 }
             }
@@ -176,8 +194,12 @@ fn card(m: &Mechanic) -> Markup {
             summary {
                 (mark(m))
                 span.ia-card-name { b { (m.name) } span { (fig(m)) } }
-                span.ia-pct.done[m.done()] { (pct(m.share())) }
-                span.ia-meter.wide { span style={ "--s:" (m.share()) } {} }
+                @if m.count == Count::Open {
+                    span.ia-pct.open { "No max" }
+                } @else {
+                    span.ia-pct.done[m.done()] { (pct(m.share())) }
+                    span.ia-meter.wide { span style={ "--s:" (m.share()) } {} }
+                }
             }
             div.ia-items {
                 @if let Some(n) = &m.note { p.ia-note { (n) } }
@@ -199,11 +221,12 @@ fn item(i: &Item) -> Markup {
                 img src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy";
             } @else { span.ia-item-dot {} }
             span.ia-item-name { (i.name) }
-            span.ia-meter { span style={ "--s:" (i.share()) } {} }
+            @if i.max > 0.0 { span.ia-meter { span style={ "--s:" (i.share()) } {} } } @else { span {} }
             span.ia-fig {
                 @match &i.level_name {
                     Some(n) => (n),
-                    None => { (num(i.level)) " / " (num(i.max)) },
+                    None if i.max > 0.0 => { (num(i.level)) " / " (num(i.max)) },
+                    None => { "Lv " (num(i.level)) },
                 }
             }
         }
@@ -235,6 +258,7 @@ fn fig(m: &Mechanic) -> String {
     match m.count {
         Count::Levels => format!("{} / {} {}", num(m.have()), num(m.total()), m.unit),
         Count::Done => format!("{} of {} {}", num(m.have()), num(m.total()), m.unit),
+        Count::Open => format!("{} {}", num(m.have()), m.unit),
     }
 }
 
@@ -355,6 +379,13 @@ body.ia-pub { background: var(--page);
 .ia-card-name span { font: 12.5px var(--mono); color: var(--ink-3); }
 .ia-pct { grid-area: p; font: 600 15px var(--mono); }
 .ia-pct.done { color: var(--live); }
+.ia-pct.open { font: 500 12px var(--sans); color: var(--ink-3); }
+.ia-fresh { display: flex; flex-wrap: wrap; gap: 8px; }
+.ia-fresh-item { display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 8px 0 6px; border-radius: 10px; background: var(--control); color: var(--ink); font-size: 13.5px; transition: background 0.18s; }
+.ia-fresh-item:hover { background: var(--hover); }
+.ia-fresh-item:active { transform: scale(0.97); }
+.ia-fresh-item .ia-mark { width: 26px; height: 26px; }
+.ia-fresh-item .ia-mark.blank { width: 8px; height: 8px; margin: 9px; }
 .ia-meter.wide { grid-area: b; }
 .ia-items { padding: 2px 16px 16px; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 0 28px; }
 .ia-note, .ia-maxed-head { grid-column: 1 / -1; font-size: 13px; color: var(--ink-3); padding: 6px 0 8px; }

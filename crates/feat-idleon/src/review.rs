@@ -41,6 +41,9 @@ pub enum Count {
     Levels,
     /// Items done: how many are at their max ("31 of 41 bought").
     Done,
+    /// No max anywhere (bubbles, refinery ranks): the levels are shown, lowest first, but the
+    /// mechanic stays out of every share and out of Do next. Items keep `max` 0.
+    Open,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +66,7 @@ impl Mechanic {
         match self.count {
             Count::Levels => self.items.iter().map(|i| i.level.min(i.max)).sum(),
             Count::Done => self.items.iter().filter(|i| i.done()).count() as f64,
+            Count::Open => self.items.iter().map(|i| i.level).sum(),
         }
     }
 
@@ -70,6 +74,7 @@ impl Mechanic {
         match self.count {
             Count::Levels => self.items.iter().map(|i| i.max).sum(),
             Count::Done => self.items.len() as f64,
+            Count::Open => 0.0,
         }
     }
 
@@ -82,11 +87,16 @@ impl Mechanic {
         self.total() > 0.0 && self.have() >= self.total()
     }
 
-    /// Items not at their max, least done first.
+    /// Items not at their max, least done first (lowest level first when there's no max).
     pub fn open_items(&self) -> Vec<&Item> {
         let mut v: Vec<&Item> = self.items.iter().filter(|i| !i.done()).collect();
-        v.sort_by(|a, b| a.share().total_cmp(&b.share()));
+        v.sort_by(|a, b| a.share().total_cmp(&b.share()).then(a.level.total_cmp(&b.level)));
         v
+    }
+
+    /// Nothing at all yet: no level anywhere, no item found.
+    pub fn untouched(&self) -> bool {
+        !self.items.is_empty() && self.items.iter().all(|i| i.level <= 0.0)
     }
 }
 
@@ -112,18 +122,23 @@ pub struct Review {
     pub world: u8,
     pub mechanics: Vec<Mechanic>,
     pub next: Vec<Next>,
+    /// Mechanics in worlds you've reached with no progress at all: new since you last played,
+    /// or skipped. In game order.
+    pub not_started: Vec<usize>,
 }
 
 impl Review {
     pub fn new(save: &Save, mechanics: Vec<Mechanic>) -> Review {
         let world = reached(&mechanics);
-        let next = pick_next(&mechanics, world);
+        let not_started: Vec<usize> = mechanics.iter().enumerate().filter(|(_, m)| m.world > 0 && m.world <= world && m.untouched()).map(|(i, _)| i).collect();
+        let next = pick_next(&mechanics, world, &not_started);
         Review {
             name: save.names.first().cloned().unwrap_or_default(),
             characters: save.characters(),
             world,
             mechanics,
             next,
+            not_started,
         }
     }
 
@@ -154,13 +169,13 @@ pub const NEXT: usize = 6;
 
 /// Do next: first, mechanics furthest under their own world's average (the ones the rest of
 /// the account has left behind), earlier worlds first when equal since they cost less; then
-/// cheap finishes, mechanics with one to three items left. Worlds you haven't reached and
-/// finished mechanics never show.
-fn pick_next(mechanics: &[Mechanic], reached: u8) -> Vec<Next> {
+/// cheap finishes, mechanics with one to three items left. Worlds you haven't reached,
+/// finished mechanics and ones not started (they have their own list) never show.
+fn pick_next(mechanics: &[Mechanic], reached: u8, not_started: &[usize]) -> Vec<Next> {
     let mut behind: Vec<(f64, usize, f64)> = Vec::new();
     let mut nearly: Vec<(usize, usize)> = Vec::new();
     for (i, m) in mechanics.iter().enumerate() {
-        if m.world > reached || m.done() || m.total() <= 0.0 {
+        if m.world > reached || m.done() || m.total() <= 0.0 || not_started.contains(&i) {
             continue;
         }
         let avg = world_avg(mechanics, m.world).unwrap_or(0.0);
@@ -224,9 +239,21 @@ mod tests {
             mech("c", 2, &[(1.0, 10.0), (1.0, 10.0)]),
             mech("d", 5, &[(0.0, 10.0)]),
         ];
-        let next = pick_next(&ms, 2);
+        let next = pick_next(&ms, 2, &[]);
         assert_eq!(next.first().map(|n| ms[n.mechanic].key), Some("c"));
         assert!(next.iter().all(|n| ms[n.mechanic].key != "a" && ms[n.mechanic].key != "d"));
+    }
+
+    #[test]
+    fn open_mechanics_stay_out_of_shares() {
+        let mut m = mech("bubbles", 2, &[(5.0, 0.0), (9.0, 0.0)]);
+        m.count = Count::Open;
+        assert_eq!(m.have(), 14.0);
+        assert_eq!(m.total(), 0.0);
+        assert_eq!(m.share(), 0.0);
+        assert!(!m.done());
+        let next = pick_next(&[m], 2, &[]);
+        assert!(next.is_empty());
     }
 
     #[test]
