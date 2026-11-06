@@ -12,8 +12,10 @@ use crate::game::num;
 /// More characters than the game allows, so nothing real is cut.
 pub const MAX_CHARACTERS: usize = 16;
 
-/// Biggest paste accepted. Late-game saves are about 1 MB.
-pub const MAX_BYTES: usize = 8 * 1024 * 1024;
+/// Biggest paste accepted. The biggest real saves seen are 1.4 MB (late World 7). A paste costs
+/// up to ~17 times its size in memory while it's read (an 8 MB one of numbers peaked at 136 MB),
+/// so the cap keeps about three times the headroom, not more.
+pub const MAX_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct Save {
     data: Map<String, Value>,
@@ -104,6 +106,21 @@ impl Save {
         self.server.get(key).map(num).filter(|v| v.is_finite())
     }
 
+    /// A server list from the copy (`serverVars`, like `ArcadeBonuses`: the upgrades the Arcade
+    /// sells this update), as a list or as JSON written as text. Read as numbers, at most
+    /// [`MAX_SERVER_LIST`] of them, since it comes from a paste.
+    pub fn server_list(&self, key: &str) -> Option<Vec<f64>> {
+        let parsed;
+        let list = match self.server.get(key)? {
+            Value::String(s) if s.len() <= MAX_SERVER_TEXT => {
+                parsed = serde_json::from_str::<Value>(s).ok()?;
+                &parsed
+            }
+            v => v,
+        };
+        Some(list.as_array()?.iter().take(MAX_SERVER_LIST).map(num).collect())
+    }
+
     /// A value in the account options list, `OptLacc[i]`.
     pub fn option(&self, i: usize) -> f64 {
         self.at("OptLacc", &[i]).map(num).unwrap_or(0.0)
@@ -126,12 +143,27 @@ pub fn index(v: &Value, i: usize) -> Option<&Value> {
     }
 }
 
+/// Highest index a numbered object is read up to. Real saves stop under 1,000; a paste with a key
+/// like "4000000000" would otherwise ask for a list billions long and take the bot down.
+const MAX_INDEX: usize = 100_000;
+
+/// Most entries a server list is read to. The game's are short (the Arcade's has 9).
+pub const MAX_SERVER_LIST: usize = 100;
+
+/// Longest server list written as text that's parsed; a real one is a few dozen characters.
+const MAX_SERVER_TEXT: usize = 10_000;
+
 pub fn numbers(v: &Value) -> Vec<f64> {
     match v {
         Value::Array(a) => a.iter().map(num).collect(),
         Value::Object(o) => {
-            let len = o.keys().filter_map(|k| k.parse::<usize>().ok()).max().map_or(0, |m| m + 1);
-            (0..len).map(|i| o.get(&i.to_string()).map(num).unwrap_or(0.0)).collect()
+            // From the entries, so the work is the object's size, not its highest key.
+            let entries: Vec<(usize, f64)> = o.iter().filter_map(|(k, v)| k.parse::<usize>().ok().filter(|&i| i < MAX_INDEX).map(|i| (i, num(v)))).collect();
+            let mut out = vec![0.0; entries.iter().map(|(i, _)| i + 1).max().unwrap_or(0)];
+            for (i, v) in entries {
+                out[i] = v;
+            }
+            out
         }
         _ => Vec::new(),
     }
@@ -161,6 +193,26 @@ mod tests {
         assert_eq!(s.server("Nope"), None);
         assert_eq!(s.numbers("CauldronInfo", &[4]), vec![13.0, 0.0, 4.0]);
         assert_eq!(s.names, vec!["x"]);
+    }
+
+    #[test]
+    fn server_lists_read_as_lists_or_text_and_stay_short() {
+        let raw = r#"{"data": {"OptLacc": [0]}, "serverVars": {"ArcadeBonuses": [73, 71, "25"], "AsText": "[5, 7]", "Num": 3, "Bad": "[1,", "Long": [PLACEHOLDER]}}"#;
+        let long = vec!["1"; 500].join(",");
+        let s = Save::parse(&raw.replace("PLACEHOLDER", &long)).unwrap();
+        assert_eq!(s.server_list("ArcadeBonuses"), Some(vec![73.0, 71.0, 25.0]));
+        assert_eq!(s.server_list("AsText"), Some(vec![5.0, 7.0]));
+        assert_eq!(s.server_list("Num"), None);
+        assert_eq!(s.server_list("Bad"), None);
+        assert_eq!(s.server_list("Nope"), None);
+        assert_eq!(s.server_list("Long").map(|v| v.len()), Some(MAX_SERVER_LIST));
+        assert_eq!(Save::parse(r#"{"OptLacc": [0]}"#).unwrap().server_list("ArcadeBonuses"), None);
+    }
+
+    #[test]
+    fn a_huge_numbered_key_is_ignored() {
+        let s = Save::parse(r#"{"OptLacc": [0], "X": {"0": 1, "4000000000": 2, "18446744073709551615": 3}}"#).unwrap();
+        assert_eq!(s.numbers("X", &[]), vec![1.0]);
     }
 
     #[test]

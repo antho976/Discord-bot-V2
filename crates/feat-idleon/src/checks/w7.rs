@@ -51,6 +51,11 @@ pub(crate) fn menagerie_unlock_name(i: usize) -> String {
     if text.is_empty() { "a Menagerie unlock".into() } else { format!("the Menagerie unlock \"{text}\"") }
 }
 
+/// A whole number with thousands commas: "7,000".
+fn whole(n: f64) -> String {
+    crate::page::num(n.floor())
+}
+
 /// The first letter in capitals.
 fn capital(s: &str) -> String {
     let mut c = s.chars();
@@ -85,6 +90,8 @@ fn list(table: &str, row: usize) -> Vec<&'static str> {
     rows(table, &[row]).iter().map(|v| v.as_str().unwrap_or("")).collect()
 }
 
+use super::general::emporium_owned;
+
 /// A Done item: 1 of 1 when `have`.
 fn found(name: impl Into<String>, picture: Option<String>, have: bool) -> Item {
     Item::new(name, picture, f64::from(u8::from(have)), 1.0)
@@ -117,7 +124,8 @@ fn pay(it: &mut Item, cost: f64, have: f64, what: &str, discounts: bool) {
         return;
     }
     let tail = if discounts { " before your discounts" } else { "" };
-    it.how = Some(format!("Next level costs {} {what}{tail}.", big(cost.ceil())));
+    // The game makes some first levels free (the first Jelly Operator upgrade, `0==t?0`).
+    it.how = Some(if cost <= 0.0 { "The next level is free.".to_string() } else { format!("Next level costs {} {what}{tail}.", big(cost.ceil())) });
     if cost <= have {
         it.state = State::Ready;
     }
@@ -228,22 +236,32 @@ fn spelunk_depth(save: &Save) -> Mechanic {
 
 /// Advice Fish: `Spelunk[11][i]`, upgrades in `Spelunky[18]` ("Name,text,max bonus,cost,"). No
 /// level cap: N.js `BigFishBonuses` gives max × level / (level + 100). N.js `BigFishCost`:
-/// 1.15^level × 10.01^col 3 coins, paid from the active character's money.
+/// 1.15^level × 10.01^col 3 coins, paid from the active character's money. Upgrade i opens
+/// (N.js `isBigFishUpgUnlocked`) at once for the first, for the rest once the Class LVs of all
+/// characters add up to more than `BigFishUpgLVREQ` = 4000 + (300 + 50 × max(0, i - 2)) × i.
+/// Pictures: the fish is `W7_fish`; the seven advice icons are drawn into its sign
+/// (`W7_fishUI`), so the items have none of their own.
 fn advice_fish(save: &Save) -> Mechanic {
     let levels = save.numbers("Spelunk", &[11]);
-    let coins = (0..save.characters().clamp(1, 12)).map(|c| held(save, &format!("Money_{c}"), &[])).fold(0.0, f64::max);
+    // The character you play pays, and can take coins out of the storage bank first.
+    let coins = super::w1::spendable(save);
+    let account: f64 = (0..save.characters()).map(|c| at(&save.numbers(&format!("Lv0_{c}"), &[]), 0)).filter(|v| v.is_finite()).map(|v| v.max(0.0)).sum();
     let items = list("Spelunky", 18)
         .into_iter()
         .enumerate()
         .map(|(i, r)| {
             let mut parts = r.split(',');
             let mut it = Item::new(label(parts.next().unwrap_or("")), None, at(&levels, i), 0.0);
-            if let Some(coef) = parts.nth(2).and_then(|c| c.parse::<f64>().ok()) {
+            let f = i as f64;
+            let need = 4000.0 + (300.0 + 50.0 * (f - 2.0).max(0.0)) * f;
+            if i > 0 && account <= need {
+                it.how = Some(format!("Needs an Account LV over {} (yours is {}).", whole(need), whole(account)));
+                it.state = State::Locked;
+            } else if let Some(coef) = parts.nth(2).and_then(|c| c.parse::<f64>().ok()) {
                 let cost = 1.15f64.powf(it.level) * 10.01f64.powf(coef);
                 if cost.is_finite() {
                     it.how = Some(format!("Next level costs {} coins.", big(cost.ceil())));
-                    // A new upgrade also needs a level requirement met (N.js `isBigFishUpgUnlocked`).
-                    if cost <= coins && it.level >= 1.0 {
+                    if cost <= coins {
                         it.state = State::Ready;
                     }
                 }
@@ -251,14 +269,15 @@ fn advice_fish(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("advice-fish", 7, "Advice Fish", None, Count::Open, "levels", items);
-    m.note = Some("No level cap. Level 100 gives half of each bonus, level 900 gives 90%. Paid from the coins of the character you play.".into());
+    let mut m = mech("advice-fish", 7, "Advice Fish", pic("W7_fish".into()), Count::Open, "levels", items);
+    m.note = Some("No level cap. Level 100 gives half of each bonus, level 900 gives 90%. Paid from the coins of the character you play, which the storage bank can top up.".into());
     m
 }
 
 /// Clam Work compensations: one more each Worker Class level, `OptLacc[464]`. The twelve are
 /// `Spelunky[30]`; the game shows compensation i once the level is above i. Promotions cost
-/// pearls and can fail (see below), so nothing here is marked Ready.
+/// pearls and can fail (see below), so nothing here is marked Ready. The game lists them as text,
+/// so they have no pictures.
 fn clam_work(save: &Save) -> Mechanic {
     let level = save.option(464);
     let items = list("Spelunky", 30)
@@ -278,7 +297,7 @@ fn clam_work(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    mech("clam-work", 7, "Clam Work Compensations", pic("ClamW".into()), Count::Done, "earned", items)
+    mech("clam-work", 7, "Clam Work Compensations", pic("Clam".into()), Count::Done, "earned", items)
 }
 
 /// The Clamworks pearl upgrades, `OptLacc[455 + i]`, and the Musselini page, `Menagerie[5][i]`
@@ -314,8 +333,15 @@ fn clam_upgrades(save: &Save) -> Mechanic {
             let mut it = Item::new(name, pic(format!("ClamPearl{}", usize::from(i >= 9))), level, 0.0);
             if i < 9 {
                 if i > 0 && (i as f64) > opened {
-                    it.how = Some(format!("Opens once you hold {} pearls.", big(req(i).ceil())));
-                    it.state = State::Locked;
+                    // N.js sets `OptLacc[465]` to the slot while the page is open and you hold
+                    // its pearls, so holding them is all it takes.
+                    if pearls >= req(i) {
+                        it.how = Some(format!("You hold the {} pearls it needs: open the Clamworks page to unlock it.", big(req(i).ceil())));
+                        it.state = State::Ready;
+                    } else {
+                        it.how = Some(format!("Opens once you hold {} pearls.", big(req(i).ceil())));
+                        it.state = State::Locked;
+                    }
                 } else if i == 1 && it.level >= 23.0 {
                     it.how = Some("25 clams, the most the map holds. More levels add nothing.".into());
                 } else {
@@ -356,6 +382,10 @@ fn clam_upgrades(save: &Save) -> Mechanic {
 /// × 1.25^level for upgrade 2, 1e7 × 6^i × 1.1^level for the rest of page one, paid with Divinity
 /// PTS (`Divinity[24]`); on page two (j = i - 6) (5 + 2j)^j × 1.85^level for the last two and
 /// (7 + 2j)^j × 1.13^level otherwise, paid with Singularity Spirals (item `CKsing`).
+/// The upgrades are text rows, each with the same up-arrow button (`CoralDivUpg`), so they have no
+/// pictures of their own.
+/// Before any of this the Kid has to be unlocked (`OptLacc[426]`): N.js takes 20M Divinity PTS a
+/// try and unlocks him 1 time in 10.
 /// The total Divinity LV each Coral Kid upgrade opens at, as N.js sets `_GenINFO[118]`.
 const CK_DIVINITY: [u32; 12] = [0, 600, 900, 1200, 1500, 1750, 500, 3000, 5000, 8000, 10000, 12000];
 
@@ -363,6 +393,7 @@ fn coral_kid(save: &Save) -> Mechanic {
     let div = held(save, "Divinity", &[24]);
     let spirals = chest(save, "CKsing");
     let page2 = menagerie_unlock(save, 2);
+    let met = save.option(426) >= 1.0;
     let cost = |i: usize, lv: f64| {
         let f = i as f64;
         match i {
@@ -377,7 +408,10 @@ fn coral_kid(save: &Save) -> Mechanic {
         .enumerate()
         .map(|(i, r)| {
             let mut it = Item::new(first_sentence(r.split(",_").next().unwrap_or(r)), None, save.option(if i < 6 { 427 + i } else { 616 + i - 6 }), 0.0);
-            if i >= 6 && !page2 {
+            if !met {
+                it.how = Some("Unlock the Coral Kid first: each try costs 20M Divinity PTS and works 1 time in 10.".into());
+                it.state = State::Locked;
+            } else if i >= 6 && !page2 {
                 it.how = Some(format!("The Singularity page comes with {}.", menagerie_unlock_name(2)));
                 it.state = State::Locked;
             } else {
@@ -398,7 +432,12 @@ fn coral_kid(save: &Save) -> Mechanic {
     let mut m = mech("coral-kid", 7, "Coral Kid", pic("CoralDivUpg".into()), Count::Open, "levels", items);
     m.have = Some(Have {
         figure: format!("{} Divinity PTS", big(div)),
-        text: if page2 { format!("And {} Singularity Spirals in storage for the second page.", big(spirals)) } else { "For the first six upgrades.".into() },
+        text: match (met, page2) {
+            (false, _) if div >= 2e7 => "Enough for a try at unlocking the Coral Kid (20M each).".into(),
+            (false, _) => "Not enough for a try at unlocking the Coral Kid yet (20M each).".into(),
+            (true, true) => format!("And {} Singularity Spirals in storage for the second page.", big(spirals)),
+            (true, false) => "For the first six upgrades.".into(),
+        },
     });
     m.note = Some("No caps. Each upgrade opens at a total Divinity LV across your characters: 0, 600, 900, 1,200, 1,500 and 1,750 on page one, 500, 3,000, 5,000, 8,000, 10,000 and 12,000 on the Singularity page.".into());
     m
@@ -530,14 +569,19 @@ fn gallery_trophies(save: &Save) -> Mechanic {
 /// smaller of 19 and: 1, plus ceil(Gallery coral `Spelunk[13][4]` / 4), Emporium 42, gem shop
 /// `GemItemsPurchased[40]`, 2 for the Lunarheim boss `Spelunk[0][5]`, min(2, Deathskull
 /// `Sailing[3][33]`) and event shop 26.
-/// The Emporium and event shop aren't read, so the podiums counted as owned are a floor.
+/// Pictures: the Gallery draws a podium as `GalleryPod{tier}`, the tier rising with podium
+/// upgrades (N.js `PodiumsOwned_Lv2`..`Lv4`: companions, Killroy, legend talents and more, not all
+/// in the save), so a podium's own picture can't be told and they have none.
 fn gallery_podiums(save: &Save) -> Mechanic {
     let slots = gallery_slots(save);
+    let bought = |yes: bool| f64::from(u8::from(yes));
     let owned = (1.0
         + (held(save, "Spelunk", &[13, 4]) / 4.0).ceil()
-        + held(save, "GemItemsPurchased", &[40])
-        + 2.0 * f64::from(u8::from(held(save, "Spelunk", &[0, 5]) >= 1.0))
-        + held(save, "Sailing", &[3, 33]).round().min(2.0))
+        + bought(emporium_owned(save, 42))
+        + held(save, "GemItemsPurchased", &[40]).floor()
+        + 2.0 * bought(held(save, "Spelunk", &[0, 5]) >= 1.0)
+        + held(save, "Sailing", &[3, 33]).round().min(2.0)
+        + bought(super::general::event_shop_owned(save, 26)))
     .min(19.0);
     let spare = slots.iter().take(48).any(|&v| v >= 1.0);
     let items = (0..19)
@@ -617,6 +661,8 @@ fn menagerie_unlocks(save: &Save) -> Mechanic {
     let (rank, lumi) = menagerie_rank_lumi(save);
     let open = slots_at(rank, 7.0);
     let mut costs: Vec<f64> = Vec::new();
+    // Unlocks your rank shows that you don't own yet, and the rank that shows the next one.
+    let (mut shown_left, mut next_rank) = (0, None);
     let items: Vec<Item> = list("Research", 56)
         .into_iter()
         .enumerate()
@@ -626,9 +672,11 @@ fn menagerie_unlocks(save: &Save) -> Mechanic {
                 let f = i as f64;
                 let cost = (10.0 + f * f) * (2.5 - 0.15 * f / 4.0).max(1.6).powf(f);
                 if (i as f64) >= open {
+                    next_rank = next_rank.or(Some(rank_for(i, 7)));
                     it.how = Some(format!("Shows at Menagerie rank {}. Costs {} Lumi.", rank_for(i, 7), big(cost.ceil())));
                     it.state = State::Locked;
                 } else {
+                    shown_left += 1;
                     it.how = Some(format!("Costs {} Lumi.", big(cost.ceil())));
                     if cost <= lumi {
                         it.state = State::Ready;
@@ -650,7 +698,11 @@ fn menagerie_unlocks(save: &Save) -> Mechanic {
     m.have = Some(Have {
         figure: format!("{} Lumi", big(lumi)),
         text: match afford {
-            0 => "Not enough for any unlock your rank shows yet.".into(),
+            0 if shown_left > 0 => "Not enough for any unlock your rank shows yet.".into(),
+            0 => match next_rank {
+                Some(r) => format!("You own every unlock your rank shows. The next shows at Menagerie rank {r}."),
+                None => "You own every unlock.".into(),
+            },
             1 => "Enough for one of the unlocks your rank shows.".into(),
             n => format!("Enough for {n} of the unlocks your rank shows, cheapest first."),
         },
@@ -728,15 +780,18 @@ fn menagerie_missions(save: &Save) -> Mechanic {
 /// stops at 100 and `Menagerie[0][10]` (auto-trash, `ObolAutoTrashRate`) at 190: the game only
 /// sells them below those. N.js `SilverJellyCosts`: 2 × (100 + 25L + L³) × 1.065^L and (25 + 10L +
 /// L²) × 1.056^L Obol Fragments (`CYObolFragments`). The Silver Jellyfish is Menagerie unlock 10.
+/// It is jellyfish 4 in town (N.js: jelly n shows once `SideJellyUnlocked`(n - 1), which for 3 is
+/// unlock 10, and jelly 4 draws `ObolMISCmulti`), so its picture is `MenaJelly4`.
 fn menagerie_jellyfish(save: &Save) -> Mechanic {
+    let silver = || pic("MenaJelly4".into());
     let v = save.numbers("Menagerie", &[0]);
     let frags = held(save, "CYObolFragments", &[]);
     let open = menagerie_unlock(save, 10);
     let cost0 = |l: f64| 2.0 * (100.0 + 25.0 * l + l.powi(3)) * 1.065f64.powf(l);
     let cost1 = |l: f64| (25.0 + 10.0 * l + l * l) * 1.056f64.powf(l);
     let mut items = vec![
-        Item::new("Silver Jellyfish: Obol bonuses", None, at(&v, 9), 100.0),
-        Item::new("Silver Jellyfish: Obol auto-trash", None, at(&v, 10), 190.0),
+        Item::new("Silver Jellyfish: Obol bonuses", silver(), at(&v, 9), 100.0),
+        Item::new("Silver Jellyfish: Obol auto-trash", silver(), at(&v, 10), 190.0),
     ];
     let mut reached = Vec::new();
     for (n, it) in items.iter_mut().enumerate() {
@@ -759,11 +814,15 @@ fn menagerie_jellyfish(save: &Save) -> Mechanic {
     m
 }
 
-/// N.js `OccurrencesToBeFound` at Research level `lv`: none below 1, then min(43, 5 × floor((lv
-/// + 10) / 10) - lv/20 - lv/30 - lv/50), each part rounded down.
-fn observations_open(lv: f64) -> f64 {
+/// N.js `OccurrencesToBeFound` at Research level `lv`: none below 1, only the first until it is
+/// found (`first`), then min(43, 5 × floor((lv + 10) / 10) - lv/20 - lv/30 - lv/50), each part
+/// rounded down.
+fn observations_open(lv: f64, first: bool) -> f64 {
     if lv < 1.0 {
         return 0.0;
+    }
+    if !first {
+        return 1.0;
     }
     (5.0 * ((lv + 10.0) / 10.0).floor() - (lv / 20.0).floor() - (lv / 30.0).floor() - (lv / 50.0).floor()).min(43.0)
 }
@@ -773,16 +832,19 @@ fn observations_open(lv: f64) -> f64 {
 fn observations(save: &Save) -> Mechanic {
     let have = save.numbers("Research", &[2]);
     let lv = research_level(save);
-    let open = observations_open(lv);
+    let first = at(&have, 0) >= 1.0;
+    let open = observations_open(lv, first);
     let table = rows("Occurrences", &[]);
+    let first_name = table.first().map(|r| label(text(r, 0))).unwrap_or_default();
     let items = observation_rows()
         .map(|(i, name)| {
             let mut it = found(name, pic(format!("ResObj{i}")), at(&have, i) >= 1.0);
             if !it.done() {
                 let place = table.get(i).map(|r| clean(text(r, 7))).unwrap_or_default();
                 if (i as f64) >= open {
-                    let needed = (1..=400).find(|&l| observations_open(f64::from(l)) > i as f64);
+                    let needed = (1..=400).find(|&l| observations_open(f64::from(l), true) > i as f64);
                     it.how = Some(match needed {
+                        Some(_) if !first && (i as f64) < observations_open(lv, true) => format!("Offered once you find {first_name}. {place}."),
                         Some(l) => format!("Offered from Research LV {l}. {place}."),
                         None => format!("{place}."),
                     });
@@ -833,6 +895,7 @@ fn posty_notes(save: &Save) -> Mechanic {
 /// Glimbo trades: `Research[12][t]` trades for slot t, which pays `Research` row 27's item and
 /// raises the max level of vault upgrade `Research` row 26 (`UpgradeVault`). No cap. N.js
 /// `Glimbo_Cost`, before discounts: (1 + 2.5n) × `Research[28][t]`^n items for trade n + 1.
+/// Glimbo himself is a town sprite, not one of the game's pictures, so the card has none.
 fn glimbo(save: &Save) -> Mechanic {
     let trades = save.numbers("Research", &[12]);
     let vault = rows("UpgradeVault", &[]);
@@ -842,9 +905,12 @@ fn glimbo(save: &Save) -> Mechanic {
         .into_iter()
         .enumerate()
         .map(|(t, v)| {
-            let name = v.parse::<usize>().ok().and_then(|v| vault.get(v)).map(|r| clean(text(r, 0))).unwrap_or_default();
+            let upgrade = v.parse::<usize>().ok();
+            let name = upgrade.and_then(|v| vault.get(v)).map(|r| clean(text(r, 0))).unwrap_or_default();
             let id = pay_with.get(t).copied().unwrap_or("");
-            let mut it = Item::new(name, (!id.is_empty()).then(|| id.to_string()), at(&trades, t), 0.0);
+            // The row is named for the vault upgrade a trade raises, so it wears that upgrade's
+            // picture; the item you pay with is named in the how.
+            let mut it = Item::new(name, upgrade.map(|v| format!("VaultUpg{v}")), at(&trades, t), 0.0);
             let k = scale.get(t).and_then(|x| x.parse::<f64>().ok()).unwrap_or(1.0);
             let cost = ((1.0 + 2.5 * it.level) * k.powf(it.level)).floor().max(1.0);
             if cost.is_finite() && !id.is_empty() {
@@ -864,7 +930,8 @@ fn glimbo(save: &Save) -> Mechanic {
     m
 }
 
-/// The Button: `OptLacc[594]` counts presses (N.js `Button_Bonuses`), with no end.
+/// The Button: `OptLacc[594]` counts presses (N.js `Button_Bonuses`), with no end. The button is a
+/// town sprite (animation "ButtonG"), not one of the game's pictures, so it has none.
 fn the_button(save: &Save) -> Mechanic {
     let items = vec![Item::new("Presses", None, save.option(594), 0.0)];
     let mut m = mech("the-button", 7, "The Button", None, Count::Open, "presses", items);
@@ -877,6 +944,9 @@ fn the_button(save: &Save) -> Mechanic {
 /// `Grid_PTSearned` is Research LV + LV/10 × (1 + [LV ≥ 60] + node 50) plus companions, sushi,
 /// jelly, sailing, tasks and shop bonuses; only the first part is read here, so the points shown
 /// are a floor.
+/// Pictures: the grid draws every node as the same square (`ResSq{max}_{level}`), so nodes have
+/// none; the card has the Research skill's own icon (N.js draws skill `Lv0[1 + t]` as
+/// `ClassIcons{42 + t}`; Research is `Lv0[20]`, so `ClassIcons61`).
 fn research_grid(save: &Save) -> Mechanic {
     let levels = save.numbers("Research", &[0]);
     let mut items: Vec<Item> = rows("ResGridSquares", &[])
@@ -891,7 +961,7 @@ fn research_grid(save: &Save) -> Mechanic {
     let lv = research_level(save);
     let earned = (lv + (lv / 10.0).floor() * (1.0 + (lv / 60.0).floor().min(1.0) + at(&levels, 50))).floor();
     let spent: f64 = levels.iter().filter(|v| v.is_finite()).sum();
-    let mut m = mech("research", 7, "Research Grid", None, Count::Levels, "levels", items);
+    let mut m = mech("research", 7, "Research Grid", pic("ClassIcons61".into()), Count::Levels, "levels", items);
     let free = earned - spent;
     if free >= 1.0 && free.is_finite() {
         m.have = Some(Have {
@@ -919,40 +989,86 @@ fn slots(row: usize) -> Vec<usize> {
     list("Research", row).iter().filter_map(|v| v.parse().ok()).collect()
 }
 
-/// A slot-ordered shop: the next level's cost, Locked until the slot before has a level (N.js
-/// `CanWeBuyUpg`), Ready when the currency covers it, and what the currency buys.
-#[allow(clippy::too_many_arguments)]
-fn slot_shop(key: &'static str, name: &'static str, table: &str, levels: &[f64], picture: &str, order: &[usize], have: f64, what: &str, cost: impl Fn(usize, &Value, f64) -> f64) -> Mechanic {
-    let data = rows(table, &[]);
-    let pairs = capped_items(table, levels, picture);
+/// What sets the research minigame shops apart (Sushi Station, Jelly Operator).
+struct Shop {
+    key: &'static str,
+    name: &'static str,
+    table: &'static str,
+    picture: &'static str,
+    /// The research grid node that opens it (see [`node_missing`]).
+    node: usize,
+    /// The currency, "Bloodcells".
+    what: &'static str,
+}
+
+/// The research grid node that opens a W7 minigame, named, when the account has no level in
+/// it. N.js: Mr Minehead (129) only opens his menu once `Grid_Bonus(129)` ≥ 1, the W7 quick menu
+/// hides Sushi Station (189) and Jelly Operator (187) until those nodes have a level, and each
+/// node's text reads "You can now speak to ... to play".
+fn node_missing(save: &Save, node: usize) -> Option<String> {
+    (held(save, "Research", &[0, node]) < 1.0).then(|| rows("ResGridSquares", &[]).get(node).map(|r| label(text(r, 0))).unwrap_or_else(|| format!("#{node}")))
+}
+
+/// Why the next level can't be bought whatever it costs: the shop's node isn't levelled, or
+/// Research LV is under what the upgrade's slot needs (N.js `UpgLvREQ`, checked against `Lv0[20]`
+/// on every buy).
+fn shop_lock(closed: Option<&str>, research: f64, need: f64) -> Option<String> {
+    if let Some(node) = closed {
+        return Some(format!("Opens with the {node} research node."));
+    }
+    (research < need).then(|| format!("Needs Research LV {} (yours is {}).", whole(need), whole(research)))
+}
+
+/// A research minigame shop's `have` line: what the currency buys, or that nothing can be
+/// bought until its node has a level.
+fn shop_have(figure: String, items: &[Item], reached: &[(usize, f64)], closed: Option<&str>) -> Have {
+    match closed {
+        Some(node) => Have { figure, text: format!("Nothing here can be bought until you level the {node} research node.") },
+        None => have_line(figure, items, reached, true),
+    }
+}
+
+/// A slot-ordered shop: the next level's cost, Locked until the shop's node has a level,
+/// Research LV reaches the slot's `lv_req` and the slot before has a level (N.js `CanWeBuyUpg`
+/// and the buy check), Ready when the currency covers it, and what the currency buys.
+fn slot_shop(save: &Save, shop: &Shop, levels: &[f64], order: &[usize], have: f64, lv_req: impl Fn(usize) -> f64, cost: impl Fn(usize, &Value, f64) -> f64) -> Mechanic {
+    let data = rows(shop.table, &[]);
+    let pairs = capped_items(shop.table, levels, shop.picture);
+    let closed = node_missing(save, shop.node);
+    let research = research_level(save);
     let mut reached = Vec::new();
     let mut items = Vec::new();
     for (n, (u, mut it)) in pairs.into_iter().enumerate() {
-        if let (Some(k), Some(row)) = (order.iter().position(|&o| o == u), data.get(u)) {
-            let before = k.checked_sub(1).and_then(|p| order.get(p)).copied();
-            if it.level < it.max {
+        let slot = order.iter().position(|&o| o == u);
+        if it.level < it.max {
+            if let Some(why) = shop_lock(closed.as_deref(), research, slot.map_or(0.0, &lv_req)) {
+                it.how = Some(why);
+                it.state = State::Locked;
+            } else if let (Some(k), Some(row)) = (slot, data.get(u)) {
+                let before = k.checked_sub(1).and_then(|p| order.get(p)).copied();
                 if let Some(b) = before.filter(|&b| at(levels, b) < 1.0) {
                     let prev = data.get(b).map(|r| label(text(r, 0))).unwrap_or_default();
                     it.how = Some(format!("Buy a level of {prev} first."));
                     it.state = State::Locked;
                 } else {
                     let c = cost(k, row, it.level);
-                    pay(&mut it, c, have, what, true);
+                    pay(&mut it, c, have, shop.what, true);
                     reached.push((n, reach(it.level, it.max, have, |lv| cost(k, row, lv))));
                 }
             }
         }
         items.push(it);
     }
-    let mut m = mech(key, 7, name, pic(format!("{picture}0")), Count::Levels, "levels", items);
-    m.have = Some(have_line(format!("{} {what}", big(have)), &m.items, &reached, true));
+    let mut m = mech(shop.key, 7, shop.name, pic(format!("{}0", shop.picture)), Count::Levels, "levels", items);
+    m.have = Some(shop_have(format!("{} {}", big(have), shop.what), &m.items, &reached, closed.as_deref()));
     m.note = Some("Only the upgrades with a cap. The rest level up without end.".into());
     m
 }
 
 /// Sushi Station: `Sushi[2][u]`, paid with Bucks (`Sushi[4][3]`). N.js `SushiStuff("UpgCost")`
 /// for slot k: max(0.1, col 4 or 1) × (5 + k + max(0, k-1)²) × (1.5 + max(0, k-3)/16)^max(0, k-4)
-/// × 1.3^max(0, k-20) × col 2^level, then discounts.
+/// × 1.3^max(0, k-20) × col 2^level, then discounts. `SushiStuff("UpgLvREQ")`: slot k needs
+/// Research LV 1 + min(2, k) + min(4, k) + 3k - max(0, k-4) - max(0, k-8) + k/6 + k/17.
 fn sushi(save: &Save) -> Mechanic {
     let levels = save.numbers("Sushi", &[2]);
     let cost = |k: usize, r: &Value, lv: f64| {
@@ -960,12 +1076,18 @@ fn sushi(save: &Save) -> Mechanic {
         let base = if cell(r, 4) != 0.0 { cell(r, 4).max(0.1) } else { 1.0 };
         base * (5.0 + k + (k - 1.0).max(0.0).powi(2)) * (1.5 + (k - 3.0).max(0.0) / 16.0).powf((k - 4.0).max(0.0)) * 1.3f64.powf((k - 20.0).max(0.0)) * cell(r, 2).powf(lv)
     };
-    slot_shop("sushi", "Sushi Station", "SushiUPG", &levels, "SushiUpg", &slots(32), held(save, "Sushi", &[4, 3]), "Bucks", cost)
+    let lv_req = |k: usize| {
+        let k = k as i64;
+        (1 + k.min(2) + k.min(4) + 3 * k - (k - 4).max(0) - (k - 8).max(0) + k / 6 + k / 17) as f64
+    };
+    let shop = Shop { key: "sushi", name: "Sushi Station", table: "SushiUPG", picture: "SushiUpg", node: 189, what: "Bucks" };
+    slot_shop(save, &shop, &levels, &slots(32), held(save, "Sushi", &[4, 3]), lv_req, cost)
 }
 
 /// Jelly Operator: `Research[17][u]`, paid with Bloodcells (`Research[7][11]`). N.js
 /// `JellyOperation("UpgCost")` for slot k: 0 for the first, else max(0.1, col 4 or 1) × (1 + k/7)
 /// × (6 + 5k + k²) × (1.4 + max(0, k-3)/30)^max(0, k-4) × 1.3^max(0, k-20) × col 2^level.
+/// `JellyOperation("UpgLvREQ")`: slot k needs Research LV 15 + 2k + k/15 - k/11.
 fn jelly(save: &Save) -> Mechanic {
     let levels = save.numbers("Research", &[17]);
     let cost = |k: usize, r: &Value, lv: f64| {
@@ -976,18 +1098,23 @@ fn jelly(save: &Save) -> Mechanic {
         let base = if cell(r, 4) != 0.0 { cell(r, 4).max(0.1) } else { 1.0 };
         base * (1.0 + k / 7.0) * (6.0 + 5.0 * k + k * k) * (1.4 + (k - 3.0).max(0.0) / 30.0).powf((k - 4.0).max(0.0)) * 1.3f64.powf((k - 20.0).max(0.0)) * cell(r, 2).powf(lv)
     };
-    slot_shop("jelly", "Jelly Operator", "JellyUPG", &levels, "JellyUpg", &slots(44), held(save, "Research", &[7, 11]), "Bloodcells", cost)
+    let lv_req = |k: usize| (15 + 2 * k + k / 15 - k / 11) as f64;
+    let shop = Shop { key: "jelly", name: "Jelly Operator", table: "JellyUPG", picture: "JellyUpg", node: 187, what: "Bloodcells" };
+    slot_shop(save, &shop, &levels, &slots(44), held(save, "Research", &[7, 11]), lv_req, cost)
 }
 
 /// Minehead: `Research[8][t]`, paid with Minehead Currency (`Research[7][5]`). N.js
 /// `Minehead("UpgCost")`: (5 + t + max(0, t-2)^1.3) × 2^max(0, t-4) × A_MineCost^max(0, t-9) ×
 /// col 2^level, then discounts. A_MineCost is a server value: IdleonToolbox pastes carry it
 /// (`Save::server`); without it, from the 11th upgrade on only the rest of the cost is shown and
-/// nothing there is marked Ready.
+/// nothing there is marked Ready. `Minehead("UpgLvREQ")`: upgrade t needs Research LV 1 + 3t +
+/// t/3 + t/11, and Mr Minehead talks once node 129 has a level.
 fn minehead(save: &Save) -> Mechanic {
     let levels = save.numbers("Research", &[8]);
     let have = held(save, "Research", &[7, 5]);
     let data = rows("MineheadUPG", &[]);
+    let closed = node_missing(save, 129);
+    let research = research_level(save);
     // IdleonToolbox pastes carry the server values; other sources don't.
     let server = save.server("A_MineCost").map(|v| v.clamp(1.0, 1e6));
     let cost = |t: usize, lv: f64| {
@@ -1006,7 +1133,10 @@ fn minehead(save: &Save) -> Mechanic {
         .map(|(n, (t, mut it))| {
             if it.level < it.max {
                 let c = cost(t, it.level);
-                if t <= 9 || server.is_some() {
+                if let Some(why) = shop_lock(closed.as_deref(), research, (1 + 3 * t + t / 3 + t / 11) as f64) {
+                    it.how = Some(why);
+                    it.state = State::Locked;
+                } else if t <= 9 || server.is_some() {
                     pay(&mut it, c, have, "Minehead Currency", true);
                     reached.push((n, reach(it.level, it.max, have, |lv| cost(t, lv))));
                 } else if c.is_finite() {
@@ -1017,7 +1147,7 @@ fn minehead(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("minehead", 7, "Minehead", pic("MineUpg0".into()), Count::Levels, "levels", items);
-    m.have = Some(have_line(format!("{} Minehead Currency", big(have)), &m.items, &reached, true));
+    m.have = Some(shop_have(format!("{} Minehead Currency", big(have)), &m.items, &reached, closed.as_deref()));
     m.note = Some("Only the upgrades with a cap. The rest level up without end.".into());
     m
 }
@@ -1063,7 +1193,10 @@ fn coral_reef(save: &Save) -> Mechanic {
 }
 
 /// Zenith Market: `Spelunk[45][i]`; col 3 is the max. N.js `ZenithMarketCost`: level + col 1 ×
-/// col 2^level (whole below 1M), paid with Zenith Clusters (`OptLacc[486]`), no discounts.
+/// col 2^level (whole below 1M), paid with Zenith Clusters (`OptLacc[486]`), no discounts. An
+/// upgrade can be bought once the one before it has a level.
+/// Pictures: the market lists its upgrades as text, with no icons; the card has the Zenith
+/// Cluster (`Quest110`), shown in the market's corner.
 fn zenith_market(save: &Save) -> Mechanic {
     let levels = save.numbers("Spelunk", &[45]);
     let have = save.option(486).max(0.0);
@@ -1080,29 +1213,40 @@ fn zenith_market(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let mut it = Item::new(label(text(r, 0)), None, at(&levels, i), cell(r, 3));
             if it.level < it.max {
-                let c = cost(r, it.level);
-                pay(&mut it, c, have, "Zenith Clusters", false);
-                reached.push((i, reach(it.level, it.max, have, |lv| cost(r, lv))));
+                // N.js buys a level only once the upgrade before has one.
+                if i > 0 && at(&levels, i - 1) < 1.0 {
+                    let prev = table.get(i - 1).map(|p| label(text(p, 0))).unwrap_or_default();
+                    it.how = Some(format!("Buy a level of {prev} first."));
+                    it.state = State::Locked;
+                } else {
+                    let c = cost(r, it.level);
+                    pay(&mut it, c, have, "Zenith Clusters", false);
+                    reached.push((i, reach(it.level, it.max, have, |lv| cost(r, lv))));
+                }
             }
             it
         })
         .collect();
-    let mut m = mech("zenith", 7, "Zenith Market", None, Count::Levels, "levels", items);
+    let mut m = mech("zenith", 7, "Zenith Market", pic("Quest110".into()), Count::Levels, "levels", items);
     m.have = Some(have_line(format!("{} Zenith Clusters", big(have)), &m.items, &reached, false));
     m
 }
 
 /// Legend Talents: `Spelunk[18][i]`. The max (N.js `LegendTalent_MaxLV`) is col 1, plus the level
-/// of four research nodes (each for five talents, counted at the node's own max here), plus 3 for
-/// nine talents with Menagerie unlock 19. Talents 40 and 41 are named at runtime and only show
-/// with Menagerie unlock 14.
+/// of four research nodes (each for five talents), plus 3 for nine talents with Menagerie unlock
+/// 19. The max here counts each node at its own max and the unlock as owned; a talent at the cap
+/// the game allows today (the nodes' placed levels, the unlock only when owned) is Locked and says
+/// what lifts it. Talents 40 and 41 are named at runtime and only show with Menagerie unlock 14.
 fn legend_talents(save: &Save) -> Mechanic {
     let levels = save.numbers("Spelunk", &[18]);
     let grid = rows("ResGridSquares", &[]);
     let grid_levels = save.numbers("Research", &[0]);
     let node_max = |n: usize| grid.get(n).map_or(0.0, |r| cell(r, 1));
+    let node_placed = |n: usize| at(&grid_levels, n).clamp(0.0, node_max(n));
+    let node_name = |n: usize| grid.get(n).map(|r| label(text(r, 0))).unwrap_or_default();
     let raises: [(usize, [usize; 5]); 4] = [(130, [2, 13, 3, 18, 5]), (131, [9, 23, 33, 1, 16]), (132, [20, 31, 19, 27, 8]), (152, [34, 30, 29, 6, 26])];
     let menagerie = [35, 33, 36, 0, 20, 31, 15, 32, 6];
+    let unlock19 = menagerie_unlock(save, 19);
     // The talent shown in each icon slot: `Spelunky[26][k]` is the talent index.
     let order = rows("Spelunky", &[26]);
     let icon_for = |i: usize| order.iter().position(|v| num(v) as usize == i).map(|k| format!("LegendTalentIcon{k}"));
@@ -1112,19 +1256,35 @@ fn legend_talents(save: &Save) -> Mechanic {
         .enumerate()
         .take(42)
         .map(|(i, r)| {
-            let mut max = cell(r, 1);
+            // `max` is the most it can ever reach, `cap` what the game allows now, `lifts` what
+            // closes the gap.
+            let (mut max, mut cap) = (cell(r, 1), cell(r, 1));
+            let mut lifts = Vec::new();
             for (node, talents) in &raises {
                 if talents.contains(&i) {
-                    max += node_max(*node);
+                    let (placed, most) = (node_placed(*node), node_max(*node));
+                    max += most;
+                    cap += placed;
+                    if placed < most {
+                        lifts.push(format!("each level of the {} research node adds 1 ({placed} of {most} placed)", node_name(*node)));
+                    }
                 }
             }
             if menagerie.contains(&i) {
                 max += 3.0;
+                if unlock19 {
+                    cap += 3.0;
+                } else {
+                    lifts.push(format!("{} adds 3", menagerie_unlock_name(19)));
+                }
             }
             let name = if i >= 40 { runtime_names[i - 40].to_string() } else { label(text(r, 0)) };
             let mut it = Item::new(name, icon_for(i), at(&levels, i), max);
             if i >= 40 && it.level <= 0.0 && !menagerie_unlock(save, 14) {
                 it.how = Some(format!("Added by {}.", menagerie_unlock_name(14)));
+                it.state = State::Locked;
+            } else if it.level < it.max && it.level >= cap && !lifts.is_empty() {
+                it.how = Some(format!("At its max of {} for now: {}.", whole(cap), lifts.join(", and ")));
                 it.state = State::Locked;
             } else if it.level < it.max {
                 // N.js levels a talent by 1 while available points are above 0 and it's under
@@ -1142,8 +1302,8 @@ fn legend_talents(save: &Save) -> Mechanic {
     let mut raised: Vec<Raise> = raises
         .iter()
         .map(|(n, talents)| {
-            let name = grid.get(*n).map(|r| label(text(r, 0))).unwrap_or_default();
-            let (have, max) = (at(&grid_levels, *n).clamp(0.0, node_max(*n)), node_max(*n));
+            let name = node_name(*n);
+            let (have, max) = (node_placed(*n), node_max(*n));
             Raise {
                 name: format!("Research node {name} ({have} of {max} levels)"),
                 amount: format!("+1 max level per node level, up to +{max}, on {}", talent_names(talents)),
@@ -1151,7 +1311,7 @@ fn legend_talents(save: &Save) -> Mechanic {
             }
         })
         .collect();
-    raised.push(Raise { name: capital(&menagerie_unlock_name(19)), amount: format!("+3 max levels on {}", talent_names(&menagerie)), owned: menagerie_unlock(save, 19) });
+    raised.push(Raise { name: capital(&menagerie_unlock_name(19)), amount: format!("+3 max levels on {}", talent_names(&menagerie)), owned: unlock19 });
     raised.push(Raise { name: capital(&menagerie_unlock_name(14)), amount: format!("Adds two talents: {}", runtime_names.join(" and ")), owned: menagerie_unlock(save, 14) });
     m.raises = raised;
     // Each point earned: one per 100 Class LVs past 400 on each character (N.js
@@ -1175,10 +1335,12 @@ fn legend_talents(save: &Save) -> Mechanic {
 /// for no cap. An upgrade shows once the one in col 6 is bought (N.js `ShopUpgVisible`). N.js
 /// `ShopUpgCost`, before discounts: B = (10 + level) × col 1 × 9.5^col 7 × 6.3^col 8, ×1e7 from
 /// row 52 and ×1e9 more from row 66; the first purchase costs B, later ones 0.25 × B × col
-/// 2^level + level² + 5 × level. Paid with Amber (`Spelunk[4][0]`).
+/// 2^level + level² + 5 × level. Paid with Amber (`Spelunk[4][0]`), which the game shows in the
+/// tier of the last contract bought (see [`amber_unit`]); costs and the figure here do the same.
 fn spelunk_upgrades(save: &Save) -> Mechanic {
     let levels = save.numbers("Spelunk", &[5]);
     let have = held(save, "Spelunk", &[4, 0]);
+    let (per, amber) = amber_unit(&levels);
     let table = rows("SpelunkUpg", &[]);
     let cost = |t: usize, r: &Value, lv: f64| {
         let mut b = (10.0 + lv) * cell(r, 1) * 9.5f64.powf(cell(r, 7)) * 6.3f64.powf(cell(r, 8));
@@ -1202,7 +1364,7 @@ fn spelunk_upgrades(save: &Save) -> Mechanic {
                 it.how = Some(format!("Shows once you buy {prev}."));
                 it.state = State::Locked;
             } else {
-                pay(&mut it, cost(i, r, raw.max(-1.0)), have, "Amber", true);
+                pay(&mut it, cost(i, r, raw.max(-1.0)) / per, have / per, amber, true);
                 if raw >= 0.0 {
                     reached.push((items.len(), reach(raw, it.max, have, |lv| cost(i, r, lv))));
                 }
@@ -1211,7 +1373,94 @@ fn spelunk_upgrades(save: &Save) -> Mechanic {
         items.push(it);
     }
     let mut m = mech("spelunk-shop", 7, "Spelunking Shop", pic("CaveShopUpg0".into()), Count::Levels, "levels", items);
-    m.have = Some(have_line(format!("{} Amber", big(have)), &m.items, &reached, true));
+    m.have = Some(have_line(format!("{} {amber}", big(have / per)), &m.items, &reached, true));
     m.note = Some("Only the upgrades with a cap. The rest level up without end.".into());
     m
+}
+
+/// How the game counts amber: N.js `AmberDenominator` divides every amount by 1e36, 1e21, 1e9 or
+/// 1e3 once the Pink, Red, Green or Blue Amber contract (shop rows 66, 51, 41, 20) has a level,
+/// and colours it to match. Before any contract it's plain amber.
+fn amber_unit(levels: &[f64]) -> (f64, &'static str) {
+    [(66, 1e36, "Pink Amber"), (51, 1e21, "Red Amber"), (41, 1e9, "Green Amber"), (20, 1e3, "Blue Amber")]
+        .into_iter()
+        .find(|(row, ..)| at(levels, *row) >= 1.0)
+        .map_or((1.0, "Amber"), |(_, per, name)| (per, name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(text: &str) -> Save {
+        Save::parse(text).unwrap()
+    }
+
+    /// A list of `n` zeros with `set` filled in, as save JSON.
+    fn list_of(n: usize, set: &[(usize, &str)]) -> String {
+        let mut v = vec!["0".to_string(); n];
+        for &(i, x) in set {
+            v[i] = x.to_string();
+        }
+        format!("[{}]", v.join(","))
+    }
+
+    #[test]
+    fn minigame_shops_wait_for_their_node_and_research_level() {
+        let closed = jelly(&parse(r#"{"OptLacc": []}"#));
+        assert!(closed.items.iter().all(|i| i.state == State::Locked && i.how.as_deref() == Some("Opens with the Jelly Operator Linguistics research node.")));
+        assert!(closed.have.as_ref().is_some_and(|h| h.text.starts_with("Nothing here can be bought until you level the Jelly Operator Linguistics")));
+
+        let grid = list_of(240, &[(187, "1")]);
+        let lv = list_of(21, &[(20, "20")]);
+        let open = jelly(&parse(&format!(r#"{{"OptLacc": [], "Lv0_0": {lv}, "Research": [{grid}]}}"#)));
+        // Slot 0 is free and needs Research LV 15; slot 3 needs 15 + 6.
+        let order = slots(44);
+        let at_slot = |k: usize| open.items.iter().find(|i| i.picture.as_deref() == Some(format!("JellyUpg{}", order[k]).as_str())).unwrap();
+        assert_eq!(at_slot(0).state, State::Ready);
+        assert_eq!(at_slot(3).state, State::Locked);
+        assert_eq!(at_slot(3).how.as_deref(), Some("Needs Research LV 21 (yours is 20)."));
+    }
+
+    #[test]
+    fn legend_talents_stop_at_the_cap_the_game_allows_today() {
+        let spelunk = format!("[{}, [2, 3]]", vec!["[]"; 18].join(","));
+        let m = legend_talents(&parse(&format!(r#"{{"OptLacc": [], "Spelunk": {spelunk}}}"#)));
+        // Coral Restoration: 2 base, +3 with Menagerie unlock 19, which this account lacks.
+        assert_eq!(m.items[0].state, State::Locked);
+        assert!(m.items[0].how.as_deref().is_some_and(|h| h.starts_with("At its max of 2 for now: the Menagerie unlock")));
+        // Greatest Drop Party Ever: 4 base, raised by a research node with no level placed.
+        assert_eq!(m.items[1].how.as_deref(), Some("Each level costs 1 Legend Talent PTS."));
+    }
+
+    #[test]
+    fn amber_reads_in_the_last_contract_tier() {
+        assert_eq!(amber_unit(&[]), (1.0, "Amber"));
+        let mut levels = vec![-1.0; 68];
+        levels[20] = 4.0;
+        assert_eq!(amber_unit(&levels), (1e3, "Blue Amber"));
+        levels[51] = 1.0;
+        assert_eq!(amber_unit(&levels), (1e21, "Red Amber"));
+    }
+
+    #[test]
+    fn advice_fish_opens_by_account_level() {
+        let lv = list_of(21, &[(0, "4500")]);
+        let m = advice_fish(&parse(&format!(r#"{{"OptLacc": [], "Lv0_0": {lv}, "Money_0": 1e60}}"#)));
+        assert_eq!(m.items[0].state, State::Ready);
+        // Upgrade 1 opens past 4,300, upgrade 2 past 4,600.
+        assert_eq!(m.items[1].state, State::Ready);
+        assert_eq!(m.items[2].state, State::Locked);
+        assert_eq!(m.items[2].how.as_deref(), Some("Needs an Account LV over 4,600 (yours is 4,500)."));
+    }
+
+    #[test]
+    fn podiums_count_the_emporium_and_event_shop() {
+        let ninja = format!("[{}, [0,0,0,0,0,0,0,0,0,\"P\"]]", vec!["[]"; 102].join(","));
+        let opt = list_of(312, &[(311, "\"z\"")]);
+        let m = gallery_podiums(&parse(&format!(r#"{{"OptLacc": {opt}, "Ninja": {ninja}}}"#)));
+        // 1 to start, +1 Emporium 42, +1 event shop 26.
+        assert_eq!(m.items[2].how.as_deref(), Some("Owned and empty: put a trophy on it."));
+        assert!(m.items[3].how.as_deref().is_some_and(|h| h.starts_with("Not owned yet")));
+    }
 }

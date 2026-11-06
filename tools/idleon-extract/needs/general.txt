@@ -14,3 +14,9 @@ picture InvBag\d+
 picture InvStorage\w+
 picture EventShopBuy\d+
 table ClassFamilyBonuses
+# Achievements: TaskAch + world letter + place in the world (A1 is RegAchieves row 0).
+picture TaskAch[A-F]\d+
+# Carry Capacity card: the first bag of each kind.
+cell PlayerCapacities 2 1
+# Greenstacks: every stackable item's own picture (the item ID).
+listed general stackable

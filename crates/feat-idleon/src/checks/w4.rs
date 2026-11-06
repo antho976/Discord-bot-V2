@@ -134,14 +134,16 @@ fn costs(row: &Value, from: usize) -> String {
     format!("Costs {}.", parts.join(", "))
 }
 
-/// Kitchens: `Cooking[i][0]` is 2 once bought. The game prices kitchens 2 to 10 (N.js
+/// Kitchens: `Cooking[i][0]` is 1 or more once bought. The game prices kitchens 2 to 10 (N.js
 /// `CookingNewKitchenCoinCost`); kitchen upgrade levels have no cap.
 fn kitchens(save: &Save) -> Mechanic {
     // N.js `CookingNewKitchenCoinCost`, by kitchen index.
     const COINS: [f64; 10] = [0.0, 82e5, 75e6, 4e8, 8e9, 5e10, 213e10, 6e13, 2e15, 1e17];
     let items = (0..10)
         .map(|i| {
-            let owned = save.at("Cooking", &[i, 0]).map(num).unwrap_or(0.0) >= 2.0;
+            // 0 is not bought; buying sets 1 (idle), cooking 2, a new recipe 3, and stopping
+            // goes back to 1 (N.js, the kitchen's click handler).
+            let owned = save.at("Cooking", &[i, 0]).map(num).unwrap_or(0.0) >= 1.0;
             let mut it = Item::new(format!("Kitchen {}", i + 1), None, f64::from(owned), 1.0);
             if !owned {
                 it.how = Some(if i == 0 { "Comes with the Cooking skill.".into() } else { format!("Costs {} coins at the kitchen sign.", big(COINS[i])) });
@@ -165,9 +167,10 @@ fn jewels(save: &Save) -> Mechanic {
             if !it.done() {
                 it.how = Some(costs(r, 5));
             }
-            // Jewels paid for with Spelunking items ("SpiA1") are World 7 content.
+            // Jewels paid for with World 6 drops ("SpiA1" is Leafy Droplet, "SpiB2b" Dark Lantern,
+            // with World 6 territory spices) are World 6 content; a World 6 account can own them.
             if text(r, 5).starts_with("Spi") {
-                it.world = Some(7);
+                it.world = Some(6);
             }
             it
         })
@@ -371,7 +374,8 @@ fn territories(save: &Save) -> Mechanic {
         .filter(|(row, r)| *row != 14 && !text(r, 4).starts_with("Filler"))
         .enumerate()
         .map(|(i, (_, r))| {
-            let mut it = Item::new(label(text(r, 4)), pic(format!("PetTerritory{}", i + 2)), f64::from((i as f64) < beaten), 1.0);
+            // `PetTerritory{i + 2}` is the whole territory panel, with no icon in it: none reads small.
+            let mut it = Item::new(label(text(r, 4)), None, f64::from((i as f64) < beaten), 1.0);
             let world = territory_world(i);
             if world > 4 {
                 it.world = Some(world);
@@ -387,7 +391,7 @@ fn territories(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    mech("territories", 4, "Breeding Territories", pic("PetTerritory2".into()), Count::Done, "beaten", items)
+    mech("territories", 4, "Breeding Territories", None, Count::Done, "beaten", items)
 }
 
 /// The last rift: the first one whose task (`RiftStuff[4][rift]`, text in `RiftStuff[0]`) is
@@ -407,32 +411,35 @@ fn rift_task(s: &str) -> String {
     c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
 }
 
-/// Rift: `Rift[0]` is the rift you're in, `Rift[1]` the progress on its task. The task is
-/// `RiftStuff[4][rift % 100]` (N.js `RiftStuff` "Task"), its goal `RiftStuff[5][task]`, done
-/// once progress reaches it (`RiftCompleted`).
+/// Rift: `Rift[0]` counts the rifts done (the game greets you in the next, "WELCOME_TO_RIFT_" +
+/// (Rift[0] + 1)), `Rift[1]` is the progress on that rift's task. The task is
+/// `RiftStuff[4][Rift[0] % 100]` (N.js `RiftStuff` "Task"), its goal `RiftStuff[5][task]`, done
+/// once progress reaches it (`RiftCompleted`). The rift opens with the Rift Ripper's quest
+/// (`QuestComplete_c.Rift_Ripper1` is 1), before any rift is done.
 fn rift(save: &Save) -> Mechanic {
-    let level = save.at("Rift", &[0]).map(num).unwrap_or(0.0);
+    let done = save.at("Rift", &[0]).map(num).unwrap_or(0.0).max(0.0);
+    let open = done > 0.0 || (0..save.characters().clamp(1, 12)).any(|c| save.at(&format!("QuestComplete_{c}"), &[]).and_then(|q| q.get("Rift_Ripper1")).map(num).unwrap_or(0.0) >= 1.0);
     let last = last_rift();
-    let mut it = Item::new("Rift reached", None, level, last);
-    if level > 0.0 && level < last {
-        let task = rows("RiftStuff", &[4]).get((level.clamp(0.0, 1e6) as usize) % 100).map_or(0, |v| num(v) as usize);
+    let mut it = Item::new("Rifts done", None, done, last);
+    if open && done < last {
+        let task = rows("RiftStuff", &[4]).get((done.min(1e6) as usize) % 100).map_or(0, |v| num(v) as usize);
         let goal = rows("RiftStuff", &[5]).get(task).map_or(0.0, |v| num(v));
         let progress = save.at("Rift", &[1]).map(num).unwrap_or(0.0);
         let text = rows("RiftStuff", &[0]).get(task).and_then(|v| v.as_str()).map(rift_task).unwrap_or_default();
-        it.how = Some(format!("{text}: {} of {} so far.", big(progress.floor()), big(goal)));
+        it.how = Some(format!("Rift {}: {text}, {} of {} so far.", done + 1.0, big(progress.floor()), big(goal)));
         if goal > 0.0 && progress >= goal {
             it.state = State::Ready;
         }
-    } else if level <= 0.0 {
+    } else if !open {
         it.how = Some("Opens with the Rift Ripper's quest in World 4.".into());
     }
     mech("rift", 4, "Rift", None, Count::Levels, "rifts", vec![it])
 }
 
-/// Rift bonuses: `RiftStuff[1]` in fives (x, y, name, ..); bonus t is on from rift 5(t+1)
-/// (N.js `riftBonus`). The last entry, Rift Guy, isn't a bonus.
+/// Rift bonuses: `RiftStuff[1]` in fives (x, y, name, ..); bonus t is on once 5(t+1) rifts are
+/// done (N.js `riftBonus`: `Rift[0]` >= 5(t+1)). The last entry, Rift Guy, isn't a bonus.
 fn rift_bonuses(save: &Save) -> Mechanic {
-    let level = save.at("Rift", &[0]).map(num).unwrap_or(0.0);
+    let raw = save.at("Rift", &[0]).map(num).unwrap_or(0.0).max(0.0);
     let list = rows("RiftStuff", &[1]);
     let items = list
         .chunks(5)
@@ -440,9 +447,9 @@ fn rift_bonuses(save: &Save) -> Mechanic {
         .filter_map(|(t, c)| {
             let name = c.get(2)?.as_str()?;
             let at_rift = 5.0 * (t as f64 + 1.0);
-            let mut it = Item::new(label(name), None, f64::from(level >= at_rift), 1.0);
+            let mut it = Item::new(label(name), None, f64::from(raw >= at_rift), 1.0);
             if !it.done() {
-                it.how = Some(format!("Opens at rift {at_rift}; you're at rift {level}."));
+                it.how = Some(format!("Opens once rift {at_rift} is done; you've done {raw}."));
                 it.state = State::Locked;
             }
             (name != "Rift_Guy").then_some(it)

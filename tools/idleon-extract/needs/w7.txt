@@ -30,7 +30,9 @@ picture ResObj\d+
 picture ResPosty\d+
 picture MenaIcon[OPY]\d+
 picture MenaJelly\d
-picture ClamW
+picture Clam
 picture ClamPearl[01]
 picture CoralDivUpg
 picture (Pearl6|Refinery[3-9]|w7B1b|w7B11b|Critter(7A|9A|10A|11)|Timecandy5|Soul8|Quest110|Ladle|SilverPen)
+# Advice Fish card: the fish.
+picture W7_fish

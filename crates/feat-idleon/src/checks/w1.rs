@@ -80,41 +80,50 @@ fn statue_step(it: &mut Item, i: usize, tier: f64, chisels: f64, stored: f64) {
 ///
 /// N.js (the bribe shop's buy button): a bribe costs col 2 in coins of the character buying it;
 /// -1 is locked until the "Art of the..." bribe before it (col 4 `BribeExpansion`, col 5
-/// "first&count") opens its set. Two cost 99999999, which means they open another way: row 26
-/// with a Fishing Island shop purchase (`OptLacc[165]`), row 33 with the Jade Emporium's
-/// New Bribes.
+/// "first&count") opens its set. Two cost 99999999 and also need something else first: row 26
+/// a Fishing Island shop purchase (`OptLacc[165]` at 1), row 33 the Jade Emporium's New Bribes
+/// (`EmporiumBonus(36)`). Once they have it, the 99,999,999 coins is their price.
 fn bribes(save: &Save) -> Mechanic {
     let status = save.numbers("BribeStatus", &[]);
     let table = rows("BribeDescriptions", &[]);
     let real = table.len().saturating_sub(1);
-    let coins = richest(save);
+    let coins = spendable(save);
+    let opened_another_way = |i: usize| match i {
+        26 => save.option(165) == 1.0,
+        33 => super::general::emporium_owned(save, 36),
+        _ => false,
+    };
     let opener = |i: usize| {
         table.iter().take(real).find(|r| {
             let span: Vec<usize> = text(r, 5).split('&').filter_map(|x| x.parse().ok()).collect();
             text(r, 4) == "BribeExpansion" && span.len() == 2 && (span[0]..span[0] + span[1]).contains(&i)
         })
     };
-    let mut affordable = 0;
+    let (mut open, mut affordable) = (0, 0);
     let items: Vec<Item> = table
         .iter()
         .take(real)
         .enumerate()
         .map(|(i, r)| {
             let st = at(&status, i);
-            let mut it = Item::new(label(text(r, 0)), pic(format!("BribeO{}", text(r, 3))), f64::from(st >= 1.0), 1.0);
+            // A bribe's own picture (`BribeO*`) is an empty envelope with a faint stamp: none reads at
+            // this size, so bribes go without.
+            let mut it = Item::new(label(text(r, 0)), None, f64::from(st >= 1.0), 1.0);
             let cost = cell(r, 2);
             if st >= 1.0 {
             } else if st < 0.0 {
                 let by = opener(i).map_or_else(|| "an earlier bribe".to_string(), |o| label(text(o, 0)));
                 it.how = Some(format!("Opens when you buy {by}."));
                 it.state = State::Locked;
-            } else if cost == 99_999_999.0 {
+            } else if cost == 99_999_999.0 && !opened_another_way(i) {
                 it.how = Some(match i {
                     26 => "Opens with a purchase in the Fishing Island shop.".into(),
                     33 => "Opens with New Bribes in the Jade Emporium.".into(),
                     _ => "Opens another way, not with coins.".into(),
                 });
+                it.state = State::Locked;
             } else {
+                open += 1;
                 it.how = Some(format!("Costs {} coins.", big(cost)));
                 if cost <= coins {
                     it.state = State::Ready;
@@ -124,13 +133,21 @@ fn bribes(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("bribes", 1, "Bribes", pic("BribeOpigbank".into()), Count::Done, "bought", items);
-    m.have = Some(coin_have(coins, if affordable == 0 { "Not enough for any bribe open to you yet.".into() } else { format!("Enough for {affordable} of the bribes open to you.") }));
+    let mut m = mech("bribes", 1, "Bribes", None, Count::Done, "bought", items);
+    m.have = Some(coin_have(
+        coins,
+        match (open, affordable) {
+            (0, _) => "Every bribe open to you is bought.".into(),
+            (_, 0) => "Not enough for any bribe open to you yet.".into(),
+            _ => format!("Enough for {affordable} of the bribes open to you."),
+        },
+    ));
     m
 }
 
-/// Star signs: `StarSg` maps a sign's name to 1 once found. The obtainable ones are those the
-/// star map places (`SSignInfoUI` col 4 isn't 999).
+/// Star signs: `StarSg` has a key for each sign found. The obtainable ones are those the star
+/// map places (`SSignInfoUI` col 4 isn't 999). The game counts a sign by its key being there,
+/// whatever the value (`hasOwnProperty`), and the map's first sign as found always (`0==i`).
 fn star_signs(save: &Save) -> Mechanic {
     let found = save.get("StarSg").and_then(Value::as_object);
     // N.js (the star map's buy): a sign costs `SSignInfoUI` col 4 star points, `OptLacc[40]`.
@@ -141,6 +158,8 @@ fn star_signs(save: &Save) -> Mechanic {
         .map(|r| cell(r, 0) as usize)
         .collect();
     let signs = rows("StarSigns", &[]);
+    // The sign at the map's first place, found from the start.
+    let first = rows("SSignInfoUI", &[]).first().map(|r| cell(r, 0) as usize);
     let mut idx: Vec<usize> = placed.into_iter().filter(|&i| i < signs.len()).collect();
     idx.sort_unstable();
     idx.dedup();
@@ -148,8 +167,9 @@ fn star_signs(save: &Save) -> Mechanic {
         .into_iter()
         .map(|i| {
             let name = text(signs[i], 0);
-            let on = found.and_then(|f| f.get(name)).map(num).unwrap_or(0.0) > 0.0;
-            let mut it = Item::new(label(name), None, f64::from(on), 1.0);
+            // A paste with no star map at all reads as nothing found.
+            let on = found.is_some_and(|f| first == Some(i) || f.contains_key(name));
+            let mut it = Item::new(label(name), star_picture(i, on), f64::from(on), 1.0);
             if !on {
                 let cost = cost_of.iter().find(|(k, _)| *k == i).map_or(0.0, |(_, c)| *c);
                 it.how = Some(if cost > 0.0 { format!("Costs {cost:.0} star points on the star map.") } else { "Free on the star map once you reach it.".into() });
@@ -157,10 +177,32 @@ fn star_signs(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("star-signs", 1, "Star Signs", None, Count::Done, "found", items);
+    let mut m = mech("star-signs", 1, "Star Signs", pic("SignStar2a".into()), Count::Done, "found", items);
     let points = save.option(40);
     m.have = Some(Have { figure: format!("{points:.0} star points"), text: "Star points come from constellations. A sign opens once the map reaches it.".into() });
     m
+}
+
+/// How the star map draws sign `sign` once found (N.js `StarSignStuff`): `SSignInfoUI` rows 0-33
+/// are the first galaxy, 34-63 the second, 64-93 the third, and a sign is its galaxy's star,
+/// `SignStar2a`, `2b` or `2c` once found (2 is the bright look; 0, dim, is one not found). The
+/// three Cosmos signs, at the galaxies' places 21, 9 and 15, have their own `SignStarA2`, `B2`,
+/// `C2` (and `A0`...).
+fn star_picture(sign: usize, found: bool) -> Option<String> {
+    let look = if found { 2 } else { 0 };
+    let row = rows("SSignInfoUI", &[]).iter().position(|r| cell(r, 0) as usize == sign)?;
+    let (galaxy, place) = match row {
+        0..=33 => (0, row),
+        34..=63 => (1, row - 34),
+        64..=93 => (2, row - 64),
+        _ => return None,
+    };
+    let letter = char::from(b'a' + galaxy as u8);
+    Some(if place == [21, 9, 15][galaxy] {
+        format!("SignStar{}{look}", letter.to_ascii_uppercase())
+    } else {
+        format!("SignStar{look}{letter}")
+    })
 }
 
 /// Stamps: `StampLv[tab][i]`. No hard max, so this counts stamps collected; the level shows
@@ -213,14 +255,30 @@ pub(super) fn class_icon(save: &Save, i: usize) -> Option<String> {
     (class > 0.0).then(|| format!("ClassIcons{class:.0}"))
 }
 
-/// Coins: each character keeps its own (`Money_i`), and an account purchase is paid by the
-/// character buying it, so the richest character is what one purchase can spend.
-pub(super) fn richest(save: &Save) -> f64 {
-    (0..characters(save)).map(|i| save.get(&format!("Money_{i}")).map(num).unwrap_or(0.0)).filter(|c| c.is_finite()).fold(0.0, f64::max)
+/// Coins one purchase can spend: each character keeps its own (`Money_i`) and pays for what it
+/// buys, and the storage chest's coin bank (`MoneyBANK`) can be withdrawn by any character first
+/// (N.js, the chest's deposit and withdraw buttons move coins between `Money` and `MoneyBANK`).
+/// So the richest character's coins plus the bank.
+pub(super) fn spendable(save: &Save) -> f64 {
+    let richest = (0..characters(save)).map(|i| coins_of(save, &format!("Money_{i}"))).fold(0.0, f64::max);
+    richest + bank(save)
+}
+
+/// What character `i` can spend: its own coins plus the bank.
+pub(super) fn spendable_by(save: &Save, i: usize) -> f64 {
+    coins_of(save, &format!("Money_{i}")) + bank(save)
+}
+
+fn bank(save: &Save) -> f64 {
+    coins_of(save, "MoneyBANK")
+}
+
+fn coins_of(save: &Save, key: &str) -> f64 {
+    save.get(key).map(num).filter(|c| c.is_finite()).unwrap_or(0.0).max(0.0)
 }
 
 pub(super) fn coin_have(coins: f64, text: String) -> Have {
-    Have { figure: format!("{} coins on your richest character", big(coins)), text }
+    Have { figure: format!("{} coins (richest character plus the bank)", big(coins)), text }
 }
 
 /// The storage chest's stacks by item (`ChestOrder`, `ChestQuantity`).
@@ -484,7 +542,7 @@ fn forge_cost(i: usize, level: f64) -> f64 {
 
 fn forge(save: &Save) -> Mechanic {
     let levels = save.numbers("ForgeLV", &[]);
-    let coins = richest(save);
+    let coins = spendable(save);
     let names = GAME.extra("w1").get("forge_upgrades").and_then(Value::as_array).cloned().unwrap_or_default();
     let maxes = rows("RANDOlist", &[42]);
     let items = maxes
@@ -503,7 +561,8 @@ fn forge(save: &Save) -> Mechanic {
             it
         })
         .collect::<Vec<Item>>();
-    let text = reach_text(&items, coins, forge_cost, "Not enough for the next level of any forge upgrade yet.");
+    let none = if items.iter().all(Item::done) { "Every forge upgrade is maxed." } else { "Not enough for the next level of any forge upgrade yet." };
+    let text = reach_text(&items, coins, forge_cost, none);
     let mut m = mech("forge", 1, "Forge Upgrades", pic("ForgeA".into()), Count::Levels, "levels", items);
     m.have = Some(coin_have(coins, text));
     m
@@ -533,7 +592,7 @@ fn anvil_points(save: &Save) -> Mechanic {
             if p < at(&caps, 0) {
                 let cost = ((p.powi(3) + 50.0) * (1.0 + p / 100.0)).round();
                 it.how = Some(format!("Next coin point costs {} coins.", big(cost)));
-                if cost <= save.get(&format!("Money_{i}")).map(num).unwrap_or(0.0) {
+                if cost <= spendable_by(save, i) {
                     it.state = State::Ready;
                 }
             } else if q < at(&caps, 1) {
@@ -548,7 +607,10 @@ fn anvil_points(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("anvil-points", 1, "Anvil Points", None, Count::Levels, "points", items);
+    // The card shows the Smithing skill's icon, an anvil. A skill's icon is `ClassIcons` at the
+    // skill's place in `ClassNames` (N.js draws skill i, `Lv0[i + 1]`, as ClassIcons 42 + i).
+    let smithing = rows("ClassNames", &[]).iter().position(|n| n.as_str() == Some("SMITHING")).map(|i| format!("ClassIcons{i}"));
+    let mut m = mech("anvil-points", 1, "Anvil Points", smithing, Count::Levels, "points", items);
     m.note = Some(format!("Each character can buy {:.0} points with coins and {:.0} with monster parts. Costs are before your discounts.", at(&caps, 0), at(&caps, 1)));
     m
 }
@@ -569,18 +631,33 @@ fn minigame_cost(darts: bool, i: usize, level: f64) -> f64 {
     c.floor()
 }
 
+/// When each upgrade can be picked: once the shop's four levels together reach this. N.js, the
+/// Hoops and Darts panels: upgrade r is picked only if the sum of `OptLacc[first..first + 4]` is
+/// at least the r-th of "0,12,80,200" (Hoops, `GenINFO[112]`) or "0,40,150,250" (Darts,
+/// `GenINFO[120]`). They're written in the panels' code, not in a table the extractor reads.
+const HOOPS_OPENS: [f64; 4] = [0.0, 12.0, 80.0, 200.0];
+const DARTS_OPENS: [f64; 4] = [0.0, 40.0, 150.0, 250.0];
+
 /// The points each shop spends sit just before its levels: `OptLacc[first - 1]`.
 fn minigame(save: &Save, key: &'static str, name: &'static str, extra: &str, picture: &str) -> Mechanic {
     let shop = GAME.extra("w1").get(extra);
     let first = shop.and_then(|s| s.get("first")).map(num).unwrap_or(0.0) as usize;
     let names = shop.and_then(|s| s.get("upgrades")).and_then(Value::as_array).cloned().unwrap_or_default();
     let darts = extra == "darts";
+    let opens = if darts { DARTS_OPENS } else { HOOPS_OPENS };
     let points = if first > 0 { save.option(first - 1).max(0.0) } else { 0.0 };
+    let total: f64 = (0..opens.len()).map(|i| save.option(first + i).max(0.0)).sum();
     let items: Vec<Item> = names
         .iter()
         .enumerate()
         .map(|(i, d)| {
             let mut it = Item::new(label(&d.as_str().unwrap_or("").replace("}x_", "")), pic(format!("{picture}{i}")), save.option(first + i), 0.0);
+            let need = opens.get(i).copied().unwrap_or(0.0);
+            if total < need {
+                it.how = Some(format!("Opens at {need:.0} total levels (you have {total:.0})."));
+                it.state = State::Locked;
+                return it;
+            }
             let cost = minigame_cost(darts, i, it.level);
             it.how = Some(format!("Next level costs {} points.", big(cost)));
             if cost <= points {
@@ -589,10 +666,10 @@ fn minigame(save: &Save, key: &'static str, name: &'static str, extra: &str, pic
             it
         })
         .collect();
-    let text = reach_text(&items, points, |i, lv| minigame_cost(darts, i, lv), "Not enough for the next level of any upgrade yet.");
+    let text = reach_text(&items, points, |i, lv| if items[i].state == State::Locked { f64::INFINITY } else { minigame_cost(darts, i, lv) }, "Not enough for the next level of any upgrade yet.");
     let mut m = mech(key, 1, name, pic(format!("{picture}0")), Count::Open, "levels", items);
     m.have = Some(Have { figure: format!("{} {name} points", big(points)), text });
-    m.note = Some("These upgrades have no cap. Points come from playing the minigame.".into());
+    m.note = Some("These upgrades have no cap, and the later ones open as your levels here add up. Points come from playing the minigame.".into());
     m
 }
 
@@ -606,11 +683,15 @@ fn vault_name(s: &str) -> String {
 /// `Research[63]` with the Gilded Awnings event shop item, plus 10 with the Potluck Pack for
 /// rows whose cap is 2 or more and for the Glimbo rows (`Research[26]`), plus, for those,
 /// your Glimbo trades (`Research[12][slot]` in the save), times 1 + Glimbo BOGO Offer + Glimbo
-/// VIP Pass where `Research[29][slot]` is 1. Every raise counts as if you had it.
+/// VIP Pass where `Research[29][slot]` is 1. The max counts every raise as owned; the buy button
+/// stops at the cap the account has now (`UpgVault[i] < VaultUpgMaxLV(i)`), so an upgrade there
+/// is Locked and names the raise that lifts it.
 ///
 /// Cost in coins, N.js `VaultUpgCost`, before your discounts: (level + (col 1 + level) ×
-/// col 2^level), × 1.1^(i - 61) past row 61. A row opens once all vault levels together reach
-/// col 6 (`VaultUpgUNLOCKED`).
+/// col 2^level), × 1.1^(i - 61) past row 61. Rows open by count (`VaultUpgUNLOCKED`): row i is
+/// open while i is under the number of rows whose col 6 the vault's total level has reached.
+/// Col 6 doesn't always rise (rows 5 and 6 are 80 and 75), so row i opens at the (i + 1)th
+/// smallest col 6, not its own.
 fn vault_cost(row: &Value, i: usize, level: f64) -> f64 {
     let base = level + (cell(row, 1) + level) * cell(row, 2).powf(level);
     if i > 61 { base * 1.1f64.powf(i as f64 - 61.0) } else { base }
@@ -618,31 +699,74 @@ fn vault_cost(row: &Value, i: usize, level: f64) -> f64 {
 
 fn upgrade_vault(save: &Save) -> Mechanic {
     let levels = save.numbers("UpgVault", &[]);
-    let coins = richest(save);
+    let coins = spendable(save);
     let table = rows("UpgradeVault", &[]);
     let total: f64 = levels.iter().take(table.len()).filter(|l| l.is_finite()).sum();
     let trades = save.numbers("Research", &[12]);
     let list = |i: usize| rows("Research", &[i]).iter().map(|v| num(v) as usize).collect::<Vec<usize>>();
     let (glimbo, scaled, awnings) = (list(26), list(29), list(63));
     let bogo = rows("ResGridSquares", &[]).get(169).map_or(0.0, |r| cell(r, 1));
-    let items = table
+    // What the account owns of each raise.
+    let awnings_owned = super::general::event_shop_owned(save, 65);
+    let vip = super::general::event_shop_owned(save, 40);
+    let bundle = save.get("bon_u").map(num).unwrap_or(0.0) >= 1.0 || save.get("BundlesReceived").and_then(|b| b.get("bon_u")).map(num).unwrap_or(0.0) >= 1.0;
+    let grid = at(&save.numbers("Research", &[0]), 169);
+    // N.js `Grid_Bonus(169, 1)`: the node's level, rounded.
+    let bogo_now = grid.round().clamp(0.0, bogo);
+    let mut opens_at: Vec<f64> = table.iter().map(|r| cell(r, 6)).collect();
+    opens_at.sort_by(f64::total_cmp);
+    let open_rows = table.iter().filter(|r| total >= cell(r, 6)).count();
+    // Each item with the cap the account has now.
+    let (items, caps): (Vec<Item>, Vec<f64>) = table
         .iter()
         .enumerate()
         .map(|(i, r)| {
             let base = cell(r, 4);
-            let mut max = base;
+            let slot = glimbo.iter().position(|&g| g == i);
+            let (mut max, mut now) = (base, base);
+            let mut lifts: Vec<&str> = Vec::new();
             if awnings.contains(&i) {
                 max += 25.0;
+                if awnings_owned {
+                    now += 25.0;
+                } else {
+                    lifts.push("Gilded Awnings");
+                }
             }
-            if let Some(slot) = glimbo.iter().position(|&g| g == i) {
-                let mult = if scaled.get(slot) == Some(&1) { 1.0 + bogo + 1.0 } else { 1.0 };
-                max += 10.0 + mult * at(&trades, slot);
-            } else if base >= 2.0 {
+            // The Potluck Pack skips the one-level unlocks, but not Glimbo's upgrades.
+            if base >= 2.0 || slot.is_some() {
                 max += 10.0;
+                if bundle {
+                    now += 10.0;
+                } else {
+                    lifts.push("the Potluck Pack");
+                }
+            }
+            if let Some(slot) = slot {
+                let trades = at(&trades, slot).max(0.0);
+                if scaled.get(slot) == Some(&1) {
+                    max += (2.0 + bogo) * trades;
+                    now += (1.0 + bogo_now + f64::from(u8::from(vip))) * trades;
+                    if trades > 0.0 && !vip {
+                        lifts.push("the Glimbo VIP Pass");
+                    }
+                    if trades > 0.0 && bogo_now < bogo {
+                        lifts.push("the Glimbo BOGO Offer");
+                    }
+                } else {
+                    max += trades;
+                    now += trades;
+                }
+                // Each trade adds to the cap too, so more of them always lift it.
+                lifts.push("more Glimbo trades");
             }
             let mut it = Item::new(vault_name(text(r, 0)), pic(format!("VaultUpg{i}")), at(&levels, i), max);
-            if total < cell(r, 6) {
-                it.how = Some(format!("Opens at {} total vault levels. You have {}.", cell(r, 6), total));
+            if i >= open_rows {
+                let need = opens_at.get(i).copied().unwrap_or(f64::INFINITY);
+                it.how = Some(format!("Opens at {} total vault levels. You have {}.", big(need), big(total)));
+                it.state = State::Locked;
+            } else if !it.done() && it.level >= now {
+                it.how = Some(format!("At your cap of {}. {} it.", big(now), lifts_it(&lifts)));
                 it.state = State::Locked;
             } else if !it.done() {
                 let cost = vault_cost(r, i, it.level);
@@ -651,10 +775,13 @@ fn upgrade_vault(save: &Save) -> Mechanic {
                     it.state = State::Ready;
                 }
             }
-            it
+            (it, now)
         })
-        .collect::<Vec<Item>>();
-    let text = reach_text(&items, coins, |i, lv| if items[i].state == State::Locked { f64::INFINITY } else { table.get(i).map_or(f64::INFINITY, |r| vault_cost(r, i, lv)) }, "Not enough for the next level of any open upgrade yet.");
+        .unzip();
+    let cost = |i: usize, lv: f64| {
+        if items[i].state == State::Locked || lv >= caps[i] { f64::INFINITY } else { table.get(i).map_or(f64::INFINITY, |r| vault_cost(r, i, lv)) }
+    };
+    let text = reach_text(&items, coins, cost, "Not enough for the next level of any open upgrade yet.");
     let mut m = mech("upgrade-vault", 1, "Upgrade Vault", pic("VaultUpg0".into()), Count::Levels, "levels", items);
     m.have = Some(coin_have(coins, format!("{text} Costs are before your discounts, so you get a little further.")));
     let awn_n = awnings.iter().filter(|&&i| i < table.len()).count();
@@ -664,17 +791,15 @@ fn upgrade_vault(save: &Save) -> Mechanic {
     let no_awnings = names_where(&|i, r| !awnings.contains(&i) && !(cell(r, 4) < 2.0 && !glimbo.contains(&i)));
     let scaled_n = scaled.iter().filter(|&&f| f == 1).count();
     m.note = Some(format!(
-        "Each max counts every raise below as owned. Glimbo trades (W7) add max levels to the {} upgrades Glimbo trades for, one level per trade, more on {} of them with the VIP Pass and BOGO Offer.",
+        "Each max counts every raise below as owned; an upgrade at the cap you have now says which raise lifts it. Glimbo trades (W7) add max levels to the {} upgrades Glimbo trades for, one level per trade, more on {} of them with the VIP Pass and BOGO Offer.",
         glimbo.len(),
         scaled_n
     ));
-    let bundle = save.get("bon_u").map(num).unwrap_or(0.0) >= 1.0 || save.get("BundlesReceived").and_then(|b| b.get("bon_u")).map(num).unwrap_or(0.0) >= 1.0;
-    let grid = at(&save.numbers("Research", &[0]), 169);
     m.raises = vec![
         Raise {
             name: "Gilded Awnings, event shop".into(),
             amount: format!("+25 max levels on {awn_n} of the {} upgrades: all but the one-level unlocks ({one_level}) and {no_awnings}", table.len()),
-            owned: super::general::event_shop_owned(save, 65),
+            owned: awnings_owned,
         },
         Raise {
             name: "Potluck Pack bundle".into(),
@@ -684,7 +809,7 @@ fn upgrade_vault(save: &Save) -> Mechanic {
         Raise {
             name: "Glimbo VIP Pass, event shop".into(),
             amount: format!("+1 more max level per Glimbo trade on {scaled_n} Glimbo upgrades (2 a trade instead of 1)"),
-            owned: super::general::event_shop_owned(save, 40),
+            owned: vip,
         },
         Raise {
             name: "Glimbo BOGO Offer, W7 research grid".into(),
@@ -693,4 +818,82 @@ fn upgrade_vault(save: &Save) -> Mechanic {
         },
     ];
     m
+}
+
+/// "Gilded Awnings or the Potluck Pack lifts": the raises that would lift a cap, named as in the
+/// card's list of raises, as the start of a sentence.
+fn lifts_it(lifts: &[&str]) -> String {
+    let list = match lifts {
+        [] => return "The raises below lift".into(),
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+    };
+    let mut c = list.chars();
+    let first = c.next().map(|f| f.to_uppercase().collect::<String>()).unwrap_or_default();
+    format!("{first}{} lifts", c.as_str())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item<'a>(m: &'a Mechanic, name: &str) -> &'a Item {
+        m.items.iter().find(|i| i.name == name).unwrap_or_else(|| panic!("no {name}"))
+    }
+
+    #[test]
+    fn coins_count_the_bank() {
+        let s = Save::parse(r#"{"OptLacc": [0], "Money_0": 5, "Money_1": 7, "MoneyBANK": 100, "playerNames": ["a", "b"]}"#).unwrap();
+        assert_eq!(spendable(&s), 107.0);
+        assert_eq!(spendable_by(&s, 0), 105.0);
+    }
+
+    #[test]
+    fn vault_rows_open_by_count_and_stop_at_your_cap() {
+        // 77 levels reach six rows' col 6 (0, 7, 13, 42, 49 and row 6's 75): rows 0 to 5 open.
+        let s = Save::parse(r#"{"OptLacc": [0], "UpgVault": [77]}"#).unwrap();
+        let m = upgrade_vault(&s);
+        assert_ne!(item(&m, "Steel Guard").state, State::Locked);
+        assert_eq!(item(&m, "Evolving Talent").how.as_deref(), Some("Opens at 80 total vault levels. You have 77."));
+        // Bigger Damage at its own 500 with no raise owned: rich, but nothing to buy.
+        let s = Save::parse(r#"{"OptLacc": [0], "UpgVault": [500], "MoneyBANK": 1e300}"#).unwrap();
+        let m = upgrade_vault(&s);
+        let it = item(&m, "Bigger Damage");
+        assert_eq!((it.state, it.max), (State::Locked, 535.0));
+        assert_eq!(it.how.as_deref(), Some("At your cap of 500. Gilded Awnings or the Potluck Pack lifts it."));
+        assert!(!m.have.as_ref().unwrap().text.contains("Bigger Damage"));
+    }
+
+    #[test]
+    fn minigame_upgrades_open_as_levels_add_up() {
+        // Hoops points at OptLacc[418], levels at [419..423]: 64 levels, 623 points.
+        let mut opt = vec![0.0; 423];
+        (opt[418], opt[419], opt[420]) = (623.0, 26.0, 38.0);
+        let s = Save::parse(&format!(r#"{{"OptLacc": {opt:?}}}"#)).unwrap();
+        let m = minigame(&s, "basketball", "Basketball", "hoops", "HoopShop");
+        assert_eq!(m.items[1].state, State::Ready);
+        assert_eq!(m.items[2].state, State::Locked);
+        assert_eq!(m.items[2].how.as_deref(), Some("Opens at 80 total levels (you have 64)."));
+        let text = &m.have.as_ref().unwrap().text;
+        assert!(!text.contains(&m.items[2].name) && !text.contains(&m.items[3].name), "{text}");
+    }
+
+    #[test]
+    fn a_star_sign_counts_by_its_key() {
+        let s = Save::parse(r#"{"OptLacc": [0], "StarSg": {"Flexo_Bendo": null}}"#).unwrap();
+        let m = star_signs(&s);
+        let found: Vec<&str> = m.items.iter().filter(|i| i.level > 0.0).map(|i| i.name.as_str()).collect();
+        assert_eq!(found, ["The Buff Guy", "Flexo Bendo"]);
+    }
+
+    #[test]
+    fn the_art_of_the_bail_costs_coins_once_the_island_opens_it() {
+        let mut opt = vec![0.0; 166];
+        let status: Vec<f64> = (0..41).map(|i| if i == 26 { 0.0 } else { 1.0 }).collect();
+        for (flag, state) in [(0.0, State::Locked), (1.0, State::Ready)] {
+            opt[165] = flag;
+            let s = Save::parse(&format!(r#"{{"OptLacc": {opt:?}, "BribeStatus": {status:?}, "MoneyBANK": 2e8}}"#)).unwrap();
+            assert_eq!(bribes(&s).items[26].state, state);
+        }
+    }
 }

@@ -2,13 +2,13 @@
 #   table <Name>                  a data table the checks read (N.js `X.Name=function(){return [...]}`)
 #   picture <regex>               pictures whose game ID fully matches (copied into the crate)
 #   cell <Table> <path|-> <col>   pictures named by a table cell; path is row indexes like 4 or 2,1
+#   listed <area> <key>           pictures named by a list in game.json extra/<area>/<key> (extra_<area>.py)
 table StampDescriptions
 table StatueInfo
 table BribeDescriptions
 table StarSigns
 table SSignInfoUI
 picture Statue[GOZ]?\d+
-picture BribeO.+
 picture Stamp[ABC]\d+
 table UpgradeVault
 table Research
@@ -24,3 +24,6 @@ table ShopLocations
 table MapDispName
 table Owlz
 table MapAFKtarget
+picture ForgeA
+# Star signs: each galaxy's found star, and the three Cosmos signs' own.
+picture SignStar([02][abc]|[ABC][02])

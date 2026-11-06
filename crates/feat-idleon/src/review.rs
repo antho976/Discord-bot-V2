@@ -331,6 +331,10 @@ fn world_avg(mechanics: &[Mechanic], world: u8) -> Option<f64> {
 /// How many the do-next list shows.
 pub const NEXT: usize = 6;
 
+/// Shops paid in gems (mostly bought with money) or in event points (only while an event runs):
+/// never a "do next", however far behind they are. Their cards still show them.
+const NOT_NEXT: &[&str] = &["gem-shop", "event-shop"];
+
 /// Do next: first, mechanics furthest under their own world's average (the ones the rest of
 /// the account has left behind), earlier worlds first when equal since they cost less; then
 /// cheap finishes, mechanics with one to three items left. Worlds you haven't reached,
@@ -339,7 +343,7 @@ fn pick_next(mechanics: &[Mechanic], reached: u8, not_started: &[usize]) -> Vec<
     let mut behind: Vec<(f64, usize, f64)> = Vec::new();
     let mut nearly: Vec<(usize, usize)> = Vec::new();
     for (i, m) in mechanics.iter().enumerate() {
-        if m.world > reached || m.done() || m.total() <= 0.0 || not_started.contains(&i) {
+        if m.world > reached || m.done() || m.total() <= 0.0 || not_started.contains(&i) || NOT_NEXT.contains(&m.key) {
             continue;
         }
         let avg = world_avg(mechanics, m.world).unwrap_or(0.0);
@@ -373,7 +377,9 @@ fn pick_next(mechanics: &[Mechanic], reached: u8, not_started: &[usize]) -> Vec<
         if out.len() >= NEXT {
             break;
         }
-        out.push(Next { mechanic: i, why: Why::Behind { world_avg: avg } });
+        if !out.iter().any(|n| n.mechanic == i) {
+            out.push(Next { mechanic: i, why: Why::Behind { world_avg: avg } });
+        }
     }
     out
 }
@@ -412,6 +418,35 @@ mod tests {
         let next = pick_next(&ms, 2, &[]);
         assert_eq!(next.first().map(|n| ms[n.mechanic].key), Some("c"));
         assert!(next.iter().all(|n| ms[n.mechanic].key != "a" && ms[n.mechanic].key != "d"));
+    }
+
+    #[test]
+    fn a_mechanic_is_next_once() {
+        // Four far behind fill the "behind" share; e is both behind and one item from done.
+        let mut e: Vec<(f64, f64)> = vec![(1.0, 1.0); 4];
+        e.push((0.0, 100.0));
+        let ms = vec![
+            mech("x", 2, &[(1.0, 1.0)]),
+            mech("y", 2, &[(1.0, 1.0)]),
+            mech("z", 2, &[(1.0, 1.0)]),
+            mech("a", 2, &[(1.0, 100.0)]),
+            mech("b", 2, &[(1.0, 100.0)]),
+            mech("c", 2, &[(1.0, 100.0)]),
+            mech("d", 2, &[(1.0, 100.0)]),
+            mech("e", 2, &e),
+        ];
+        let next = pick_next(&ms, 2, &[]);
+        let mut seen: Vec<usize> = next.iter().map(|n| n.mechanic).collect();
+        let n = seen.len();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), n, "{:?}", next.iter().map(|n| ms[n.mechanic].key).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn paid_shops_are_never_next() {
+        let ms = vec![mech("stamps", 0, &[(10.0, 10.0), (10.0, 10.0)]), mech("gem-shop", 0, &[(0.0, 10.0), (1.0, 10.0)]), mech("event-shop", 0, &[(1.0, 10.0)])];
+        assert!(pick_next(&ms, 7, &[]).is_empty());
     }
 
     #[test]

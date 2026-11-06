@@ -42,8 +42,8 @@ const BODY_LIMIT: usize = save::MAX_BYTES * 3;
 static READING: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(2));
 const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Longest problem report, like a suggestion.
-const REPORT_MAX: usize = 1500;
+/// Longest problem report with its header, the suggestion box's own limit.
+const REPORT_MAX: usize = feat_community::SUGGESTION_MAX;
 
 /// Open to anyone with the link by default (owner, 2026-11-06); the dashboard switch closes it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -110,7 +110,7 @@ async fn dashboard(State(ctx): State<Ctx>, user: User, Path(guild): Path<u64>) -
         (ui::settings_form(&page, &page.path(KEY), html! {
             (ui::section("Closed test", Some("While it's closed, only staff and testers can open the page, and it says it's a test with a way to report problems to the suggestion box."), ui::card(html! {
                 (ui::field_toggle("closed", "Closed test", Some("Off opens the page to anyone with the link."), s.closed))
-                (ui::field_role(&ctx, guild, "testers_role", "Testers", Some("Members with this role can use the page while it's closed. Staff always can."), s.testers_role))
+                (ui::field_role(&ctx, guild, "testers_role", "Testers", Some("Members with this role can use the page while it's closed. Staff always can. Testers sign in on the page with Discord, so they also need dashboard access (People)."), s.testers_role))
             })))
         }))
         p { a.btn href={ "/p/" (guild) "/idleon" } { "Open the account check" (ui::icon(Icon::Enter)) } }
@@ -135,13 +135,16 @@ async fn form(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>)
 /// The paste from the request body. The page's form is `text/plain` (`save=<the JSON>`, nothing
 /// escaped), which skips percent-decoding a megabyte; a URL-encoded body still works.
 fn paste(headers: &bot_core::axum::http::HeaderMap, body: &[u8]) -> String {
-    let plain = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|t| t.starts_with("text/plain"));
-    if plain {
+    if plain(headers) {
         let raw = String::from_utf8_lossy(body);
         let raw = raw.strip_prefix("save=").unwrap_or(&raw);
         return raw.trim().to_string();
     }
     FormData::parse(body).get("save").map(str::to_string).unwrap_or_default()
+}
+
+fn plain(headers: &bot_core::axum::http::HeaderMap) -> bool {
+    headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|t| t.starts_with("text/plain"))
 }
 
 async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>, headers: bot_core::axum::http::HeaderMap, body: bot_core::axum::body::Bytes) -> WebResult {
@@ -150,17 +153,29 @@ async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64>
     if !a.allowed {
         return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None }).into_response());
     }
-    let Ok(Ok(_slot)) = bot_core::tokio::time::timeout(WAIT, READING.acquire()).await else {
-        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some("A lot of saves are being read right now. Try again in a few seconds.") }).into_response());
-    };
+    // A plain-text paste is the save itself (plus "save="): refuse an oversized one before it is
+    // decoded. Either kind is decoded before it waits in line, so a slot is never held by a paste
+    // that's too big, and what waits is the paste, not its (up to three times bigger) body.
+    if plain(&headers) && body.len() > save::MAX_BYTES + 16 {
+        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some(save::SaveError::TooBig.message()) }).into_response());
+    }
     let text = paste(&headers, &body);
     drop(body);
     if text.is_empty() {
         return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some("Paste your save first.") }).into_response());
     }
+    if text.len() > save::MAX_BYTES {
+        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some(save::SaveError::TooBig.message()) }).into_response());
+    }
+    let Ok(Ok(slot)) = bot_core::tokio::time::timeout(WAIT, READING.acquire()).await else {
+        return Ok(page::render(&ctx, guild, &a, page::State::Ask { error: Some("A lot of saves are being read right now. Try again in a few seconds.") }).into_response());
+    };
     // About 14 ms of CPU: run it off the bot's two runtime threads, so Discord events and other
     // pages never wait behind a check (at most two at once, `READING`).
     let html = bot_core::tokio::task::spawn_blocking(move || {
+        // The slot is held by the work, not the request: a visitor who leaves mid-check drops the
+        // request, but the check runs on, and must keep counting against the two.
+        let _slot = slot;
         let review = match save::Save::parse(&text) {
             Ok(s) => review::Review::new(&s, checks::all(&s), checks::world_reached(&s)),
             Err(e) => return page::render(&ctx, guild, &a, page::State::Ask { error: Some(e.message()) }).into_string(),
@@ -206,10 +221,6 @@ async fn report(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64
     let Some(user) = viewer.0.as_ref().filter(|_| a.allowed) else {
         return Ok((bot_core::axum::http::StatusCode::FORBIDDEN, "Sign in with Discord first, then send it again.").into_response());
     };
-    let what: String = form.text("text").trim().chars().take(REPORT_MAX).collect();
-    if what.is_empty() {
-        return Ok((bot_core::axum::http::StatusCode::BAD_REQUEST, "Write what looks wrong first.").into_response());
-    }
     let account: String = form.text("account").trim().chars().take(40).collect();
     let card: String = form.text("card").trim().chars().take(60).collect();
     let mut content = String::from("Account check report");
@@ -220,6 +231,13 @@ async fn report(State(ctx): State<Ctx>, viewer: MaybeUser, Path(guild): Path<u64
         content.push_str(&format!(", {card}"));
     }
     content.push_str(":\n");
+    // The suggestion box keeps REPORT_MAX characters in all, header included: cut the member's
+    // text to what's left, so nothing is lost silently off the end.
+    let room = REPORT_MAX.saturating_sub(content.chars().count());
+    let what: String = form.text("text").trim().chars().take(room).collect();
+    if what.is_empty() {
+        return Ok((bot_core::axum::http::StatusCode::BAD_REQUEST, "Write what looks wrong first.").into_response());
+    }
     content.push_str(&what);
     let msg = match feat_community::submit_suggestion(&ctx, guild, user.id, &content).await {
         Ok(Some(n)) => format!("Sent to staff as suggestion #{n}. Thanks."),

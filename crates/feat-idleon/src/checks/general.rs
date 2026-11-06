@@ -75,8 +75,9 @@ fn cards(save: &Save) -> Mechanic {
             if count <= 0.0 {
                 it.how = Some(format!("Drops from {name}."));
             } else if (stars as usize) < CARD_STARS {
-                let need = (card_step(stars as usize, cell(r, 2), mob == "Boss3B") + 1.0 - count).ceil().max(1.0);
-                it.how = Some(format!("{} more cards for the next star.", big(need)));
+                // The count has to pass the step, so a step of 1.5 needs 2 cards, not 3.
+                let need = (card_step(stars as usize, cell(r, 2), mob == "Boss3B").floor() + 1.0 - count).ceil().max(1.0);
+                it.how = Some(if need == 1.0 { "1 more card for the next star.".into() } else { format!("{} more cards for the next star.", big(need)) });
             }
             it.level_name = Some(match (count > 0.0, stars as u8) {
                 (false, _) => "Not found".into(),
@@ -97,6 +98,9 @@ fn cards(save: &Save) -> Mechanic {
 /// Achievements: `AchieveReg[i]` is -1 once done. Only the first 420 are ever saved. They come
 /// in blocks of 70 per world (N.js names each by `27 + floor(i / 70)` for its world's page, and
 /// rows 70, 140, 210 start the World 2, 3 and 4 sets).
+///
+/// Pictures: the achievements page draws achievement i as `TaskAch` + `Number2Letter[27 + i/70]`
+/// (A for World 1) + its place in that world counted from 1, `TaskAchA1` for row 0.
 fn achievements(save: &Save) -> Mechanic {
     let reg = save.numbers("AchieveReg", &[]);
     let items = rows("RegAchieves", &[])
@@ -106,7 +110,7 @@ fn achievements(save: &Save) -> Mechanic {
         .filter(|(_, r)| text(r, 0) != "FILLERZZZ_ACH")
         .map(|(i, r)| {
             let done = at(&reg, i) == -1.0;
-            let mut it = Item::new(label(text(r, 0)), None, f64::from(done), 1.0);
+            let mut it = Item::new(label(text(r, 0)), achievement_picture(i), f64::from(done), 1.0);
             it.world = later((i / 70 + 1) as f64, 1);
             if !done {
                 it.how = achievement_how(text(r, 2));
@@ -190,12 +194,20 @@ fn gem_shop(save: &Save) -> Mechanic {
 
 /// The letters the event shop writes into `OptLacc[311]`, one per item owned: the game's
 /// `Number2Letter`, "_", a to z, A to Z, then the `TournyStuff` characters in order.
-fn number_to_letter() -> Vec<String> {
-    let mut v: Vec<String> = std::iter::once('_').chain('a'..='z').chain('A'..='Z').map(String::from).collect();
-    for row in GAME.rows("TournyStuff").iter().take(13) {
-        v.extend(row.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string));
-    }
-    v
+fn number_to_letter() -> &'static [String] {
+    static LETTERS: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+        let mut v: Vec<String> = std::iter::once('_').chain('a'..='z').chain('A'..='Z').map(String::from).collect();
+        for row in GAME.rows("TournyStuff").iter().take(13) {
+            v.extend(row.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string));
+        }
+        v
+    });
+    &LETTERS
+}
+
+/// Whether thing `i` is in a bought-letters string (the event shop's and the Jade Emporium's).
+fn letter_bought(owned: &str, i: usize) -> bool {
+    number_to_letter().get(i).is_some_and(|l| owned.contains(l.as_str()))
 }
 
 /// Event shop: `NinjaInfo[39]` pairs "Name_@_what_it_does" and cost. Item i is owned when
@@ -238,25 +250,41 @@ fn event_shop(save: &Save) -> Mechanic {
 
 /// Whether event shop item `i` is bought.
 pub(super) fn event_shop_owned(save: &Save, i: usize) -> bool {
-    let owned = save.at("OptLacc", &[311]).and_then(Value::as_str).unwrap_or("");
-    number_to_letter().get(i).is_some_and(|l| owned.contains(l.as_str()))
+    letter_bought(save.at("OptLacc", &[311]).and_then(Value::as_str).unwrap_or(""), i)
 }
 
-/// "2.4M", "380K": a stack size as the storage chest shows it.
+/// Whether Jade Emporium upgrade `i` is bought. N.js `EmporiumBonus`: its letter (see
+/// [`number_to_letter`]) is in `Ninja[102][9]`.
+pub(super) fn emporium_owned(save: &Save, i: usize) -> bool {
+    letter_bought(save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or(""), i)
+}
+
+/// "2.4M", "380K": a stack size as the storage chest shows it. Rounded down, so 9.98M never
+/// reads as the 10M that makes a stack green.
 fn short(n: f64) -> String {
+    let down = |v: f64, places: i32| {
+        let p = 10f64.powi(places);
+        (v * p).floor() / p
+    };
     match n {
-        n if n >= 1e9 => format!("{:.1}B", n / 1e9),
-        n if n >= 1e6 => format!("{:.1}M", n / 1e6),
-        n if n >= 1e3 => format!("{:.0}K", n / 1e3),
+        n if n >= 1e9 => format!("{:.1}B", down(n / 1e9, 1)),
+        n if n >= 1e6 => format!("{:.1}M", down(n / 1e6, 1)),
+        n if n >= 1e3 => format!("{:.0}K", down(n / 1e3, 0)),
         n => format!("{n:.0}"),
     }
+}
+
+/// Achievement `i`'s icon, as the achievements page draws it: "TaskAch" + `Number2Letter[27 +
+/// i / 70]` (A for World 1) + its place in that world from 1, "TaskAchA1" for row 0.
+pub(super) fn achievement_picture(i: usize) -> Option<String> {
+    number_to_letter().get(27 + i / 70).map(|l| format!("TaskAch{l}{}", i % 70 + 1))
 }
 
 /// Greenstacks: 10M or more of one item in storage. The game keeps every item that has ever
 /// been at 10M in `GreenStacks`, and counts that list. Checked against the stackable items
 /// (`extra.general.stackable`: item types starting b, c or d) in your storage chest
 /// (`ChestOrder`/`ChestQuantity`) plus the ones already on the list, biggest stacks first;
-/// with nothing stored, against every stackable item.
+/// with nothing stored, against every stackable item. An item's picture is its own ID.
 fn greenstacks(save: &Save) -> Mechanic {
     let stackable: Vec<&str> = GAME.extra("general").get("stackable").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     let green: Vec<&str> = save.get("GreenStacks").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
@@ -283,7 +311,7 @@ fn greenstacks(save: &Save) -> Mechanic {
         .map(|(id, n)| {
             let done = n >= 1e7 || greens.contains(id);
             let name = GAME.item_name(id).map(str::to_string).unwrap_or_else(|| words(id));
-            let mut it = Item::new(name, None, f64::from(done), 1.0);
+            let mut it = Item::new(name, pic(id.to_string()), f64::from(done), 1.0);
             if !done {
                 it.level_name = Some(if n > 0.0 { format!("{} of 10M", short(n)) } else { "Not in storage".into() });
                 if n > 0.0 {
@@ -336,7 +364,8 @@ fn class_levels(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("class-levels", 0, "Class Levels", None, Count::Open, "levels", items);
+    // The card shows the Beginner's class icon, the class every character starts as.
+    let mut m = mech("class-levels", 0, "Class Levels", pic("ClassIcons1".into()), Count::Open, "levels", items);
     m.note = Some("Class levels have no cap.".into());
     m
 }
@@ -448,8 +477,23 @@ fn carry_capacity(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("carry-capacity", 0, "Carry Capacity", None, Count::Levels, "bag tiers", items);
+    // The card shows the first kind's first bag (the Mini Materials Pouch).
+    let first_bag = table.get(1).map(|r| text(r, 1).to_string()).filter(|b| b.starts_with("MaxCapBag"));
+    let mut m = mech("carry-capacity", 0, "Carry Capacity", first_bag, Count::Levels, "bag tiers", items);
     let best = kinds.iter().map(|(_, top, _)| at(&tiers, *top)).fold(0.0, f64::max);
     m.note = Some(format!("Bag tiers reached across the {} item kinds; the best bags hold {} a slot.", kinds.len(), short(best)));
     m
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_next_star_passes_a_half_step() {
+        // Chaotic Chizoar's first star needs more than 1.5 cards: from 1, one more.
+        let m = cards(&Save::parse(r#"{"OptLacc": [0], "Cards0": {"Boss3B": 1}}"#).unwrap());
+        let it = m.items.iter().find(|i| i.name == "Chaotic Chizoar").unwrap();
+        assert_eq!(it.how.as_deref(), Some("1 more card for the next star."));
+    }
 }

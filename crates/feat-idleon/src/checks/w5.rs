@@ -25,8 +25,13 @@ fn letter_in(s: &str, i: usize) -> bool {
     NUMBER_TO_LETTER.chars().nth(i).is_some_and(|c| s.contains(c))
 }
 
-fn superbit_owned(save: &Save, i: usize) -> bool {
+pub(crate) fn superbit_owned(save: &Save, i: usize) -> bool {
     letter_in(save.at("Gaming", &[12]).and_then(Value::as_str).unwrap_or(""), i)
+}
+
+/// A superbit's name as its page shows it, `GamingUpg` col 3 ("Isotope|Discovery").
+pub(crate) fn superbit_name(i: usize) -> String {
+    rows("GamingUpg", &[]).get(i).map_or_else(|| format!("superbit {i}"), |r| label(&text(r, 3).replace('|', "_")))
 }
 
 /// A research grid node has at least one level (`Research[0][i]`), which is what the game's
@@ -51,7 +56,7 @@ fn value(save: &Save, key: &str, path: &[usize]) -> f64 {
 const ARTIFACT_TIERS: [&str; 8] = ["Not found", "Found", "Ancient", "Eldritch", "Sovereign", "Omnipotent", "Transcendent", "Verisimilitude"];
 
 /// Sailing artifacts: `Sailing[3][i]` is the tier, 0 not found to 7 Verisimilitude. What opens
-/// each form (N.js, the artifact tooltip): Eldritch from rift 30 (`Rift[0]` over 29), Sovereign
+/// each form (N.js, the artifact tooltip): Eldritch once 30 rifts are done (`Rift[0]` over 29), Sovereign
 /// with Jade Emporium 35, Omnipotent with Spelunking lore bonus 0 (`OmnipotentArtifactsUnlocked`),
 /// Transcendent with research node 109 (`TranscendentArtifactsUnlocked`), Verisimilitude with
 /// Menagerie unlock 0 (`VerisimilitudeUnlocked`).
@@ -60,7 +65,7 @@ fn artifacts(save: &Save) -> Mechanic {
     let emporium = save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or("");
     let gate = |tier: usize| -> Option<String> {
         match tier {
-            3 if value(save, "Rift", &[0]) <= 29.0 => Some("Eldritch forms open at rift 30.".into()),
+            3 if value(save, "Rift", &[0]) <= 29.0 => Some("Eldritch forms open once rift 30 is done.".into()),
             4 if !letter_in(emporium, 35) => Some("Sovereign forms come with the Jade Emporium's Sovereign Artifacts.".into()),
             5 if !lore(save, 0) => Some("Omnipotent forms come with Spelunking's first lore bonus.".into()),
             6 if !grid_node(save, 109) => Some(format!("Transcendent forms come with research node {}.", grid_name(109))),
@@ -150,12 +155,13 @@ fn blessing_raises(save: &Save) -> BlessingRaises {
 
 /// What a blessing level is paid in, by god (N.js, the blessing button): Snehebatu, Nobisect,
 /// Goharut and Kattlekruk take gaming bits (`Gaming[0]`), Arctis gold bars (`Sailing[1][0]`),
-/// Harriep and Purrmep coins (a character's own `Money_c`), the rest particles (`Divinity[39]`).
+/// Harriep and Purrmep coins (a character's own `Money_c`, which the storage bank can top up), the
+/// rest particles (`Divinity[39]`).
 fn blessing_purse(save: &Save, god: usize) -> (&'static str, f64) {
     match god {
         0 | 2 | 4 | 8 => ("bits", value(save, "Gaming", &[0])),
         1 => ("gold bars", value(save, "Sailing", &[1, 0])),
-        3 | 6 => ("coins", (0..save.characters().min(12)).map(|c| value(save, &format!("Money_{c}"), &[])).fold(0.0, f64::max)),
+        3 | 6 => ("coins", super::w1::spendable(save)),
         _ => ("particles", value(save, "Divinity", &[39])),
     }
 }
@@ -304,11 +310,11 @@ fn superbits(save: &Save) -> Mechanic {
 fn snail(save: &Save) -> Mechanic {
     let level = value(save, "GamingSprout", &[32, 1]);
     let enc = value(save, "GamingSprout", &[32, 2]);
-    let table = rows("GamingUpg", &[]);
-    let bit = |i: usize| table.get(i).map_or_else(|| format!("superbit {i}"), |r| label(&text(r, 3).replace('|', "_")));
+    let bit = superbit_name;
     let raises = [(29, 10.0), (30, 5.0), (40, 10.0)];
     let cap = 25.0 + raises.iter().filter(|(i, _)| superbit_owned(save, *i)).map(|(_, a)| a).sum::<f64>();
-    let mut it = Item::new("Immortal Snail", None, level, 49.0);
+    // The snail is gaming item 7 (`GamingSprout[25 + 7]`), drawn as `GamingItem7`.
+    let mut it = Item::new("Immortal Snail", pic("GamingItem7".into()), level, 49.0);
     if level < 49.0 {
         if level >= cap {
             let missing: Vec<String> = raises.iter().filter(|(i, _)| !superbit_owned(save, *i)).map(|(i, _)| bit(*i)).collect();
@@ -323,7 +329,7 @@ fn snail(save: &Save) -> Mechanic {
             it.how = Some(format!("Next level: {:.1}% chance each try, before your Cavern bonus.", (chance.clamp(0.0, 1.0) * 100.0)));
         }
     }
-    let mut m = mech("snail", 5, "Immortal Snail", None, Count::Levels, "levels", vec![it]);
+    let mut m = mech("snail", 5, "Immortal Snail", pic("GamingItem7".into()), Count::Levels, "levels", vec![it]);
     m.raises = raises.iter().map(|(i, a)| Raise { name: format!("Superbit {}", bit(*i)), amount: format!("+{a} max snail levels"), owned: superbit_owned(save, *i) }).collect();
     m.note = Some("The snail's cap starts at 25. Three superbits raise it to 50, but the snail can't level past 49: the chance of a level at 49 is zero.".into());
     m
@@ -348,7 +354,8 @@ fn islands(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let name = ISLANDS.get(i).map_or_else(|| format!("Island {}", i + 1), |s| (*s).to_string());
             let found = state.len() > i && at(&state, i) == -1.0;
-            let mut it = Item::new(name, None, f64::from(found), 1.0);
+            // The island's box on the sailing map shows its treasure, `SailT{1 + 2i}`, beside its name.
+            let mut it = Item::new(name, pic(format!("SailT{}", 1 + 2 * i)), f64::from(found), 1.0);
             // World's End and The Maw open with World 7 content.
             if i == 15 || i == 16 {
                 it.world = Some(7);
@@ -374,7 +381,7 @@ fn islands(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    mech("islands", 5, "Sailing Islands", pic("SailingNewIsle1".into()), Count::Done, "discovered", items)
+    mech("sailing-islands", 5, "Sailing Islands", pic("SailingNewIsle1".into()), Count::Done, "discovered", items)
 }
 
 /// What boat `i` costs in gold bars (N.js `NewCaptBoatSlot` with 1):

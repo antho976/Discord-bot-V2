@@ -109,17 +109,25 @@ pub(crate) fn mech(key: &'static str, world: u8, name: &'static str, picture: Op
 /// A big number the way the game writes it: 400K, 1.5M, 96 Qa. Past the names, 1.2e45.
 pub(crate) fn big(n: f64) -> String {
     const NAMES: [&str; 11] = ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "O", "N"];
-    if !n.is_finite() {
+    if n.is_nan() {
+        return "0".into();
+    }
+    if n.is_infinite() {
         return "∞".into();
     }
     if n.abs() < 1000.0 {
         return format!("{}", n.round());
     }
-    let k = ((n.abs().log10() / 3.0).floor() as usize).min(NAMES.len());
+    let mut k = ((n.abs().log10() / 3.0).floor() as usize).min(NAMES.len());
+    let mut v = n / 1000f64.powi(k as i32);
+    // 999,960 rounds to 1000K: that's 1M.
+    if v.abs().round() >= 1000.0 {
+        k += 1;
+        v /= 1000.0;
+    }
     if k >= NAMES.len() {
         return format!("{n:.1e}");
     }
-    let v = n / 1000f64.powi(k as i32);
     let digits = if v.abs() >= 10.0 { 0 } else { 1 };
     let s = format!("{v:.digits$}");
     let s = s.trim_end_matches(".0");
@@ -142,6 +150,8 @@ mod tests {
         assert_eq!(big(1_500_000.0), "1.5M");
         assert_eq!(big(9.64e16), "96Qa");
         assert_eq!(big(512.0), "512");
+        assert_eq!(big(999_960.0), "1M");
+        assert_eq!(big(999.6), "1000");
     }
 
     #[test]
@@ -165,6 +175,12 @@ mod tests {
         let s = Save::parse(r#"{"OptLacc": []}"#).unwrap();
         let ms = all(&s);
         assert!(ms.len() >= 25);
+        // The key is the card's id and its Show all data: two cards can't share one.
+        let mut keys: Vec<&str> = ms.iter().map(|m| m.key).collect();
+        keys.sort_unstable();
+        let n = keys.len();
+        keys.dedup();
+        assert_eq!(keys.len(), n, "two mechanics share a key");
         for m in &ms {
             assert!(!m.items.is_empty(), "{} has no items", m.key);
             assert_eq!(m.have(), 0.0, "{} reads progress from nothing", m.key);

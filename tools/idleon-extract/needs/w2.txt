@@ -8,6 +8,8 @@ picture aSiga\d+
 picture PachiShopICON\d+
 picture aUpgrades[OGPY]\d+
 picture aEmptyCauldronB[0-3]
+# Pay2Win: each bubble cauldron's and liquid's jar.
+picture aJar[BL][0-3]
 picture UIboxUpg\d+
 picture IslandSail[0-5]
 picture Quest69
