@@ -24,3 +24,10 @@ picture Boss6A
 picture SummC\d
 picture SummSt\d
 picture FarmCrop230
+# Market tabs: Day Market (Day and Night Market's card) and Exotic Market.
+picture FarmStT[03]
+# Land Rank Database upgrades and Summoning upgrades, by row.
+picture RankUpg\d+
+picture SumUpgIc\d+
+# Jade Emporium rows (JadeUpg col 3): the 48 on sale; later ones are UNDER_CONSTRUCTION hard hats.
+picture NjJupg([1-3]?\d|4[0-7])

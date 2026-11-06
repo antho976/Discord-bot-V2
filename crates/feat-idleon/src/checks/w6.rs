@@ -98,6 +98,10 @@ fn shout(s: &str) -> String {
 /// Emperor and Exotic discounts). `MarketUpgUnlocked`: a row opens at col 6 crops found.
 ///
 /// Before World 7 the caps leave Day 'N' Nite out: it is a World 7 research node.
+///
+/// Pictures: the card is the Day Market tab, `FarmStT0` (N.js draws the tabs as `FarmStT{tab}`).
+/// An upgrade has no picture of its own: the market draws its name over a coloured tray,
+/// `FarmStFood`, picked by slot.
 fn markets(save: &Save) -> Mechanic {
     let levels = save.numbers("FarmUpg", &[]);
     let w7 = super::world_reached(save) >= 7;
@@ -140,7 +144,7 @@ fn markets(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("farm-market", 6, "Day and Night Market", None, Count::Levels, "levels", items);
+    let mut m = mech("farm-market", 6, "Day and Night Market", pic("FarmStT0".into()), Count::Levels, "levels", items);
     m.raises = vec![Raise {
         name: "Day 'N' Nite, research grid (World 7)".into(),
         amount: format!("up to +{full_raise} max levels on every upgrade but Land Plots, Overgrowth and Land Rank"),
@@ -159,6 +163,9 @@ fn markets(save: &Save) -> Mechanic {
 /// the last one. `NAME_MAGNI` rows are unused. World 7: the market opens with a Spelunking
 /// cave bonus (Blushpit). No "how": the shop offers a few at a time, and
 /// which ones is kept outside the save.
+///
+/// Pictures: the card is the Exotic Market tab, `FarmStT3`. Like the Day and Night Market, an
+/// upgrade has no picture of its own.
 fn exotic_market(save: &Save) -> Mechanic {
     let levels = save.numbers("FarmUpg", &[]);
     let items = rows("MarketExoticInfo", &[])
@@ -167,7 +174,7 @@ fn exotic_market(save: &Save) -> Mechanic {
         .filter(|(_, r)| text(r, 0) != "NAME_MAGNI")
         .map(|(i, r)| Item::new(shout(text(r, 0)), None, at(&levels, i + 20), 0.0))
         .collect();
-    let mut m = mech("exotic-market", 7, "Exotic Market", None, Count::Open, "levels", items);
+    let mut m = mech("exotic-market", 7, "Exotic Market", pic("FarmStT3".into()), Count::Open, "levels", items);
     m.note = Some("No max: each level adds less, toward the bonus's top.".into());
     m
 }
@@ -176,6 +183,8 @@ fn exotic_market(save: &Save) -> Mechanic {
 /// (N.js `LandRank5thColumnMaxLV`): 1 + Grimoire upgrade 9 + ceil(Exotic DATADIGGING) + Legend
 /// Talent 3, each at its most. DATADIGGING doubles when it is organic. DATADIGGING and the Legend
 /// Talent are World 7, so before World 7 the cap is 1 + the Grimoire upgrade.
+///
+/// Pictures: upgrade i is `RankUpg{i}`; the card shows the first one listed.
 fn land_rank(save: &Save) -> Mechanic {
     let levels = save.numbers("FarmRank", &[2]);
     let w7 = super::world_reached(save) >= 7;
@@ -206,7 +215,8 @@ fn land_rank(save: &Save) -> Mechanic {
         .filter(|(i, _)| i % 5 == 4)
         .map(|(i, v)| {
             let lv = at(&levels, i);
-            let mut it = Item::new(label(v.as_str().unwrap_or("")), None, lv, max);
+            // N.js draws database upgrade i as `RankUpg{i}`.
+            let mut it = Item::new(label(v.as_str().unwrap_or("")), pic(format!("RankUpg{i}")), lv, max);
             let need = unlock.get(i).map_or(0.0, |u| num(u));
             if total < need {
                 it.how = Some(format!("Opens at {need} land ranks over all 36 plots. You have {total}."));
@@ -223,7 +233,8 @@ fn land_rank(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("land-rank", 6, "Land Rank Database", None, Count::Levels, "levels", items);
+    let picture = items.first().and_then(|i| i.picture.clone());
+    let mut m = mech("land-rank", 6, "Land Rank Database", picture, Count::Levels, "levels", items);
     m.have = Some(Have {
         figure: format!("{} land rank points", big(left)),
         text: if left >= 1.0 { format!("Enough for {} levels across the database.", big(left)) } else { "No points left. Each plot rank gained gives 1.".into() },
@@ -247,6 +258,8 @@ fn land_rank(save: &Save) -> Mechanic {
 /// Cost: N.js `EmporiumCost(p)`, where `p` is the upgrade's place in the shop order
 /// (`NinjaInfo[24]`): (300 + 500p + p³) × 2.52^p × 3.07^(p-28) × 160^(p-38) × 300^(p-44), each
 /// extra factor only past its threshold. Paid in jade coins, `Ninja[102][1]`.
+///
+/// Pictures: a row is `NjJupg` + `JadeUpg` col 3; the card shows the first row.
 fn jade_emporium(save: &Save) -> Mechanic {
     let bought = save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or("");
     let jade = save.at("Ninja", &[102, 1]).map_or(0.0, num).max(0.0) + 0.0;
@@ -260,7 +273,8 @@ fn jade_emporium(save: &Save) -> Mechanic {
         .filter(|(_, r)| text(r, 0) != "UNDER_CONSTRUCTION")
         .map(|(i, r)| {
             let have = letters.get(i).is_some_and(|c| bought.contains(*c));
-            let mut it = Item::new(label(text(r, 0)), None, f64::from(u8::from(have)), 1.0);
+            // N.js draws an emporium row as `NjJupg` + `JadeUpg` col 3.
+            let mut it = Item::new(label(text(r, 0)), pic(format!("NjJupg{}", text(r, 3))), f64::from(u8::from(have)), 1.0);
             if W7_EMPORIUM.contains(&i) {
                 it.world = Some(7);
             }
@@ -284,7 +298,8 @@ fn jade_emporium(save: &Save) -> Mechanic {
         [a, b] => format!("Enough for {a} and {b}."),
         [a, b, rest @ ..] => format!("Enough for {a}, {b} and {} more, each on its own.", rest.len()),
     };
-    let mut m = mech("jade-emporium", 6, "Jade Emporium", None, Count::Done, "bought", items);
+    let picture = items.first().and_then(|i| i.picture.clone());
+    let mut m = mech("jade-emporium", 6, "Jade Emporium", picture, Count::Done, "bought", items);
     m.have = Some(Have { figure: format!("{} jade coins", big(jade)), text });
     m
 }
@@ -678,13 +693,14 @@ fn emperor(save: &Save) -> Mechanic {
 fn summoning(save: &Save) -> Mechanic {
     let levels = save.numbers("Summon", &[0]);
     let essence = save.numbers("Summon", &[2]);
-    let items = rows("SummonUPG", &[])
+    let items: Vec<Item> = rows("SummonUPG", &[])
         .iter()
         .enumerate()
         .filter(|(i, r)| *i != 2 && cell(r, 8) > 0.0 && cell(r, 8) < 999.0)
         .map(|(i, r)| {
             let lv = at(&levels, i);
-            let mut it = Item::new(label(text(r, 3)), None, lv, cell(r, 8));
+            // N.js draws upgrade i as `SumUpgIc{i}`.
+            let mut it = Item::new(label(text(r, 3)), pic(format!("SumUpgIc{i}")), lv, cell(r, 8));
             let colour = cell(r, 2) as usize;
             // Colour 7 (Teal) is World 7's summoning.
             if colour == 7 {
@@ -701,7 +717,8 @@ fn summoning(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("summoning", 6, "Summoning Upgrades", None, Count::Levels, "levels", items);
+    let picture = items.first().and_then(|i| i.picture.clone());
+    let mut m = mech("summoning", 6, "Summoning Upgrades", picture, Count::Levels, "levels", items);
     m.note = Some("Only the upgrades with a cap, and not Familiar, whose level resets every few days. The rest level up without end. Costs are before reductions from talents, other Summoning upgrades, Sushi, Jelly, an Arcane upgrade and the Menagerie, so the real cost is lower. Teal upgrades are World 7.".into());
     m
 }
@@ -765,7 +782,10 @@ fn summoning_stones(save: &Save) -> Mechanic {
         })
         .collect();
     let endless = save.option(319).max(0.0);
-    let mut it = Item::new("Endless battles won", None, endless, 0.0);
+    // Endless has no picture of its own (its button is text); this is the icon of the
+    // Summoning upgrade that opens it.
+    let endless_pic = rows("SummonUPG", &[]).iter().position(|r| text(r, 3) == "Endless_Summoning").map(|i| format!("SumUpgIc{i}"));
+    let mut it = Item::new("Endless battles won", endless_pic, endless, 0.0);
     if let Some(who) = ids.iter().position(|v| v.as_str() == Some("rift1")).and_then(|f| name_at(f + (endless / 20.0).floor().min(4.0) as usize)) {
         it.how = Some(format!("Next opponent: {who}."));
     }

@@ -229,6 +229,8 @@ fn spelunk_depth(save: &Save) -> Mechanic {
 /// Advice Fish: `Spelunk[11][i]`, upgrades in `Spelunky[18]` ("Name,text,max bonus,cost,"). No
 /// level cap: N.js `BigFishBonuses` gives max × level / (level + 100). N.js `BigFishCost`:
 /// 1.15^level × 10.01^col 3 coins, paid from the active character's money.
+/// Pictures: the fish is `W7_fish`; the seven advice icons are drawn into its sign
+/// (`W7_fishUI`), so the items have none of their own.
 fn advice_fish(save: &Save) -> Mechanic {
     let levels = save.numbers("Spelunk", &[11]);
     let coins = (0..save.characters().clamp(1, 12)).map(|c| held(save, &format!("Money_{c}"), &[])).fold(0.0, f64::max);
@@ -251,14 +253,15 @@ fn advice_fish(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("advice-fish", 7, "Advice Fish", None, Count::Open, "levels", items);
+    let mut m = mech("advice-fish", 7, "Advice Fish", pic("W7_fish".into()), Count::Open, "levels", items);
     m.note = Some("No level cap. Level 100 gives half of each bonus, level 900 gives 90%. Paid from the coins of the character you play.".into());
     m
 }
 
 /// Clam Work compensations: one more each Worker Class level, `OptLacc[464]`. The twelve are
 /// `Spelunky[30]`; the game shows compensation i once the level is above i. Promotions cost
-/// pearls and can fail (see below), so nothing here is marked Ready.
+/// pearls and can fail (see below), so nothing here is marked Ready. The game lists them as text,
+/// so they have no pictures.
 fn clam_work(save: &Save) -> Mechanic {
     let level = save.option(464);
     let items = list("Spelunky", 30)
@@ -356,6 +359,8 @@ fn clam_upgrades(save: &Save) -> Mechanic {
 /// × 1.25^level for upgrade 2, 1e7 × 6^i × 1.1^level for the rest of page one, paid with Divinity
 /// PTS (`Divinity[24]`); on page two (j = i - 6) (5 + 2j)^j × 1.85^level for the last two and
 /// (7 + 2j)^j × 1.13^level otherwise, paid with Singularity Spirals (item `CKsing`).
+/// The upgrades are text rows, each with the same up-arrow button (`CoralDivUpg`), so they have no
+/// pictures of their own.
 /// The total Divinity LV each Coral Kid upgrade opens at, as N.js sets `_GenINFO[118]`.
 const CK_DIVINITY: [u32; 12] = [0, 600, 900, 1200, 1500, 1750, 500, 3000, 5000, 8000, 10000, 12000];
 
@@ -531,6 +536,9 @@ fn gallery_trophies(save: &Save) -> Mechanic {
 /// `GemItemsPurchased[40]`, 2 for the Lunarheim boss `Spelunk[0][5]`, min(2, Deathskull
 /// `Sailing[3][33]`) and event shop 26.
 /// The Emporium and event shop aren't read, so the podiums counted as owned are a floor.
+/// Pictures: the Gallery draws a podium as `GalleryPod{tier}`, the tier rising with podium
+/// upgrades (N.js `PodiumsOwned_Lv2`..`Lv4`: companions, Killroy, legend talents and more, not all
+/// in the save), so a podium's own picture can't be told and they have none.
 fn gallery_podiums(save: &Save) -> Mechanic {
     let slots = gallery_slots(save);
     let owned = (1.0
@@ -728,15 +736,18 @@ fn menagerie_missions(save: &Save) -> Mechanic {
 /// stops at 100 and `Menagerie[0][10]` (auto-trash, `ObolAutoTrashRate`) at 190: the game only
 /// sells them below those. N.js `SilverJellyCosts`: 2 × (100 + 25L + L³) × 1.065^L and (25 + 10L +
 /// L²) × 1.056^L Obol Fragments (`CYObolFragments`). The Silver Jellyfish is Menagerie unlock 10.
+/// It is jellyfish 4 in town (N.js: jelly n shows once `SideJellyUnlocked`(n - 1), which for 3 is
+/// unlock 10, and jelly 4 draws `ObolMISCmulti`), so its picture is `MenaJelly4`.
 fn menagerie_jellyfish(save: &Save) -> Mechanic {
+    let silver = || pic("MenaJelly4".into());
     let v = save.numbers("Menagerie", &[0]);
     let frags = held(save, "CYObolFragments", &[]);
     let open = menagerie_unlock(save, 10);
     let cost0 = |l: f64| 2.0 * (100.0 + 25.0 * l + l.powi(3)) * 1.065f64.powf(l);
     let cost1 = |l: f64| (25.0 + 10.0 * l + l * l) * 1.056f64.powf(l);
     let mut items = vec![
-        Item::new("Silver Jellyfish: Obol bonuses", None, at(&v, 9), 100.0),
-        Item::new("Silver Jellyfish: Obol auto-trash", None, at(&v, 10), 190.0),
+        Item::new("Silver Jellyfish: Obol bonuses", silver(), at(&v, 9), 100.0),
+        Item::new("Silver Jellyfish: Obol auto-trash", silver(), at(&v, 10), 190.0),
     ];
     let mut reached = Vec::new();
     for (n, it) in items.iter_mut().enumerate() {
@@ -833,6 +844,7 @@ fn posty_notes(save: &Save) -> Mechanic {
 /// Glimbo trades: `Research[12][t]` trades for slot t, which pays `Research` row 27's item and
 /// raises the max level of vault upgrade `Research` row 26 (`UpgradeVault`). No cap. N.js
 /// `Glimbo_Cost`, before discounts: (1 + 2.5n) × `Research[28][t]`^n items for trade n + 1.
+/// Glimbo himself is a town sprite, not one of the game's pictures, so the card has none.
 fn glimbo(save: &Save) -> Mechanic {
     let trades = save.numbers("Research", &[12]);
     let vault = rows("UpgradeVault", &[]);
@@ -864,7 +876,8 @@ fn glimbo(save: &Save) -> Mechanic {
     m
 }
 
-/// The Button: `OptLacc[594]` counts presses (N.js `Button_Bonuses`), with no end.
+/// The Button: `OptLacc[594]` counts presses (N.js `Button_Bonuses`), with no end. The button is a
+/// town sprite (animation "ButtonG"), not one of the game's pictures, so it has none.
 fn the_button(save: &Save) -> Mechanic {
     let items = vec![Item::new("Presses", None, save.option(594), 0.0)];
     let mut m = mech("the-button", 7, "The Button", None, Count::Open, "presses", items);
@@ -877,6 +890,9 @@ fn the_button(save: &Save) -> Mechanic {
 /// `Grid_PTSearned` is Research LV + LV/10 × (1 + [LV ≥ 60] + node 50) plus companions, sushi,
 /// jelly, sailing, tasks and shop bonuses; only the first part is read here, so the points shown
 /// are a floor.
+/// Pictures: the grid draws every node as the same square (`ResSq{max}_{level}`), so nodes have
+/// none; the card has the Research skill's own icon (N.js draws skill `Lv0[1 + t]` as
+/// `ClassIcons{42 + t}`; Research is `Lv0[20]`, so `ClassIcons61`).
 fn research_grid(save: &Save) -> Mechanic {
     let levels = save.numbers("Research", &[0]);
     let mut items: Vec<Item> = rows("ResGridSquares", &[])
@@ -891,7 +907,7 @@ fn research_grid(save: &Save) -> Mechanic {
     let lv = research_level(save);
     let earned = (lv + (lv / 10.0).floor() * (1.0 + (lv / 60.0).floor().min(1.0) + at(&levels, 50))).floor();
     let spent: f64 = levels.iter().filter(|v| v.is_finite()).sum();
-    let mut m = mech("research", 7, "Research Grid", None, Count::Levels, "levels", items);
+    let mut m = mech("research", 7, "Research Grid", pic("ClassIcons61".into()), Count::Levels, "levels", items);
     let free = earned - spent;
     if free >= 1.0 && free.is_finite() {
         m.have = Some(Have {
@@ -1064,6 +1080,8 @@ fn coral_reef(save: &Save) -> Mechanic {
 
 /// Zenith Market: `Spelunk[45][i]`; col 3 is the max. N.js `ZenithMarketCost`: level + col 1 ×
 /// col 2^level (whole below 1M), paid with Zenith Clusters (`OptLacc[486]`), no discounts.
+/// Pictures: the market lists its upgrades as text, with no icons; the card has the Zenith
+/// Cluster (`Quest110`), shown in the market's corner.
 fn zenith_market(save: &Save) -> Mechanic {
     let levels = save.numbers("Spelunk", &[45]);
     let have = save.option(486).max(0.0);
@@ -1087,7 +1105,7 @@ fn zenith_market(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("zenith", 7, "Zenith Market", None, Count::Levels, "levels", items);
+    let mut m = mech("zenith", 7, "Zenith Market", pic("Quest110".into()), Count::Levels, "levels", items);
     m.have = Some(have_line(format!("{} Zenith Clusters", big(have)), &m.items, &reached, false));
     m
 }

@@ -262,7 +262,14 @@ fn pay2win(save: &Save) -> Mechanic {
         .iter()
         .enumerate()
         .map(|(n, (name, level, max, kind, s))| {
-            let mut it = Item::new(name.clone(), None, *level, *max);
+            // The tab draws each cauldron's and liquid's jar beside its upgrade buttons (N.js
+            // `"aJarB"+c`, `"aJarL"+l`); the vial and player rows are buttons with no picture.
+            let picture = match kind {
+                0 => pic(format!("aJarB{}", n / 3)),
+                1 => pic(format!("aJarL{}", (n - 12) / 2)),
+                _ => None,
+            };
+            let mut it = Item::new(name.clone(), picture, *level, *max);
             if *kind == 1 && *level < 0.0 {
                 let need = [0.0, 20.0, 35.0, 80.0][(n - 12) / 2];
                 it.how = Some(format!("Opens when a character reaches Alchemy level {need:.0}; your highest is {alchemy:.0}."));

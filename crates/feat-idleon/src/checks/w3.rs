@@ -605,7 +605,7 @@ fn library(save: &Save) -> Mechanic {
     }
     if let Some(r) = rows("RegAchieves", &[]).get(145) {
         let have = if at(&save.numbers("AchieveReg", &[]), 145) == -1.0 { 5.0 } else { 0.0 };
-        let mut it = Item::new(format!("{} achievement", label(text(r, 0))), None, have, 5.0);
+        let mut it = Item::new(format!("{} achievement", label(text(r, 0))), pic(achievement_pic(145)), have, 5.0);
         it.how = Some(format!("{}.", label(text(r, 2))));
         items.push(it);
     }
@@ -630,6 +630,12 @@ fn library(save: &Save) -> Mechanic {
     let mut m = mech("library", 3, "Talent Book Library", pic("ConTower1".into()), Count::Levels, "book levels", items);
     m.note = Some("How high the library prints talent books, on top of its base of 125. Summoning wins add more that isn't counted here.".into());
     m
+}
+
+/// An achievement's icon: the achievements board draws `RegAchieves[i]` as "TaskAch" + the
+/// world's capital letter (`Number2Letter[27 + i / 70]`) + (i % 70 + 1), e.g. "TaskAchC6".
+fn achievement_pic(i: usize) -> String {
+    format!("TaskAch{}{}", char::from(b'A' + (i / 70) as u8), i % 70 + 1)
 }
 
 /// Refinery: `Refinery[3 + i][1]` is salt i's rank; salts from `Refinery[0][0]` on aren't unlocked.

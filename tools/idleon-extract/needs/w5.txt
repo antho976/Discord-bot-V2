@@ -11,3 +11,7 @@ table ResGridSquares
 picture Arti\d+
 picture DivGod\d+
 picture SailingNewIsle1
+# Immortal Snail: gaming item 7.
+picture GamingItem7
+# Sailing islands: island i's treasure, SailT{1 + 2i}, shown beside its name in the island's box.
+picture SailT\d*[13579]

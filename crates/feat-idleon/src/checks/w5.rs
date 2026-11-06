@@ -308,7 +308,8 @@ fn snail(save: &Save) -> Mechanic {
     let bit = |i: usize| table.get(i).map_or_else(|| format!("superbit {i}"), |r| label(&text(r, 3).replace('|', "_")));
     let raises = [(29, 10.0), (30, 5.0), (40, 10.0)];
     let cap = 25.0 + raises.iter().filter(|(i, _)| superbit_owned(save, *i)).map(|(_, a)| a).sum::<f64>();
-    let mut it = Item::new("Immortal Snail", None, level, 49.0);
+    // The snail is gaming item 7 (`GamingSprout[25 + 7]`), drawn as `GamingItem7`.
+    let mut it = Item::new("Immortal Snail", pic("GamingItem7".into()), level, 49.0);
     if level < 49.0 {
         if level >= cap {
             let missing: Vec<String> = raises.iter().filter(|(i, _)| !superbit_owned(save, *i)).map(|(i, _)| bit(*i)).collect();
@@ -323,7 +324,7 @@ fn snail(save: &Save) -> Mechanic {
             it.how = Some(format!("Next level: {:.1}% chance each try, before your Cavern bonus.", (chance.clamp(0.0, 1.0) * 100.0)));
         }
     }
-    let mut m = mech("snail", 5, "Immortal Snail", None, Count::Levels, "levels", vec![it]);
+    let mut m = mech("snail", 5, "Immortal Snail", pic("GamingItem7".into()), Count::Levels, "levels", vec![it]);
     m.raises = raises.iter().map(|(i, a)| Raise { name: format!("Superbit {}", bit(*i)), amount: format!("+{a} max snail levels"), owned: superbit_owned(save, *i) }).collect();
     m.note = Some("The snail's cap starts at 25. Three superbits raise it to 50, but the snail can't level past 49: the chance of a level at 49 is zero.".into());
     m
@@ -348,7 +349,8 @@ fn islands(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let name = ISLANDS.get(i).map_or_else(|| format!("Island {}", i + 1), |s| (*s).to_string());
             let found = state.len() > i && at(&state, i) == -1.0;
-            let mut it = Item::new(name, None, f64::from(found), 1.0);
+            // The island's box on the sailing map shows its treasure, `SailT{1 + 2i}`, beside its name.
+            let mut it = Item::new(name, pic(format!("SailT{}", 1 + 2 * i)), f64::from(found), 1.0);
             // World's End and The Maw open with World 7 content.
             if i == 15 || i == 16 {
                 it.world = Some(7);

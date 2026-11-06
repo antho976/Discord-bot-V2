@@ -149,7 +149,7 @@ fn star_signs(save: &Save) -> Mechanic {
         .map(|i| {
             let name = text(signs[i], 0);
             let on = found.and_then(|f| f.get(name)).map(num).unwrap_or(0.0) > 0.0;
-            let mut it = Item::new(label(name), None, f64::from(on), 1.0);
+            let mut it = Item::new(label(name), star_picture(i), f64::from(on), 1.0);
             if !on {
                 let cost = cost_of.iter().find(|(k, _)| *k == i).map_or(0.0, |(_, c)| *c);
                 it.how = Some(if cost > 0.0 { format!("Costs {cost:.0} star points on the star map.") } else { "Free on the star map once you reach it.".into() });
@@ -157,10 +157,30 @@ fn star_signs(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("star-signs", 1, "Star Signs", None, Count::Done, "found", items);
+    let mut m = mech("star-signs", 1, "Star Signs", pic("SignStar2a".into()), Count::Done, "found", items);
     let points = save.option(40);
     m.have = Some(Have { figure: format!("{points:.0} star points"), text: "Star points come from constellations. A sign opens once the map reaches it.".into() });
     m
+}
+
+/// How the star map draws sign `sign` once found (N.js `StarSignStuff`): `SSignInfoUI` rows 0-33
+/// are the first galaxy, 34-63 the second, 64-93 the third, and a sign is its galaxy's star,
+/// `SignStar2a`, `2b` or `2c` (2 is the found look). The three Cosmos signs, at the galaxies'
+/// places 21, 9 and 15, have their own `SignStarA2`, `B2` and `C2`.
+fn star_picture(sign: usize) -> Option<String> {
+    let row = rows("SSignInfoUI", &[]).iter().position(|r| cell(r, 0) as usize == sign)?;
+    let (galaxy, place) = match row {
+        0..=33 => (0, row),
+        34..=63 => (1, row - 34),
+        64..=93 => (2, row - 64),
+        _ => return None,
+    };
+    let letter = char::from(b'a' + galaxy as u8);
+    Some(if place == [21, 9, 15][galaxy] {
+        format!("SignStar{}2", letter.to_ascii_uppercase())
+    } else {
+        format!("SignStar2{letter}")
+    })
 }
 
 /// Stamps: `StampLv[tab][i]`. No hard max, so this counts stamps collected; the level shows
@@ -548,7 +568,10 @@ fn anvil_points(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("anvil-points", 1, "Anvil Points", None, Count::Levels, "points", items);
+    // The card shows the Smithing skill's icon, an anvil. A skill's icon is `ClassIcons` at the
+    // skill's place in `ClassNames` (N.js draws skill i, `Lv0[i + 1]`, as ClassIcons 42 + i).
+    let smithing = rows("ClassNames", &[]).iter().position(|n| n.as_str() == Some("SMITHING")).map(|i| format!("ClassIcons{i}"));
+    let mut m = mech("anvil-points", 1, "Anvil Points", smithing, Count::Levels, "points", items);
     m.note = Some(format!("Each character can buy {:.0} points with coins and {:.0} with monster parts. Costs are before your discounts.", at(&caps, 0), at(&caps, 1)));
     m
 }

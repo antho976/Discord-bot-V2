@@ -36,10 +36,10 @@ CRATE = Path(__file__).resolve().parents[2] / "crates/feat-idleon"
 HERE = Path(__file__).resolve().parent
 
 
-def needs() -> tuple[list[str], list[str], list[tuple[str, list[int], int]]]:
+def needs() -> tuple[list[str], list[str], list[tuple[str, list[int], int]], list[tuple[str, str]]]:
     """What the checks need, one file per area in needs/: tables, picture patterns, and pictures
-    named by a table cell. See needs/w1.txt for the format."""
-    tables, pictures, cells = [], [], []
+    named by a table cell or by a list in the extra data. See needs/w1.txt for the format."""
+    tables, pictures, cells, listed = [], [], [], []
     for f in sorted((HERE / "needs").glob("*.txt")):
         for n, line in enumerate(f.read_text().splitlines(), 1):
             line = line.split(" #")[0].strip()
@@ -53,9 +53,12 @@ def needs() -> tuple[list[str], list[str], list[tuple[str, list[int], int]]]:
             elif kind == "cell":
                 t, path, col = rest.split()
                 cells.append((t, [] if path == "-" else [int(x) for x in path.split(",")], int(col)))
+            elif kind == "listed":
+                area, key = rest.split()
+                listed.append((area, key))
             else:
                 sys.exit(f"{f.name}:{n}: unknown entry {kind!r}")
-    return list(dict.fromkeys(tables)), list(dict.fromkeys(pictures)), cells
+    return list(dict.fromkeys(tables)), list(dict.fromkeys(pictures)), cells, listed
 
 
 def extras(js: str, found: dict) -> dict:
@@ -308,7 +311,7 @@ def main():
     js = asar.read("distBuild/static/game/N.js").decode("utf-8", "replace")
 
     found, failed = tables(js)
-    TABLES, PICTURES, PICTURE_CELLS = needs()
+    TABLES, PICTURES, PICTURE_CELLS, PICTURE_LISTS = needs()
     missing = [t for t in TABLES if t not in found]
     if missing:
         sys.exit(f"tables not found or unreadable: {', '.join(missing)}")
@@ -336,6 +339,8 @@ def main():
         for i in path:
             rows = rows[i]
         cells |= {r[col] for r in rows if len(r) > col}
+    for area, key in PICTURE_LISTS:
+        cells |= set(data["extra"][area][key])
     write_pictures(args.out, pak, images, cells, PICTURES)
 
     if args.all_tables:

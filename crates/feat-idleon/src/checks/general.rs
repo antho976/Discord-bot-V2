@@ -97,8 +97,12 @@ fn cards(save: &Save) -> Mechanic {
 /// Achievements: `AchieveReg[i]` is -1 once done. Only the first 420 are ever saved. They come
 /// in blocks of 70 per world (N.js names each by `27 + floor(i / 70)` for its world's page, and
 /// rows 70, 140, 210 start the World 2, 3 and 4 sets).
+///
+/// Pictures: the achievements page draws achievement i as `TaskAch` + `Number2Letter[27 + i/70]`
+/// (A for World 1) + its place in that world counted from 1, `TaskAchA1` for row 0.
 fn achievements(save: &Save) -> Mechanic {
     let reg = save.numbers("AchieveReg", &[]);
+    let letters = number_to_letter();
     let items = rows("RegAchieves", &[])
         .iter()
         .enumerate()
@@ -106,7 +110,8 @@ fn achievements(save: &Save) -> Mechanic {
         .filter(|(_, r)| text(r, 0) != "FILLERZZZ_ACH")
         .map(|(i, r)| {
             let done = at(&reg, i) == -1.0;
-            let mut it = Item::new(label(text(r, 0)), None, f64::from(done), 1.0);
+            let picture = letters.get(27 + i / 70).map(|l| format!("TaskAch{l}{}", i % 70 + 1));
+            let mut it = Item::new(label(text(r, 0)), picture, f64::from(done), 1.0);
             it.world = later((i / 70 + 1) as f64, 1);
             if !done {
                 it.how = achievement_how(text(r, 2));
@@ -256,7 +261,7 @@ fn short(n: f64) -> String {
 /// been at 10M in `GreenStacks`, and counts that list. Checked against the stackable items
 /// (`extra.general.stackable`: item types starting b, c or d) in your storage chest
 /// (`ChestOrder`/`ChestQuantity`) plus the ones already on the list, biggest stacks first;
-/// with nothing stored, against every stackable item.
+/// with nothing stored, against every stackable item. An item's picture is its own ID.
 fn greenstacks(save: &Save) -> Mechanic {
     let stackable: Vec<&str> = GAME.extra("general").get("stackable").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     let green: Vec<&str> = save.get("GreenStacks").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
@@ -283,7 +288,7 @@ fn greenstacks(save: &Save) -> Mechanic {
         .map(|(id, n)| {
             let done = n >= 1e7 || greens.contains(id);
             let name = GAME.item_name(id).map(str::to_string).unwrap_or_else(|| words(id));
-            let mut it = Item::new(name, None, f64::from(done), 1.0);
+            let mut it = Item::new(name, pic(id.to_string()), f64::from(done), 1.0);
             if !done {
                 it.level_name = Some(if n > 0.0 { format!("{} of 10M", short(n)) } else { "Not in storage".into() });
                 if n > 0.0 {
@@ -336,7 +341,8 @@ fn class_levels(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("class-levels", 0, "Class Levels", None, Count::Open, "levels", items);
+    // The card shows the Beginner's class icon, the class every character starts as.
+    let mut m = mech("class-levels", 0, "Class Levels", pic("ClassIcons1".into()), Count::Open, "levels", items);
     m.note = Some("Class levels have no cap.".into());
     m
 }
@@ -448,7 +454,9 @@ fn carry_capacity(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("carry-capacity", 0, "Carry Capacity", None, Count::Levels, "bag tiers", items);
+    // The card shows the first kind's first bag (the Mini Materials Pouch).
+    let first_bag = table.get(1).map(|r| text(r, 1).to_string()).filter(|b| b.starts_with("MaxCapBag"));
+    let mut m = mech("carry-capacity", 0, "Carry Capacity", first_bag, Count::Levels, "bag tiers", items);
     let best = kinds.iter().map(|(_, top, _)| at(&tiers, *top)).fold(0.0, f64::max);
     m.note = Some(format!("Bag tiers reached across the {} item kinds; the best bags hold {} a slot.", kinds.len(), short(best)));
     m
