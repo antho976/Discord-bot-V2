@@ -109,13 +109,13 @@ fn buildings(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("construction", 3, "Construction Buildings", pic("ConTower0".into()), Count::Levels, "levels", items);
+    let mut m = mech("construction", 3, "Construction Buildings", pic("ConTowerA0".into()), Count::Levels, "levels", items);
     let spelunk = save.at("Spelunk", &[4, 6]).map(num).unwrap_or(0.0);
     m.raises = vec![
-        Raise { name: "Carbon atom (wizard towers)".into(), amount: "+2 per level".into(), owned: at(&save.numbers("Atoms", &[]), 5) > 0.0 },
-        Raise { name: "Sushi Station bonus 59 (shrines)".into(), amount: format!("+{}", research(37, 58)), owned: sushi_bonus(save, 58) > 0.0 },
-        Raise { name: format!("Spelunking shrine raises ({} of 9 shrines)", spelunk.clamp(0.0, 9.0)), amount: "+100 each".into(), owned: spelunk >= 9.0 },
-        Raise { name: "Menagerie boost 5 (shrines)".into(), amount: format!("+{} each", research(58, 5)), owned: menagerie_boosts(save, 5) > 0.0 },
+        Raise { name: "Carbon atom, per level".into(), amount: "+2 max levels on each of the 9 wizard towers".into(), owned: at(&save.numbers("Atoms", &[]), 5) > 0.0 },
+        Raise { name: "Sushi Station bonus 59 (59 unique sushi)".into(), amount: format!("+{} max levels on all 9 shrines", research(37, 58)), owned: sushi_bonus(save, 58) > 0.0 },
+        Raise { name: format!("Spelunking shrine unlocks, {} of 9 done", spelunk.clamp(0.0, 9.0)), amount: "+100 max levels on that shrine, one shrine each".into(), owned: spelunk >= 9.0 },
+        Raise { name: "Menagerie boost 5, per boost".into(), amount: format!("+{} max levels on all 9 shrines", research(58, 5)), owned: menagerie_boosts(save, 5) > 0.0 },
     ];
     m.note = Some(format!(
         "Caps include every raise: wizard towers get 2 per Carbon atom level ({carbon} at the atom cap), 30 from Construct Mastery and 100 from the Gambit cavern; shrines get 100 from Construct Mastery, 10 from a Sushi Station bonus, 100 from Spelunking and 10 per Menagerie boost, so more boosts raise them further. Costs count your Cost Cruncher and only what's in storage."
@@ -171,6 +171,7 @@ fn prayers(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let level = at(&levels, i);
             let mut it = Item::new(label(text(r, 0)), pic(format!("Prayer{i}")), level, cell(r, 9));
+            it.world = totem_world(cell(r, 8) as usize);
             if level <= 0.0 {
                 let (wave, totem) = (cell(r, 7), cell(r, 8) as usize);
                 it.how = Some(format!("Found by reaching wave {wave} at {}.", totem_name(totem)));
@@ -202,6 +203,14 @@ fn prayer_cost(r: &Value, i: usize, lv: f64) -> f64 {
     } else {
         (base * (1.0 + (1.0 + t / 20.0) * lv) * 1.12f64.powf(lv - 5.0)).min(2e9).round()
     }
+}
+
+/// The world a worship totem belongs to, from its monster (`WorshipBASEinfos` col 2, "w5b3"),
+/// when that's after World 3.
+fn totem_world(i: usize) -> Option<u8> {
+    let mob = rows("WorshipBASEinfos", &[]).get(i).map(|r| text(r, 2)).unwrap_or("");
+    let w = mob.strip_prefix('w').and_then(|r| r.chars().next()).and_then(|c| c.to_digit(10))?;
+    (w > 3).then_some(w as u8)
 }
 
 /// A worship totem's name, `RANDOlist[10][i]`; the game's list stops short of the newest.
@@ -280,6 +289,12 @@ fn atoms(save: &Save) -> Mechanic {
             let name = text(r, 0).split("_-_").next().unwrap_or("");
             let level = at(&levels, i);
             let mut it = Item::new(label(name), pic(format!("Atom{i}")), level, max);
+            // Their unlocks are World 6 (the Windwalker's compass) and World 7 content.
+            it.world = match i {
+                11 | 12 => Some(6),
+                13.. => Some(7),
+                _ => None,
+            };
             if i >= available && level <= 0.0 {
                 let source = LATE_ATOMS.get(i.wrapping_sub(11)).copied().unwrap_or("another atom unlock");
                 it.how = Some(format!("Opens with one more atom unlock, such as {source}."));
@@ -310,7 +325,7 @@ fn atoms(save: &Save) -> Mechanic {
     };
     let mut m = mech("atoms", 3, "Atom Collider", pic("Atom0".into()), Count::Levels, "levels", items);
     m.have = Some(have);
-    m.raises = vec![Raise { name: "Menagerie boost 17".into(), amount: "+1 each".into(), owned: menagerie_boosts(save, 17) > 0.0 }];
+    m.raises = vec![Raise { name: "Menagerie boost 17, per boost".into(), amount: "+1 max level on every atom".into(), owned: menagerie_boosts(save, 17) > 0.0 }];
     m.note = Some(format!(
         "The cap starts at 20. A gaming superbit, a compass upgrade and an event shop item raise it to 70, and each Menagerie boost adds 1 more (counted here: {max})."
     ));
@@ -370,7 +385,7 @@ fn death_note(save: &Save) -> Mechanic {
     let chars = save.characters();
     let eclipse = at(&save.numbers("Rift", &[]), 0) >= 20.0;
     let mut items = Vec::new();
-    for world in rows("DeathNoteMobs", &[]) {
+    for (w, world) in rows("DeathNoteMobs", &[]).into_iter().enumerate() {
         for id in world.as_array().into_iter().flatten().filter_map(Value::as_str) {
             let kills = targets.iter().position(|t| t.as_str() == Some(id)).map_or(0.0, |map| {
                 let req = details.get(map).and_then(|d| d.get(0)).and_then(|d| d.get(0)).map(num).unwrap_or(0.0);
@@ -380,16 +395,21 @@ fn death_note(save: &Save) -> Mechanic {
                     .sum()
             });
             let name = GAME.monster_name(id).unwrap_or(id).to_string();
-            items.push(skull_item(name, id, kills, false, eclipse));
+            let mut it = skull_item(name, id, kills, false, eclipse);
+            it.world = (w + 1 > 3).then_some(w as u8 + 1);
+            items.push(it);
         }
     }
     let mini_kills = save.numbers("Ninja", &[105]);
     for (i, id) in rows("NinjaInfo", &[30]).iter().filter_map(|v| v.as_str()).enumerate() {
         let name = format!("{} (miniboss)", GAME.monster_name(id).unwrap_or(id));
-        items.push(skull_item(name, id, at(&mini_kills, i), true, eclipse));
+        let mut it = skull_item(name, id, at(&mini_kills, i), true, eclipse);
+        // Miniboss kills are kept by Sneaking (`Ninja[105]`), World 6 content.
+        it.world = Some(6);
+        items.push(it);
     }
     let mut m = mech("death-note", 3, "Death Note", face("mushG"), Count::Levels, "skull points", items);
-    m.note = Some("Skull points per monster: 20 is an Eclipse Skull, a billion kills once rift 20 unlocks them. Minibosses top out at 10.".into());
+    m.note = Some("Skull points per monster: 20 is an Eclipse Skull, a billion kills once rift 20 unlocks them. Minibosses (their page came with Sneaking in World 6) top out at 10.".into());
     m
 }
 
@@ -436,6 +456,10 @@ fn equinox_dreams(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let done = dream_done(save, i);
             let mut it = Item::new(challenge(text(r, 0)), None, f64::from(u8::from(done)), 1.0);
+            // The nightmares are gated on a World 7 research node.
+            if i >= 36 {
+                it.world = Some(7);
+            }
             if !done {
                 if i >= 36 && !nightmares {
                     it.how = Some(format!("Comes up once the research node {node} has a level."));
@@ -552,7 +576,7 @@ fn equinox_upgrades(save: &Save) -> Mechanic {
         text: if bar >= bar_req { "The bar is full: enough for one level of any open upgrade.".into() } else { "Not full yet. Each level bought makes the next bar a little longer.".into() },
     });
     let upg = |name: &str| label(name);
-    m.raises = list.iter().map(|(d, name, n)| Raise { name: format!("Dream {} ({})", d + 1, upg(name)), amount: format!("+{n}"), owned: dream_done(save, *d) }).collect();
+    m.raises = list.iter().map(|(d, name, n)| Raise { name: format!("Dream {}", d + 1), amount: format!("+{n} max levels on {}", upg(name)), owned: dream_done(save, *d) }).collect();
     m.note = Some(format!(
         "Caps include every dream's raise and a gaming superbit. Endless Summoning wins keep adding to most of them (+{summon} from your wins so far)."
     ));
@@ -568,7 +592,8 @@ fn library(save: &Save) -> Mechanic {
     if let Some(r) = rows("ArtifactInfo", &[]).get(21) {
         let tier = at(&save.numbers("Sailing", &[3]), 21).clamp(0.0, 7.0);
         let mut it = Item::new(label(text(r, 0)), pic("Arti21".into()), cell(r, 3) * tier, cell(r, 3) * 7.0);
-        it.how = Some(format!("A Sailing artifact: each tier adds {}.", cell(r, 3)));
+        it.world = Some(5);
+        it.how = Some(format!("A Sailing artifact: each of its 7 tiers adds {} book levels.", cell(r, 3)));
         items.push(it);
     }
     if let Some(r) = rows("AtomInfo", &[]).get(7) {
@@ -599,7 +624,7 @@ fn library(save: &Save) -> Mechanic {
     if let Some(r) = rows("TaskShopDesc", &[2]).get(2) {
         let lv = at(&save.numbers("TaskZZ2", &[2]), 2);
         let mut it = Item::new("World 3 merit", pic("TaskSc3".into()), lv * cell(r, 11), cell(r, 5) * cell(r, 11));
-        it.how = Some(format!("Bought in the World 3 merit shop: {} per level.", cell(r, 11)));
+        it.how = Some(format!("Bought in the World 3 merit shop: +{} book levels per merit level.", cell(r, 11)));
         items.push(it);
     }
     let mut m = mech("library", 3, "Talent Book Library", pic("ConTower1".into()), Count::Levels, "book levels", items);
@@ -623,7 +648,8 @@ fn refinery(save: &Save) -> Mechanic {
     };
     let unlock_costs = GAME.extra("w3").get("salt_unlocks").map(crate::save::numbers).unwrap_or_default();
     let table = rows("RefineryInfo", &[]);
-    let items = table
+    // (seconds to the next rank, or a big number for salts not open, item)
+    let mut ranked: Vec<(f64, Item)> = table
         .iter()
         .enumerate()
         .map(|(i, r)| {
@@ -631,17 +657,26 @@ fn refinery(save: &Save) -> Mechanic {
             let open = (i as f64) < unlocked;
             let rank = if open { save.at("Refinery", &[3 + i, 1]).map(num).unwrap_or(0.0) } else { 0.0 };
             let mut it = Item::new(item_name(id), pic(id.to_string()), rank, 0.0);
+            // Salts made from World 6 and 7 materials (RefineryInfo col 0).
+            it.world = match text(r, 0) {
+                m if m.starts_with("Spi") => Some(6),
+                m if m.starts_with("w7") => Some(7),
+                _ => None,
+            };
+            let mut secs = f64::MAX;
             if open {
                 let power = save.at("Refinery", &[3 + i, 0]).map(num).unwrap_or(0.0).max(0.0);
                 let cap = power_cap(rank);
                 let per = rank.max(1.0).powf(1.3).min(25e4).floor().max(1.0);
                 if power >= cap {
-                    it.how = Some(format!("Full power ({}): claim it for the next rank.", big(cap)));
+                    it.how = Some(format!("Full power ({}): claim it now for the next rank.", big(cap)));
                     it.state = State::Ready;
+                    secs = 0.0;
                 } else {
                     let cycles = ((cap - power) / per).ceil();
+                    secs = cycles * base_cycle(i / 3);
                     let unit = if cycles == 1.0 { "cycle" } else { "cycles" };
-                    it.how = Some(format!("Next rank at {} power, {} now: about {} {unit}.", big(cap), big(power), big(cycles)));
+                    it.how = Some(format!("Next rank in {}: {} {unit} to {} power, {} now.", duration(secs), big(cycles), big(cap), big(power)));
                 }
             } else if i == unlocked as usize && i > 0 {
                 let pay = format!("Refinery{i}");
@@ -655,12 +690,35 @@ fn refinery(save: &Save) -> Mechanic {
                 it.how = Some(format!("Opens after {prev} is unlocked."));
                 it.state = State::Locked;
             }
-            it
+            (secs, it)
         })
         .collect();
+    // Soonest rank-up first: full power, then the least time left; salts not open last.
+    ranked.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let items = ranked.into_iter().map(|(_, it)| it).collect();
     let mut m = mech("refinery", 3, "Refinery", pic("Refinery1".into()), Count::Open, "ranks", items);
-    m.note = Some("Refinery ranks have no cap. Cycle counts are before your Companion bonus.".into());
+    m.open_order = Some("Soonest rank-up first");
+    m.note = Some("Refinery ranks have no cap. Times use the game's base cycle length (15 min, 1 h, then 100 h for the third row of salts) before your refinery speed and Companion bonuses, so yours are shorter.".into());
     m
+}
+
+/// A refinery cycle's base length for salt row `g` (N.js `CycleInitialTime`, before the speed
+/// bonuses it divides by): `900 * 4 ^ g * 25 ^ max(0, g - 1)` seconds.
+fn base_cycle(g: usize) -> f64 {
+    let g = g.min(10) as f64;
+    900.0 * 4f64.powf(g) * 25f64.powf((g - 1.0).max(0.0))
+}
+
+/// "45 min", "32 h", "12 days".
+fn duration(secs: f64) -> String {
+    let m = secs / 60.0;
+    if m < 90.0 {
+        format!("{} min", m.ceil().max(1.0))
+    } else if m < 48.0 * 60.0 {
+        format!("{} h", (m / 60.0).round())
+    } else {
+        format!("{} days", big((m / 1440.0).round()))
+    }
 }
 
 /// 3D printer samples: `Print[5..]` then `PrinterXtra` hold (item, sample size) pairs, every
@@ -708,6 +766,7 @@ fn worship(save: &Save) -> Mechanic {
             let name = names.get(i).and_then(|v| v.as_str()).map_or_else(|| format!("Tower Defence {}", i + 1), label);
             let best = at(&waves, i);
             let mut it = Item::new(name, None, best, 0.0);
+            it.world = totem_world(i);
             // The next prayer this totem finds (PrayerInfo col 7 wave, col 8 totem).
             let next = rows("PrayerInfo", &[])
                 .into_iter()

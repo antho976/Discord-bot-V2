@@ -20,6 +20,7 @@ picture Refinery\d+
 picture Prayer\d+
 picture Atom\d+
 picture ConTower\d+
+picture ConTowerA0
 picture Mface\d+
 picture Dream_Cloud
 picture Arti21
