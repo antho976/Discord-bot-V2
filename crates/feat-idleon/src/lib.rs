@@ -45,20 +45,14 @@ const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Longest problem report, like a suggestion.
 const REPORT_MAX: usize = 1500;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Open to anyone with the link by default (owner, 2026-11-06); the dashboard switch closes it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Closed test: only signed-in staff and members with `testers_role` can open the page,
     /// and it says it's a test.
     pub closed: bool,
     pub testers_role: Option<u64>,
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        // Open to anyone with the link (owner, 2026-11-06); the dashboard switch can close it.
-        Self { closed: false, testers_role: None }
-    }
 }
 
 #[derive(Default)]
