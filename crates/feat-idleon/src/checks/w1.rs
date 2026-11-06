@@ -15,6 +15,7 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
         stamps(save),
         statue_flair(save),
         owl(save),
+        owl_lasting(save),
         forge(save),
         anvil_points(save),
         minigame(save, "basketball", "Basketball", "hoops", "HoopShop"),
@@ -39,6 +40,8 @@ fn statues(save: &Save) -> Mechanic {
             let mut it = Item::new(format!("{} Statue", label(text(r, 0))), pic(format!("{prefix}{}", i + 1)), tier, 3.0);
             it.level_name = Some(STATUE_TIERS[tier as usize].into());
             statue_step(&mut it, i, tier, chisels, held(&chest, &format!("EquipmentStatues{}", i + 1)));
+            // `StatueInfo` col 4 is the statue's world, 0 for World 1.
+            it.world = later(cell(r, 4) + 1.0, 1);
             it
         })
         .collect();
@@ -173,6 +176,7 @@ fn stamps(save: &Save) -> Mechanic {
             let name = GAME.item_name(&id).map(str::to_string).unwrap_or_else(|| id.clone());
             let mut it = Item::new(name, pic(id.clone()), f64::from(lv > 0.0), 1.0);
             it.level_name = Some(if lv > 0.0 { format!("Lv {lv:.0}") } else { "Not found".into() });
+            it.world = source_world(&id).and_then(|w| later(f64::from(w), 1));
             if lv <= 0.0 {
                 it.how = found_where(&id);
                 // No shop, drop, quest or prize gives it: an event stamp that's gone or one not
@@ -246,6 +250,38 @@ pub(super) fn shop_of(id: &str) -> Option<String> {
     let map = rows("ShopLocations", &[]).get(k).map(|v| num(v) as usize)?;
     let town = rows("MapDispName", &[]).get(map).map(|v| label(v.as_str().unwrap_or("")))?;
     Some(format!("Sold at the shop in {town}."))
+}
+
+/// `Some(world)` when `world` is later than the mechanic's own (`own`, 0 for account-wide
+/// mechanics counts as 1), for `Item.world`.
+pub(super) fn later(world: f64, own: u8) -> Option<u8> {
+    let w = world.clamp(1.0, 7.0) as u8;
+    (w > own.max(1)).then_some(w)
+}
+
+/// The world of a map: maps are numbered by world in fifties (`ShopLocations` puts the towns at
+/// 0, 50, 100, ... 300, and `MapDispName` runs World 1 then World 2 and so on).
+fn map_world(map: usize) -> u8 {
+    (map / 50 + 1).min(7) as u8
+}
+
+/// The earliest world a monster is fought in: the maps whose `MapAFKtarget` it is.
+pub(super) fn monster_world(mob: &str) -> Option<u8> {
+    rows("MapAFKtarget", &[]).iter().enumerate().filter(|(_, v)| v.as_str() == Some(mob)).map(|(m, _)| map_world(m)).min()
+}
+
+/// The earliest world an item can be had in: the town shop that sells it, the monsters that
+/// drop it, World 2 for Arcade prizes. `None` when the data doesn't say.
+pub(super) fn source_world(id: &str) -> Option<u8> {
+    let shop = GAME
+        .rows("ShopNames")
+        .iter()
+        .position(|r| r.as_array().is_some_and(|a| a.iter().any(|x| x.as_str() == Some(id))))
+        .and_then(|k| rows("ShopLocations", &[]).get(k).map(|v| map_world(num(v) as usize)));
+    let general = GAME.extra("general");
+    let drop = general.get("drops").and_then(|d| d.get(id)).and_then(Value::as_array).and_then(|mobs| mobs.iter().filter_map(Value::as_str).filter_map(monster_world).min());
+    let prize = (general.get("sources").and_then(|x| x.get(id)).and_then(Value::as_str) == Some("arcade")).then_some(2);
+    [shop, drop, prize].into_iter().flatten().min()
 }
 
 /// Where a found-once item comes from, per the game data, in this order: a town shop
@@ -352,7 +388,7 @@ fn statue_flair(save: &Save) -> Mechanic {
                 it.how = Some("Opens with the Statue Flair upgrade in the Armory.".into());
                 it.state = State::Locked;
             } else if level >= 3.0 && !raised && level < 4.0 {
-                it.how = Some("Level 4 needs the Menagerie unlock that raises Flair.".into());
+                it.how = Some(format!("Level 4 needs {}.", super::w7::menagerie_unlock_name(17)));
                 it.state = State::Locked;
             } else if level < 4.0 {
                 let cost = 10.0 * (i as f64 + 1.0) * 5f64.powf(level);
@@ -367,8 +403,13 @@ fn statue_flair(save: &Save) -> Mechanic {
         .collect();
     // World 7: flair is unlocked from the W7 armory, so it is weighed against W7 progress.
     let mut m = mech("statue-flair", 7, "Statue Flair", pic("Statue1".into()), Count::Levels, "levels", items);
-    m.note = Some("Opens with the Statue Flair upgrade in the Armory. Each statue goes to 3, and to 4 with a Menagerie unlock.".into());
-    m.raises = vec![Raise { name: "Menagerie unlock: Flair to Elegant".into(), amount: "+1".into(), owned: raised }];
+    m.note = Some("Opens with the Statue Flair upgrade in the Armory. Each statue's flair goes to level 3, and to level 4 with a Menagerie unlock.".into());
+    let unlock = super::w7::menagerie_unlock_name(17);
+    let mut name = unlock.clone();
+    if let Some(f) = name.get_mut(0..1) {
+        f.make_ascii_uppercase();
+    }
+    m.raises = vec![Raise { name, amount: "+1 max level on every statue's flair, 3 to 4".into(), owned: raised }];
     m
 }
 
@@ -385,16 +426,44 @@ fn owl(save: &Save) -> Mechanic {
         .map(|(i, n)| {
             let mut it = Item::new(format!("{} Megafeather", n.as_str().unwrap_or("")), pic(format!("Feaz{i}")), f64::from(owned > i as f64), 1.0);
             if owned <= i as f64 {
-                it.how = Some("Each Great Mega Reset in Orion's shop gives the next Megafeather.".into());
+                it.how = Some("Buy The Great Mega Reset in Orion's shop: it resets your feathers and gives one.".into());
             }
             it
         })
         .collect();
     let mut m = mech("owl", 1, "Owl", pic("Feaz0".into()), Count::Done, "earned", items);
-    let orion = save.option(255);
     m.note = Some(format!(
-        "You have {owned:.0} Megafeathers and {orion:.0} Bonuses of Orion. Past the tenth, Fractal Megafeathers and Bonuses of Orion keep going with no cap."
+        "The ten kinds of Megafeather; you have {owned:.0} in all. Fractal ones keep stacking past the tenth: see Owl: Lasting Bonuses."
     ));
+    m
+}
+
+/// The two Owl things that outlast every Feather Restart and have no cap (N.js "OwlBonuses"
+/// and "OwlMegafeather"): Bonuses of Orion (`OptLacc[255]`, the upgrade that "never resets";
+/// the six bonuses each get a level every sixth purchase) and Fractal Megafeather stacks (each
+/// Megafeather past the tenth makes Orion's bonuses 0.5x bigger: 6 + 0.5 × (count - 10) times).
+/// Costs are N.js `OwlCost` without its discounts: `Owlz[t]` col 1 × col 2^level, in feathers
+/// (`OptLacc[253]`), for t 1 (Bonuses of Orion) and 8 (The Great Mega Reset, level = your
+/// Megafeathers, `OptLacc[262]`).
+fn owl_lasting(save: &Save) -> Mechanic {
+    let owlz = rows("Owlz", &[]);
+    let cost = |t: usize, level: f64| owlz.get(t).map_or(f64::INFINITY, |r| cell(r, 1) * cell(r, 2).powf(level));
+    let feathers = save.option(253).max(0.0);
+    let (orion, mega) = (save.option(255), save.option(262));
+    let mut bonuses = Item::new("Bonuses of Orion", pic("Feaz0".into()), orion, 0.0);
+    let next = cost(1, orion);
+    bonuses.how = Some(format!("Next one costs {} feathers before discounts. You have {}.", big(next), big(feathers)));
+    if next <= feathers {
+        bonuses.state = State::Ready;
+    }
+    let mut fractal = Item::new("Fractal Megafeather stacks", pic("Feaz9".into()), (mega - 9.0).max(0.0), 0.0);
+    fractal.how = Some(format!(
+        "Each Great Mega Reset past the tenth adds one, +0.5x to Orion's bonuses. Next costs {} feathers before discounts.",
+        big(cost(8, mega))
+    ));
+    let mut m = mech("owl-lasting", 1, "Owl: Lasting Bonuses", pic("Feaz9".into()), Count::Open, "levels", vec![bonuses, fractal]);
+    m.have = Some(Have { figure: format!("{} feathers", big(feathers)), text: "Feathers reset with every Feather Restart; these two stay.".into() });
+    m.note = Some("Neither has a cap, and neither resets with a Feather Restart or a Great Mega Reset.".into());
     m
 }
 
@@ -588,14 +657,40 @@ fn upgrade_vault(save: &Save) -> Mechanic {
     let text = reach_text(&items, coins, |i, lv| if items[i].state == State::Locked { f64::INFINITY } else { table.get(i).map_or(f64::INFINITY, |r| vault_cost(r, i, lv)) }, "Not enough for the next level of any open upgrade yet.");
     let mut m = mech("upgrade-vault", 1, "Upgrade Vault", pic("VaultUpg0".into()), Count::Levels, "levels", items);
     m.have = Some(coin_have(coins, format!("{text} Costs are before your discounts, so you get a little further.")));
-    m.note = Some("Caps include +25 from Gilded Awnings in the event shop, +10 from the Potluck Pack, and what your Glimbo trades add with Glimbo BOGO Offer and the Glimbo VIP Pass.".into());
+    let awn_n = awnings.iter().filter(|&&i| i < table.len()).count();
+    // Exactly which upgrades each raise skips, by name.
+    let names_where = |skip: &dyn Fn(usize, &Value) -> bool| table.iter().enumerate().filter(|(i, r)| skip(*i, r)).map(|(_, r)| vault_name(super::text(r, 0))).collect::<Vec<String>>().join(", ");
+    let one_level = names_where(&|i, r| cell(r, 4) < 2.0 && !glimbo.contains(&i));
+    let no_awnings = names_where(&|i, r| !awnings.contains(&i) && !(cell(r, 4) < 2.0 && !glimbo.contains(&i)));
+    let scaled_n = scaled.iter().filter(|&&f| f == 1).count();
+    m.note = Some(format!(
+        "Each max counts every raise below as owned. Glimbo trades (W7) add max levels to the {} upgrades Glimbo trades for, one level per trade, more on {} of them with the VIP Pass and BOGO Offer.",
+        glimbo.len(),
+        scaled_n
+    ));
     let bundle = save.get("bon_u").map(num).unwrap_or(0.0) >= 1.0 || save.get("BundlesReceived").and_then(|b| b.get("bon_u")).map(num).unwrap_or(0.0) >= 1.0;
     let grid = at(&save.numbers("Research", &[0]), 169);
     m.raises = vec![
-        Raise { name: "Gilded Awnings (event shop)".into(), amount: "+25 on most".into(), owned: super::general::event_shop_owned(save, 65) },
-        Raise { name: "Potluck Pack".into(), amount: "+10".into(), owned: bundle },
-        Raise { name: "Glimbo VIP Pass (event shop)".into(), amount: "+1 a Glimbo trade".into(), owned: super::general::event_shop_owned(save, 40) },
-        Raise { name: "Glimbo BOGO Offer (research)".into(), amount: "+1 a Glimbo trade per level".into(), owned: grid >= bogo && bogo > 0.0 },
+        Raise {
+            name: "Gilded Awnings, event shop".into(),
+            amount: format!("+25 max levels on {awn_n} of the {} upgrades: all but the one-level unlocks ({one_level}) and {no_awnings}", table.len()),
+            owned: super::general::event_shop_owned(save, 65),
+        },
+        Raise {
+            name: "Potluck Pack bundle".into(),
+            amount: format!("+10 max levels on every upgrade except the one-level unlocks ({one_level})"),
+            owned: bundle,
+        },
+        Raise {
+            name: "Glimbo VIP Pass, event shop".into(),
+            amount: format!("+1 more max level per Glimbo trade on {scaled_n} Glimbo upgrades (2 a trade instead of 1)"),
+            owned: super::general::event_shop_owned(save, 40),
+        },
+        Raise {
+            name: "Glimbo BOGO Offer, W7 research grid".into(),
+            amount: format!("+1 more max level per Glimbo trade on those {scaled_n} upgrades, for each of its {bogo:.0} levels"),
+            owned: grid >= bogo && bogo > 0.0,
+        },
     ];
     m
 }

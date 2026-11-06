@@ -22,3 +22,5 @@ picture ClassIcons\d+
 table ShopNames
 table ShopLocations
 table MapDispName
+table Owlz
+table MapAFKtarget

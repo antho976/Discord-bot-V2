@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use bot_core::serde_json::Value;
 
 use super::*;
-use super::w1::{char_name, characters, class_icon, found_where, shop_of};
+use super::w1::{char_name, characters, class_icon, found_where, later, monster_world, shop_of, source_world};
 use crate::review::{Have, State};
 
 pub fn all(save: &Save) -> Vec<Mechanic> {
@@ -71,6 +71,7 @@ fn cards(save: &Save) -> Mechanic {
             let stars = card_stars(count, cell(r, 2), mob == "Boss3B");
             let name = GAME.monster_name(mob).map(str::to_string).unwrap_or_else(|| words(mob));
             let mut it = Item::new(name.clone(), pic(format!("Cards{}", text(r, 1))), stars, CARD_STARS as f64);
+            it.world = monster_world(mob).and_then(|w| later(f64::from(w), 1));
             if count <= 0.0 {
                 it.how = Some(format!("Drops from {name}."));
             } else if (stars as usize) < CARD_STARS {
@@ -89,11 +90,13 @@ fn cards(save: &Save) -> Mechanic {
     let mut m = mech("cards", 0, "Cards", pic("CardsA0".into()), Count::Levels, "stars", items);
     // Levels are stars, so the game's tiers start at the first star; "Found" is level 0.
     m.tier_names = Some(["1 star", "2 stars", "3 stars", "4 stars", "5 stars", "6 stars"].iter().map(|s| s.to_string()).collect());
-    m.note = Some("4 stars at first, 5 with the Rift unlock, 6 with Spelunking's.".into());
+    m.note = Some("Cards go to 4 stars at first; a Rift unlock raises that to 5 stars, and a Spelunking one to 6.".into());
     m
 }
 
-/// Achievements: `AchieveReg[i]` is -1 once done. Only the first 420 are ever saved.
+/// Achievements: `AchieveReg[i]` is -1 once done. Only the first 420 are ever saved. They come
+/// in blocks of 70 per world (N.js names each by `27 + floor(i / 70)` for its world's page, and
+/// rows 70, 140, 210 start the World 2, 3 and 4 sets).
 fn achievements(save: &Save) -> Mechanic {
     let reg = save.numbers("AchieveReg", &[]);
     let items = rows("RegAchieves", &[])
@@ -104,6 +107,7 @@ fn achievements(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let done = at(&reg, i) == -1.0;
             let mut it = Item::new(label(text(r, 0)), None, f64::from(done), 1.0);
+            it.world = later((i / 70 + 1) as f64, 1);
             if !done {
                 it.how = achievement_how(text(r, 2));
             }
@@ -146,8 +150,15 @@ fn gem_shop(save: &Save) -> Mechanic {
     let mut ready = 0;
     let restocks: Vec<usize> = GAME.extra("general").get("gem_restocks").map(crate::save::numbers).unwrap_or_default().into_iter().map(|v| v as usize).collect();
     let mut items = Vec::new();
-    for section in GAME.rows("MTXinfo") {
-        for tab in section.as_array().into_iter().flatten() {
+    // The shop's own tabs: the third section has one per world (Worlds 1 and 2 share the
+    // first), and the first tab of the first section is the World 5 caverns.
+    let tab_world = |sec: usize, tab: usize| match (sec, tab) {
+        (0, 0) => Some(5),
+        (2, t @ 1..=5) => Some(t as u8 + 2),
+        _ => None,
+    };
+    for (sec, section) in GAME.rows("MTXinfo").iter().enumerate() {
+        for (tab_i, tab) in section.as_array().into_iter().flatten().enumerate() {
             for r in tab.as_array().into_iter().flatten() {
                 let (code, name, index, max) = (text(r, 0), text(r, 1), cell(r, 4) as usize, cell(r, 5));
                 if name == "NAME_OF_ITEM" || max <= 0.0 || max >= 50000.0 || restocks.contains(&index) || code == "ClassSwapC" {
@@ -155,6 +166,7 @@ fn gem_shop(save: &Save) -> Mechanic {
                 }
                 let picture = (code != "Blank").then(|| code.to_string());
                 let mut it = Item::new(label(name), picture, at(&bought, index), max);
+                it.world = tab_world(sec, tab_i);
                 if !it.done() {
                     let cost = (it.level * cell(r, 7) + cell(r, 3)).round();
                     it.how = Some(format!("The next one costs {} gems.", big(cost)));
@@ -202,6 +214,9 @@ fn event_shop(save: &Save) -> Mechanic {
             let name = pair[0].as_str().unwrap_or("").split('@').next().unwrap_or("");
             let has = letters.get(i).is_some_and(|l| owned.contains(l.as_str()));
             let mut it = Item::new(label(name), pic(format!("EventShopBuy{i}")), f64::from(has), 1.0);
+            // The item's own text names the world it's for ("..._in_World_7").
+            let desc = pair[0].as_str().unwrap_or("");
+            it.world = (2..=7u8).rev().find(|w| desc.contains(&format!("World_{w}"))).and_then(|w| later(f64::from(w), 1));
             if !has {
                 let cost = pair.get(1).map(|v| num(v)).unwrap_or(0.0);
                 it.how = Some(format!("Costs {cost:.0} event points."));
@@ -346,6 +361,7 @@ fn storage_chests(save: &Save) -> Mechanic {
             let name = GAME.item_name(&id).map(str::to_string).unwrap_or_else(|| id.clone());
             let done = has_key(used, &key);
             let mut it = Item::new(name, pic(id.clone()), f64::from(done), 1.0);
+            it.world = source_world(&id).and_then(|w| later(f64::from(w), 1));
             if !done {
                 it.how = found_where(&id);
                 // Nothing gives it now (a past event's chest): it counts only for those who have it.
