@@ -145,11 +145,11 @@ fn villagers(save: &Save, h: &Holes) -> Mechanic {
         if v == 4 {
             // A study is picked on Bolaia's page; only caverns you've found can be studied.
             if level < 1.0 {
-                it.how = Some("Bolaia isn't found yet.".into());
+                it.how = Some("You haven't found Bolaia yet.".into());
                 it.state = State::Locked;
             } else if let Some(next) = (0..studies).find(|&i| at(&study, i) < 1.0) {
                 if h.has(next + 1) {
-                    it.how = Some(format!("Pick {} as Bolaia's study.", cave_name(next)));
+                    it.how = Some(format!("Pick {} as Bolaia's study to start it.", cave_name(next)));
                     it.state = State::Ready;
                 } else {
                     it.how = Some(format!("Find {} first, then pick it as Bolaia's study.", cave_name(next)));
@@ -159,7 +159,7 @@ fn villagers(save: &Save, h: &Holes) -> Mechanic {
             continue;
         }
         if level < 1.0 {
-            it.how = Some(format!("{} isn't found yet.", ["Polonai", "Kaipu", "Cosmos", "Minau", "Bolaia"][v]));
+            it.how = Some(format!("You haven't found {} yet.", ["Polonai", "Kaipu", "Cosmos", "Minau", "Bolaia"][v]));
             it.state = State::Locked;
             continue;
         }
@@ -175,8 +175,7 @@ fn villagers(save: &Save, h: &Holes) -> Mechanic {
         it.state = if req.is_finite() && have >= req { State::Ready } else { State::Unknown };
     }
     let mut m = mech("cavern-villagers", 5, "Villagers", pic("HoleUItab0".into()), Count::Levels, "unlocked", items);
-    m.note = Some(format!("Villager levels have no cap, so this is what they unlock: Kaipu has every schematic at level {}, Minau every measurement at 17, Polonai every cavern at 18. Majik points count the gem shop's Conjuror Pts.", kaipu_level_for(SCHEMATICS - 1)));
-    m.raises = vec![Raise { name: "Conjuror Pts (gem shop)".into(), amount: "+1 majik point each".into(), owned: at(&save.numbers("GemItemsPurchased", &[]), 4) > 0.0 }];
+    m.note = Some(format!("Villager levels have no cap, so this is what they unlock: Kaipu has every schematic at level {}, Minau every measurement at 17, Polonai every cavern at 18. Cosmos' majik points are his level plus the Conjuror Pts bought in the gem shop, against the {total} levels all majiks add up to.", kaipu_level_for(SCHEMATICS - 1)));
     m
 }
 
@@ -239,7 +238,7 @@ fn schematics(h: &Holes) -> Mechanic {
         })
         .collect();
     let mut m = mech("cavern-schematics", 5, "Schematics", pic("HoleUIbuildUpg0".into()), Count::Done, "built", items);
-    m.note = Some("Costs include your A Moderate Discount wishes from The Lamp. Resources are numbered in the order each cavern lists them.".into());
+    m.note = Some("Costs include the 15% off per level of the Lamp's A Moderate Discount wish. Resources are numbered in the order their cavern lists them: Well sediment 1 is the first sediment at The Well.".into());
     m
 }
 
@@ -303,9 +302,9 @@ fn majiks(save: &Save, h: &Holes) -> Mechanic {
         },
     };
     let mut m = mech("cavern-majiks", 5, "Majiks", pic("HoleUItab2".into()), Count::Levels, "levels", items);
-    m.note = Some(format!("Caps past level 1 need the {enhance_name} majik."));
+    m.note = Some(format!("Every majik stops at level 1 until you have the {enhance_name} majik; the caps shown are with it."));
     m.have = Some(have);
-    m.raises = vec![Raise { name: enhance_name, amount: "past Lv 1".into(), owned: enhance }];
+    m.raises = vec![Raise { name: enhance_name, amount: "lets every majik go past level 1".into(), owned: enhance }];
     m
 }
 
@@ -351,7 +350,7 @@ fn measurements(h: &Holes) -> Mechanic {
         })
         .collect();
     let mut m = mech("cavern-measurements", 5, "Measurements", pic("HoleUItab3".into()), Count::Open, "levels", items);
-    m.note = Some("Measurements level up without end. Costs are before the Fountain's discount, so they can be a little lower.".into());
+    m.note = Some("Measurements level up without end. Costs shown are before the Fountain's measurement discount, so yours can be lower.".into());
     m
 }
 
@@ -370,7 +369,7 @@ fn studies(h: &Holes) -> Mechanic {
             let level = at(&levels, i);
             let mut it = Item::new(cave_name(i), cave_pic(i), level, 0.0);
             if bolaia < 1.0 {
-                it.how = Some("Bolaia isn't found yet.".into());
+                it.how = Some("You haven't found Bolaia yet.".into());
                 it.state = State::Locked;
             } else if !h.has(i + 1) {
                 it.how = Some(format!("Find {} to study it.", cave_name(i)));
@@ -385,7 +384,7 @@ fn studies(h: &Holes) -> Mechanic {
     let per = info(70).get(3).map_or(0.0, |v| num(v));
     let bravery = if per > 0.0 { ((32.0 - 12.0) / per).ceil() } else { 0.0 };
     let mut m = mech("cavern-studies", 5, "Studies", pic("HoleUItab4".into()), Count::Open, "levels", items);
-    m.note = Some(format!("Studies level up without end, but the Bravery Monument study stops adding at level {bravery}."));
+    m.note = Some(format!("Studies level up without end, but the Bravery Monument study's bonus stops growing at level {bravery} (32%)."));
     m
 }
 
@@ -403,7 +402,7 @@ fn monument(h: &Holes, cave: usize, monument: usize) -> Item {
         } else if let Some(mark) = marks.get(got as usize).map(|v| num(v)) {
             let hours = h.get(&[14], 2 * monument);
             if hours >= mark {
-                it.how = Some(format!("You have the {} hours for the next brick: click it.", big(mark)));
+                it.how = Some(format!("You have the {} AFK hours for the next reward: break its brick at the monument.", big(mark)));
                 it.state = State::Ready;
             } else {
                 it.how = Some(format!("Next reward at {} AFK hours there; you have {}.", big(mark), big(hours)));
@@ -413,7 +412,7 @@ fn monument(h: &Holes, cave: usize, monument: usize) -> Item {
     it
 }
 
-const BIOME_NOTE: &str = "Only what has a cap. Buildings are under Schematics; bonuses that level without end are left out.";
+const BIOME_NOTE: &str = "Only the parts with a cap. These caverns' buildings count under Schematics; bonuses that level without end are left out.";
 
 /// The Well, Motherlode, The Den, Bravery Monument, The Bell (caverns 1 to 5).
 fn shallow_caverns(h: &Holes) -> Mechanic {
@@ -434,7 +433,7 @@ fn shallow_caverns(h: &Holes) -> Mechanic {
     if !bell.done() {
         if h.has(5) {
             let req = 100.0 * 3f64.powf(cleans);
-            bell.how = Some(format!("Clean the Bell for a chance at one: {} of {} Clean charge.", big(h.get(&[18], 4)), big(req)));
+            bell.how = Some(format!("Each Clean of the Bell may add one: {} of {} Clean charge.", big(h.get(&[18], 4)), big(req)));
         } else {
             bell.how = Some(format!("Find {} first.", cave_name(4)));
             bell.state = State::Locked;
@@ -516,7 +515,7 @@ fn underground_overgrowth(h: &Holes) -> Mechanic {
             coll.state = State::Locked;
         } else if first_page && !advanced {
             let name = rows("HolesBuildings", &[]).get(75).map(|r| label(text(r, 0))).unwrap_or_default();
-            coll.how = Some(format!("The rest need the {name} schematic."));
+            coll.how = Some(format!("Collectibles 17 to 40 need the {name} schematic."));
             coll.state = State::Locked;
         } else {
             coll.how = Some("Found at random when jars break.".into());
