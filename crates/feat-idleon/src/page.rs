@@ -1,7 +1,7 @@
 //! The public page: the paste box, then the review.
 //!
 //! The review leads with the answer: how far the account is overall with one bar per world,
-//! then "Should have by now" (what the ranking expects by your world), then every mechanic by world (tabs switched in the page, no reload), each a
+//! then "Not started yet" and "Should have by now" (what the ranking expects by your world), then every mechanic by world (tabs switched in the page, no reload), each a
 //! card that opens to its items, least done first. Worlds wear their own colour (data colour,
 //! not decoration): the bars, the meters and the world tags.
 
@@ -265,9 +265,9 @@ fn done(guild: u64, r: &Review) -> Markup {
                 }
             }
         }
-        (should_have(r))
-        // After Should have by now (the page's answer comes first), and only the first few up front: a
-        // returning player can have twenty-odd, one per line on a phone.
+        // Above Should have by now: a whole mechanic untouched is the biggest gap, and the list is
+        // short. Only the first few up front: a returning player can have twenty-odd, one per line
+        // on a phone.
         @if !r.not_started.is_empty() {
             section.ia-panel {
                 div.ia-head {
@@ -287,6 +287,7 @@ fn done(guild: u64, r: &Review) -> Markup {
                 }
             }
         }
+        (should_have(r))
         section.ia-worlds {
             div.ia-tabs role="tablist" {
                 @for w in &worlds {
