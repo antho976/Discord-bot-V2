@@ -16,18 +16,30 @@ use std::collections::HashMap;
 
 use crate::review::Item;
 
-/// Stage codes, in game order: world, then e(arly), m(id), l(ate).
-pub const STAGES: [&str; 21] = ["1e", "1m", "1l", "2e", "2m", "2l", "3e", "3m", "3l", "4e", "4m", "4l", "5e", "5m", "5l", "6e", "6m", "6l", "7e", "7m", "7l"];
+/// Stage codes, in game order: world, then e(arly), m(id), l(ate); then the endgame past Late
+/// World 7: two steps up, then the highest any save has (`max`).
+pub const STAGES: [&str; 24] = ["1e", "1m", "1l", "2e", "2m", "2l", "3e", "3m", "3l", "4e", "4m", "4l", "5e", "5m", "5l", "6e", "6m", "6l", "7e", "7m", "7l", "end1", "end2", "max"];
+/// The first endgame stage.
+pub const ENDGAME: usize = 21;
 
-/// The world a stage is in, 1 to 7.
+/// The world a stage is in, 1 to 7; the endgame counts as World 7.
 pub fn stage_world(stage: usize) -> u8 {
-    (stage / 3 + 1) as u8
+    (stage.min(ENDGAME - 1) / 3 + 1) as u8
 }
 
-/// "Early World 7".
+/// Past Late World 7: goals, not what a stage expects.
+pub fn endgame(stage: usize) -> bool {
+    stage >= ENDGAME
+}
+
+/// "Early World 7", "Endgame 1", "Min-max".
 pub fn stage_label(stage: usize) -> String {
-    let part = ["Early", "Mid", "Late"][stage % 3];
-    format!("{part} World {}", stage_world(stage))
+    match stage.checked_sub(ENDGAME) {
+        Some(0) => "Endgame 1".into(),
+        Some(1) => "Endgame 2".into(),
+        Some(_) => "Min-max".into(),
+        None => format!("{} World {}", ["Early", "Mid", "Late"][stage % 3], stage_world(stage)),
+    }
 }
 
 /// One mechanic's table.
@@ -286,6 +298,14 @@ impl Ladder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_endgame_follows_late_world_7() {
+        assert_eq!(STAGES[ENDGAME - 1], "7l");
+        assert_eq!((stage_label(20), stage_label(21), stage_label(22), stage_label(23)), ("Late World 7".into(), "Endgame 1".into(), "Endgame 2".into(), "Min-max".into()));
+        assert!((ENDGAME..STAGES.len()).all(|s| stage_world(s) == 7 && endgame(s)));
+        assert!(!endgame(20));
+    }
 
     const TEXT: &str = "\
 # a comment

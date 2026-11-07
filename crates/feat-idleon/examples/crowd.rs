@@ -93,7 +93,7 @@ fn main() {
 
     // Stages: by world, then thirds by total class levels.
     let mut seen: Vec<Seen> = Vec::new();
-    let mut counts = [0usize; 21];
+    let mut counts = [0usize; STAGES.len()];
     for w in 1..=7u8 {
         let mut here: Vec<_> = read.iter().filter(|r| r.0.clamp(1, 7) == w).collect();
         here.sort_by(|a, b| a.1.total_cmp(&b.1));
@@ -112,11 +112,16 @@ fn main() {
             }
         }
     }
-    let stages: Vec<usize> = (0..21).filter(|&s| counts[s] >= MIN_SAVES).collect();
     let total: usize = counts.iter().sum();
+    // The endgame: two steps from Late World 7's saves, then the highest of every save.
+    let late7 = crowd::ENDGAME - 1;
+    counts[crowd::ENDGAME] = counts[late7];
+    counts[crowd::ENDGAME + 1] = counts[late7];
+    counts[crowd::ENDGAME + 2] = total;
+    let stages: Vec<usize> = (0..STAGES.len()).filter(|&s| counts[s] >= MIN_SAVES).collect();
 
     let mut out = String::from(HEAD);
-    let _ = writeln!(out, "# Saves per stage: {}", (0..21).filter(|&s| counts[s] > 0).map(|s| format!("{} {}", STAGES[s], counts[s])).collect::<Vec<_>>().join(", "));
+    let _ = writeln!(out, "# Saves per stage: {}", (0..crowd::ENDGAME).filter(|&s| counts[s] > 0).map(|s| format!("{} {}", STAGES[s], counts[s])).collect::<Vec<_>>().join(", "));
     let _ = writeln!(out, "# ({total} saves; a stage needs {MIN_SAVES} to get a column)");
     let mut gen_out = out.clone();
     let mut written = 0;
@@ -192,7 +197,11 @@ fn main() {
         let mut prio: Vec<Vec<f64>> = vec![vec![0.0; cols.len()]; rows.len()];
         let mut floor = vec![0.0f64; rows.len()];
         for (k, &s) in cols.iter().enumerate() {
-            let here: Vec<&Seen> = seen.iter().filter(|x| x.stage == s).collect();
+            let here: Vec<&Seen> = match s.checked_sub(crowd::ENDGAME) {
+                Some(0 | 1) => seen.iter().filter(|x| x.stage == late7).collect(),
+                Some(_) => seen.iter().collect(),
+                None => seen.iter().filter(|x| x.stage == s).collect(),
+            };
             let n = here.len();
             if n < MIN_SAVES {
                 if let Some((col, rank)) = from_base.get(&s) {
@@ -212,7 +221,15 @@ fn main() {
             // that stage has all of, not each item's own median.
             let mut targets = floor.clone();
             let mut chose = 1.0;
-            for q in (10..=20).map(|t| f64::from(t) * 0.05) {
+            // The endgame: per item, the level the top quarter of Late World 7 has, then the top
+            // tenth, then the highest any save has; never under the tier before, so nothing
+            // there is already asked for by World 7.
+            if let Some(e) = s.checked_sub(crowd::ENDGAME) {
+                let top = [0.25, 0.10, 0.0][e.min(2)];
+                let at = ((top * n as f64).ceil() as usize).clamp(1, n) - 1;
+                targets = (0..rows.len()).map(|r| crowd::nice(f64::from(sorted[r][at])).max(floor[r]).min(maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX))).collect();
+            }
+            for q in (10..=20).map(|t| f64::from(t) * 0.05).filter(|_| !crowd::endgame(s)) {
                 chose = q;
                 let at = ((q * n as f64).ceil() as usize).clamp(1, n) - 1;
                 targets = (0..rows.len()).map(|r| crowd::nice(f64::from(sorted[r][at])).max(floor[r]).min(maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX))).collect();

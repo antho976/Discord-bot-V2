@@ -330,18 +330,24 @@ fn window(len: usize, current: Option<usize>) -> (usize, usize) {
 
 /// Should have by now: a box per stage (Early, Mid and Late of each world), oldest first, side
 /// by side like the cards, and in each a line per mechanic: the tier you're on and the tier that
-/// stage asks for. A line opens its card; a long box scrolls inside itself.
+/// stage asks for. A line opens its card; a long box scrolls inside itself. Past Late World 7,
+/// the endgame boxes (Endgame 1, 2, Min-max) are goals from the best saves, not counted as owed.
 fn should_have(r: &Review) -> Markup {
     let stages = r.should_have();
     if stages.is_empty() {
         return html! {};
     }
-    let total: usize = stages.iter().map(|(_, v)| v.len()).sum();
+    let total: usize = stages.iter().filter(|(s, _)| !crate::crowd::endgame(*s)).map(|(_, v)| v.len()).sum();
+    let goals = stages.iter().any(|(s, _)| crate::crowd::endgame(*s));
     html! {
         section.ia-owe {
             div.ia-head {
                 h2 { "Should have by now" }
-                p { (total) " things players have by your world and you don't, oldest first. Click one to open its card." }
+                p {
+                    (total) " things players have by your world and you don't, oldest first. "
+                    @if goals { "Then the endgame: steps toward the best of every save we have, and Min-max, the best itself. " }
+                    "Click one to open its card."
+                }
             }
             div.ia-owe-grid {
                 @for (stage, v) in &stages {
@@ -360,7 +366,8 @@ fn should_have(r: &Review) -> Markup {
                     div.ia-owe-box style={ "--w: var(--w" (w) ")" } {
                         div.ia-owe-head {
                             b { (crate::crowd::stage_label(*stage)) }
-                            @if w < r.world { span.ia-chip.miss { "Missed" } } @else { span.ia-chip.next { "Next up" } }
+                            @if crate::crowd::endgame(*stage) { span.ia-chip.goal { "Goal" } }
+                            @else if w < r.world { span.ia-chip.miss { "Missed" } } @else { span.ia-chip.next { "Next up" } }
                             span.ia-owe-n { (v.len()) (if v.len() == 1 { " thing" } else { " things" }) }
                         }
                         div.ia-owe-lines { @for g in &rows { (owed(r, g)) } }
@@ -1077,6 +1084,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-chip.lock { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
 .ia-chip.miss { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
 .ia-chip.next { color: var(--w); background: color-mix(in oklab, var(--w) 14%, transparent); }
+.ia-chip.goal { color: var(--ink-2); background: color-mix(in oklab, var(--ink-2) 12%, transparent); }
 /* Should have by now: a box per stage like the cards (three on a wide screen, one on a phone),
    a line per mechanic; a long box scrolls inside itself. */
 .ia-owe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; margin-top: 12px; align-items: stretch; }

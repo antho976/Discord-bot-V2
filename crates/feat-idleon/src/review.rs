@@ -272,7 +272,8 @@ impl Mechanic {
             let met = asked().filter(|(i, t)| i.crowd_level() >= **t).count();
             Tier { label, targets: Some(targets), met, need }
         };
-        let mut out: Vec<(Tier, Option<u8>)> = l.rungs.iter().map(|r| (tier(r.label.clone(), r.targets.clone()), Some(r.world))).collect();
+        // Endgame tiers belong to no world: nobody is behind for not having them.
+        let mut out: Vec<(Tier, Option<u8>)> = l.rungs.iter().map(|r| (tier(r.label.clone(), r.targets.clone()), (!crate::crowd::endgame(r.stage)).then_some(r.world))).collect();
         // Items with a real level of their own have no max in those units (stamps, bubbles).
         if self.count != Count::Open && self.items.iter().any(|i| i.max > 0.0) && self.items.iter().all(|i| i.raw.is_none()) {
             let max: Vec<f64> = self.items.iter().map(|i| i.max).collect();
