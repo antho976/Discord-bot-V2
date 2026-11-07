@@ -502,6 +502,11 @@ fn gallery_slots(save: &Save) -> Vec<f64> {
 
 /// Where a trophy or nametag comes from, when the code gives it plainly (extra_w7.py): a quest
 /// reward, a drop-table row, a gem shop pack, a box, the Darts minigame or the dice buff.
+/// Where a Gallery item comes from first ("quest", "drop", "pack", ...).
+fn gallery_kind(id: &str) -> Option<&'static str> {
+    GAME.extra("w7").get("gallery_sources")?.get(id)?.as_array()?.first()?.as_array()?.first()?.as_str()
+}
+
 fn gallery_source(id: &str) -> Option<String> {
     let first = GAME.extra("w7").get("gallery_sources")?.get(id)?.as_array()?.first()?.as_array()?;
     let (kind, detail) = (first.first()?.as_str()?, first.get(1)?.as_str()?);
@@ -537,6 +542,8 @@ fn gallery_how(it: &mut Item, save: &Save, id: &str, more: &str) {
     if held >= 1.0 {
         how = format!("{} in storage: bring it to the Gallery. {how}", big(held)).trim_end().to_string();
         it.state = State::Ready;
+    } else if gallery_kind(id) == Some("pack") {
+        it.pack_only = true;
     }
     if !how.is_empty() {
         it.how = Some(how);

@@ -1,7 +1,7 @@
 //! The public page: the paste box, then the review.
 //!
 //! The review leads with the answer: how far the account is overall with one bar per world,
-//! then "Do next", then every mechanic by world (tabs switched in the page, no reload), each a
+//! then "Not started yet" and "Should have by now" (what the ranking expects by your world), then every mechanic by world (tabs switched in the page, no reload), each a
 //! card that opens to its items, least done first. Worlds wear their own colour (data colour,
 //! not decoration): the bars, the meters and the world tags.
 
@@ -12,7 +12,7 @@ use bot_core::web::ui;
 use crate::expected::Pace;
 use crate::game::GAME;
 use crate::pictures;
-use crate::review::{Count, Item, Mechanic, Review, State as Step, Tier, Why};
+use crate::review::{Count, Item, Mechanic, Packs, Review, State as Step, Tier};
 
 /// Who's looking, as the closed test sees it.
 pub struct Access {
@@ -24,6 +24,8 @@ pub struct Access {
     pub staff: bool,
     /// The name of whoever signed in with Discord (on this page or the dashboard).
     pub member: Option<String>,
+    /// May open a test account (everything at 0): staff, and the local preview.
+    pub test: bool,
 }
 
 pub enum State<'a> {
@@ -49,6 +51,7 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
     let frame = bot_core::web::banner::frame(ctx, guild);
     let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
     let title = match &state {
+        State::Done(r) if r.test => "Test account".to_string(),
         State::Done(r) if !r.name.is_empty() => format!("{}'s account", r.name),
         _ => "Account check".to_string(),
     };
@@ -94,7 +97,7 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
                             }
                         }
                         @match state {
-                            State::Ask { error, retry } => (ask(guild, error, retry)),
+                            State::Ask { error, retry } => (ask(guild, error, retry, access.test)),
                             State::Done(r) => {
                                 (done(guild, r))
                                 (report_box(guild, r, access.member.as_deref()))
@@ -196,7 +199,7 @@ fn report_box(guild: u64, r: &Review, member: Option<&str>) -> Markup {
     }
 }
 
-fn ask(guild: u64, error: Option<&str>, retry: bool) -> Markup {
+fn ask(guild: u64, error: Option<&str>, retry: bool, test: bool) -> Markup {
     html! {
         section.ia-panel.ia-ask {
             div.ia-ask-text {
@@ -206,6 +209,22 @@ fn ask(guild: u64, error: Option<&str>, retry: bool) -> Markup {
             // Sent as plain text: URL-encoding a save triples its size and was a fifth of the
             // server's work per check.
             form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
+                // First in the form so it's the first line of the plain-text body (the server
+                // reads it before the save); shown under the box (CSS order). The page script
+                // remembers the choice in this browser.
+                div.ia-packs role="radiogroup" aria-label="Packs" {
+                    span { "Packs" }
+                    @for (p, tip) in [
+                        (Packs::Buy, "Every tier counts everything."),
+                        (Packs::NoMore, "Leaves out what only a pack you don't own gives: the Potluck Pack's vault levels, pack-only Gallery items."),
+                        (Packs::Free, "That, and the Gem Shop leaves Should have by now."),
+                    ] {
+                        label title=(tip) {
+                            input type="radio" name="packs" value=(p.code()) checked[p == Packs::Buy];
+                            span { (p.label()) }
+                        }
+                    }
+                }
                 textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
                 p.ia-err #ia-err role="alert" hidden[error.is_none()] data-retry[retry] { (error.unwrap_or_default()) }
                 p.ia-note #ia-last hidden { "Filled in with the save you last checked in this tab." }
@@ -221,20 +240,33 @@ fn ask(guild: u64, error: Option<&str>, retry: bool) -> Markup {
                     button.btn.primary type="submit" { "Check my account" }
                 }
             }
+            @if test {
+                p.ia-try {
+                    span { "Test account, everything at 0, seen as a player in" }
+                    @for w in 1..=7u8 { a href={ "/p/" (guild) "/idleon/test?world=" (w) } { "World " (w) } }
+                }
+            }
         }
     }
 }
 
 fn done(guild: u64, r: &Review) -> Markup {
     let worlds: Vec<u8> = (1..=7).chain([0]).filter(|w| r.mechanics.iter().any(|m| m.world == *w)).collect();
-    let start = worlds.iter().copied().find(|w| *w == r.next.first().map_or(r.world, |n| r.mechanics[n.mechanic].world)).unwrap_or(1);
+    let start = worlds.iter().copied().filter(|w| (1..=r.world).contains(w)).max().unwrap_or(1);
     html! {
+        @if r.test {
+            p.ia-test role="note" {
+                b { "Test account." }
+                " Everything is at 0, as a World " (r.world) " player would see the page. Paste a real save to check one."
+            }
+        }
         section.ia-panel.ia-lead {
             div.ia-lead-who {
                 b.ia-big { (pct(r.share())) }
                 span { "of the maxes this check reads, across " (r.mechanics.iter().filter(|m| m.world <= r.world && m.total() > 0.0).count()) " mechanics" }
                 p.ia-lead-line {
                     "World " (r.world) " · " (r.characters) " characters"
+                    @if r.packs != Packs::Buy { " · " (r.packs.label()) }
                     " · " a.ia-again href={ "/p/" (guild) "/idleon" } { "Check another account" }
                 }
             }
@@ -250,33 +282,9 @@ fn done(guild: u64, r: &Review) -> Markup {
                 }
             }
         }
-        @if !r.next.is_empty() {
-            section.ia-panel {
-                div.ia-head {
-                    h2 { "Do next" }
-                    p { "What the rest of your account has left behind, then the quick finishes" }
-                }
-                ol.ia-next {
-                    @for n in &r.next {
-                        @let m = &r.mechanics[n.mechanic];
-                        li {
-                            a.ia-row href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
-                                (mark(m))
-                                span.ia-row-text {
-                                    b { (m.name) }
-                                    span { (why(m, &n.why)) }
-                                }
-                                span.ia-meter { span style={ "--s:" (share3(m.share())) } {} }
-                                span.ia-fig { (fig(m)) }
-                                span.ia-tag { (world_tag(m.world)) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // After Do next (the page's answer comes first), and only the first few up front: a
-        // returning player can have twenty-odd, one per line on a phone.
+        // Above Should have by now: a whole mechanic untouched is the biggest gap, and the list is
+        // short. Only the first few up front: a returning player can have twenty-odd, one per line
+        // on a phone.
         @if !r.not_started.is_empty() {
             section.ia-panel {
                 div.ia-head {
@@ -296,6 +304,7 @@ fn done(guild: u64, r: &Review) -> Markup {
                 }
             }
         }
+        (should_have(r))
         section.ia-worlds {
             div.ia-tabs role="tablist" {
                 @for w in &worlds {
@@ -321,6 +330,100 @@ fn done(guild: u64, r: &Review) -> Markup {
 
 /// Not started chips shown before "Show N more".
 const FRESH: usize = 8;
+
+/// Tiers a card's ladder shows at once, and later tiers its "After that" lists.
+const LADDER: usize = 6;
+const LATER: usize = 5;
+
+/// Which tiers a ladder shows: `LADDER` of them, starting one before the current tier (the last
+/// done one, for context), all of them when they fit. `(from, to)`, `to` exclusive.
+fn window(len: usize, current: Option<usize>) -> (usize, usize) {
+    if len <= LADDER {
+        return (0, len);
+    }
+    let from = current.map_or(len - LADDER, |c| c.saturating_sub(1)).min(len - LADDER);
+    (from, from + LADDER)
+}
+
+/// Boxes Should have by now shows, oldest first: two rows of four on a wide screen, never a
+/// third (narrower screens show two rows of what fits, see the CSS).
+const OWED_BOXES: usize = 8;
+
+/// Should have by now: a box per stage (Early, Mid and Late of each world), oldest first, side
+/// by side like the cards, and in each a line per mechanic: the tier you're on and the tier that
+/// stage asks for. A line opens its card; a long box scrolls inside itself. Past Late World 7,
+/// the endgame boxes (Endgame 1, 2, Min-max) are goals from the best saves, not counted as owed.
+fn should_have(r: &Review) -> Markup {
+    let stages = r.should_have();
+    if stages.is_empty() {
+        return html! {};
+    }
+    let total: usize = stages.iter().filter(|(s, _)| !crate::crowd::endgame(*s)).map(|(_, v)| v.len()).sum();
+    let goals = stages.iter().any(|(s, _)| crate::crowd::endgame(*s));
+    html! {
+        section.ia-owe {
+            div.ia-head {
+                h2 { "Should have by now" }
+                p {
+                    (total) " things players have by your world and you don't, oldest first. "
+                    @if goals { "Then the endgame: steps toward the best of every save we have, and Min-max, the best itself. " }
+                    "Click one to open its card."
+                }
+            }
+            div.ia-owe-grid {
+                @for (stage, v) in stages.iter().take(OWED_BOXES) {
+                    @let w = crate::crowd::stage_world(*stage);
+                    // A mechanic's items at this stage, in the order the list ranks them.
+                    @let rows = {
+                        let mut rows: Vec<Vec<&crate::review::Owed>> = Vec::new();
+                        for o in v {
+                            match rows.iter_mut().find(|g| g[0].mechanic == o.mechanic) {
+                                Some(g) => g.push(o),
+                                None => rows.push(vec![o]),
+                            }
+                        }
+                        rows
+                    };
+                    div.ia-owe-box style={ "--w: var(--w" (w) ")" } {
+                        div.ia-owe-head {
+                            b { (crate::crowd::stage_label(*stage)) }
+                            @if crate::crowd::endgame(*stage) { span.ia-chip.goal { "Goal" } }
+                            @else if w < r.world { span.ia-chip.miss { "Missed" } } @else { span.ia-chip.next { "Next up" } }
+                            span.ia-owe-n { (v.len()) (if v.len() == 1 { " thing" } else { " things" }) }
+                        }
+                        div.ia-owe-lines { @for g in &rows { (owed(r, g)) } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One mechanic's line at a stage, a link that opens its card: the tier you're on and the one
+/// the stage asks for; what's missing on hover. When none of it can move yet, a line under it
+/// on what it waits for (every locked item says), named when there are several.
+fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
+    let m = &r.mechanics[g[0].mechanic];
+    let here = m.tiers().iter().position(|t| !t.complete()).unwrap_or(0) + 1;
+    let want = g.iter().map(|o| o.tier).max().unwrap_or(0) + 1;
+    let items: Vec<&Item> = g.iter().map(|o| &m.items[o.item]).collect();
+    let need = items.iter().all(|i| i.state == Step::Locked).then(|| items[0].how.as_deref()).flatten().map(|h| match items.len() {
+        1 => h.to_string(),
+        _ => format!("{}: {h}", items[0].name),
+    });
+    let names = items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", ");
+    html! {
+        a.ia-owe-line href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) title={ (items.len()) " left: " (names) } {
+            (mark(m))
+            span.ia-owe-name {
+                b { (m.name) }
+                @if let [i] = items.as_slice() { span { " · " (i.name) } }
+            }
+            span.ia-owe-t { @if want > here { "T " (here) " ▸ T " (want) } @else { "T " (want) } }
+            @if let Some(n) = &need { span.ia-owe-need { (n) } }
+        }
+    }
+}
 
 /// A Not started chip: opens its card.
 fn fresh(m: &Mechanic) -> Markup {
@@ -428,8 +531,15 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                     }
                 }
                 @if !tiers.is_empty() {
-                    ol.ia-ladder style={ "--n:" (tiers.len()) } {
-                        @for (k, t) in tiers.iter().enumerate() {
+                    @let (from, to) = window(tiers.len(), current);
+                    @if from > 0 || to < tiers.len() {
+                        p.ia-ladder-note {
+                            "Tiers " (from + 1) "–" (to) " of " (tiers.len())
+                            @if from > 0 { " · " (from) " before these done" }
+                        }
+                    }
+                    ol.ia-ladder style={ "--n:" (to - from) } {
+                        @for (k, t) in tiers.iter().enumerate().skip(from).take(to - from) {
                             li.ia-rung.done[t.complete()].here[current == Some(k)] {
                                 span.ia-rung-k {
                                     "Tier " (k + 1)
@@ -441,7 +551,7 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                                 b { (t.label) }
                                 span.ia-fig { (t.met) " of " (t.need) }
                                 span.ia-meter { span style={ "--s:" (share3(t.met as f64 / t.need.max(1) as f64)) } {} }
-                                @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty()) { span.ia-rung-note { (n) } }
+                                @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty() && m.crowd.is_none()) { span.ia-rung-note { (n) } }
                             }
                         }
                     }
@@ -466,7 +576,8 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                                 @if tasks.len() > TASKS { p.ia-note { "And " (tasks.len() - TASKS) " more, in the full list below." } }
                                 @if k + 1 < tiers.len() {
                                     p.ia-later-head { "After that" }
-                                    @for (j, t) in tiers.iter().enumerate().skip(k + 1) { (later(m, j, t)) }
+                                    @for (j, t) in tiers.iter().enumerate().skip(k + 1).take(LATER) { (later(m, j, t)) }
+                                    @if tiers.len() > k + 1 + LATER { p.ia-note { "And " (tiers.len() - k - 1 - LATER) " more tiers after those." } }
                                 }
                             }
                             None if !tiers.is_empty() => { p.ia-note { "Every tier done." } }
@@ -561,7 +672,8 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
             }
             span.ia-fig {
                 // A one-time thing has no level to show; the chip or the line says the rest.
-                @if once { (i.level_name.as_deref().unwrap_or("")) }
+                @if m.crowd.is_some() && !(once && i.raw.is_none()) { "Lv " (num(m.tier_level(i))) " → Lv " (num(target)) }
+                @else if once { (i.level_name.as_deref().unwrap_or("")) }
                 @else { (level_text(m, i.level)) " → " (level_text(m, target)) }
             }
             @match i.state {
@@ -580,8 +692,13 @@ fn later(m: &Mechanic, j: usize, t: &Tier) -> Markup {
             .items
             .iter()
             .zip(targets)
-            .filter(|(i, tg)| i.level < **tg)
-            .map(|(i, _)| if i.max <= 1.0 && m.tier_names.is_none() { i.name.clone() } else { format!("{} {}", i.name, level_text(m, i.level)) })
+            .filter(|(i, tg)| m.tier_level(i) < **tg)
+            .map(|(i, _)| match () {
+                _ if m.crowd.is_some() && i.raw.is_some() => format!("{} Lv {}", i.name, num(m.tier_level(i))),
+                _ if i.max <= 1.0 && m.tier_names.is_none() => i.name.clone(),
+                _ if m.crowd.is_some() => format!("{} Lv {}", i.name, num(i.level)),
+                _ => format!("{} {}", i.name, level_text(m, i.level)),
+            })
             .collect(),
         None => Vec::new(),
     };
@@ -636,17 +753,6 @@ fn left_square(id: &str) -> bool {
     LEFT_SQUARE.iter().any(|p| id.starts_with(p))
 }
 
-fn why(m: &Mechanic, w: &Why) -> String {
-    match w {
-        Why::Behind { world_avg } => {
-            let place = if m.world == 0 { "account".to_string() } else { format!("W{}", m.world) };
-            format!("{} done, your {place} average is {}", pct(m.share()), pct(*world_avg))
-        }
-        Why::NearlyDone { left: 1 } => "One left to max".into(),
-        Why::NearlyDone { left } => format!("{left} left to max"),
-    }
-}
-
 fn fig(m: &Mechanic) -> String {
     match m.count {
         Count::Levels => format!("{} / {} {}", num(m.have()), num(m.total()), m.unit),
@@ -698,8 +804,8 @@ pub(crate) fn num(n: f64) -> String {
 /// spans the grid, so every card is measured before and after (FLIP). The opened one is
 /// revealed from its old size rather than stretched and draws on top; cards that only moved up
 /// or down slide; cards that changed column fade in where they land, since sliding them across
-/// their neighbours reads as a double image. Do next and Not
-/// started links switch the world, open the card the same way and scroll to it.
+/// their neighbours reads as a double image. Should have by now
+/// and Not started links switch the world, open the card the same way and scroll to it.
 const JS: &str = r##"(function(){
 var f=document.getElementById("ia-file"),t=document.getElementById("ia-save"),pb=document.getElementById("ia-paste"),er=document.getElementById("ia-err");
 function say(s){if(er){er.textContent=s;er.hidden=false}}
@@ -722,8 +828,15 @@ if(pb&&t&&navigator.clipboard&&navigator.clipboard.readText){
 // Back from signing in to send a report (?from=signin): check the same save again and land on
 // the report, with what you'd written put back.
 var signin=/[?&]from=signin/.test(location.search);
-try{history.replaceState(null,"",location.pathname+location.hash)}catch(x){}
+// The rest of the address stays (the test account's ?world=).
+try{history.replaceState(null,"",location.pathname+location.search.replace(/([?&])from=signin(&|$)/,function(m,a,b){return b?a:""})+location.hash)}catch(x){}
 var LAST="ia-last-save";
+// Packs: the choice on the paste box, remembered in this browser, and passed to the test
+// account links.
+var PK="ia-packs";
+function packsLinks(v){document.querySelectorAll(".ia-try a").forEach(function(a){a.href=a.href.replace(/&packs=[^&]*/,"")+(v&&v!=="buy"?"&packs="+v:"")})}
+try{var pv=localStorage.getItem(PK),pr=pv&&document.querySelector('input[name=packs][value="'+pv+'"]');if(pr){pr.checked=true;packsLinks(pv)}}catch(x){}
+document.addEventListener("change",function(e){if(e.target.name!=="packs")return;try{localStorage.setItem(PK,e.target.value)}catch(x){}packsLinks(e.target.value)});
 function keep(s){try{if(s)sessionStorage.setItem(LAST,s);else sessionStorage.removeItem(LAST)}catch(x){try{sessionStorage.removeItem(LAST)}catch(y){}}}
 if(t){
   t.form.addEventListener("submit",function(){keep(t.value)});
@@ -894,7 +1007,19 @@ body.ia-pub { background: var(--page); -webkit-tap-highlight-color: transparent;
 .ia-ask form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .ia-ask textarea { width: 100%; min-height: 150px; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 12.5px/1.5 var(--mono); }
 .ia-ask textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
-.ia-ask-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.ia-ask-actions { order: 2; display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.ia-packs { order: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.ia-packs > span { margin-right: 4px; color: var(--ink-3); }
+.ia-packs label { position: relative; cursor: pointer; }
+.ia-packs input { position: absolute; opacity: 0; pointer-events: none; }
+.ia-packs label span { display: block; padding: 6px 11px; border-radius: 8px; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.ia-packs label:hover span { color: var(--ink); }
+.ia-packs input:checked + span { color: var(--ink); background: color-mix(in oklab, var(--accent) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 55%, transparent); }
+.ia-packs input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ia-try { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding-top: 14px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 13px; }
+.ia-try a { color: var(--ink-2); text-underline-offset: 3px; }
+.ia-try a:hover { color: var(--ink); }
+@media (pointer: coarse) { .ia-try a { padding: 8px 0; } }
 .ia-err { color: var(--held); font-size: 13.5px; }
 
 /* The answer: the big share and one column per world. */
@@ -919,14 +1044,7 @@ body.ia-pub { background: var(--page); -webkit-tap-highlight-color: transparent;
 .ia-col.off .ia-col-track { background: var(--well); }
 .ia-col.off b { color: var(--ink-3); }
 
-/* Rows: do next and the items. A 28 px mark, the name and its line, a meter, the figure. */
-.ia-next { list-style: none; display: flex; flex-direction: column; padding: 0; margin: 0; }
-.ia-next li + li { border-top: 1px solid var(--edge-1); }
-.ia-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(80px, 22%) auto 34px; align-items: center; gap: 14px; min-height: 54px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; color: var(--ink); transition: background 0.18s; }
-.ia-row:active { transform: scale(0.99); }
-.ia-row-text { display: flex; flex-direction: column; min-width: 0; }
-.ia-row-text b { font-size: 14px; font-weight: 500; }
-.ia-row-text span { font-size: 13px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Rows: the items. A 28 px mark, the name and its line, a meter, the figure. */
 .ia-mark { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; }
 body.ia-pub img.left { object-fit: cover; object-position: left center; }
 .ia-mark.blank { display: block; width: 10px; height: 10px; margin: 9px; border-radius: 50%; background: var(--w); }
@@ -973,6 +1091,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-meter.wide { grid-area: b; }
 .ia-body { padding: 4px 16px 18px; display: flex; flex-direction: column; gap: 18px; }
 .ia-body .ia-note { padding: 0; }
+.ia-ladder-note { font-size: 12px; color: var(--ink-3); margin-bottom: 6px; }
 .ia-ladder { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 8px; }
 .ia-rung { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 11px 13px; border-radius: 10px; background: var(--well); }
 .ia-rung b { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -998,6 +1117,32 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-chip { font: 600 12px var(--sans); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
 .ia-chip.ok { color: var(--live); background: color-mix(in oklab, var(--live) 14%, transparent); }
 .ia-chip.lock { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
+.ia-chip.miss { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
+.ia-chip.next { color: var(--w); background: color-mix(in oklab, var(--w) 14%, transparent); }
+.ia-chip.goal { color: var(--ink-2); background: color-mix(in oklab, var(--ink-2) 12%, transparent); }
+/* Should have by now: a box per stage like the cards (three on a wide screen, one on a phone),
+   a line per mechanic; a long box scrolls inside itself. */
+.ia-owe-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 12px; align-items: stretch; }
+/* Never more than two rows: as many columns as fit (each at least 340 px), and only twice that
+   many boxes; a phone stacks them all. */
+@container col (min-width: 692px) { .ia-owe-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ia-owe-box:nth-child(n+5) { display: none; } }
+@container col (min-width: 1044px) { .ia-owe-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .ia-owe-box:nth-child(n+5) { display: block; } .ia-owe-box:nth-child(n+7) { display: none; } }
+@container col (min-width: 1396px) { .ia-owe-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .ia-owe-box:nth-child(n+7) { display: block; } }
+.ia-owe-box { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 14px 16px 6px; min-width: 0; }
+.ia-owe-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ia-owe-head b { font-size: 14px; font-weight: 600; color: var(--w); }
+.ia-owe-n { margin-left: auto; font-size: 13px; color: var(--ink-3); }
+.ia-owe-lines { margin-top: 6px; max-height: 312px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.ia-owe-line { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 2px; padding: 8px 4px 8px 0; color: inherit; text-decoration: none; border-bottom: 1px solid var(--edge-1); }
+.ia-owe-line:last-child { border-bottom: 0; }
+.ia-owe-line .ia-mark { width: 24px; height: 24px; }
+.ia-owe-line .ia-mark.blank { width: 8px; height: 8px; margin: 8px; }
+.ia-owe-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.ia-owe-name b { font-weight: 500; }
+.ia-owe-name span { color: var(--ink-3); }
+.ia-owe-line:hover b, .ia-owe-line:focus-visible b { text-decoration: underline; text-underline-offset: 3px; }
+.ia-owe-t { font: 500 12.5px var(--mono); color: var(--ink-2); white-space: nowrap; }
+.ia-owe-need { grid-column: 2 / -1; font-size: 12px; line-height: 1.35; color: var(--waiting); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .ia-later-head { margin-top: 18px; font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
 .ia-later { display: flex; align-items: baseline; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--edge-1); font-size: 13.5px; }
 .ia-later-k { flex: none; white-space: nowrap; }
@@ -1072,7 +1217,6 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 /* Hover only where there's a pointer to hover with: a tap would leave it stuck on. */
 @media (hover: hover) and (pointer: fine) {
   .ia-lead-line a:hover { color: var(--ink); }
-  .ia-row:hover { background: var(--hover); }
   .ia-tabs label:hover { background: var(--hover); color: var(--ink); }
   .ia-card > summary:hover { background: var(--hover); }
   .ia-card[open] > summary:hover { background: linear-gradient(var(--hover), var(--hover)), var(--raised); }
@@ -1080,7 +1224,7 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-all > summary:hover, .ia-fresh-more > summary:hover { color: var(--ink); }
 }
 @media (hover: none) {
-  .ia-row:active, .ia-tabs label:active { background: var(--hover); }
+  .ia-tabs label:active { background: var(--hover); }
   .ia-card > summary:active { background: linear-gradient(var(--hover), var(--hover)), var(--raised); }
 }
 /* Under 16 px a phone zooms into the box when you tap it. */
@@ -1100,12 +1244,6 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-big { font-size: 48px; }
   .ia-cols { height: 112px; gap: 6px; }
   .ia-ask-actions .btn { flex: 1 1 auto; justify-content: center; }
-  /* Do next: the name and its line get the width; the bar runs under them. */
-  .ia-row { grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "m t g" ". b b"; row-gap: 7px; padding: 10px 6px; }
-  .ia-row > .ia-mark { grid-area: m; } .ia-row > .ia-row-text { grid-area: t; } .ia-row > .ia-tag { grid-area: g; align-self: start; }
-  .ia-row > .ia-meter { grid-area: b; }
-  .ia-row > .ia-fig { display: none; }
-  .ia-row-text span { white-space: normal; }
   /* World tabs: one row that scrolls sideways instead of three rows of tabs. */
   .ia-tabs { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px 12px; padding: 0 16px 2px; scrollbar-width: none; scroll-padding: 0 16px; overscroll-behavior-x: contain; }
   .ia-tabs::-webkit-scrollbar { display: none; }
@@ -1129,3 +1267,17 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-item { grid-template-columns: 24px minmax(0, 1fr) minmax(44px, 22%) minmax(9ch, auto); gap: 8px; }
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::window;
+
+    #[test]
+    fn a_ladder_shows_six_tiers_around_where_you_are() {
+        assert_eq!(window(4, Some(2)), (0, 4));
+        assert_eq!(window(20, Some(0)), (0, 6));
+        assert_eq!(window(20, Some(9)), (8, 14));
+        assert_eq!(window(20, Some(19)), (14, 20));
+        assert_eq!(window(20, None), (14, 20));
+    }
+}
