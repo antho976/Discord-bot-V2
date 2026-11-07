@@ -354,7 +354,7 @@ fn window(len: usize, current: Option<usize>) -> (usize, usize) {
 
 /// Rows each stage of Should have by now shows before "Show N more", and stages shown before
 /// the rest fold away.
-const OWED_ROWS: usize = 6;
+const OWED_ROWS: usize = 12;
 const OWED_STAGES: usize = 3;
 
 /// Should have by now: what players at your world have, from every mechanic and world, that
@@ -1137,6 +1137,14 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-owe-head b { font-size: 14px; font-weight: 600; color: var(--w); }
 .ia-owe-n { margin-left: auto; font-size: 13px; color: var(--ink-3); }
 .ia-owe-card { color: var(--ink-2); text-underline-offset: 3px; }
+/* Should have by now: columns like the cards below (three on a wide screen, one on a phone),
+   each item compact: where it stands under its name, the chip on the right. */
+.ia-owe .ia-task-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); column-gap: 28px; }
+.ia-owe .ia-task { grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "i t c" "i f c"; row-gap: 3px; border-bottom: 1px solid var(--edge-1); }
+.ia-owe .ia-task > :first-child { grid-area: i; }
+.ia-owe .ia-task > .ia-task-text { grid-area: t; }
+.ia-owe .ia-task > .ia-fig { grid-area: f; text-align: left; font-size: 12px; color: var(--ink-3); }
+.ia-owe .ia-task > :last-child { grid-area: c; }
 details.ia-owe-more > summary { margin-top: 10px; cursor: pointer; font-size: 13px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; list-style: none; }
 details.ia-owe-more > summary::-webkit-details-marker { display: none; }
 .ia-later-head { margin-top: 18px; font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
