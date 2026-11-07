@@ -146,13 +146,16 @@ mod tests {
         let review = crate::review::Review::new(&save, checks::all(&save), 7);
         for (key, ws) in &worlds {
             let m = review.mechanics.iter().find(|m| m.key == key).unwrap_or_else(|| panic!("expected.txt: no mechanic {key}"));
+            if m.crowd.is_some() {
+                continue; // its tiers' worlds come from crowd.txt
+            }
             let rungs = m.tiers().len();
             assert!(ws.len() <= rungs, "expected.txt: {key} lists {} tiers, its ladder has {rungs}", ws.len());
             let set: Vec<u8> = ws.iter().flatten().copied().collect();
             assert!(set.windows(2).all(|p| p[0] <= p[1]), "expected.txt: {key}'s worlds go down: {ws:?}");
         }
         for m in &review.mechanics {
-            assert!(m.tiers().is_empty() || worlds.contains_key(m.key), "expected.txt has no {}: run the expected example", m.key);
+            assert!(m.tiers().is_empty() || m.crowd.is_some() || worlds.contains_key(m.key), "expected.txt has no {}: run the expected example", m.key);
         }
     }
 }
