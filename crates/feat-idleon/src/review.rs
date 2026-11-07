@@ -6,6 +6,7 @@
 //! behind the rest of your account in the same world, and cheap finishes (one or two steps from
 //! done).
 
+use crate::expected::Pace;
 use crate::save::Save;
 
 /// One thing inside a mechanic: a vial, a statue, a research node.
@@ -129,6 +130,9 @@ pub struct Mechanic {
     /// For a mechanic with no max: keep the check's own item order and show this heading
     /// ("Soonest rank-up first") instead of sorting lowest first.
     pub open_order: Option<&'static str>,
+    /// Where it stands against the worlds its tiers belong to (`expected.txt`), set by
+    /// `Review::new`; `None` until its tiers have worlds.
+    pub pace: Option<Pace>,
 }
 
 impl Mechanic {
@@ -298,6 +302,11 @@ impl Review {
             m.items = now;
             m.later = later;
         }
+        crate::expected::with(|worlds| {
+            for m in &mut mechanics {
+                m.pace = worlds.get(m.key).and_then(|ws| Pace::new(&m.tiers(), ws, world));
+            }
+        });
         let not_started: Vec<usize> = mechanics.iter().enumerate().filter(|(_, m)| m.world > 0 && m.world <= world && m.untouched()).map(|(i, _)| i).collect();
         let next = pick_next(&mechanics, world, &not_started);
         Review {
@@ -319,6 +328,21 @@ impl Review {
     /// One world's average share, `None` when it has no mechanics with a max.
     pub fn world_share(&self, world: u8) -> Option<f64> {
         world_avg(&self.mechanics, world)
+    }
+
+    /// Mechanics with a tier overdue for the world you're in, grouped by the world that tier
+    /// belongs to, earliest world first (the most overdue), in game order inside each.
+    pub fn overdue(&self) -> Vec<(u8, Vec<usize>)> {
+        let mut out: Vec<(u8, Vec<usize>)> = Vec::new();
+        for (i, m) in self.mechanics.iter().enumerate() {
+            let Some(w) = m.pace.as_ref().and_then(|p| p.due.and_then(|k| p.worlds[k])) else { continue };
+            match out.iter_mut().find(|(ow, _)| *ow == w) {
+                Some((_, v)) => v.push(i),
+                None => out.push((w, vec![i])),
+            }
+        }
+        out.sort_by_key(|(w, _)| *w);
+        out
     }
 }
 
@@ -404,6 +428,7 @@ mod tests {
             have: None,
             later: Vec::new(),
             open_order: None,
+            pace: None,
         }
     }
 

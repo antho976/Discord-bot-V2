@@ -57,6 +57,7 @@ fn prune(ctx: &Ctx) {
     let month = 30 * 86_400_000i64;
     let _ = ctx.db.with(|c| {
         c.execute("DELETE FROM dash_sessions WHERE expires_at < ?1", [now])?;
+        c.execute("DELETE FROM member_sessions WHERE expires_at < ?1", [now])?;
         c.execute("DELETE FROM notifications WHERE at < ?1", [now - month])?;
         c.execute("DELETE FROM dash_audit WHERE at < ?1", [now - 6 * month])?;
         Ok(())
