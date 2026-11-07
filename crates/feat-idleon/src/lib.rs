@@ -5,16 +5,12 @@
 //! answered in the same request and never stored. The maxes, names and pictures come from the
 //! game itself (`tools/idleon-extract`), so they follow game updates.
 
-mod checks;
-pub mod crowd;
-pub mod expected;
-mod game;
 mod limit;
 mod page;
-mod pictures;
-pub mod review;
-pub mod save;
 pub mod steam;
+
+pub use idleon_core::{crowd, expected, review, save, view};
+use idleon_core::{checks, game, pictures};
 
 use std::sync::LazyLock;
 
@@ -33,8 +29,7 @@ use bot_core::web::{FormData, Level, User, WebError, WebResult, saved, ui};
 use bot_core::{Ctx, Feature, FeatureMeta, Group, Icon, Migration, NavItem, feature_async};
 use serde::{Deserialize, Serialize};
 
-pub use checks::{all as run_checks, world_reached};
-pub use pictures::has as has_picture;
+pub use idleon_core::{has_picture, run_checks, world_reached};
 
 pub const KEY: &str = "idleon";
 

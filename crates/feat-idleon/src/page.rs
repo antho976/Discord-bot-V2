@@ -9,10 +9,10 @@ use bot_core::Ctx;
 use bot_core::maud::{DOCTYPE, Markup, PreEscaped, html};
 use bot_core::web::ui;
 
-use crate::expected::Pace;
 use crate::game::GAME;
 use crate::pictures;
 use crate::review::{Count, Item, Mechanic, Packs, Review, State as Step, Tier};
+use crate::view::{Chip, OweLine, FRESH, LATER, REPORT_TEXT, TASKS, WORLD_NAMES, item_fig, left_square, num, on_hold, pace_line, pct, share3, window, world_tag};
 
 /// Who's looking, as the closed test sees it.
 pub struct Access {
@@ -37,12 +37,6 @@ pub enum State<'a> {
 
 /// The page in a sentence, for link previews.
 const ABOUT: &str = "Paste your Idleon save and see how far each mechanic is from the game's max, and what to work on next.";
-
-pub const WORLD_NAMES: [&str; 8] = ["Account", "Blunder Hills", "Yum-Yum Desert", "Frostbite Tundra", "Hyperion Nebula", "Smolderin' Plateau", "Spirited Valley", "Shimmerfin Deep"];
-
-fn world_tag(w: u8) -> String {
-    if w == 0 { "All".into() } else { format!("W{w}") }
-}
 
 pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
     let name = ctx.guild_name(guild);
@@ -145,10 +139,6 @@ fn closed_door(guild: u64, a: &Access) -> Markup {
         }
     }
 }
-
-/// The longest report text: the suggestion box's limit less the longest header the report gets
-/// ("Account check report (40 characters), 60 characters:").
-const REPORT_TEXT: usize = 1370;
 
 /// "Report a problem": a note to staff about what looks wrong, sent to the suggestion box.
 fn report_box(guild: u64, r: &Review, member: Option<&str>) -> Markup {
@@ -328,70 +318,31 @@ fn done(guild: u64, r: &Review) -> Markup {
     }
 }
 
-/// Not started chips shown before "Show N more".
-const FRESH: usize = 8;
-
-/// Tiers a card's ladder shows at once, and later tiers its "After that" lists.
-const LADDER: usize = 6;
-const LATER: usize = 5;
-
-/// Which tiers a ladder shows: `LADDER` of them, starting one before the current tier (the last
-/// done one, for context), all of them when they fit. `(from, to)`, `to` exclusive.
-fn window(len: usize, current: Option<usize>) -> (usize, usize) {
-    if len <= LADDER {
-        return (0, len);
-    }
-    let from = current.map_or(len - LADDER, |c| c.saturating_sub(1)).min(len - LADDER);
-    (from, from + LADDER)
-}
-
-/// Boxes Should have by now shows, oldest first: two rows of four on a wide screen, never a
-/// third (narrower screens show two rows of what fits, see the CSS).
-const OWED_BOXES: usize = 8;
-
 /// Should have by now: a box per stage (Early, Mid and Late of each world), oldest first, side
 /// by side like the cards, and in each a line per mechanic: the tier you're on and the tier that
 /// stage asks for. A line opens its card; a long box scrolls inside itself. Past Late World 7,
 /// the endgame boxes (Endgame 1, 2, Min-max) are goals from the best saves, not counted as owed.
 fn should_have(r: &Review) -> Markup {
-    let stages = r.should_have();
-    if stages.is_empty() {
-        return html! {};
-    }
-    let total: usize = stages.iter().filter(|(s, _)| !crate::crowd::endgame(*s)).map(|(_, v)| v.len()).sum();
-    let goals = stages.iter().any(|(s, _)| crate::crowd::endgame(*s));
+    let Some(o) = crate::view::owing(r) else { return html! {} };
     html! {
         section.ia-owe {
             div.ia-head {
                 h2 { "Should have by now" }
-                p {
-                    (total) " things players have by your world and you don't, oldest first. "
-                    @if goals { "Then the endgame: steps toward the best of every save we have, and Min-max, the best itself. " }
-                    "Click one to open its card."
-                }
+                p { (crate::view::owing_about(&o)) }
             }
             div.ia-owe-grid {
-                @for (stage, v) in stages.iter().take(OWED_BOXES) {
-                    @let w = crate::crowd::stage_world(*stage);
-                    // A mechanic's items at this stage, in the order the list ranks them.
-                    @let rows = {
-                        let mut rows: Vec<Vec<&crate::review::Owed>> = Vec::new();
-                        for o in v {
-                            match rows.iter_mut().find(|g| g[0].mechanic == o.mechanic) {
-                                Some(g) => g.push(o),
-                                None => rows.push(vec![o]),
-                            }
-                        }
-                        rows
-                    };
-                    div.ia-owe-box style={ "--w: var(--w" (w) ")" } {
+                @for b in &o.boxes {
+                    div.ia-owe-box style={ "--w: var(--w" (b.world) ")" } {
                         div.ia-owe-head {
-                            b { (crate::crowd::stage_label(*stage)) }
-                            @if crate::crowd::endgame(*stage) { span.ia-chip.goal { "Goal" } }
-                            @else if w < r.world { span.ia-chip.miss { "Missed" } } @else { span.ia-chip.next { "Next up" } }
-                            span.ia-owe-n { (v.len()) (if v.len() == 1 { " thing" } else { " things" }) }
+                            b { (b.label) }
+                            @match b.chip {
+                                Chip::Goal => span.ia-chip.goal { "Goal" },
+                                Chip::Missed => span.ia-chip.miss { "Missed" },
+                                Chip::NextUp => span.ia-chip.next { "Next up" },
+                            }
+                            span.ia-owe-n { (b.count) }
                         }
-                        div.ia-owe-lines { @for g in &rows { (owed(r, g)) } }
+                        div.ia-owe-lines { @for l in &b.lines { (owed(r, l)) } }
                     }
                 }
             }
@@ -402,25 +353,17 @@ fn should_have(r: &Review) -> Markup {
 /// One mechanic's line at a stage, a link that opens its card: the tier you're on and the one
 /// the stage asks for; what's missing on hover. When none of it can move yet, a line under it
 /// on what it waits for (every locked item says), named when there are several.
-fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
-    let m = &r.mechanics[g[0].mechanic];
-    let here = m.tiers().iter().position(|t| !t.complete()).unwrap_or(0) + 1;
-    let want = g.iter().map(|o| o.tier).max().unwrap_or(0) + 1;
-    let items: Vec<&Item> = g.iter().map(|o| &m.items[o.item]).collect();
-    let need = items.iter().all(|i| i.state == Step::Locked).then(|| items[0].how.as_deref()).flatten().map(|h| match items.len() {
-        1 => h.to_string(),
-        _ => format!("{}: {h}", items[0].name),
-    });
-    let names = items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", ");
+fn owed(r: &Review, l: &OweLine) -> Markup {
+    let m = &r.mechanics[l.mechanic];
     html! {
-        a.ia-owe-line href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) title={ (items.len()) " left: " (names) } {
+        a.ia-owe-line href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) title=(l.title) {
             (mark(m))
             span.ia-owe-name {
                 b { (m.name) }
-                @if let [i] = items.as_slice() { span { " · " (i.name) } }
+                @if let Some(i) = &l.item { span { " · " (i) } }
             }
-            span.ia-owe-t { @if want > here { "T " (here) " ▸ T " (want) } @else { "T " (want) } }
-            @if let Some(n) = &need { span.ia-owe-need { (n) } }
+            span.ia-owe-t { (l.tiers) }
+            @if let Some(n) = &l.need { span.ia-owe-need { (n) } }
         }
     }
 }
@@ -457,33 +400,13 @@ fn items_data(r: &Review) -> Markup {
     html! { script #ia-items type="application/json" { (PreEscaped(text)) } }
 }
 
-/// What an item's row says on the right: its named level, "17 / 40", or "Lv 17".
-fn item_fig(i: &Item) -> String {
-    match &i.level_name {
-        Some(n) => n.clone(),
-        None if i.max > 0.0 => format!("{} / {}", num(i.level), num(i.max)),
-        None => format!("Lv {}", num(i.level)),
-    }
-}
-
-/// Where a mechanic stands against its tiers' worlds, in a line: what world it's at, and the
-/// first tier overdue for the world you're in.
-fn pace_line(p: &Pace, reached: u8) -> Option<String> {
-    let at = p.at.map(|w| format!("Where a World {w} player would be."));
-    match (at, p.due.and_then(|k| p.worlds[k].map(|w| (k, w)))) {
-        (at, Some((k, w))) => Some(format!("{}Tier {} is expected by World {w}, and you're in World {reached}.", at.map(|a| a + " ").unwrap_or_default(), k + 1)),
-        (Some(at), None) => Some(format!("{at} Nothing here is overdue for World {reached}.")),
-        (None, None) => p.worlds.iter().flatten().min().map(|w| format!("Its first tier is expected by World {w}.")),
-    }
-}
-
 fn card(m: &Mechanic, reached: u8) -> Markup {
     let open = m.open_items();
     let tiers = m.tiers();
     let current = tiers.iter().position(|t| !t.complete());
     // What you hold and what raises the cap only matter while there's a tier to work on.
     let side = current.is_some() && (m.have.is_some() || !m.raises.is_empty());
-    let hold = ON_HOLD.contains(&m.key);
+    let hold = on_hold(m);
     html! {
         details.ia-card #{ "m-" (m.key) } {
             summary {
@@ -491,21 +414,7 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                 span.ia-card-name {
                     b { (m.name) }
                     // The tier you're on, numbered as the ladder numbers it ("Tier 3 · you're here").
-                    span {
-                        (fig(m))
-                        @match current {
-                            Some(k) => { " · Tier " (k + 1) "/" (tiers.len()) },
-                            None if !tiers.is_empty() => { " · All tiers" },
-                            None => {},
-                        }
-                        @if let Some(p) = &m.pace {
-                            @match (p.at, p.worlds.iter().flatten().min()) {
-                                (Some(w), _) => { " · World " (w) " level" },
-                                (None, Some(f)) if *f <= reached => { " · Under World " (f) " level" },
-                                _ => {},
-                            }
-                        }
-                    }
+                    span { (crate::view::card_line(m, &tiers, reached)) }
                 }
                 @if m.count == Count::Open {
                     span.ia-pct.open { "No max" }
@@ -561,15 +470,8 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                         @match current {
                             Some(k) => {
                                 @let tasks = m.tasks(&tiers[k]);
-                                @let ready = tasks.iter().filter(|(i, _)| i.state == Step::Ready).count();
-                                @let short = tiers[k].need - tiers[k].met;
                                 h3 { "To reach Tier " (k + 1) }
-                                p.ia-note {
-                                    @if tiers[k].targets.is_none() { (short) " more, any of these. " }
-                                    (tasks.len()) " left."
-                                    @if ready == tasks.len() && ready > 0 { " You can do all of them now." }
-                                    @else if ready > 0 { " " (ready) " you can do right now." }
-                                }
+                                p.ia-note { (crate::view::tasks_note(&tiers[k], &tasks)) }
                                 div.ia-task-list {
                                     @for (i, target) in tasks.iter().take(TASKS) { (task(m, i, *target)) }
                                 }
@@ -617,17 +519,7 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                         }
                     }
                 }
-                @if !m.later.is_empty() {
-                    p.ia-note.ia-later-worlds {
-                        "Not counted until you get there: "
-                        @for (n, i) in m.later.iter().take(6).enumerate() {
-                            @if n > 0 { ", " }
-                            (i.name) " (World " (i.world.unwrap_or(0)) ")"
-                        }
-                        @if m.later.len() > 6 { " and " (m.later.len() - 6) " more" }
-                        "."
-                    }
-                }
+                @if let Some(l) = crate::view::later_worlds(m) { p.ia-note.ia-later-worlds { (l) } }
                 @if !m.items.is_empty() {
                     // Drawn by the page script from the page's item data when first opened: these
                     // lists were three quarters of the page and most are never opened.
@@ -641,26 +533,7 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
     }
 }
 
-/// Mechanics whose tiers aren't in a real order yet (owner, 2026-11-06): their cards say so.
-const ON_HOLD: &[&str] = &[
-    "arcade", "sigils", "post-office", "equinox-upgrades", "sampling", "meals", "lab-chips", "breeding-upgrades", "shiny",
-    "breeding-pets", "artifacts", "slab",
-];
-
-/// Tasks shown under the current tier before "and N more".
-const TASKS: usize = 8;
-
-/// A level as the mechanic names it: "Gold" for a statue, "Lv 17" otherwise.
-fn level_text(m: &Mechanic, level: f64) -> String {
-    match &m.tier_names {
-        Some(names) if level >= 1.0 => names.get(level as usize - 1).cloned().unwrap_or_else(|| format!("Lv {}", num(level))),
-        Some(_) => "None".into(),
-        None => format!("Lv {}", num(level)),
-    }
-}
-
 fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
-    let once = i.max <= 1.0 && m.tier_names.is_none();
     html! {
         div.ia-task {
             @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {
@@ -670,12 +543,7 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
                 b { (i.name) }
                 @if let Some(h) = &i.how { span { (h) } }
             }
-            span.ia-fig {
-                // A one-time thing has no level to show; the chip or the line says the rest.
-                @if m.crowd.is_some() && !(once && i.raw.is_none()) { "Lv " (num(m.tier_level(i))) " → Lv " (num(target)) }
-                @else if once { (i.level_name.as_deref().unwrap_or("")) }
-                @else { (level_text(m, i.level)) " → " (level_text(m, target)) }
-            }
+            span.ia-fig { (crate::view::task_fig(m, i, target)) }
             @match i.state {
                 Step::Ready => span.ia-chip.ok { "Do now" },
                 Step::Locked => span.ia-chip.lock { "Locked" },
@@ -687,31 +555,10 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
 
 /// A later tier, folded to one line: what it is and who holds it back.
 fn later(m: &Mechanic, j: usize, t: &Tier) -> Markup {
-    let behind: Vec<String> = match &t.targets {
-        Some(targets) => m
-            .items
-            .iter()
-            .zip(targets)
-            .filter(|(i, tg)| m.tier_level(i) < **tg)
-            .map(|(i, _)| match () {
-                _ if m.crowd.is_some() && i.raw.is_some() => format!("{} Lv {}", i.name, num(m.tier_level(i))),
-                _ if i.max <= 1.0 && m.tier_names.is_none() => i.name.clone(),
-                _ if m.crowd.is_some() => format!("{} Lv {}", i.name, num(i.level)),
-                _ => format!("{} {}", i.name, level_text(m, i.level)),
-            })
-            .collect(),
-        None => Vec::new(),
-    };
     html! {
         div.ia-later {
             span.ia-later-k { "Tier " (j + 1) " · " (t.label) }
-            span.ia-later-who {
-                @if t.targets.is_none() { (t.need - t.met) " more" }
-                @else {
-                    (behind.iter().take(3).cloned().collect::<Vec<_>>().join(", "))
-                    @if behind.len() > 3 { " and " (behind.len() - 3) " more" }
-                }
-            }
+            span.ia-later-who { (crate::view::later_who(m, t)) }
         }
     }
 }
@@ -743,61 +590,6 @@ fn mark(m: &Mechanic) -> Markup {
             None => span.ia-mark.blank {},
         }
     }
-}
-
-/// Pictures that are a portrait at the left end of a wide name plate (the cavern villagers):
-/// drawn as their left square, which is the portrait. Show all rows carry it as a flag.
-const LEFT_SQUARE: &[&str] = &["HoleUIvillager"];
-
-fn left_square(id: &str) -> bool {
-    LEFT_SQUARE.iter().any(|p| id.starts_with(p))
-}
-
-fn fig(m: &Mechanic) -> String {
-    match m.count {
-        Count::Levels => format!("{} / {} {}", num(m.have()), num(m.total()), m.unit),
-        Count::Done => format!("{} of {} {}", num(m.have()), num(m.total()), m.unit),
-        // A sum of levels with no max says little: the middle one says more.
-        Count::Open => match m.spread() {
-            Some([_, median, top, _]) => format!("median {} · highest {}", num(median.round()), num(top)),
-            None => format!("{} {}", num(m.have()), m.unit),
-        },
-    }
-}
-
-/// A share for a bar's width, to three places: the bar can't show more.
-fn share3(s: f64) -> String {
-    format!("{:.3}", s.clamp(0.0, 1.0)).trim_end_matches('0').trim_end_matches('.').to_string()
-}
-
-fn pct(s: f64) -> String {
-    let p = s * 100.0;
-    // 99.6% shouldn't read as done.
-    if (99.5..100.0).contains(&p) { "99%".into() } else { format!("{:.0}%", p) }
-}
-
-/// Whole numbers with thousands separators; anything else with one decimal. From a quadrillion
-/// on, the game's short form ("1.2Qa", "3.4e21"): past 2^53 the digits aren't real, and past
-/// 2^64 a plain cast reads 18,446,744,073,709,551,615.
-pub(crate) fn num(n: f64) -> String {
-    if n.is_nan() {
-        return "0".into();
-    }
-    if n.is_infinite() || n.abs() >= 1e15 {
-        return crate::checks::big(n);
-    }
-    if n.fract().abs() > 1e-9 {
-        return format!("{n:.1}");
-    }
-    let s = format!("{}", n.abs() as u64);
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    if n < 0.0 { format!("-{out}") } else { out }
 }
 
 /// The paste box's file picker, and cards that grow out of their place: when one opens it
@@ -1268,16 +1060,3 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 }
 "#;
 
-#[cfg(test)]
-mod tests {
-    use super::window;
-
-    #[test]
-    fn a_ladder_shows_six_tiers_around_where_you_are() {
-        assert_eq!(window(4, Some(2)), (0, 4));
-        assert_eq!(window(20, Some(0)), (0, 6));
-        assert_eq!(window(20, Some(9)), (8, 14));
-        assert_eq!(window(20, Some(19)), (14, 20));
-        assert_eq!(window(20, None), (14, 20));
-    }
-}

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use bot_core::serde_json::Value;
+use serde_json::Value;
 
 use super::*;
 use crate::review::{Have, Raise, State};

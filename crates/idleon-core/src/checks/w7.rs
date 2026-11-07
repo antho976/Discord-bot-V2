@@ -53,7 +53,7 @@ pub(crate) fn menagerie_unlock_name(i: usize) -> String {
 
 /// A whole number with thousands commas: "7,000".
 fn whole(n: f64) -> String {
-    crate::page::num(n.floor())
+    crate::view::num(n.floor())
 }
 
 /// The first letter in capitals.

@@ -17,7 +17,7 @@ mod w5;
 mod w6;
 mod w7;
 
-pub(crate) use bot_core::serde_json::Value;
+pub(crate) use serde_json::Value;
 
 pub(crate) use crate::game::{GAME, num, words};
 pub(crate) use crate::review::{Count, Have, Item, Mechanic, Raise, State};
@@ -107,7 +107,7 @@ pub(crate) fn mech(key: &'static str, world: u8, name: &'static str, picture: Op
 }
 
 /// A big number the way the game writes it: 400K, 1.5M, 96 Qa. Past the names, 1.2e45.
-pub(crate) fn big(n: f64) -> String {
+pub fn big(n: f64) -> String {
     const NAMES: [&str; 11] = ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "O", "N"];
     if n.is_nan() {
         return "0".into();

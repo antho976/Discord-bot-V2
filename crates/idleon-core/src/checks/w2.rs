@@ -128,9 +128,9 @@ fn bubbles(save: &Save) -> Mechanic {
             it.raw = Some(level);
             it.level_name = Some(if capped && level > 0.0 {
                 let x2 = cell(r, 2);
-                format!("Lv {} · {:.0}% of its bonus", crate::page::num(level), (100.0 * level / (level + x2)).floor())
+                format!("Lv {} · {:.0}% of its bonus", crate::view::num(level), (100.0 * level / (level + x2)).floor())
             } else {
-                format!("Lv {}", crate::page::num(level))
+                format!("Lv {}", crate::view::num(level))
             });
             if world > 2 && level <= 0.0 {
                 it.world = Some(world);
@@ -139,7 +139,7 @@ fn bubbles(save: &Save) -> Mechanic {
             if level <= 0.0 {
                 it.how = Some(format!("Not found yet: the {} Cauldron finds new bubbles as it brews.", CAULDRONS[c]));
             } else if reached < 5 {
-                let target = crate::page::num(targets[reached]);
+                let target = crate::view::num(targets[reached]);
                 let goal = if capped { format!("{:.0}% of its bonus at Lv {target}", BUBBLE_SHARES[reached] * 100.0) } else { format!("Next target Lv {target} (flat bonus, no cap)") };
                 if parts.iter().any(|(_, n)| !n.is_finite()) {
                     it.how = Some(format!("{goal}; each level costs more Bits than the game can count."));
@@ -164,8 +164,8 @@ fn bubbles(save: &Save) -> Mechanic {
             format!(
                 "Bubbles with a capped bonus at {:.0}% of it; bubbles that add a flat amount per level at Lv {} (World 1 bubbles) to Lv {} (World 7).",
                 p * 100.0,
-                crate::page::num(l),
-                crate::page::num(l * w7)
+                crate::view::num(l),
+                crate::view::num(l * w7)
             )
         })
         .collect();

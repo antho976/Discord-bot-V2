@@ -1,7 +1,7 @@
 //! Writes `crowd.txt` (tiers from other players' saves, see `src/crowd.rs`) from a folder of
 //! saves.
 //!
-//! `cargo run --release -p feat-idleon --example crowd -- ~/saves/*.json`
+//! `cargo run --release -p idleon-core --example crowd -- ~/saves/*.json`
 //!
 //! Each save is put at a stage: the world it has reached, then early, mid or late in it by its
 //! total class levels against the other saves in that world (the lowest third is early). Only
@@ -21,9 +21,9 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use feat_idleon::crowd::{self, Block, STAGES};
-use feat_idleon::review::{Count, Review};
-use feat_idleon::save::Save;
+use idleon_core::crowd::{self, Block, STAGES};
+use idleon_core::review::{Count, Review};
+use idleon_core::save::Save;
 
 /// Saves a stage needs before it gets a column.
 const MIN_SAVES: usize = 5;
@@ -59,7 +59,7 @@ fn main() {
 
     // Every item as a World 7 account sees it, for the row order (the game's order).
     let empty = Save::parse(r#"{"OptLacc": []}"#).expect("an empty save");
-    let full = Review::new(&empty, feat_idleon::run_checks(&empty), 7);
+    let full = Review::new(&empty, idleon_core::run_checks(&empty), 7);
 
     // Read every save once, keeping only levels.
     let mut names: Vec<String> = Vec::new();
@@ -70,9 +70,9 @@ fn main() {
         let Ok(text) = std::fs::read_to_string(&p) else { skipped += 1; continue };
         let Ok(save) = Save::parse(&text) else { skipped += 1; continue };
         let when = std::fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
-        let world = feat_idleon::world_reached(&save);
+        let world = idleon_core::world_reached(&save);
         let levels: f64 = (0..save.characters()).map(|i| save.numbers(&format!("Lv0_{i}"), &[]).first().copied().unwrap_or(0.0).max(0.0)).sum();
-        let r = Review::new(&save, feat_idleon::run_checks(&save), world);
+        let r = Review::new(&save, idleon_core::run_checks(&save), world);
         let mut per: HashMap<&'static str, HashMap<u32, f32>> = HashMap::new();
         for m in &r.mechanics {
             let row = per.entry(m.key).or_default();
@@ -415,6 +415,6 @@ const HEAD: &str = "\
 #   - to ask for something sooner, write a level in an earlier column
 #   - `off` after a mechanic's key keeps the page on its old ladder for it
 # Rewrite from saves (keeps your edits):
-#   cargo run --release -p feat-idleon --example crowd -- <folder of saves>/*.json
+#   cargo run --release -p idleon-core --example crowd -- <folder of saves>/*.json
 # `bot preview` (a debug build) reads this file on every check: edit, save, check again.
 ";

@@ -2,7 +2,7 @@
 //! with a ladder, one line per tier, keeping every world already set, with how many of the saves
 //! given have each tier done.
 //!
-//! `cargo run -p feat-idleon --example expected -- ~/saves/*.json`
+//! `cargo run -p idleon-core --example expected -- ~/saves/*.json`
 //!
 //! Run it after the ladders change (a game update, a new mechanic, a new tier). It rewrites the
 //! file in place and says on stderr what moved.
@@ -10,9 +10,9 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use feat_idleon::expected;
-use feat_idleon::review::Review;
-use feat_idleon::save::Save;
+use idleon_core::expected;
+use idleon_core::review::Review;
+use idleon_core::save::Save;
 
 const WORLD_NAMES: [&str; 8] = ["Account", "Blunder Hills", "Yum-Yum Desert", "Frostbite Tundra", "Hyperion Nebula", "Smolderin' Plateau", "Spirited Valley", "Shimmerfin Deep"];
 
@@ -26,7 +26,7 @@ fn main() {
 
     // The ladders as a World 7 account sees them: every item in, nothing done.
     let empty = Save::parse(r#"{"OptLacc": []}"#).expect("an empty save");
-    let full = Review::new(&empty, feat_idleon::run_checks(&empty), 7);
+    let full = Review::new(&empty, idleon_core::run_checks(&empty), 7);
 
     // Per mechanic, per tier: how many saves have it done. And how many saves read a ladder
     // of another length (an account whose own items change the ladder).
@@ -40,7 +40,7 @@ fn main() {
         let Ok(text) = std::fs::read_to_string(&p) else { continue };
         let Ok(save) = Save::parse(&text) else { continue };
         saves += 1;
-        let r = Review::new(&save, feat_idleon::run_checks(&save), feat_idleon::world_reached(&save));
+        let r = Review::new(&save, idleon_core::run_checks(&save), idleon_core::world_reached(&save));
         for m in &r.mechanics {
             let Some(fm) = full.mechanics.iter().find(|f| f.key == m.key) else { continue };
             let tiers = m.tiers();
@@ -58,7 +58,7 @@ fn main() {
     }
 
     // By world, as the page's tabs show them (account-wide last), the page's order inside each.
-    let mut order: Vec<&feat_idleon::review::Mechanic> = full.mechanics.iter().collect();
+    let mut order: Vec<&idleon_core::review::Mechanic> = full.mechanics.iter().collect();
     order.sort_by_key(|m| if m.world == 0 { 8 } else { m.world });
     let mut out = String::from(HEAD);
     let mut world = u8::MAX;
@@ -115,6 +115,6 @@ const HEAD: &str = "\
 #
 # `bot preview` (a debug build) reads this file on every check: edit, save, check again.
 # After the ladders change (a game update, a new mechanic), run
-#   cargo run -p feat-idleon --example expected -- <folder of saves>/*.json
+#   cargo run -p idleon-core --example expected -- <folder of saves>/*.json
 # to rewrite it with the new tiers, keeping every world already set.
 ";

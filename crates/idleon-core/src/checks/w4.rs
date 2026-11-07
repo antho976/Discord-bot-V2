@@ -1,6 +1,6 @@
 //! World 4: Hyperion Nebula.
 
-use bot_core::serde_json::Value;
+use serde_json::Value;
 
 use super::*;
 

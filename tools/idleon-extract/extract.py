@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pull Idleon's game data and pictures out of the Steam install, for crates/feat-idleon.
+"""Pull Idleon's game data and pictures out of the Steam install, for crates/idleon-core.
 
 The game is an Electron app. Its code and data are one script, N.js, inside resources/app.asar,
 and its pictures are one Lime asset pack, lib/default.pak, indexed by a manifest inside N.js.
@@ -31,7 +31,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 STEAM = Path.home() / ".local/share/Steam/steamapps/common/Legends of Idleon"
-CRATE = Path(__file__).resolve().parents[2] / "crates/feat-idleon"
+CRATE = Path(__file__).resolve().parents[2] / "crates/idleon-core"
 
 HERE = Path(__file__).resolve().parent
 

@@ -1,12 +1,12 @@
 //! Feed every check broken saves and look for panics (the release build aborts on one):
-//! `cargo run --release -p feat-idleon --example fuzz -- save.json`. Each top-level key in turn
+//! `cargo run --release -p idleon-core --example fuzz -- save.json`. Each top-level key in turn
 //! is replaced with junk of every shape, and every check runs on the result.
 
 use std::panic;
 
-use bot_core::serde_json::{self, Value, json};
-use feat_idleon::review::Review;
-use feat_idleon::save::Save;
+use serde_json::{self, Value, json};
+use idleon_core::review::Review;
+use idleon_core::save::Save;
 
 fn main() {
     let junk = [
@@ -34,7 +34,7 @@ fn main() {
                     runs += 1;
                     let ok = panic::catch_unwind(|| {
                         if let Ok(s) = Save::parse(&text) {
-                            let r = Review::new(&s, feat_idleon::run_checks(&s), feat_idleon::world_reached(&s));
+                            let r = Review::new(&s, idleon_core::run_checks(&s), idleon_core::world_reached(&s));
                             std::hint::black_box(r.share());
                         }
                     });
@@ -80,7 +80,7 @@ fn main() {
                         let t = std::time::Instant::now();
                         let ok = panic::catch_unwind(|| {
                             if let Ok(s) = Save::parse(&text) {
-                                let r = Review::new(&s, feat_idleon::run_checks(&s), feat_idleon::world_reached(&s));
+                                let r = Review::new(&s, idleon_core::run_checks(&s), idleon_core::world_reached(&s));
                                 std::hint::black_box(r.share());
                             }
                         });

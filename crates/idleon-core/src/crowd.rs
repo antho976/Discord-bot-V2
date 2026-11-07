@@ -4,7 +4,7 @@
 //! stage is what that stage's tier asks for; what nobody has touched yet isn't asked for.
 //!
 //! The numbers live in `crowd.txt` next to this crate's `Cargo.toml`, one table per mechanic:
-//! a row per item, a column per stage. `cargo run -p feat-idleon --example crowd -- saves/*.json`
+//! a row per item, a column per stage. `cargo run -p idleon-core --example crowd -- saves/*.json`
 //! writes it from a folder of saves, and keeps every number edited by hand (see that example).
 //! A mechanic with a table gets its ladder from it, a tier per stage; one without keeps the
 //! ladder `review.rs` builds from the game's maxes.

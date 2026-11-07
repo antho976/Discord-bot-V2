@@ -280,9 +280,9 @@ impl Mechanic {
                 let targets: Vec<f64> = self.items.iter().map(|i| if f == 0.0 { i.max.min(1.0) } else { (i.max * f).ceil().max(1.0) }).collect();
                 let label = match (n, same) {
                     (1, _) if f == 0.0 => "Started".to_string(),
-                    (1, _) => format!("{} {}", crate::page::num(targets[0]), self.unit),
-                    (_, true) if f == 1.0 => format!("Max, Lv {}", crate::page::num(targets[0])),
-                    (_, true) if f > 0.0 => format!("Lv {}", crate::page::num(targets[0])),
+                    (1, _) => format!("{} {}", crate::view::num(targets[0]), self.unit),
+                    (_, true) if f == 1.0 => format!("Max, Lv {}", crate::view::num(targets[0])),
+                    (_, true) if f > 0.0 => format!("Lv {}", crate::view::num(targets[0])),
                     _ => word.to_string(),
                 };
                 steps.push((label, targets));

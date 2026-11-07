@@ -1,10 +1,10 @@
 //! Prints every ladder an empty account sees in a given world: `--example ladders -- 5`.
-use feat_idleon::review::Review;
-use feat_idleon::save::Save;
+use idleon_core::review::Review;
+use idleon_core::save::Save;
 fn main() {
     let w: u8 = std::env::args().nth(1).and_then(|a| a.parse().ok()).unwrap_or(7);
     let s = Save::parse(r#"{"OptLacc": []}"#).unwrap();
-    let r = Review::new(&s, feat_idleon::run_checks(&s), w);
+    let r = Review::new(&s, idleon_core::run_checks(&s), w);
     let (mut crowd, mut generic, mut none) = (0, 0, 0);
     for m in &r.mechanics {
         let t = m.tiers();

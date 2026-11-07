@@ -8,6 +8,7 @@ publish.workspace = true
 bot-core.workspace = true
 feat-community = { path = "../feat-community" }
 feat-connect = { path = "../feat-connect" }
+idleon-core = { path = "../idleon-core" }
 libc = "0.2"
 maud.workspace = true
 serde.workspace = true

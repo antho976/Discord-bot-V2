@@ -1,10 +1,10 @@
 //! Which items and mechanics show no picture, over many saves:
-//! `cargo run -p feat-idleon --example pictures -- saves/*.json`. A picture ID the crate doesn't
+//! `cargo run -p idleon-core --example pictures -- saves/*.json`. A picture ID the crate doesn't
 //! have is listed with its ID; an item with no ID at all as "(no id)".
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use feat_idleon::save::Save;
+use idleon_core::save::Save;
 
 fn main() {
     // mechanic -> items without a picture (name, the ID it asked for)
@@ -13,15 +13,15 @@ fn main() {
     for path in std::env::args().skip(1) {
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
         let Ok(save) = Save::parse(&text) else { continue };
-        for m in feat_idleon::run_checks(&save) {
+        for m in idleon_core::run_checks(&save) {
             let key = format!("W{} {} ({})", m.world, m.name, m.key);
             let n = items.entry(key.clone()).or_default();
             *n = (*n).max(m.items.len());
-            if !m.picture.as_deref().is_some_and(feat_idleon::has_picture) {
+            if !m.picture.as_deref().is_some_and(idleon_core::has_picture) {
                 missing.entry(key.clone()).or_default().insert(("[card]".into(), m.picture.clone().unwrap_or_else(|| "(no id)".into())));
             }
             for i in &m.items {
-                if !i.picture.as_deref().is_some_and(feat_idleon::has_picture) {
+                if !i.picture.as_deref().is_some_and(idleon_core::has_picture) {
                     missing.entry(key.clone()).or_default().insert((i.name.clone(), i.picture.clone().unwrap_or_else(|| "(no id)".into())));
                 }
             }

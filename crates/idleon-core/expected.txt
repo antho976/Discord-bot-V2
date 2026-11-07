@@ -10,7 +10,7 @@
 #
 # `bot preview` (a debug build) reads this file on every check: edit, save, check again.
 # After the ladders change (a game update, a new mechanic), run
-#   cargo run -p feat-idleon --example expected -- <folder of saves>/*.json
+#   cargo run -p idleon-core --example expected -- <folder of saves>/*.json
 # to rewrite it with the new tiers, keeping every world already set.
 
 # ---- World 1, Blunder Hills ---------------------------------------------------

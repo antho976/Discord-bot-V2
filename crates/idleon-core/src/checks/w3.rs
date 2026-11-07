@@ -87,7 +87,7 @@ fn buildings(save: &Save) -> Mechanic {
     let total: f64 = (0..27).map(|k| at(&levels, k).max(0.0)).sum();
     let rifts = at(&save.numbers("Rift", &[]), 0);
     let mastery = |need: f64| rifts >= 40.0 && total >= need;
-    let mastery_lift = |amount: f64, need: f64| format!("Construct Mastery adds {amount} once 40 rifts are done and your buildings total {} levels.", crate::page::num(need));
+    let mastery_lift = |amount: f64, need: f64| format!("Construct Mastery adds {amount} once 40 rifts are done and your buildings total {} levels.", crate::view::num(need));
     let table = rows("TowerInfo", &[]);
     let cc = at(&levels, 5);
     let cc_per = table.get(5).map_or(0.0, |r| cell(r, 2));
@@ -177,7 +177,7 @@ fn buildings(save: &Save) -> Mechanic {
     ];
     m.note = Some(format!(
         "Caps include every raise: wizard towers get 2 per Carbon atom level ({carbon} at the atom cap), 30 from Construct Mastery and 100 from the Gambit cavern; shrines get 100 from Construct Mastery, 10 from a Sushi Station bonus, 100 from Spelunking and 10 per Menagerie boost, so more boosts raise them further. Your buildings total {} levels. The Gambit cavern's raise isn't in a save, so a wizard tower close to it is never marked ready. Costs count your Cost Cruncher and only what's in storage.",
-        crate::page::num(total)
+        crate::view::num(total)
     ));
     m
 }

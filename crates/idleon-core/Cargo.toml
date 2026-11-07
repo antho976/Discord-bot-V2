@@ -1,0 +1,10 @@
+[package]
+name = "idleon-core"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+description = "The IdleOn account check's reading of a save: the checks, the tiers and the review, with no server in it."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

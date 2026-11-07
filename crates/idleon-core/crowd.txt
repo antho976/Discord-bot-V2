@@ -8,7 +8,7 @@
 #   - to ask for something sooner, write a level in an earlier column
 #   - `off` after a mechanic's key keeps the page on its old ladder for it
 # Rewrite from saves (keeps your edits):
-#   cargo run --release -p feat-idleon --example crowd -- <folder of saves>/*.json
+#   cargo run --release -p idleon-core --example crowd -- <folder of saves>/*.json
 # `bot preview` (a debug build) reads this file on every check: edit, save, check again.
 # Saves per stage: 5e 1, 5m 1, 6e 3, 6m 2, 6l 2, 7e 37, 7m 37, 7l 36
 # (119 saves; a stage needs 5 to get a column)

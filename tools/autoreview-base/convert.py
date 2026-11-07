@@ -5,7 +5,7 @@ its authors' permission (2026-11-06) as a base we change, not as is.
 
 Reads their tier tables (consts/progression_tiers.py) and their world mapping
 (general/pinchy.py) as data only, with `ast.literal_eval` (their code is never run), and writes
-crates/feat-idleon/crowd-base.txt: for World 1 to World 5, a table per mechanic in crowd.txt's
+crates/idleon-core/crowd-base.txt: for World 1 to World 5, a table per mechanic in crowd.txt's
 format. The crowd generator (`--example crowd`) takes a stage's column from here when there
 aren't enough saves at that stage, and the owner edits the result in crowd.txt.
 
@@ -222,7 +222,7 @@ def main():
     tables = literals(os.path.join(site, "consts", "progression_tiers.py"))
     stages = thresholds(os.path.join(site, "general", "pinchy.py"))
     here = os.path.dirname(os.path.abspath(__file__))
-    out_path = os.path.join(here, "..", "..", "crates", "feat-idleon", "crowd-base.txt")
+    out_path = os.path.join(here, "..", "..", "crates", "idleon-core", "crowd-base.txt")
     out = [
         "# Early-world base tiers, from IdleOn AutoReview (TwoSpookyBoos), used with its authors'",
         "# permission as a base: levels raised x%s, their stages as our columns. Written by" % LEVEL_FACTOR,

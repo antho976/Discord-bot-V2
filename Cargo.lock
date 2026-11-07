@@ -623,6 +623,7 @@ dependencies = [
  "bot-core",
  "feat-community",
  "feat-connect",
+ "idleon-core",
  "libc",
  "maud",
  "serde",
@@ -1128,6 +1129,14 @@ dependencies = [
  "zerofrom",
  "zerotrie",
  "zerovec",
+]
+
+[[package]]
+name = "idleon-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

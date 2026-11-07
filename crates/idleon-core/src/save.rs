@@ -5,7 +5,7 @@
 //! `playerNames`). Many values inside are themselves JSON written as text, so [`Save::get`]
 //! reads those too.
 
-use bot_core::serde_json::{self, Map, Value};
+use serde_json::{self, Map, Value};
 
 use crate::game::num;
 

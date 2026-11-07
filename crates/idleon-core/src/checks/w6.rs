@@ -1,6 +1,6 @@
 //! World 6: Spirited Valley.
 
-use bot_core::serde_json::Value;
+use serde_json::Value;
 
 use super::*;
 

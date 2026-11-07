@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use bot_core::serde_json::{self, Value};
+use serde_json::{self, Value};
 use serde::Deserialize;
 
 static RAW: &str = include_str!("../data/game.json");

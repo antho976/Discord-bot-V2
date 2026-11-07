@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use bot_core::serde_json::Value;
+use serde_json::Value;
 
 use super::*;
 use super::w1::{char_name, characters, class_icon, found_where, later, monster_world, shop_of, source_world};
