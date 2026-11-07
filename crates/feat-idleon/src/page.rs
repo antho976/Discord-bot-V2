@@ -328,9 +328,12 @@ fn window(len: usize, current: Option<usize>) -> (usize, usize) {
     (from, from + LADDER)
 }
 
+/// Lines a Should have by now box shows before "Show N more".
+const OWED_LINES: usize = 8;
+
 /// Should have by now: a box per stage (Early, Mid and Late of each world), oldest first, side
 /// by side like the cards, and in each a line per mechanic: the tier you're on and the tier that
-/// stage asks for. A line opens its card; a long box scrolls inside itself. Past Late World 7,
+/// stage asks for. A line opens its card; past eight, the rest fold under "Show N more". Past Late World 7,
 /// the endgame boxes (Endgame 1, 2, Min-max) are goals from the best saves, not counted as owed.
 fn should_have(r: &Review) -> Markup {
     let stages = r.should_have();
@@ -370,7 +373,13 @@ fn should_have(r: &Review) -> Markup {
                             @else if w < r.world { span.ia-chip.miss { "Missed" } } @else { span.ia-chip.next { "Next up" } }
                             span.ia-owe-n { (v.len()) (if v.len() == 1 { " thing" } else { " things" }) }
                         }
-                        div.ia-owe-lines { @for g in &rows { (owed(r, g)) } }
+                        div.ia-owe-lines { @for g in rows.iter().take(OWED_LINES) { (owed(r, g)) } }
+                        @if rows.len() > OWED_LINES {
+                            details.ia-owe-more {
+                                summary { "Show " (rows.len() - OWED_LINES) " more" }
+                                div.ia-owe-lines { @for g in rows.iter().skip(OWED_LINES) { (owed(r, g)) } }
+                            }
+                        }
                     }
                 }
             }
@@ -1085,14 +1094,18 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-chip.miss { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
 .ia-chip.next { color: var(--w); background: color-mix(in oklab, var(--w) 14%, transparent); }
 .ia-chip.goal { color: var(--ink-2); background: color-mix(in oklab, var(--ink-2) 12%, transparent); }
-/* Should have by now: a box per stage like the cards (three on a wide screen, one on a phone),
-   a line per mechanic; a long box scrolls inside itself. */
-.ia-owe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; margin-top: 12px; align-items: stretch; }
+/* Should have by now: a box per stage like the cards (four on a wide screen, one on a phone),
+   a line per mechanic; past eight, the rest fold under Show N more. */
+.ia-owe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; margin-top: 12px; align-items: start; }
 .ia-owe-box { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 14px 16px 6px; min-width: 0; }
 .ia-owe-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .ia-owe-head b { font-size: 14px; font-weight: 600; color: var(--w); }
 .ia-owe-n { margin-left: auto; font-size: 13px; color: var(--ink-3); }
-.ia-owe-lines { margin-top: 6px; max-height: 312px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.ia-owe-lines { margin-top: 6px; }
+.ia-owe-more > .ia-owe-lines { margin-top: 0; border-top: 1px solid var(--edge-1); }
+details.ia-owe-more > summary { margin: 2px 0 8px; cursor: pointer; font-size: 13px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; list-style: none; }
+details.ia-owe-more > summary::-webkit-details-marker { display: none; }
+details.ia-owe-more[open] > summary { display: none; }
 .ia-owe-line { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 2px; padding: 8px 4px 8px 0; color: inherit; text-decoration: none; border-bottom: 1px solid var(--edge-1); }
 .ia-owe-line:last-child { border-bottom: 0; }
 .ia-owe-line .ia-mark { width: 24px; height: 24px; }
