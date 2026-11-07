@@ -20,7 +20,7 @@ use std::sync::LazyLock;
 
 use bot_core::axum::Router;
 use bot_core::axum::body::Body;
-use bot_core::axum::extract::{Path, State};
+use bot_core::axum::extract::{Path, Query, State};
 use bot_core::axum::http::HeaderMap;
 use bot_core::axum::http::header;
 use bot_core::axum::response::IntoResponse;
@@ -96,6 +96,7 @@ impl Feature for Idleon {
             .route("/g/{guild}/idleon", get(dashboard).post(save_settings))
             .route("/p/{guild}/idleon", get(form).post(check))
             .route("/p/{guild}/idleon/report", post(report))
+            .route("/p/{guild}/idleon/test", get(test_account))
             .route("/idleon/pic/{id}", get(picture))
     }
 }
@@ -120,7 +121,7 @@ async fn access(ctx: &Ctx, guild: u64, viewer: &MaybeUser, member: &MaybeMember)
         (true, Some(role), Some(m)) => in_server(ctx, guild, m.id).await.is_some_and(|m| m.roles.contains(&role)),
         _ => false,
     };
-    page::Access { closed: s.closed, allowed: !s.closed || staff || tester, staff, member: member.0.as_ref().map(|m| m.name.clone()) }
+    page::Access { closed: s.closed, allowed: !s.closed || staff || tester, staff, member: member.0.as_ref().map(|m| m.name.clone()), test: staff || ctx.cfg.preview }
 }
 
 /// Someone in the server: their roles, and until when they're timed out.
@@ -200,6 +201,31 @@ async fn form(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, Pa
     open(&ctx, guild)?;
     let a = access(&ctx, guild, &viewer, &member).await;
     Ok(page::render(&ctx, guild, &a, page::State::Ask { error: None, retry: false }).into_response())
+}
+
+#[derive(Deserialize)]
+struct TestQuery {
+    world: Option<u8>,
+}
+
+/// A test account: an empty save, everything at 0, seen as a player in the world asked for.
+/// For staff (and the local preview) to see how the page reads, with no save to paste.
+async fn test_account(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, Path(guild): Path<u64>, Query(q): Query<TestQuery>) -> WebResult {
+    open(&ctx, guild)?;
+    let a = access(&ctx, guild, &viewer, &member).await;
+    if !a.allowed || !a.test {
+        return Err(WebError::NotFound);
+    }
+    let world = q.world.unwrap_or(7).clamp(1, 7);
+    let html = bot_core::tokio::task::spawn_blocking(move || {
+        let s = save::Save::parse(r#"{"OptLacc": []}"#).expect("an empty save reads");
+        let mut review = review::Review::new(&s, checks::all(&s), world);
+        review.test = true;
+        page::render(&ctx, guild, &a, page::State::Done(&review)).into_string()
+    })
+    .await
+    .map_err(|e| WebError::Internal(e.into()))?;
+    Ok(bot_core::axum::response::Html(html).into_response())
 }
 
 /// The paste from the request body. The page's form is `text/plain` (`save=<the JSON>`, nothing

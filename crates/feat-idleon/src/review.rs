@@ -332,6 +332,9 @@ pub struct Review {
     /// Mechanics in worlds you've reached with no progress at all: new since you last played,
     /// or skipped. In game order.
     pub not_started: Vec<usize>,
+    /// A made-up account with nothing in it, for staff to see how the page reads (the page's
+    /// Test account links), not a paste.
+    pub test: bool,
 }
 
 impl Review {
@@ -371,6 +374,7 @@ impl Review {
             mechanics,
             next,
             not_started,
+            test: false,
         }
     }
 

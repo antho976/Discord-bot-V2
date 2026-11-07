@@ -24,6 +24,8 @@ pub struct Access {
     pub staff: bool,
     /// The name of whoever signed in with Discord (on this page or the dashboard).
     pub member: Option<String>,
+    /// May open a test account (everything at 0): staff, and the local preview.
+    pub test: bool,
 }
 
 pub enum State<'a> {
@@ -49,6 +51,7 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
     let frame = bot_core::web::banner::frame(ctx, guild);
     let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
     let title = match &state {
+        State::Done(r) if r.test => "Test account".to_string(),
         State::Done(r) if !r.name.is_empty() => format!("{}'s account", r.name),
         _ => "Account check".to_string(),
     };
@@ -94,7 +97,7 @@ pub fn render(ctx: &Ctx, guild: u64, access: &Access, state: State) -> Markup {
                             }
                         }
                         @match state {
-                            State::Ask { error, retry } => (ask(guild, error, retry)),
+                            State::Ask { error, retry } => (ask(guild, error, retry, access.test)),
                             State::Done(r) => {
                                 (done(guild, r))
                                 (report_box(guild, r, access.member.as_deref()))
@@ -196,7 +199,7 @@ fn report_box(guild: u64, r: &Review, member: Option<&str>) -> Markup {
     }
 }
 
-fn ask(guild: u64, error: Option<&str>, retry: bool) -> Markup {
+fn ask(guild: u64, error: Option<&str>, retry: bool, test: bool) -> Markup {
     html! {
         section.ia-panel.ia-ask {
             div.ia-ask-text {
@@ -221,6 +224,12 @@ fn ask(guild: u64, error: Option<&str>, retry: bool) -> Markup {
                     button.btn.primary type="submit" { "Check my account" }
                 }
             }
+            @if test {
+                p.ia-try {
+                    span { "Test account, everything at 0, seen as a player in" }
+                    @for w in 1..=7u8 { a href={ "/p/" (guild) "/idleon/test?world=" (w) } { "World " (w) } }
+                }
+            }
         }
     }
 }
@@ -229,6 +238,12 @@ fn done(guild: u64, r: &Review) -> Markup {
     let worlds: Vec<u8> = (1..=7).chain([0]).filter(|w| r.mechanics.iter().any(|m| m.world == *w)).collect();
     let start = worlds.iter().copied().find(|w| *w == r.next.first().map_or(r.world, |n| r.mechanics[n.mechanic].world)).unwrap_or(1);
     html! {
+        @if r.test {
+            p.ia-test role="note" {
+                b { "Test account." }
+                " Everything is at 0, as a World " (r.world) " player would see the page. Paste a real save to check one."
+            }
+        }
         section.ia-panel.ia-lead {
             div.ia-lead-who {
                 b.ia-big { (pct(r.share())) }
@@ -901,6 +916,10 @@ body.ia-pub { background: var(--page); -webkit-tap-highlight-color: transparent;
 .ia-ask textarea { width: 100%; min-height: 150px; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 12.5px/1.5 var(--mono); }
 .ia-ask textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
 .ia-ask-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.ia-try { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding-top: 14px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 13px; }
+.ia-try a { color: var(--ink-2); text-underline-offset: 3px; }
+.ia-try a:hover { color: var(--ink); }
+@media (pointer: coarse) { .ia-try a { padding: 8px 0; } }
 .ia-err { color: var(--held); font-size: 13.5px; }
 
 /* The answer: the big share and one column per world. */
