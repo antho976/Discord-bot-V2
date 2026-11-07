@@ -47,6 +47,14 @@ fn main() {
         eprintln!("crowd.txt {p} (left out)");
     }
     let gen_text = std::fs::read_to_string(&gen_path).ok();
+    // Early-world base tiers (tools/autoreview-base): a stage without enough saves takes its
+    // column from here.
+    let (base, problems) = crowd::parse(&std::fs::read_to_string(format!("{dir}/crowd-base.txt")).unwrap_or_default());
+    for p in &problems {
+        eprintln!("crowd-base.txt {p} (left out)");
+    }
+    let mut unmatched: Vec<String> = Vec::new();
+    let mut fuzzy: Vec<String> = Vec::new();
     let (last_gen, _) = crowd::parse(gen_text.as_deref().unwrap_or(""));
 
     // Every item as a World 7 account sees it, for the row order (the game's order).
@@ -147,8 +155,22 @@ fn main() {
                 continue;
             }
         }
-        // Columns: stages with enough saves, and any stage with a hand edit in it.
+        // The base's columns for stages short of saves, matched to these rows.
+        let maxes: HashMap<&str, f64> = m.items.iter().chain(&m.later).filter(|i| i.raw.is_none() && i.max > 0.0).map(|i| (i.name.as_str(), i.max)).collect();
+        let from_base: HashMap<usize, Vec<Option<f64>>> = base
+            .get(m.key)
+            .map(|b| {
+                b.stages
+                    .iter()
+                    .filter(|&&s| counts[s] < MIN_SAVES)
+                    .map(|&s| (s, base_column(b, s, &rows, &maxes, m.key, &mut unmatched, &mut fuzzy)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // Columns: stages with enough saves, the base's for stages without, and any stage with a
+        // hand edit in it.
         let mut cols = stages.clone();
+        cols.extend(from_base.keys().copied());
         if let Some(b) = had {
             cols.extend(b.stages.iter().copied());
         }
@@ -170,6 +192,11 @@ fn main() {
             let here: Vec<&Seen> = seen.iter().filter(|x| x.stage == s).collect();
             let n = here.len();
             if n < MIN_SAVES {
+                if let Some(col) = from_base.get(&s) {
+                    for r in 0..rows.len() {
+                        table[r][k] = col[r];
+                    }
+                }
                 continue;
             }
             // lv[r][j]: row r's level in save j; sorted[r]: highest first.
@@ -184,7 +211,7 @@ fn main() {
             for q in (10..=20).map(|t| f64::from(t) * 0.05) {
                 chose = q;
                 let at = ((q * n as f64).ceil() as usize).clamp(1, n) - 1;
-                targets = (0..rows.len()).map(|r| crowd::nice(f64::from(sorted[r][at])).max(floor[r])).collect();
+                targets = (0..rows.len()).map(|r| crowd::nice(f64::from(sorted[r][at])).max(floor[r]).min(maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX))).collect();
                 let met = (0..n).filter(|&j| (0..rows.len()).all(|r| targets[r] <= 0.0 || f64::from(lv[r][j]) >= targets[r])).count();
                 if met * 2 >= n {
                     break;
@@ -238,8 +265,10 @@ fn main() {
                 }
             }
         }
-        let count = match m.count {
-            Count::Open => "no max",
+        let count = match (m.count, from_base.is_empty()) {
+            (Count::Open, true) => "no max",
+            (Count::Open, false) => "no max; World 1 to 5 columns from AutoReview's tiers, changed",
+            (_, false) => "World 1 to 5 columns from AutoReview's tiers, changed",
             _ => "",
         };
         write_block(&mut out, m.key, m.name, count, &block, &lines);
@@ -255,12 +284,68 @@ fn main() {
     if !new_items.is_empty() {
         eprintln!("new since the last run ({}): {}", new_items.len(), new_items.join(", "));
     }
+    if !fuzzy.is_empty() {
+        eprintln!("base names matched loosely ({}): {}", fuzzy.len(), fuzzy.join("; "));
+    }
+    if !unmatched.is_empty() {
+        eprintln!("base names with no item here ({}): {}", unmatched.len(), unmatched.join(", "));
+    }
     if !per_account.is_empty() {
         eprintln!("left out, their items differ per account: {}", per_account.join(", "));
     }
     std::fs::write(&path, out).expect("write crowd.txt");
     std::fs::write(&gen_path, gen_out).expect("write crowd.gen.txt");
     eprintln!("wrote {written} mechanics from {total} saves to {path}; {hand_kept} rows keep hand edits");
+}
+
+/// One base column for these rows: `@first N` is the first N rows (found, level 1),
+/// `@first-max N` the first N at their max, neither counting a `!Name`; named rows match by name, letters
+/// and digits only, else by the most words in common. A cell of 1e15 is the item's max.
+fn base_column(b: &Block, stage: usize, rows: &[String], maxes: &HashMap<&str, f64>, key: &str, unmatched: &mut Vec<String>, fuzzy: &mut Vec<String>) -> Vec<Option<f64>> {
+    let mut col: Vec<Option<f64>> = vec![None; rows.len()];
+    let norm = |s: &str| s.chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_lowercase();
+    let words = |s: &str| s.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| w.len() >= 3).map(str::to_lowercase).collect::<Vec<_>>();
+    let at_max = |r: usize| maxes.get(rows[r].as_str()).copied();
+    let get = |name: &str| b.cell(name, stage).flatten();
+    // `!Name` rows leave an item out of the counts (it doesn't count toward N either).
+    let skip: Vec<String> = b.rows.iter().filter(|(name, _)| name.starts_with('!') && get(name).is_some()).map(|(name, _)| norm(&name[1..])).collect();
+    for (special, max) in [("@first", false), ("@first-max", true)] {
+        let Some(n) = get(special) else { continue };
+        for r in (0..rows.len()).filter(|&r| !skip.contains(&norm(&rows[r]))).take(n as usize) {
+            col[r] = if max { at_max(r).or(Some(1.0)) } else { Some(col[r].unwrap_or(0.0).max(1.0)) };
+        }
+    }
+    for (name, _) in &b.rows {
+        if name.starts_with(['@', '!']) {
+            continue;
+        }
+        let Some(v) = get(name) else { continue };
+        let r = rows.iter().position(|row| norm(row) == norm(name)).or_else(|| {
+            let theirs = words(name);
+            let score = |row: &String| words(row).iter().filter(|w| theirs.iter().any(|t| w.starts_with(t.as_str()) || t.starts_with(w.as_str()))).count();
+            let best = rows.iter().map(score).max().unwrap_or(0);
+            let found: Vec<usize> = (0..rows.len()).filter(|&r| best > 0 && score(&rows[r]) == best).collect();
+            let r = (found.len() == 1).then(|| found[0])?;
+            let note = format!("{key}: {name} = {}", rows[r]);
+            if !fuzzy.contains(&note) {
+                fuzzy.push(note);
+            }
+            Some(r)
+        });
+        match r {
+            Some(r) => {
+                let v = if v >= 1e15 { at_max(r).unwrap_or(1.0) } else { v.min(at_max(r).unwrap_or(f64::MAX)) };
+                col[r] = Some(col[r].unwrap_or(0.0).max(v));
+            }
+            None => {
+                let note = format!("{key}: {name}");
+                if !unmatched.contains(&note) {
+                    unmatched.push(note);
+                }
+            }
+        }
+    }
+    col
 }
 
 fn write_block(out: &mut String, key: &str, name: &str, note: &str, b: &Block, lines: &[(String, Vec<Option<f64>>, &str)]) {

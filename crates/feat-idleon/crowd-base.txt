@@ -1,0 +1,163 @@
+# Early-world base tiers, from IdleOn AutoReview (TwoSpookyBoos), used with its authors'
+# permission as a base: levels raised x1.25, their stages as our columns. Written by
+# tools/autoreview-base/convert.py; edit crowd.txt, not this file.
+
+stamps                                  # Stamps (AutoReview)
+  stages                         3e      3m      3l      4m      4l      5m      5l
+  Mana Stamp                      1       1       1       1       1       1       1
+  Tomahawk Stamp                  1       1       1       1       1       1       1
+  Target Stamp                    1       1       1       1       1       1       1
+  Shield Stamp                    1       1       1       1       1       1       1
+  Vitality Stamp                  1       1       1       1       1       1       1
+  Choppin' Bag Stamp              1       1       1       1       1       1       1
+  Vendor Stamp                    1       1       1       1       1       1       1
+  Lil' Mining Baggy Stamp         -       1       1       1       1       1       1
+  Anvil Zoomer Stamp              -       -       1       1       1       1       1
+  Matty Bag Stamp                 -       -       1       1       1      35      35
+  Fishing Rod Stamp               -       -       -       1       1       1       1
+  Catch Net Stamp                 -       -       -       1       1       1       1
+  Pickaxe Stamp                   -       -       -      40      40      40      55
+  Hatchet Stamp                   -       -       -      40      40      40      55
+  Drippy Drop Stamp               -       -       -       -      35      50      50
+  Fist Stamp                      -       -       -       -       -       1       1
+  Manamoar Stamp                  -       -       -       -       -       1       1
+  Longsword Stamp                 -       -       -       -       -       1       1
+  Battleaxe Stamp                 -       -       -       -       -       1       1
+  Scimitar Stamp                  -       -       -       -       -       1       1
+  Bullseye Stamp                  -       -       -       -       -       1       1
+  Buckler Stamp                   -       -       -       -       -       1       1
+  Twin Ores Stamp                 -       -       -       -       -       1       1
+  Duplogs Stamp                   -       -       -       -       -       1       1
+  Cool Diggy Tool Stamp           -       -       -       -       -       1       1
+  Swag Swingy Tool Stamp          -       -       -       -       -       1       1
+  Alch Go Brrr Stamp              -       -       -       -       -       1       1
+  Droplots Stamp                  -       -       -       -       -       1       1
+  Bugsack Stamp                   -       -       -       -       -       1       1
+  Hidey Box Stamp                 -       -       -       -       -       1       1
+  Spikemouth Stamp                -       -       -       -       -       1       1
+  Purp Froge Stamp                -       -       -       -       -       1       1
+  Crystallin                      -       -       -       -       -       1       1
+  Talent S Stamp                  -       -       -       -       -       1       1
+  Stample Stamp                   -       -       -       -       -       -       1
+  Spice Stamp                     -       -       -       -       -       -       1
+  Egg Stamp                       -       -       -       -       -       -       1
+  Mason Jar Stamp                 -       -       -       -       -       -      15
+  Sigil Stamp                     -       -       -       -       -       -       1
+
+bribes                                  # Bribes (AutoReview)
+  stages                           2e      3e      4e      5e
+  Insider Trading                   1       1       1       1
+  Tracking Chips                    1       1       1       1
+  Mandatory Fire Sale               1       1       1       1
+  Sleeping On the Job               1       1       1       1
+  Artificial Demand                 1       1       1       1
+  The Art of the Deal               1       1       1       1
+  Overstock Regulations             -       1       1       1
+  Double EXP Scheme                 -       1       1       1
+  Tagged Indicators                 -       1       1       1
+  Fossil Fuel Legislation           -       1       1       1
+  Five Aces in the Deck             -       1       1       1
+  Fake Teleport Tickets             -       1       1       1
+  The Art of the Steal              -       1       1       1
+  Counterfeit Telepassports         -       -       1       1
+  Weighted Marbles                  -       -       1       1
+  Changing the Code                 -       -       1       1
+  Taxidermied Cog Pouches           -       -       1       1
+  Guild VIP Fraud                   -       -       1       1
+  Library Double Agent              -       -       1       1
+  The Art of the Fail               -       -       1       1
+  Photoshopped Dmg Range            -       -       -       1
+  Glitched Acc Formula              -       -       -       1
+  Firewalled Defence                -       -       -       1
+  Bottomless Bags                   -       -       -       1
+  AFKeylogging                      -       -       -       1
+  Guild GP Hack                     -       -       -       1
+
+star-signs                              # Star Signs (AutoReview)
+  stages                3m      4m      5m
+  @first                13      24      32
+  Chronus Cosmos         1       1       1
+  Pie Seas               -       1       1
+  Shoe Fly               -       1       1
+  Hydron Cosmos          -       -       1
+
+owl                                     # Owl (AutoReview)
+  stages        3e
+  @first         1
+
+upgrade-vault                           # Vault (AutoReview)
+  stages                       5e
+  Bigger Damage              1e15
+  Massive Whirl              1e15
+  Rapid Arrows               1e15
+  Dual Fireballs             1e15
+  Weapon Craft               1e15
+  Mining Payday              1e15
+  Baby on Board              1e15
+  Bored to Death             1e15
+  Stamp Bonanza              1e15
+  Drops for Days             1e15
+  Slice N Dice               1e15
+  Go Go Secret Owl           1e15
+  Boss Decimation            1e15
+  Sleepy Time                1e15
+  Production Revolution      1e15
+  Statue Bonanza             1e15
+  Stick Snapping             1e15
+  Liquid Knowledge           1e15
+  Bug Knowledge              1e15
+  Fish Knowledge             1e15
+  Dirty Money                1e15
+  Schoolin' the Fish         1e15
+  Straight to Storage        1e15
+  Bubble Money               1e15
+  Drip Drip Drip             1e15
+  Active Learning            1e15
+  Bug Power En Masse         1e15
+  Vial Overtune              1e15
+  Daily Mailbox              1e15
+  Duplicate Entries          1e15
+
+bubbles                                 # Bubbles (AutoReview)
+  stages                 3l      4l      5l
+  Roid Ragin             15      30      80
+  Warriors Rule           7      16      40
+  Hearty Diggy           15      30      80
+  Wyoming Blood           7      16      25
+  Sploosh Sploosh         7      16      25
+  Stronk Tools           10      20      55
+  Swift Steppin          15      30      80
+  Archer Or Bust          7      16      40
+  Sanic Tools            10      20      55
+  Bug^2                   7      16      25
+  Stable Jenius          15      30      80
+  Mage Is Best            7      16      40
+  Hocus Choppus          15      30      80
+  Molto Loggo             7      16      25
+  Le Brain Tools         10      20      55
+  FMJ                     6      12      18
+  Shaquracy               6      12      18
+  Prowesessary            8      18      50
+  Hammer Hammer           7      17      50
+  Name I Guess            -      12      25
+  All For Kill            -       -      30
+
+vials                                   # Vials (AutoReview)
+  stages             3e      3l      4m      4l      5e      5m      5l
+  @first              7      14      19      27      33      38      51
+  !Pickle Jar         1       1       1       1       1       1       1
+
+salt-lick                               # Salt Lick (AutoReview)
+  stages                     5m      5l
+  Obol Storage               10      10
+  Printer Sample Size         -      25
+
+prayers                                 # Prayers (AutoReview)
+  stages                   4m      5e      5m      5l
+  The Royal Sampler         1       1       1       1
+  Skilled Dimwit            -      25      25      40
+  Balance of Pain           -       -      13      25
+
+gods                                    # Divinity (AutoReview)
+  stages        5m      5l
+  @first         3       5
