@@ -49,255 +49,255 @@ statues                                 # Statues
   Dragon Statue          2   3   3
 
 bribes                                  # Bribes, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                       2e  3e  4e  5e  7e  7m  7l
-  Insider Trading               1   1   1   1   1   1   1
-  Tracking Chips                1   1   1   1   1   1   1
-  Mandatory Fire Sale           1   1   1   1   1   1   1
-  Sleeping on the Job           1   1   1   1   1   1   1
-  Artificial Demand             1   1   1   1   1   1   1
-  The Art of the Deal           1   1   1   1   1   1   1
-  Overstock Regulations         -   1   1   1   1   1   1
-  Double Exp Scheme             -   1   1   1   1   1   1
-  Tagged Indicators             -   1   1   1   1   1   1
-  Fossil Fuel Legislation       -   1   1   1   1   1   1
-  Five Aces in the Deck         -   1   1   1   1   1   1
-  Fake Teleport Tickets         -   1   1   1   1   1   1
-  The Art of the Steal          -   1   1   1   1   1   1
-  Counterfeit Telepassports     -   -   1   1   1   1   1
-  Weighted Marbles              -   -   1   1   1   1   1
-  Changing the Code             -   -   1   1   1   1   1
-  Taxidermied Cog Pouches       -   -   1   1   1   1   1
-  Guild VIP Fraud               -   -   1   1   1   1   1
-  Library Double Agent          -   -   1   1   1   1   1
-  The Art of the Fail           -   -   1   1   1   1   1
-  Photoshopped Dmg Range        -   -   -   1   1   1   1
-  Glitched Acc Formula          -   -   -   1   1   1   1
-  Firewalled Defence            -   -   -   1   1   1   1
-  Bottomless Bags               -   -   -   1   1   1   1
-  AFKeylogging                  -   -   -   1   1   1   1
-  Guild GP Hack                 -   -   -   1   1   1   1
-  The Art of the Bail           -   -   -   -   1   1   1
-  Random Garbage                -   -   -   -   1   1   1
-  Godlier Creation              -   -   -   -   1   1   1
-  Fishermaster                  -   -   -   -   1   1   1
-  Muscles on Muscles            -   -   -   -   1   1   1
-  Bottle Service                -   -   -   -   1   1   1
-  Star Scraper                  -   -   -   -   1   1   1
-  The Art of the Grail          -   -   -   -   1   1   1
-  Artifact Pilfering            -   -   -   -   1   1   1
-  Forge Cap Smuggling           -   -   -   -   1   1   1
-  Gold from Lead                -   -   -   -   1   1   1
-  Nugget Fabrication            -   -   -   -   1   1   1
-  Divine PTS Miscounting        -   -   -   -   1   1   1
-  Loot Table Tampering          -   -   -   -   1   1   1
+  stages                       1l  2e  2l  3e  3l  4e  4l  5e  7e  7m  7l
+  Insider Trading               1   -   1   -   1   -   1   -   1   1   1
+  Tracking Chips                1   -   1   -   1   -   1   -   1   1   1
+  Mandatory Fire Sale           1   -   1   -   1   -   1   -   1   1   1
+  Sleeping on the Job           1   -   1   -   1   -   1   -   1   1   1
+  Artificial Demand             1   -   1   -   1   -   1   -   1   1   1
+  The Art of the Deal           1   -   1   -   1   -   1   -   1   1   1
+  Overstock Regulations         -   -   1   -   1   -   1   -   1   1   1
+  Double Exp Scheme             -   -   1   -   1   -   1   -   1   1   1
+  Tagged Indicators             -   -   1   -   1   -   1   -   1   1   1
+  Fossil Fuel Legislation       -   -   1   -   1   -   1   -   1   1   1
+  Five Aces in the Deck         -   -   1   -   1   -   1   -   1   1   1
+  Fake Teleport Tickets         -   -   1   -   1   -   1   -   1   1   1
+  The Art of the Steal          -   -   1   -   1   -   1   -   1   1   1
+  Counterfeit Telepassports     -   -   -   -   1   -   1   -   1   1   1
+  Weighted Marbles              -   -   -   -   1   -   1   -   1   1   1
+  Changing the Code             -   -   -   -   1   -   1   -   1   1   1
+  Taxidermied Cog Pouches       -   -   -   -   1   -   1   -   1   1   1
+  Guild VIP Fraud               -   -   -   -   1   -   1   -   1   1   1
+  Library Double Agent          -   -   -   -   1   -   1   -   1   1   1
+  The Art of the Fail           -   -   -   -   1   -   1   -   1   1   1
+  Photoshopped Dmg Range        -   -   -   -   -   -   1   -   1   1   1
+  Glitched Acc Formula          -   -   -   -   -   -   1   -   1   1   1
+  Firewalled Defence            -   -   -   -   -   -   1   -   1   1   1
+  Bottomless Bags               -   -   -   -   -   -   1   -   1   1   1
+  AFKeylogging                  -   -   -   -   -   -   1   -   1   1   1
+  Guild GP Hack                 -   -   -   -   -   -   1   -   1   1   1
+  The Art of the Bail           -   -   -   -   -   -   -   -   1   1   1
+  Random Garbage                -   -   -   -   -   -   -   -   1   1   1
+  Godlier Creation              -   -   -   -   -   -   -   -   1   1   1
+  Fishermaster                  -   -   -   -   -   -   -   -   1   1   1
+  Muscles on Muscles            -   -   -   -   -   -   -   -   1   1   1
+  Bottle Service                -   -   -   -   -   -   -   -   1   1   1
+  Star Scraper                  -   -   -   -   -   -   -   -   1   1   1
+  The Art of the Grail          -   -   -   -   -   -   -   -   1   1   1
+  Artifact Pilfering            -   -   -   -   -   -   -   -   1   1   1
+  Forge Cap Smuggling           -   -   -   -   -   -   -   -   1   1   1
+  Gold from Lead                -   -   -   -   -   -   -   -   1   1   1
+  Nugget Fabrication            -   -   -   -   -   -   -   -   1   1   1
+  Divine PTS Miscounting        -   -   -   -   -   -   -   -   1   1   1
+  Loot Table Tampering          -   -   -   -   -   -   -   -   1   1   1
 
 star-signs                              # Star Signs, World 1 to 5 columns from AutoReview's tiers, changed
-  stages               3m  4m  5m  7e  7m  7l
-  Chronus Cosmos        1   1   1   1   1   1
-  The Buff Guy          1   1   1   1   1   1
-  Flexo Bendo           1   1   1   1   1   1
-  The Book Worm         1   1   1   1   1   1
-  The Fuzzy Dice        1   1   1   1   1   1
-  Dwarfo Beardus        1   1   1   1   1   1
-  Hipster Logger        1   1   1   1   1   1
-  Pie Seas              1   1   1   1   1   1
-  Shoe Fly              1   1   1   1   1   1
-  Blue Hedgehog         1   1   1   1   1   1
-  Gum Drop              1   1   1   1   1   1
-  Activelius            1   1   1   1   1   1
-  Pack Mule             1   1   1   1   1   1
-  Ned Kelly             1   1   1   1   1   1
-  Robinhood             -   1   1   1   1   1
-  Pirate Booty          -   1   1   1   1   1
-  Muscle Man            -   1   1   1   1   1
-  Fast Frog             -   1   1   1   1   1
-  Smart Stooge          -   1   1   1   1   1
-  Lucky Larry           -   1   1   1   1   1
-  Silly Snoozer         -   1   1   1   1   1
-  The Big Comatose      -   1   1   1   1   1
-  Miniature Game        -   1   1   1   1   1
-  Mount Eaterest        -   1   1   1   1   1
-  Bob Build Guy         -   1   1   1   1   1
-  Hydron Cosmos         -   -   1   1   1   1
-  The Big Brain         -   -   1   -   1   1
-  The OG Skiller        -   -   1   1   1   1
-  Grim Reaper           -   -   1   1   1   1
-  The Fallen Titan      -   -   1   -   1   1
-  The Forsaken          -   -   1   1   1   1
-  Mr No Sleep           -   -   1   -   1   1
-  Sir Savvy             -   -   1   -   1   1
-  All Rounder           -   -   1   1   1   1
-  Fatty Doodoo          -   -   -   1   1   1
-  All Rounderi          -   -   -   1   1   1
-  Centaurii             -   -   -   1   1   1
-  Murmollio             -   -   -   1   1   1
-  Strandissi            -   -   -   1   1   1
-  Wispommo              -   -   -   1   1   1
-  Pokaminni             -   -   -   1   1   1
-  Gor Bowzor            -   -   -   1   1   1
-  Sawsaw Salala         -   -   -   1   1   1
-  Cullingo              -   -   -   1   1   1
-  Grim Reaper Major     -   -   -   1   1   1
-  Sir Savvy Major       -   -   -   1   1   1
-  Lukiris               -   -   -   1   1   1
-  The Bulwark           -   -   -   1   1   1
-  Big Brain Major       -   -   -   1   1   1
-  The Fiesty            -   -   -   1   1   1
-  Comatose Major        -   -   -   1   1   1
-  S. Snoozer Major      -   -   -   1   1   1
-  Breedabilli           -   -   -   1   1   1
-  Gordonius Major       -   -   -   1   1   1
-  Scienscion            -   -   -   1   1   1
-  Agitagi               -   -   -   -   1   1
-  Trapezoidburg         -   -   -   -   1   1
-  Preys Bea             -   -   -   -   1   1
-  Muscle Magnus         -   -   -   -   1   1
-  Cropiovo Minor        -   -   -   -   1   1
-  Fabarmi               -   -   -   -   1   1
-  O.G. Signalais        -   -   -   -   1   1
-  Lightspeed Frog       -   -   -   -   1   1
-  Beanbie Major         -   -   -   -   1   1
-  S. Tealio             -   -   -   -   1   1
-  Sneekee E. X          -   -   -   -   1   1
-  Jadaciussi            -   -   -   -   1   1
-  Druipi Major          -   -   -   -   1   1
-  Gum Drop Major        -   -   -   -   1   1
-  Damarian Major        -   -   -   -   1   1
-  The Overachiever      -   -   -   -   1   1
-  Artifosho             -   -   -   -   1   1
-  Divividov             -   -   -   -   1   1
-  C. Shanti Minor       -   -   -   -   1   1
-  Sumo Magno            -   -   -   -   1   1
-  Seraph Cosmos         -   -   -   -   1   1
-  Lotto Larrinald       -   -   -   -   1   1
-  Intellostooge         -   -   -   -   1   1
-  Killian Maximus       -   -   -   -   1   1
-  Power Bowower         -   -   -   -   1   1
+  stages               3e  3m  4e  4m  5e  5m  7e  7m  7l
+  Chronus Cosmos        1   -   1   -   1   -   1   1   1
+  The Buff Guy          1   -   1   -   1   -   1   1   1
+  Flexo Bendo           1   -   1   -   1   -   1   1   1
+  The Book Worm         1   -   1   -   1   -   1   1   1
+  The Fuzzy Dice        1   -   1   -   1   -   1   1   1
+  Dwarfo Beardus        1   -   1   -   1   -   1   1   1
+  Hipster Logger        1   -   1   -   1   -   1   1   1
+  Pie Seas              1   -   1   -   1   -   1   1   1
+  Shoe Fly              1   -   1   -   1   -   1   1   1
+  Blue Hedgehog         1   -   1   -   1   -   1   1   1
+  Gum Drop              1   -   1   -   1   -   1   1   1
+  Activelius            1   -   1   -   1   -   1   1   1
+  Pack Mule             1   -   1   -   1   -   1   1   1
+  Ned Kelly             1   -   1   -   1   -   1   1   1
+  Robinhood             -   -   1   -   1   -   1   1   1
+  Pirate Booty          -   -   1   -   1   -   1   1   1
+  Muscle Man            -   -   1   -   1   -   1   1   1
+  Fast Frog             -   -   1   -   1   -   1   1   1
+  Smart Stooge          -   -   1   -   1   -   1   1   1
+  Lucky Larry           -   -   1   -   1   -   1   1   1
+  Silly Snoozer         -   -   1   -   1   -   1   1   1
+  The Big Comatose      -   -   1   -   1   -   1   1   1
+  Miniature Game        -   -   1   -   1   -   1   1   1
+  Mount Eaterest        -   -   1   -   1   -   1   1   1
+  Bob Build Guy         -   -   1   -   1   -   1   1   1
+  Hydron Cosmos         -   -   -   -   1   -   1   1   1
+  The Big Brain         -   -   -   -   1   -   -   1   1
+  The OG Skiller        -   -   -   -   1   -   1   1   1
+  Grim Reaper           -   -   -   -   1   -   1   1   1
+  The Fallen Titan      -   -   -   -   1   -   -   1   1
+  The Forsaken          -   -   -   -   1   -   1   1   1
+  Mr No Sleep           -   -   -   -   1   -   -   1   1
+  Sir Savvy             -   -   -   -   1   -   -   1   1
+  All Rounder           -   -   -   -   1   -   1   1   1
+  Fatty Doodoo          -   -   -   -   -   -   1   1   1
+  All Rounderi          -   -   -   -   -   -   1   1   1
+  Centaurii             -   -   -   -   -   -   1   1   1
+  Murmollio             -   -   -   -   -   -   1   1   1
+  Strandissi            -   -   -   -   -   -   1   1   1
+  Wispommo              -   -   -   -   -   -   1   1   1
+  Pokaminni             -   -   -   -   -   -   1   1   1
+  Gor Bowzor            -   -   -   -   -   -   1   1   1
+  Sawsaw Salala         -   -   -   -   -   -   1   1   1
+  Cullingo              -   -   -   -   -   -   1   1   1
+  Grim Reaper Major     -   -   -   -   -   -   1   1   1
+  Sir Savvy Major       -   -   -   -   -   -   1   1   1
+  Lukiris               -   -   -   -   -   -   1   1   1
+  The Bulwark           -   -   -   -   -   -   1   1   1
+  Big Brain Major       -   -   -   -   -   -   1   1   1
+  The Fiesty            -   -   -   -   -   -   1   1   1
+  Comatose Major        -   -   -   -   -   -   1   1   1
+  S. Snoozer Major      -   -   -   -   -   -   1   1   1
+  Breedabilli           -   -   -   -   -   -   1   1   1
+  Gordonius Major       -   -   -   -   -   -   1   1   1
+  Scienscion            -   -   -   -   -   -   1   1   1
+  Agitagi               -   -   -   -   -   -   -   1   1
+  Trapezoidburg         -   -   -   -   -   -   -   1   1
+  Preys Bea             -   -   -   -   -   -   -   1   1
+  Muscle Magnus         -   -   -   -   -   -   -   1   1
+  Cropiovo Minor        -   -   -   -   -   -   -   1   1
+  Fabarmi               -   -   -   -   -   -   -   1   1
+  O.G. Signalais        -   -   -   -   -   -   -   1   1
+  Lightspeed Frog       -   -   -   -   -   -   -   1   1
+  Beanbie Major         -   -   -   -   -   -   -   1   1
+  S. Tealio             -   -   -   -   -   -   -   1   1
+  Sneekee E. X          -   -   -   -   -   -   -   1   1
+  Jadaciussi            -   -   -   -   -   -   -   1   1
+  Druipi Major          -   -   -   -   -   -   -   1   1
+  Gum Drop Major        -   -   -   -   -   -   -   1   1
+  Damarian Major        -   -   -   -   -   -   -   1   1
+  The Overachiever      -   -   -   -   -   -   -   1   1
+  Artifosho             -   -   -   -   -   -   -   1   1
+  Divividov             -   -   -   -   -   -   -   1   1
+  C. Shanti Minor       -   -   -   -   -   -   -   1   1
+  Sumo Magno            -   -   -   -   -   -   -   1   1
+  Seraph Cosmos         -   -   -   -   -   -   -   1   1
+  Lotto Larrinald       -   -   -   -   -   -   -   1   1
+  Intellostooge         -   -   -   -   -   -   -   1   1
+  Killian Maximus       -   -   -   -   -   -   -   1   1
+  Power Bowower         -   -   -   -   -   -   -   1   1
 
 stamps                                  # Stamps, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                      3e  3m  3l  4m  4l  5m  5l   7e   7m   7l
-  Mana Stamp                   1   1   1   1   1   1   1   55  120  130
-  Tomahawk Stamp               1   1   1   1   1   1   1   40   75  100
-  Target Stamp                 1   1   1   1   1   1   1   60   75  110
-  Shield Stamp                 1   1   1   1   1   1   1   35   90   95
-  Vitality Stamp               1   1   1   1   1   1   1   40   65   95
-  Choppin' Bag Stamp           1   1   1   1   1   1   1   20  190  240
-  Vendor Stamp                 1   1   1   1   1   1   1   30   80  110
-  Lil' Mining Baggy Stamp      -   1   1   1   1   1   1   20  160  230
-  Anvil Zoomer Stamp           -   -   1   1   1   1   1   15   95   95
-  Matty Bag Stamp              -   -   1   1   1  35  35  120  190  210
-  Fishing Rod Stamp            -   -   -   1   1   1   1    -   95   95
-  Catch Net Stamp              -   -   -   1   1   1   1   25   60  110
-  Pickaxe Stamp                -   -   -  40  40  40  55   85  210  270
-  Hatchet Stamp                -   -   -  40  40  40  55  100  160  210
-  Drippy Drop Stamp            -   -   -   -  35  50  50   40   95  140
-  Fist Stamp                   -   -   -   -   -   1   1   18   35   50
-  Manamoar Stamp               -   -   -   -   -   1   1    3   60   60
-  Longsword Stamp              -   -   -   -   -   1   1   30   90   90
-  Battleaxe Stamp              -   -   -   -   -   1   1   35   90  100
-  Scimitar Stamp               -   -   -   -   -   1   1   12   70   70
-  Bullseye Stamp               -   -   -   -   -   1   1   20   60   80
-  Buckler Stamp                -   -   -   -   -   1   1    -   70   75
-  Twin Ores Stamp              -   -   -   -   -   1   1   10   45   45
-  Duplogs Stamp                -   -   -   -   -   1   1   15   50   50
-  Cool Diggy Tool Stamp        -   -   -   -   -   1   1   30  160  180
-  Swag Swingy Tool Stamp       -   -   -   -   -   1   1   10  120  120
-  Alch Go Brrr Stamp           -   -   -   -   -   1   1   35   65   85
-  Droplots Stamp               -   -   -   -   -   1   1   10   40   70
-  Bugsack Stamp                -   -   -   -   -   1   1   16  120  120
-  Hidey Box Stamp              -   -   -   -   -   1   1   30  140  200
-  Spikemouth Stamp             -   -   -   -   -   1   1   15   30   60
-  Purp Froge Stamp             -   -   -   -   -   1   1    -   55   75
-  Crystallin                   -   -   -   -   -   1   1  120  130  230
-  Talent S Stamp               -   -   -   -   -   1   1    -   30   30
-  Stample Stamp                -   -   -   -   -   -   1   20   60  100
-  Spice Stamp                  -   -   -   -   -   -   1   75  190  310
-  Egg Stamp                    -   -   -   -   -   -   1   45  190  250
-  Mason Jar Stamp              -   -   -   -   -   -  15   40  110  140
-  Sigil Stamp                  -   -   -   -   -   -   1   12  150  190
-  Agile Stamp                  -   -   -   -   -   -   -    2   18   20
-  Book Stamp                   -   -   -   -   -   -   -   10   40   50
-  Clover Stamp                 -   -   -   -   -   -   -    2   25   30
-  Blackheart Stamp             -   -   -   -   -   -   -   15  120  180
-  Void Sword Stamp             -   -   -   -   -   -   -   10   80   90
-  Captalist Stats Stamp        -   -   -   -   -   -   -   10   80   80
-  Fishhead Stamp               -   -   -   -   -   -   -    5   70   85
-  Buzz Buzz Stamp              -   -   -   -   -   -   -    5   80  110
-  Saw Stamp                    -   -   -   -   -   -   -    3   35   45
-  Flowin Stamp                 -   -   -   -   -   -   -    2   20   50
-  Nest Eggs Stamp              -   -   -   -   -   -   -   10  120  130
-  Sailboat Stamp               -   -   -   -   -   -   -    5   80  100
-  Crop Evo Stamp               -   -   -   -   -   -   -    5   30   70
-  Sneaky Peeky Stamp           -   -   -   -   -   -   -    8   55   95
-  Jade Mint Stamp              -   -   -   -   -   -   -   10   20   70
-  White Essence Stamp          -   -   -   -   -   -   -    8   60   80
-  Dark Triad Essence Stamp     -   -   -   -   -   -   -    8   55   70
-  Forge Stamp                  -   -   -   -   -   -   -   10  120  140
-  Talent IV Stamp              -   -   -   -   -   -   -    2   14   60
-  Refinery Stamp               -   -   -   -   -   -   -   25  100  120
-  Atomic Stamp                 -   -   -   -   -   -   -    8   95  120
-  Kruker Stamp                 -   -   -   -   -   -   -    1    3    6
-  Kapow Stamp                  -   -   -   -   -   -   -   18   35   75
-  Violence Stamp               -   -   -   -   -   -   -   18   50   50
-  Blover Stamp                 -   -   -   -   -   -   -   12   60   80
-  Gilded Axe Stamp             -   -   -   -   -   -   -   18   70   80
-  Tripleshot Stamp             -   -   -   -   -   -   -   20   70  110
-  Maxo Slappo Stamp            -   -   -   -   -   -   -   14   70   90
-  Intellectostampo             -   -   -   -   -   -   -   20   95   95
-  Dementia Sword Stamp         -   -   -   -   -   -   -   10  120  130
-  Smart Dirt Stamp             -   -   -   -   -   -   -   15   95  110
-  High IQ Lumber Stamp         -   -   -   -   -   -   -   30  100  120
-  Bag o Heads Stamp            -   -   -   -   -   -   -   20  120  160
-  Banked Pts Stamp             -   -   -   -   -   -   -   18   90  190
-  Cooked Meal Stamp            -   -   -   -   -   -   -   60  210  210
-  Ladle Stamp                  -   -   -   -   -   -   -   10  140  260
-  Divine Stamp                 -   -   -   -   -   -   -    8   80  110
-  Skelefish Stamp              -   -   -   -   -   -   -    2    2   30
-  Multikill Stamp              -   -   -   -   -   -   -   20   65   85
-  Sword Stamp                  -   -   -   -   -   -   -   85  140  150
-  Heart Stamp                  -   -   -   -   -   -   -   40   95  130
-  Sukka Foo                    -   -   -   -   -   -   -   30   30   90
-  Card Stamp                   -   -   -   -   -   -   -  100  180  210
-  Holy Mackerel Stamp          -   -   -   -   -   -   -    -   85   95
-  Gamejoy Stamp                -   -   -   -   -   -   -    -   45   85
-  Potion Stamp                 -   -   -   -   -   -   -    -   25   65
-  DNA Stamp                    -   -   -   -   -   -   -    -    9   55
-  Cavern Resource Stamp        -   -   -   -   -   -   -    -   80  140
-  Study Hall Stamp             -   -   -   -   -   -   -    -   15  150
-  Feather Stamp                -   -   -   -   -   -   -    -  100  100
-  Polearm Stamp                -   -   -   -   -   -   -    -  100  120
-  Hermes Stamp                 -   -   -   -   -   -   -    -   30   60
-  Arcane Stamp                 -   -   -   -   -   -   -    -   35   45
-  Avast Yar Stamp              -   -   -   -   -   -   -    -   70   70
-  Steve Sword                  -   -   -   -   -   -   -    -  150  170
-  Sashe Sidestamp              -   -   -   -   -   -   -    -   90   95
-  Conjocharmo Stamp            -   -   -   -   -   -   -    -  100  130
-  Brainstew Stamps             -   -   -   -   -   -   -    -   60   90
-  Fly Intel Stamp              -   -   -   -   -   -   -    -   80   80
-  Amplestample Stamp           -   -   -   -   -   -   -    -   25   30
-  Lab Tube Stamp               -   -   -   -   -   -   -    -  110  150
-  Multitool Stamp              -   -   -   -   -   -   -    -  130  190
-  Summoner Stone Stamp         -   -   -   -   -   -   -    -    8    8
-  Triad Essence Stamp          -   -   -   -   -   -   -    -   20   95
-  Questin Stamp                -   -   -   -   -   -   -    -   10   60
-  Golden Apple Stamp           -   -   -   -   -   -   -    -  100  100
-  Talent II Stamp              -   -   -   -   -   -   -    -   16   35
-  Talent III Stamp             -   -   -   -   -   -   -    -   20   30
-  Biblio Stamp                 -   -   -   -   -   -   -    -   30   45
-  Golden Sixes Stamp           -   -   -   -   -   -   -    -    -  150
-  Diamond Axe Stamp            -   -   -   -   -   -   -    -    -  120
-  Amber Stamp                  -   -   -   -   -   -   -    -    -   45
-  Little Rock Stamp            -   -   -   -   -   -   -    -    -   60
-  Hardhat Stamp                -   -   -   -   -   -   -    -    -   45
-  Corale Stamp                 -   -   -   -   -   -   -    -    -   90
-  Stat Graph Stamp             -   -   -   -   -   -   -    -    -    -
-  Stat Wallstreet Stamp        -   -   -   -   -   -   -    -    -    -
-  Void Axe Stamp               -   -   -   -   -   -   -    -    -    -
-  Gud EXP Stamp                -   -   -   -   -   -   -    -    -    -
-  Arcade Ball Stamp            -   -   -   -   -   -   -    -    -    -
-  Gold Ball Stamp              -   -   -   -   -   -   -    -    -    -
-  Ball Timer Stamp             -   -   -   -   -   -   -    -    -    -
-  Splosion Stamp               -   -   -   -   -   -   -    -    -    -
+  stages                      2l  3e  3m  3l  4e  4m  4l  5e  5m  5l   7e   7m   7l
+  Mana Stamp                   1   1   1   -   1   1   -   1   1   1   55  120  130
+  Tomahawk Stamp               1   1   1   -   1   1   -   1   1   1   40   75  100
+  Target Stamp                 1   1   1   -   1   1   -   1   1   1   60   75  110
+  Shield Stamp                 1   1   1   -   1   1   -   1   1   1   35   90   95
+  Vitality Stamp               1   1   1   -   1   1   -   1   1   1   40   65   95
+  Choppin' Bag Stamp           1   1   1   -   1   1   -   1   1   1   20  190  240
+  Vendor Stamp                 1   1   1   -   1   1   -   1   1   1   30   80  110
+  Lil' Mining Baggy Stamp      -   1   1   -   1   1   -   1   1   1   20  160  230
+  Anvil Zoomer Stamp           -   -   1   -   1   1   -   1   1   1   15   95   95
+  Matty Bag Stamp              -   -   1   -   1   1   -  35  35  35  120  190  210
+  Fishing Rod Stamp            -   -   -   -   1   1   -   1   1   1    -   95   95
+  Catch Net Stamp              -   -   -   -   1   1   -   1   1   1   25   60  110
+  Pickaxe Stamp                -   -   -   -  40  40   -  40  55  65   85  210  270
+  Hatchet Stamp                -   -   -   -  40  40   -  40  55  65  100  160  210
+  Drippy Drop Stamp            -   -   -   -   -  35   -  50  50  60   40   95  140
+  Fist Stamp                   -   -   -   -   -   -   -   1   1   1   18   35   50
+  Manamoar Stamp               -   -   -   -   -   -   -   1   1   1    3   60   60
+  Longsword Stamp              -   -   -   -   -   -   -   1   1   1   30   90   90
+  Battleaxe Stamp              -   -   -   -   -   -   -   1   1   1   35   90  100
+  Scimitar Stamp               -   -   -   -   -   -   -   1   1   1   12   70   70
+  Bullseye Stamp               -   -   -   -   -   -   -   1   1   1   20   60   80
+  Buckler Stamp                -   -   -   -   -   -   -   1   1   1    -   70   75
+  Twin Ores Stamp              -   -   -   -   -   -   -   1   1   1   10   45   45
+  Duplogs Stamp                -   -   -   -   -   -   -   1   1   1   15   50   50
+  Cool Diggy Tool Stamp        -   -   -   -   -   -   -   1   1   1   30  160  180
+  Swag Swingy Tool Stamp       -   -   -   -   -   -   -   1   1   1   10  120  120
+  Alch Go Brrr Stamp           -   -   -   -   -   -   -   1   1   1   35   65   85
+  Droplots Stamp               -   -   -   -   -   -   -   1   1   1   10   40   70
+  Bugsack Stamp                -   -   -   -   -   -   -   1   1   1   16  120  120
+  Hidey Box Stamp              -   -   -   -   -   -   -   1   1   1   30  140  200
+  Spikemouth Stamp             -   -   -   -   -   -   -   1   1   1   15   30   60
+  Purp Froge Stamp             -   -   -   -   -   -   -   1   1   1    -   55   75
+  Crystallin                   -   -   -   -   -   -   -   1   1   1  120  130  230
+  Talent S Stamp               -   -   -   -   -   -   -   1   1   1    -   30   30
+  Stample Stamp                -   -   -   -   -   -   -   -   1   1   20   60  100
+  Spice Stamp                  -   -   -   -   -   -   -   -   1   1   75  190  310
+  Egg Stamp                    -   -   -   -   -   -   -   -   1   1   45  190  250
+  Mason Jar Stamp              -   -   -   -   -   -   -   -  15  15   40  110  140
+  Sigil Stamp                  -   -   -   -   -   -   -   -   1   1   12  150  190
+  Bag o Heads Stamp            -   -   -   -   -   -   -   -   -   1   20  120  160
+  Skelefish Stamp              -   -   -   -   -   -   -   -   -   1    2    2   30
+  Cooked Meal Stamp            -   -   -   -   -   -   -   -   -   1   60  210  210
+  Card Stamp                   -   -   -   -   -   -   -   -   -  60  100  180  210
+  Agile Stamp                  -   -   -   -   -   -   -   -   -   -    2   18   20
+  Book Stamp                   -   -   -   -   -   -   -   -   -   -   10   40   50
+  Clover Stamp                 -   -   -   -   -   -   -   -   -   -    2   25   30
+  Blackheart Stamp             -   -   -   -   -   -   -   -   -   -   15  120  180
+  Void Sword Stamp             -   -   -   -   -   -   -   -   -   -   10   80   90
+  Captalist Stats Stamp        -   -   -   -   -   -   -   -   -   -   10   80   80
+  Fishhead Stamp               -   -   -   -   -   -   -   -   -   -    5   70   85
+  Buzz Buzz Stamp              -   -   -   -   -   -   -   -   -   -    5   80  110
+  Saw Stamp                    -   -   -   -   -   -   -   -   -   -    3   35   45
+  Flowin Stamp                 -   -   -   -   -   -   -   -   -   -    2   20   50
+  Nest Eggs Stamp              -   -   -   -   -   -   -   -   -   -   10  120  130
+  Sailboat Stamp               -   -   -   -   -   -   -   -   -   -    5   80  100
+  Crop Evo Stamp               -   -   -   -   -   -   -   -   -   -    5   30   70
+  Sneaky Peeky Stamp           -   -   -   -   -   -   -   -   -   -    8   55   95
+  Jade Mint Stamp              -   -   -   -   -   -   -   -   -   -   10   20   70
+  White Essence Stamp          -   -   -   -   -   -   -   -   -   -    8   60   80
+  Dark Triad Essence Stamp     -   -   -   -   -   -   -   -   -   -    8   55   70
+  Forge Stamp                  -   -   -   -   -   -   -   -   -   -   10  120  140
+  Talent IV Stamp              -   -   -   -   -   -   -   -   -   -    2   14   60
+  Refinery Stamp               -   -   -   -   -   -   -   -   -   -   25  100  120
+  Atomic Stamp                 -   -   -   -   -   -   -   -   -   -    8   95  120
+  Kruker Stamp                 -   -   -   -   -   -   -   -   -   -    1    3    6
+  Kapow Stamp                  -   -   -   -   -   -   -   -   -   -   18   35   75
+  Violence Stamp               -   -   -   -   -   -   -   -   -   -   18   50   50
+  Blover Stamp                 -   -   -   -   -   -   -   -   -   -   12   60   80
+  Gilded Axe Stamp             -   -   -   -   -   -   -   -   -   -   18   70   80
+  Tripleshot Stamp             -   -   -   -   -   -   -   -   -   -   20   70  110
+  Maxo Slappo Stamp            -   -   -   -   -   -   -   -   -   -   14   70   90
+  Intellectostampo             -   -   -   -   -   -   -   -   -   -   20   95   95
+  Dementia Sword Stamp         -   -   -   -   -   -   -   -   -   -   10  120  130
+  Smart Dirt Stamp             -   -   -   -   -   -   -   -   -   -   15   95  110
+  High IQ Lumber Stamp         -   -   -   -   -   -   -   -   -   -   30  100  120
+  Banked Pts Stamp             -   -   -   -   -   -   -   -   -   -   18   90  190
+  Ladle Stamp                  -   -   -   -   -   -   -   -   -   -   10  140  260
+  Divine Stamp                 -   -   -   -   -   -   -   -   -   -    8   80  110
+  Multikill Stamp              -   -   -   -   -   -   -   -   -   -   20   65   85
+  Sword Stamp                  -   -   -   -   -   -   -   -   -   -   85  140  150
+  Heart Stamp                  -   -   -   -   -   -   -   -   -   -   40   95  130
+  Sukka Foo                    -   -   -   -   -   -   -   -   -   -   30   30   90
+  Holy Mackerel Stamp          -   -   -   -   -   -   -   -   -   -    -   85   95
+  Gamejoy Stamp                -   -   -   -   -   -   -   -   -   -    -   45   85
+  Potion Stamp                 -   -   -   -   -   -   -   -   -   -    -   25   65
+  DNA Stamp                    -   -   -   -   -   -   -   -   -   -    -    9   55
+  Cavern Resource Stamp        -   -   -   -   -   -   -   -   -   -    -   80  140
+  Study Hall Stamp             -   -   -   -   -   -   -   -   -   -    -   15  150
+  Feather Stamp                -   -   -   -   -   -   -   -   -   -    -  100  100
+  Polearm Stamp                -   -   -   -   -   -   -   -   -   -    -  100  120
+  Hermes Stamp                 -   -   -   -   -   -   -   -   -   -    -   30   60
+  Arcane Stamp                 -   -   -   -   -   -   -   -   -   -    -   35   45
+  Avast Yar Stamp              -   -   -   -   -   -   -   -   -   -    -   70   70
+  Steve Sword                  -   -   -   -   -   -   -   -   -   -    -  150  170
+  Sashe Sidestamp              -   -   -   -   -   -   -   -   -   -    -   90   95
+  Conjocharmo Stamp            -   -   -   -   -   -   -   -   -   -    -  100  130
+  Brainstew Stamps             -   -   -   -   -   -   -   -   -   -    -   60   90
+  Fly Intel Stamp              -   -   -   -   -   -   -   -   -   -    -   80   80
+  Amplestample Stamp           -   -   -   -   -   -   -   -   -   -    -   25   30
+  Lab Tube Stamp               -   -   -   -   -   -   -   -   -   -    -  110  150
+  Multitool Stamp              -   -   -   -   -   -   -   -   -   -    -  130  190
+  Summoner Stone Stamp         -   -   -   -   -   -   -   -   -   -    -    8    8
+  Triad Essence Stamp          -   -   -   -   -   -   -   -   -   -    -   20   95
+  Questin Stamp                -   -   -   -   -   -   -   -   -   -    -   10   60
+  Golden Apple Stamp           -   -   -   -   -   -   -   -   -   -    -  100  100
+  Talent II Stamp              -   -   -   -   -   -   -   -   -   -    -   16   35
+  Talent III Stamp             -   -   -   -   -   -   -   -   -   -    -   20   30
+  Biblio Stamp                 -   -   -   -   -   -   -   -   -   -    -   30   45
+  Golden Sixes Stamp           -   -   -   -   -   -   -   -   -   -    -    -  150
+  Diamond Axe Stamp            -   -   -   -   -   -   -   -   -   -    -    -  120
+  Amber Stamp                  -   -   -   -   -   -   -   -   -   -    -    -   45
+  Little Rock Stamp            -   -   -   -   -   -   -   -   -   -    -    -   60
+  Hardhat Stamp                -   -   -   -   -   -   -   -   -   -    -    -   45
+  Corale Stamp                 -   -   -   -   -   -   -   -   -   -    -    -   90
+  Stat Graph Stamp             -   -   -   -   -   -   -   -   -   -    -    -    -
+  Stat Wallstreet Stamp        -   -   -   -   -   -   -   -   -   -    -    -    -
+  Void Axe Stamp               -   -   -   -   -   -   -   -   -   -    -    -    -
+  Gud EXP Stamp                -   -   -   -   -   -   -   -   -   -    -    -    -
+  Arcade Ball Stamp            -   -   -   -   -   -   -   -   -   -    -    -    -
+  Gold Ball Stamp              -   -   -   -   -   -   -   -   -   -    -    -    -
+  Ball Timer Stamp             -   -   -   -   -   -   -   -   -   -    -    -    -
+  Splosion Stamp               -   -   -   -   -   -   -   -   -   -    -    -    -
 
 statue-flair                            # Statue Flair
   stages                7e  7m  7l
@@ -335,17 +335,17 @@ statue-flair                            # Statue Flair
   Coral Statue           -   -   -
 
 owl                                     # Owl, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                    3e  7e  7m  7l
-  Maple Megafeather          1   1   1   1
-  Amethyst Megafeather       -   1   1   1
-  Frostraven Megafeather     -   1   1   1
-  Phoenix Megafeather        -   1   1   1
-  Obsidian Megafeather       -   1   1   1
-  Evergreen Megafeather      -   1   1   1
-  Pristine Megafeather       -   1   1   1
-  Lavathian Megafeather      -   1   1   1
-  Midas Megafeather          -   1   1   1
-  Fractal Megafeather        -   1   1   1
+  stages                    2l  3e  7e  7m  7l
+  Maple Megafeather          1   -   1   1   1
+  Amethyst Megafeather       -   -   1   1   1
+  Frostraven Megafeather     -   -   1   1   1
+  Phoenix Megafeather        -   -   1   1   1
+  Obsidian Megafeather       -   -   1   1   1
+  Evergreen Megafeather      -   -   1   1   1
+  Pristine Megafeather       -   -   1   1   1
+  Lavathian Megafeather      -   -   1   1   1
+  Midas Megafeather          -   -   1   1   1
+  Fractal Megafeather        -   -   1   1   1
 
 owl-lasting                             # Owl: Lasting Bonuses, no max
   stages                        7e  7m  7l
@@ -376,230 +376,230 @@ darts                                   # Darts, no max
   Talent PTS for the first page              5    5    5
 
 upgrade-vault                           # Upgrade Vault, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                          5e   7e   7m   7l
-  Bigger Damage                  535  500  500  510
-  Massive Whirl                    1    1    1    1
-  Rapid Arrows                     1    1    1    1
-  Dual Fireballs                   1    1    1    1
-  Weapon Craft                    15    5    5   15
-  Mining Payday                  110  100  100  110
-  Baby on Board                   85   50   50   60
-  Bored to Death                  20   10   10   20
-  Stamp Bonanza                  110  100  100  110
-  Drops for Days                  85   50   50   60
-  Slice N Dice                   110  100  100  110
-  Go Go Secret Owl               135  100  135  135
-  Boss Decimation                 60   25   25   35
-  Sleepy Time                     30   20   20   30
-  Production Revolution          135  100  100  110
-  Statue Bonanza                  60   50   50   60
-  Stick Snapping                  60   50   50   60
-  Liquid Knowledge               135  100  100  110
-  Bug Knowledge                  135  100  100  110
-  Fish Knowledge                 135  100  100  110
-  Dirty Money                     35   25   25   35
-  Schoolin' the Fish              30   20   20   30
-  Straight to Storage              1    1    1    1
-  Bubble Money                    20   10   10   20
-  Drip Drip Drip                  30   20   20   30
-  Active Learning                135  100  100  110
-  Bug Power En Masse              30   20   20   30
-  Vial Overtune                   13    3    3   13
-  Daily Mailbox                   20   10   10   20
-  Duplicate Entries                1    1    1    1
-  Natural Talent                   -  200  200  210
-  Monster Tax                      -  500  535  535
-  Steel Guard                      -  100  100  110
-  Carry Capacity                   -  100  100  110
-  Knockout                         -    5    5   15
-  Beeg Forge                       -  100  100  110
-  Vault Mastery                    -   50   55   60
-  Storage Slots                    -   20   20   30
-  Recipe for Profit                -   50   50   60
-  Stunning Talent                  -  100  100  110
-  Active Murdering                 -  100  130  135
-  Card Retirement                  -    1    1    1
-  Go Go Secret Kangaroo Mouse      -  250  285  285
-  All Armoured Up                  -  100  100  110
-  Buildie Sheepie                  -   20   20   30
-  Quest KAPOW                      -  200  200  210
-  Critters 'n Souls                -  300  320  335
-  Slight Do-Over                   -   20   20   30
-  Special Talent                   -  150  150  160
-  Lab Knowledge                    -  100  100  110
-  Breeding Knowledge               -  100  100  110
-  Speedy Sailing                   -  100  100  110
-  Evolving Talent                  -  200  200  210
-  Happy Doggy                      -  100  100  110
-  Foraging Forever                 -  250  285  285
-  Pet Punchies                     -  250  260  285
-  Skulltrick                       -  100  100  110
-  Collection Cashout               -   20   20   30
-  Vault Mastery II                 -   50   50   60
-  Ocean Knowledge                  -  100  100  110
-  Go Go Bubba the Seal             -  150  330  460
-  Big Blessings                    -   20   30   40
-  Kitchen Dream-mare               -  230  420  535
-  Gamer Knowledge                  -  100  100  110
-  Divinity Points                  -  100  130  135
-  Smarter Villagers                -   25   50   60
-  Super Slab                       -   12   20   30
-  Croppius Evolvius                -  110  250  260
-  Properly Funded Research         -    7   10   20
-  Summoning Knowledge              -   55  100  110
-  24 Karat Foods                   -   10   35   55
-  Vault Mastery III                -    8   35   60
-  Wicked Smart                     -  300  510  535
-  Bullseye                         -  390  500  510
-  Major Discount                   -   90  115  115
-  Teh TOM                          -  180  340  460
-  Cooking Knowledge                -  280  500  510
-  Artifact Find Chance             -  190  285  285
-  Sailing Loot                     -  140  200  210
-  Mega Bits                        -  160  310  335
-  Divine Knowledge                 -   95  100  110
-  Better Captains                  -   95  135  135
-  Farming Knowledge                -   95  100  110
-  Raw Damage                       -   55  140  210
-  Finders Keepers                  -  110  270  285
-  Sneaking Knowledge               -   65  100  110
-  White Essentials                 -   85  200  210
-  Bigger Better Beans              -   15   50   85
-  Rest of the Essentials           -   50  230  235
-  Topheavy Charms                  -   25  100  110
+  stages                          4l  5e   5l   7e   7m   7l
+  Bigger Damage                  535   -  535  500  500  510
+  Massive Whirl                    1   -    1    1    1    1
+  Rapid Arrows                     1   -    1    1    1    1
+  Dual Fireballs                   1   -    1    1    1    1
+  Weapon Craft                    15   -   15    5    5   15
+  Mining Payday                  110   -  110  100  100  110
+  Baby on Board                   85   -   85   50   50   60
+  Bored to Death                  20   -   20   10   10   20
+  Stamp Bonanza                  110   -  110  100  100  110
+  Drops for Days                  85   -   85   50   50   60
+  Slice N Dice                   110   -  110  100  100  110
+  Go Go Secret Owl               135   -  135  100  135  135
+  Boss Decimation                 60   -   60   25   25   35
+  Sleepy Time                     30   -   30   20   20   30
+  Production Revolution          135   -  135  100  100  110
+  Statue Bonanza                  60   -   60   50   50   60
+  Stick Snapping                  60   -   60   50   50   60
+  Liquid Knowledge               135   -  135  100  100  110
+  Bug Knowledge                  135   -  135  100  100  110
+  Fish Knowledge                 135   -  135  100  100  110
+  Dirty Money                     35   -   35   25   25   35
+  Schoolin' the Fish              30   -   30   20   20   30
+  Straight to Storage              1   -    1    1    1    1
+  Bubble Money                    20   -   20   10   10   20
+  Drip Drip Drip                  30   -   30   20   20   30
+  Active Learning                135   -  135  100  100  110
+  Bug Power En Masse              30   -   30   20   20   30
+  Vial Overtune                   13   -   13    3    3   13
+  Daily Mailbox                   20   -   20   10   10   20
+  Duplicate Entries                1   -    1    1    1    1
+  Major Discount                   -   -  115   90  115  115
+  Monster Tax                      -   -  535  500  535  535
+  Recipe for Profit                -   -   85   50   50   60
+  Stunning Talent                  -   -  135  100  100  110
+  All Armoured Up                  -   -  135  100  100  110
+  Buildie Sheepie                  -   -   30   20   20   30
+  Natural Talent                   -   -    -  200  200  210
+  Steel Guard                      -   -    -  100  100  110
+  Carry Capacity                   -   -    -  100  100  110
+  Knockout                         -   -    -    5    5   15
+  Beeg Forge                       -   -    -  100  100  110
+  Vault Mastery                    -   -    -   50   55   60
+  Storage Slots                    -   -    -   20   20   30
+  Active Murdering                 -   -    -  100  130  135
+  Card Retirement                  -   -    -    1    1    1
+  Go Go Secret Kangaroo Mouse      -   -    -  250  285  285
+  Quest KAPOW                      -   -    -  200  200  210
+  Critters 'n Souls                -   -    -  300  320  335
+  Slight Do-Over                   -   -    -   20   20   30
+  Special Talent                   -   -    -  150  150  160
+  Lab Knowledge                    -   -    -  100  100  110
+  Breeding Knowledge               -   -    -  100  100  110
+  Speedy Sailing                   -   -    -  100  100  110
+  Evolving Talent                  -   -    -  200  200  210
+  Happy Doggy                      -   -    -  100  100  110
+  Foraging Forever                 -   -    -  250  285  285
+  Pet Punchies                     -   -    -  250  260  285
+  Skulltrick                       -   -    -  100  100  110
+  Collection Cashout               -   -    -   20   20   30
+  Vault Mastery II                 -   -    -   50   50   60
+  Ocean Knowledge                  -   -    -  100  100  110
+  Go Go Bubba the Seal             -   -    -  150  330  460
+  Big Blessings                    -   -    -   20   30   40
+  Kitchen Dream-mare               -   -    -  230  420  535
+  Gamer Knowledge                  -   -    -  100  100  110
+  Divinity Points                  -   -    -  100  130  135
+  Smarter Villagers                -   -    -   25   50   60
+  Super Slab                       -   -    -   12   20   30
+  Croppius Evolvius                -   -    -  110  250  260
+  Properly Funded Research         -   -    -    7   10   20
+  Summoning Knowledge              -   -    -   55  100  110
+  24 Karat Foods                   -   -    -   10   35   55
+  Vault Mastery III                -   -    -    8   35   60
+  Wicked Smart                     -   -    -  300  510  535
+  Bullseye                         -   -    -  390  500  510
+  Teh TOM                          -   -    -  180  340  460
+  Cooking Knowledge                -   -    -  280  500  510
+  Artifact Find Chance             -   -    -  190  285  285
+  Sailing Loot                     -   -    -  140  200  210
+  Mega Bits                        -   -    -  160  310  335
+  Divine Knowledge                 -   -    -   95  100  110
+  Better Captains                  -   -    -   95  135  135
+  Farming Knowledge                -   -    -   95  100  110
+  Raw Damage                       -   -    -   55  140  210
+  Finders Keepers                  -   -    -  110  270  285
+  Sneaking Knowledge               -   -    -   65  100  110
+  White Essentials                 -   -    -   85  200  210
+  Bigger Better Beans              -   -    -   15   50   85
+  Rest of the Essentials           -   -    -   50  230  235
+  Topheavy Charms                  -   -    -   25  100  110
 
 bubbles                                 # Alchemy Bubbles, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                3l  4l  5l     7e      7m      7l
-  Roid Ragin            15  30  80  1,000  14,000  76,000
-  Warriors Rule          7  16  40    180     270   1,000
-  Hearty Diggy          15  30  80    140     240     930
-  Wyoming Blood          7  16  25    150     250     420
-  Sploosh Sploosh        7  16  25     75     210     380
-  Stronk Tools          10  20  55    130     220     680
-  Swift Steppin         15  30  80  1,000  10,000  73,000
-  Archer Or Bust         7  16  40    150     210     420
-  Sanic Tools           10  20  55     80     180     420
-  Bug]                   7  16  25     65     210     390
-  Stable Jenius         15  30  80  1,100  10,000  76,000
-  Mage Is Best           7  16  40    150     220   1,000
-  Hocus Choppus         15  30  80    120     180     420
-  Molto Loggo            7  16  25     75     210     380
-  Le Brain Tools        10  20  55    100     200     420
-  Fmj                    6  12  18    100     180     340
-  Shaquracy              6  12  18    100     220     350
-  Prowesessary           8  18  50    110     190     350
-  Hammer Hammer          7  17  50    110     310  54,000
-  Name I Guess           -  12  25    120     230     420
-  All For Kill           -   -  30    110     210     400
-  Shimmeron              -   -   -      1     120     540
-  Power Trithree         -   -   -      1     120     310
-  Egg Ink                -   -   -     35     100     270
-  Card Champ             -   -   -     35     100     350
-  Buff Boi Talent        -   -   -     70     220     390
-  Dream Of Ironfish      -   -   -     40     120     280
-  Farquad Force          -   -   -      1       1     230
-  Endgame Eff I          -   -   -      1     120     230
-  Crop Chapter           -   -   -      1     280   1,100
-  Bow Jack               -   -   -     95     180     430
-  Premigreen             -   -   -     35     130     300
-  Slabo Critterbug       -   -   -     30     110     310
-  Endgame Eff Ii         -   -   -      1       1     430
-  Tome Agility           -   -   -      1     110     300
-  Stealth Chapter        -   -   -      1       1     310
-  Endgame Eff Iii        -   -   -      1     540   1,100
-  Tome Wisdom            -   -   -      1       1     310
-  Hinge Buster           -   -   -      1       1     370
-  Brittley Spears        -   -   -    100     190     420
-  Gamer At Heart         -   -   -     35     130     450
-  Double Pagey           -   -   -      1      20     100
-  Cheap Shot             -   -   -     65     200     340
-  Fast Boi Talent        -   -   -     65     180     350
-  Green Bargain          -   -   -     65     210     340
-  Fly In Mind            -   -   -     35     110     310
-  Bow Power              -   -   -     35     230     300
-  Sailor At Heart        -   -   -     45     120     360
-  Slabo Agility          -   -   -     30     130     310
-  Purple Bargain         -   -   -     75     180     340
-  Tree Sleeper           -   -   -     35     120     310
-  Matrix Evolved         -   -   -     35     120     320
-  Essence Chapter        -   -   -      1     500   1,000
-  Stamp Tramp            -   -   -    110     180     350
-  Undeveloped Costs      -   -   -    100     180     340
-  Da Daily Drip          -   -   -     70     180     420
-  Cogs For Hands         -   -   -     90     180     340
-  Diamond Chef           -   -   -     40     100     890
-  Petting The Rift       -   -   -     30     100     220
-  Big P                  -   -   -     55     110   1,500
-  Lo Cost Mo Jade        -   -   -      1     100     230
-  Reely Smart            -   -   -     90     180     350
-  Big Meaty Claws        -   -   -     95     180     350
-  Bappity Boopity        -   -   -     75     180     350
-  Call Me Bob            -   -   -    110     300  61,000
-  Carpenter              -   -   -     90     180   1,300
-  Orange Bargain         -   -   -     75     180     340
-  Penny Of Strength      -   -   -     70     120     570
-  Multorange             -   -   -     50     120     820
-  Bite But Not Chew      -   -   -     35     120     230
-  Spear Powah            -   -   -     85     230     330
-  Slabi Orefish          -   -   -     45     120     680
-  Slabi Strength         -   -   -     45     120     800
-  Power Trione           -   -   -     50     170     800
-  Tome Strength          -   -   -    100     280   1,000
-  Essence Boost          -   -   -      6     130     450
-  Dmg Of The Sun         -   -   -     19      45     100
-  Lil Big Damage         -   -   -     45     220     340
-  Anvilnomics            -   -   -     70     220     340
-  Quick Slap             -   -   -     90     210     340
-  Call Me Ash            -   -   -    100     310  56,000
-  Cuz I Catch Em All     -   -   -     75     180     340
-  Dollar Of Agility      -   -   -     40     100     310
-  Kill Per Kill          -   -   -     45     100     430
-  Afk Expexp             -   -   -     35     110     230
-  Power Tritwo           -   -   -     30     240     310
-  Quickdraw Quiver       -   -   -    200     690     940
-  Spapunkie              -   -   -      1      25     320
-  Noodubble              -   -   -     80     190     420
-  Cookin Roadkill        -   -   -    130     190     690
-  Brewstachio            -   -   -     95     180     340
-  Matty Stafford         -   -   -     85     180     340
-  Call Me Pope           -   -   -     95     230     420
-  Gospel Leader          -   -   -     95     200     430
-  Smart Boi Talent       -   -   -     95     200     350
-  Nickel Of Wisdom       -   -   -     65     130     310
-  Severapurple           -   -   -     85     130     590
-  Hyperswift             -   -   -     60     120     310
-  Wand Pawur             -   -   -     55     220     330
-  Slabe Logsoul          -   -   -     55     130     310
-  Pious At Heart         -   -   -     80     140     800
-  Slabe Wisdom           -   -   -     55     130     280
-  Smarter Spells         -   -   -    160     550   1,400
-  Lotto Skills           -   -   -    170   4,000  70,000
-  Droppin Loads          -   -   -    130     230     790
-  Startue Exp            -   -   -    180     210     710
-  Level Up Gift          -   -   -     95     210     470
-  Grind Time             -   -   -  1,600  11,000  28,000
-  Laaarrrryyyy           -   -   -    230   1,500  64,000
-  Sample It              -   -   -     95     180     420
-  Big Game Hunter        -   -   -     75     190     570
-  Ignore Overdues        -   -   -     95     180     520
-  Yellow Bargain         -   -   -     75     180     340
-  Mr Massacre            -   -   -     50     100     450
-  Boaty Bubble           -   -   -     90     140     300
-  Bit By Bit             -   -   -     55     100     410
-  Gifts Abound           -   -   -     55     100     370
-  Atom Split             -   -   -     55     100     230
-  Cropius Mapper         -   -   -     40     100     280
-  Ninja Looter           -   -   -    120     280   1,400
-  Bone Bubble            -   -   -      -      60     190
-  Dmg Of The Moon        -   -   -      -      12      50
-  Dust Bubble            -   -   -      -       1     120
-  Deep Depth             -   -   -      -      90     840
-  Dmg Of The Soul        -   -   -      -      30      70
-  Tachyon Bubble         -   -   -      -      25     100
-  Faster Nrg             -   -   -      -      30     820
-  Kattle Da Goat         -   -   -      -      30     110
-  Codfrey Rulz Ok        -   -   -      -      70     110
-  Royal Riches           -   -   -      -       -     900
+  stages                3m  3l  4m  4l  5m  5l     7e      7m      7l
+  Roid Ragin            15   -  30   -  80   -  1,000  14,000  76,000
+  Warriors Rule          7   -  16   -  40   -    180     270   1,000
+  Hearty Diggy          15   -  30   -  80   -    140     240     930
+  Wyoming Blood          7   -  16   -  25   -    150     250     420
+  Sploosh Sploosh        7   -  16   -  25   -     75     210     380
+  Stronk Tools          10   -  20   -  55   -    130     220     680
+  Swift Steppin         15   -  30   -  80   -  1,000  10,000  73,000
+  Archer Or Bust         7   -  16   -  40   -    150     210     420
+  Sanic Tools           10   -  20   -  55   -     80     180     420
+  Bug]                   7   -  16   -  25   -     65     210     390
+  Stable Jenius         15   -  30   -  80   -  1,100  10,000  76,000
+  Mage Is Best           7   -  16   -  40   -    150     220   1,000
+  Hocus Choppus         15   -  30   -  80   -    120     180     420
+  Molto Loggo            7   -  16   -  25   -     75     210     380
+  Le Brain Tools        10   -  20   -  55   -    100     200     420
+  Fmj                    6   -  12   -  18   -    100     180     340
+  Shaquracy              6   -  12   -  18   -    100     220     350
+  Prowesessary           8   -  18   -  50   -    110     190     350
+  Hammer Hammer          7   -  17   -  50   -    110     310  54,000
+  Name I Guess           -   -  12   -  25   -    120     230     420
+  All For Kill           -   -   -   -  30   -    110     210     400
+  Shimmeron              -   -   -   -   -   -      1     120     540
+  Power Trithree         -   -   -   -   -   -      1     120     310
+  Egg Ink                -   -   -   -   -   -     35     100     270
+  Card Champ             -   -   -   -   -   -     35     100     350
+  Buff Boi Talent        -   -   -   -   -   -     70     220     390
+  Dream Of Ironfish      -   -   -   -   -   -     40     120     280
+  Farquad Force          -   -   -   -   -   -      1       1     230
+  Endgame Eff I          -   -   -   -   -   -      1     120     230
+  Crop Chapter           -   -   -   -   -   -      1     280   1,100
+  Bow Jack               -   -   -   -   -   -     95     180     430
+  Premigreen             -   -   -   -   -   -     35     130     300
+  Slabo Critterbug       -   -   -   -   -   -     30     110     310
+  Endgame Eff Ii         -   -   -   -   -   -      1       1     430
+  Tome Agility           -   -   -   -   -   -      1     110     300
+  Stealth Chapter        -   -   -   -   -   -      1       1     310
+  Endgame Eff Iii        -   -   -   -   -   -      1     540   1,100
+  Tome Wisdom            -   -   -   -   -   -      1       1     310
+  Hinge Buster           -   -   -   -   -   -      1       1     370
+  Brittley Spears        -   -   -   -   -   -    100     190     420
+  Gamer At Heart         -   -   -   -   -   -     35     130     450
+  Double Pagey           -   -   -   -   -   -      1      20     100
+  Cheap Shot             -   -   -   -   -   -     65     200     340
+  Fast Boi Talent        -   -   -   -   -   -     65     180     350
+  Green Bargain          -   -   -   -   -   -     65     210     340
+  Fly In Mind            -   -   -   -   -   -     35     110     310
+  Bow Power              -   -   -   -   -   -     35     230     300
+  Sailor At Heart        -   -   -   -   -   -     45     120     360
+  Slabo Agility          -   -   -   -   -   -     30     130     310
+  Purple Bargain         -   -   -   -   -   -     75     180     340
+  Tree Sleeper           -   -   -   -   -   -     35     120     310
+  Matrix Evolved         -   -   -   -   -   -     35     120     320
+  Essence Chapter        -   -   -   -   -   -      1     500   1,000
+  Stamp Tramp            -   -   -   -   -   -    110     180     350
+  Undeveloped Costs      -   -   -   -   -   -    100     180     340
+  Da Daily Drip          -   -   -   -   -   -     70     180     420
+  Cogs For Hands         -   -   -   -   -   -     90     180     340
+  Diamond Chef           -   -   -   -   -   -     40     100     890
+  Petting The Rift       -   -   -   -   -   -     30     100     220
+  Big P                  -   -   -   -   -   -     55     110   1,500
+  Lo Cost Mo Jade        -   -   -   -   -   -      1     100     230
+  Reely Smart            -   -   -   -   -   -     90     180     350
+  Big Meaty Claws        -   -   -   -   -   -     95     180     350
+  Bappity Boopity        -   -   -   -   -   -     75     180     350
+  Call Me Bob            -   -   -   -   -   -    110     300  61,000
+  Carpenter              -   -   -   -   -   -     90     180   1,300
+  Orange Bargain         -   -   -   -   -   -     75     180     340
+  Penny Of Strength      -   -   -   -   -   -     70     120     570
+  Multorange             -   -   -   -   -   -     50     120     820
+  Bite But Not Chew      -   -   -   -   -   -     35     120     230
+  Spear Powah            -   -   -   -   -   -     85     230     330
+  Slabi Orefish          -   -   -   -   -   -     45     120     680
+  Slabi Strength         -   -   -   -   -   -     45     120     800
+  Power Trione           -   -   -   -   -   -     50     170     800
+  Tome Strength          -   -   -   -   -   -    100     280   1,000
+  Essence Boost          -   -   -   -   -   -      6     130     450
+  Dmg Of The Sun         -   -   -   -   -   -     19      45     100
+  Lil Big Damage         -   -   -   -   -   -     45     220     340
+  Anvilnomics            -   -   -   -   -   -     70     220     340
+  Quick Slap             -   -   -   -   -   -     90     210     340
+  Call Me Ash            -   -   -   -   -   -    100     310  56,000
+  Cuz I Catch Em All     -   -   -   -   -   -     75     180     340
+  Dollar Of Agility      -   -   -   -   -   -     40     100     310
+  Kill Per Kill          -   -   -   -   -   -     45     100     430
+  Afk Expexp             -   -   -   -   -   -     35     110     230
+  Power Tritwo           -   -   -   -   -   -     30     240     310
+  Quickdraw Quiver       -   -   -   -   -   -    200     690     940
+  Spapunkie              -   -   -   -   -   -      1      25     320
+  Noodubble              -   -   -   -   -   -     80     190     420
+  Cookin Roadkill        -   -   -   -   -   -    130     190     690
+  Brewstachio            -   -   -   -   -   -     95     180     340
+  Matty Stafford         -   -   -   -   -   -     85     180     340
+  Call Me Pope           -   -   -   -   -   -     95     230     420
+  Gospel Leader          -   -   -   -   -   -     95     200     430
+  Smart Boi Talent       -   -   -   -   -   -     95     200     350
+  Nickel Of Wisdom       -   -   -   -   -   -     65     130     310
+  Severapurple           -   -   -   -   -   -     85     130     590
+  Hyperswift             -   -   -   -   -   -     60     120     310
+  Wand Pawur             -   -   -   -   -   -     55     220     330
+  Slabe Logsoul          -   -   -   -   -   -     55     130     310
+  Pious At Heart         -   -   -   -   -   -     80     140     800
+  Slabe Wisdom           -   -   -   -   -   -     55     130     280
+  Smarter Spells         -   -   -   -   -   -    160     550   1,400
+  Lotto Skills           -   -   -   -   -   -    170   4,000  70,000
+  Droppin Loads          -   -   -   -   -   -    130     230     790
+  Startue Exp            -   -   -   -   -   -    180     210     710
+  Level Up Gift          -   -   -   -   -   -     95     210     470
+  Grind Time             -   -   -   -   -   -  1,600  11,000  28,000
+  Laaarrrryyyy           -   -   -   -   -   -    230   1,500  64,000
+  Sample It              -   -   -   -   -   -     95     180     420
+  Big Game Hunter        -   -   -   -   -   -     75     190     570
+  Ignore Overdues        -   -   -   -   -   -     95     180     520
+  Yellow Bargain         -   -   -   -   -   -     75     180     340
+  Mr Massacre            -   -   -   -   -   -     50     100     450
+  Boaty Bubble           -   -   -   -   -   -     90     140     300
+  Bit By Bit             -   -   -   -   -   -     55     100     410
+  Gifts Abound           -   -   -   -   -   -     55     100     370
+  Atom Split             -   -   -   -   -   -     55     100     230
+  Cropius Mapper         -   -   -   -   -   -     40     100     280
+  Ninja Looter           -   -   -   -   -   -    120     280   1,400
+  Bone Bubble            -   -   -   -   -   -      -      60     190
+  Dmg Of The Moon        -   -   -   -   -   -      -      12      50
+  Dust Bubble            -   -   -   -   -   -      -       1     120
+  Deep Depth             -   -   -   -   -   -      -      90     840
+  Dmg Of The Soul        -   -   -   -   -   -      -      30      70
+  Tachyon Bubble         -   -   -   -   -   -      -      25     100
+  Faster Nrg             -   -   -   -   -   -      -      30     820
+  Kattle Da Goat         -   -   -   -   -   -      -      30     110
+  Codfrey Rulz Ok        -   -   -   -   -   -      -      70     110
+  Royal Riches           -   -   -   -   -   -      -       -     900
 
 cauldron-upgrades                       # Cauldron Upgrades
   stages                      7e   7m   7l
@@ -648,94 +648,94 @@ pay2win                                 # Alchemy Pay2Win
   Player: Extra EXP               130  190  220
 
 vials                                   # Vials, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                3e  3l  4m  4l  5e  5m  5l  7e  7m  7l
-  Copper Corona          1   1   1   1   1   1   1  13  13  13
-  Sippy Splinters        1   1   1   1   1   1   1  13  13  13
-  Mushroom Soup          1   1   1   1   1   1   1  13  13  13
-  Spool Sprite           1   1   1   1   1   1   1  11  13  13
-  Barium Mixture         1   1   1   1   1   1   1  10  13  13
-  Dieter Drink           1   1   1   1   1   1   1  12  13  13
-  Skinny 0 Cal           1   1   1   1   1   1   1  12  13  13
-  Thumb Pow              -   1   1   1   1   1   1  10  13  13
-  Jungle Juice           -   1   1   1   1   1   1  13  13  13
-  Barley Brew            -   1   1   1   1   1   1   9  13  13
-  Anearful               -   1   1   1   1   1   1  11  13  13
-  Tea With Pea           -   1   1   1   1   1   1  13  13  13
-  Gold Guzzle            -   1   1   1   1   1   1  13  13  13
-  Ramificoction          -   1   1   1   1   1   1  12  13  13
-  Seawater               -   -   1   1   1   1   1  13  13  13
-  Tail Time              -   -   1   1   1   1   1  11  13  13
-  Fly In My Drink        -   -   1   1   1   1   1  13  13  13
-  Mimicraught            -   -   1   1   1   1   1  11  13  13
-  Blue Flav              -   -   1   1   1   1   1  13  13  13
-  Slug Slurp             -   -   -   1   1   1   1  12  13  13
-  Fur Refresher          -   -   -   1   1   1   1  12  13  13
-  Sippy Soul             -   -   -   1   1   1   1   9  13  13
-  Crab Juice             -   -   -   1   1   1   1   9  13  13
-  Void Vial              -   -   -   1   1   1   1  13  13  13
-  Red Malt               -   -   -   1   1   1   1   7  10  12
-  Ew Gross Gross         -   -   -   1   1   1   1  10  13  13
-  The Spanish Sahara     -   -   -   1   1   1   1  13  13  13
-  Poison Tincture        -   -   -   -   1   1   1   2   3   5
-  Etruscan Lager         -   -   -   -   1   1   1  11  13  13
-  Chonker Chug           -   -   -   -   1   1   1   9  13  13
-  Bubonic Burp           -   -   -   -   1   1   1   9  13  13
-  Visible Ink            -   -   -   -   1   1   1  10  13  13
-  Orange Malt            -   -   -   -   1   1   1   6   6  11
-  Snow Slurry            -   -   -   -   -   1   1  10  13  13
-  Slowergy Drink         -   -   -   -   -   1   1   7  12  13
-  Sippy Cup              -   -   -   -   -   1   1  10  13  13
-  Bunny Brew             -   -   -   -   -   1   1   7  10  13
-  40-40 Purity           -   -   -   -   -   1   1  12  13  13
-  Shaved Ice             -   -   -   -   -   -   1   2   5  10
-  Goosey Glug            -   -   -   -   -   -   1   7  12  13
-  Ball Pickle Jar        -   -   -   -   -   -   1   -   -   -
-  Capachino              -   -   -   -   -   -   1  11  13  13
-  Donut Drink            -   -   -   -   -   -   1  10  13  13
-  Long Island Tea        -   -   -   -   -   -   1  11  13  13
-  Spook Pint             -   -   -   -   -   -   1   7  12  13
-  Calcium Carbonate      -   -   -   -   -   -   1  10  13  13
-  Bloat Draft            -   -   -   -   -   -   1   7  13  13
-  Choco Milkshake        -   -   -   -   -   -   1   8  13  13
-  Pearl Seltzer          -   -   -   -   -   -   1   2   4  12
-  Krakenade              -   -   -   -   -   -   1   8  13  13
-  Electrolyte            -   -   -   -   -   -   1   9  13  13
-  Pickle Jar             -   -   -   -   -   -   -   1   2   2
-  Ash Agua               -   -   -   -   -   -   -   6  13  13
-  Maple Syrup            -   -   -   -   -   -   -   5  13  13
-  Hampter Drippy         -   -   -   -   -   -   -   1   3  10
-  Dreadnog               -   -   -   -   -   -   -   2   9  12
-  Oj Jooce               -   -   -   -   -   -   -   9  13  13
-  Venison Malt           -   -   -   -   -   -   -  10  13  13
-  Marble Mocha           -   -   -   -   -   -   -  10  12  13
-  Willow Sippy           -   -   -   -   -   -   -  12  13  13
-  Dreamy Drink           -   -   -   -   -   -   -   2  13  13
-  Ricecakorade           -   -   -   -   -   -   -   7   7  13
-  Dusted Drink           -   -   -   -   -   -   -   -  13  13
-  Ladybug Serum          -   -   -   -   -   -   -   -   9  13
-  Flavorgil              -   -   -   -   -   -   -   -  13  13
-  Greenleaf Tea          -   -   -   -   -   -   -   -  13  13
-  Firefly Grog           -   -   -   -   -   -   -   -  12  13
-  Refreshment            -   -   -   -   -   -   -   -  10  13
-  Royale Cola            -   -   -   -   -   -   -   -  13  13
-  Sippy Seaweed          -   -   -   -   -   -   -   -   7  13
-  Wriggle Water          -   -   -   -   -   -   -   -   9  13
-  Trash Drank            -   -   -   -   -   -   -   -   8  13
-  Oozie Ooblek           -   -   -   -   -   -   -   -  10  13
-  Shinyfin Stew          -   -   -   -   -   -   -   -  13  13
-  Dabar Special          -   -   -   -   -   -   -   -   7  10
-  Ded Sap                -   -   -   -   -   -   -   -  10  13
-  Turtle Tisane          -   -   -   -   -   -   -   -  11  13
-  Chapter Chug           -   -   -   -   -   -   -   -   7  12
-  Rocky Boba             -   -   -   -   -   -   -   -  13  13
-  Scale On Ice           -   -   -   -   -   -   -   -   9  13
-  Gibbed Drink           -   -   -   -   -   -   -   -   -  13
-  Octosoda               -   -   -   -   -   -   -   -   -  13
-  Crabomayse             -   -   -   -   -   -   -   -   -  13
-  Shipinabottle          -   -   -   -   -   -   -   -   -   4
-  Canteen Read           -   -   -   -   -   -   -   -   -   8
-  Paper Pint             -   -   -   -   -   -   -   -   -  10
-  Spiked Drink           -   -   -   -   -   -   -   -   -   -
+  stages                2l  3e  3m  3l  4e  4m  4l  5e  5m  5l  7e  7m  7l
+  Copper Corona          1   -   1   -   1   1   1   1   1   1  13  13  13
+  Sippy Splinters        1   -   1   -   1   1   1   1   1   1  13  13  13
+  Mushroom Soup          1   -   1   -   1   1   1   1   1   1  13  13  13
+  Spool Sprite           1   -   1   -   1   1   1   1   1   1  11  13  13
+  Barium Mixture         1   -   1   -   1   1   1   1   1   1  10  13  13
+  Dieter Drink           1   -   1   -   1   1   1   1   1   1  12  13  13
+  Skinny 0 Cal           1   -   1   -   1   1   1   1   1   1  12  13  13
+  Thumb Pow              -   -   1   -   1   1   1   1   1   1  10  13  13
+  Jungle Juice           -   -   1   -   1   1   1   1   1   1  13  13  13
+  Barley Brew            -   -   1   -   1   1   1   1   1   1   9  13  13
+  Anearful               -   -   1   -   1   1   1   1   1   1  11  13  13
+  Tea With Pea           -   -   1   -   1   1   1   1   1   1  13  13  13
+  Gold Guzzle            -   -   1   -   1   1   1   1   1   1  13  13  13
+  Ramificoction          -   -   1   -   1   1   1   1   1   1  12  13  13
+  Seawater               -   -   -   -   1   1   1   1   1   1  13  13  13
+  Tail Time              -   -   -   -   1   1   1   1   1   1  11  13  13
+  Fly In My Drink        -   -   -   -   1   1   1   1   1   1  13  13  13
+  Mimicraught            -   -   -   -   1   1   1   1   1   1  11  13  13
+  Blue Flav              -   -   -   -   1   1   1   1   1   1  13  13  13
+  Slug Slurp             -   -   -   -   -   1   1   1   1   1  12  13  13
+  Fur Refresher          -   -   -   -   -   1   1   1   1   1  12  13  13
+  Sippy Soul             -   -   -   -   -   1   1   1   1   1   9  13  13
+  Crab Juice             -   -   -   -   -   1   1   1   1   1   9  13  13
+  Void Vial              -   -   -   -   -   1   1   1   1   1  13  13  13
+  Red Malt               -   -   -   -   -   1   1   1   1   1   7  10  12
+  Ew Gross Gross         -   -   -   -   -   1   1   1   1   1  10  13  13
+  The Spanish Sahara     -   -   -   -   -   1   1   1   1   1  13  13  13
+  Poison Tincture        -   -   -   -   -   -   1   1   1   1   2   3   5
+  Etruscan Lager         -   -   -   -   -   -   1   1   1   1  11  13  13
+  Chonker Chug           -   -   -   -   -   -   1   1   1   1   9  13  13
+  Bubonic Burp           -   -   -   -   -   -   1   1   1   1   9  13  13
+  Visible Ink            -   -   -   -   -   -   1   1   1   1  10  13  13
+  Orange Malt            -   -   -   -   -   -   1   1   1   1   6   6  11
+  Snow Slurry            -   -   -   -   -   -   -   1   1   1  10  13  13
+  Slowergy Drink         -   -   -   -   -   -   -   1   1   1   7  12  13
+  Sippy Cup              -   -   -   -   -   -   -   1   1   1  10  13  13
+  Bunny Brew             -   -   -   -   -   -   -   1   1   1   7  10  13
+  40-40 Purity           -   -   -   -   -   -   -   1   1   1  12  13  13
+  Shaved Ice             -   -   -   -   -   -   -   -   1   1   2   5  10
+  Goosey Glug            -   -   -   -   -   -   -   -   1   1   7  12  13
+  Ball Pickle Jar        -   -   -   -   -   -   -   -   1   1   -   -   -
+  Capachino              -   -   -   -   -   -   -   -   1   1  11  13  13
+  Donut Drink            -   -   -   -   -   -   -   -   1   1  10  13  13
+  Long Island Tea        -   -   -   -   -   -   -   -   1   1  11  13  13
+  Spook Pint             -   -   -   -   -   -   -   -   1   1   7  12  13
+  Calcium Carbonate      -   -   -   -   -   -   -   -   1   1  10  13  13
+  Bloat Draft            -   -   -   -   -   -   -   -   1   1   7  13  13
+  Choco Milkshake        -   -   -   -   -   -   -   -   1   1   8  13  13
+  Pearl Seltzer          -   -   -   -   -   -   -   -   1   1   2   4  12
+  Krakenade              -   -   -   -   -   -   -   -   1   1   8  13  13
+  Electrolyte            -   -   -   -   -   -   -   -   1   1   9  13  13
+  Ash Agua               -   -   -   -   -   -   -   -   -   1   6  13  13
+  Maple Syrup            -   -   -   -   -   -   -   -   -   1   5  13  13
+  Hampter Drippy         -   -   -   -   -   -   -   -   -   1   1   3  10
+  Dreadnog               -   -   -   -   -   -   -   -   -   1   2   9  12
+  Dusted Drink           -   -   -   -   -   -   -   -   -   1   -  13  13
+  Oj Jooce               -   -   -   -   -   -   -   -   -   1   9  13  13
+  Oozie Ooblek           -   -   -   -   -   -   -   -   -   1   -  10  13
+  Venison Malt           -   -   -   -   -   -   -   -   -   1  10  13  13
+  Marble Mocha           -   -   -   -   -   -   -   -   -   1  10  12  13
+  Willow Sippy           -   -   -   -   -   -   -   -   -   1  12  13  13
+  Shinyfin Stew          -   -   -   -   -   -   -   -   -   1   -  13  13
+  Dreamy Drink           -   -   -   -   -   -   -   -   -   1   2  13  13
+  Pickle Jar             -   -   -   -   -   -   -   -   -   -   1   2   2
+  Ricecakorade           -   -   -   -   -   -   -   -   -   -   7   7  13
+  Ladybug Serum          -   -   -   -   -   -   -   -   -   -   -   9  13
+  Flavorgil              -   -   -   -   -   -   -   -   -   -   -  13  13
+  Greenleaf Tea          -   -   -   -   -   -   -   -   -   -   -  13  13
+  Firefly Grog           -   -   -   -   -   -   -   -   -   -   -  12  13
+  Refreshment            -   -   -   -   -   -   -   -   -   -   -  10  13
+  Royale Cola            -   -   -   -   -   -   -   -   -   -   -  13  13
+  Sippy Seaweed          -   -   -   -   -   -   -   -   -   -   -   7  13
+  Wriggle Water          -   -   -   -   -   -   -   -   -   -   -   9  13
+  Trash Drank            -   -   -   -   -   -   -   -   -   -   -   8  13
+  Dabar Special          -   -   -   -   -   -   -   -   -   -   -   7  10
+  Ded Sap                -   -   -   -   -   -   -   -   -   -   -  10  13
+  Turtle Tisane          -   -   -   -   -   -   -   -   -   -   -  11  13
+  Chapter Chug           -   -   -   -   -   -   -   -   -   -   -   7  12
+  Rocky Boba             -   -   -   -   -   -   -   -   -   -   -  13  13
+  Scale On Ice           -   -   -   -   -   -   -   -   -   -   -   9  13
+  Gibbed Drink           -   -   -   -   -   -   -   -   -   -   -   -  13
+  Octosoda               -   -   -   -   -   -   -   -   -   -   -   -  13
+  Crabomayse             -   -   -   -   -   -   -   -   -   -   -   -  13
+  Shipinabottle          -   -   -   -   -   -   -   -   -   -   -   -   4
+  Canteen Read           -   -   -   -   -   -   -   -   -   -   -   -   8
+  Paper Pint             -   -   -   -   -   -   -   -   -   -   -   -  10
+  Spiked Drink           -   -   -   -   -   -   -   -   -   -   -   -   -
 
 sigils                                  # Sigils
   stages            7e  7m  7l
@@ -906,40 +906,40 @@ construction                            # Construction Buildings
   Primordial Shrine        8  200  210
 
 salt-lick                               # Salt Lick, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                                                              5m  5l   7e   7m   7l
-  4 Obol storage slots per upgrade                                     8   8    8    8    8
-  Samples taken for the 3D printer are bigger                          -  20   20   20   20
-  Max level for talent books from the library                          -   -   10   10   10
-  Points Earned during Worship Tower Defense from killing monsters     -   -   10   10   10
-  Multikill Rate for all worlds                                        -   -   10   10   10
-  Liquid rate and Capacity for all liquids in Alchemy                  -   -   60  100  100
-  Refinery Speed for all cycle types                                   -   -   60   85  100
-  Movement Speed                                                       -   -   25   25   25
-  Class EXP and Skill EXP                                              -   -   50  100  100
-  Total Damage dealt                                                   -   -  100  250  250
-  Cooking Mastery EXP gain                                             -   -   12   35   55
+  stages                                                              5e  5m  5l   7e   7m   7l
+  4 Obol storage slots per upgrade                                     8   8   8    8    8    8
+  Samples taken for the 3D printer are bigger                          -  20  20   20   20   20
+  Max level for talent books from the library                          -   -  10   10   10   10
+  Points Earned during Worship Tower Defense from killing monsters     -   -   -   10   10   10
+  Multikill Rate for all worlds                                        -   -   -   10   10   10
+  Liquid rate and Capacity for all liquids in Alchemy                  -   -   -   60  100  100
+  Refinery Speed for all cycle types                                   -   -   -   60   85  100
+  Movement Speed                                                       -   -   -   25   25   25
+  Class EXP and Skill EXP                                              -   -   -   50  100  100
+  Total Damage dealt                                                   -   -   -  100  250  250
+  Cooking Mastery EXP gain                                             -   -   -   12   35   55
 
 prayers                                 # Prayers, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                    4m  5e  5m  5l  7e  7m  7l
-  The Royal Sampler          1   1   1   1  11  20  20
-  Skilled Dimwit             -  25  25  40  40  50  50
-  Balance of Pain            -   -  13  25  25  30  30
-  Big Brain Time             -   -   -   -   1  50  50
-  Unending Energy            -   -   -   -   1  50  50
-  Tachion of the Titans      -   -   -   -   2   2   2
-  Balance of Precision       -   -   -   -   1  50  50
-  Antifun Spirit             -   -   -   -   1  10  10
-  Fibers of Absence          -   -   -   -   1  50  50
-  Vacuous Tissue             -   -   -   -   1   1   1
-  Circular Criticals         -   -   -   -   1  20  20
-  Balance of Proficiency     -   -   -   -   1  50  50
-  Midas Minded               -   -   -   -  25  50  50
-  Shiny Snitch               -   -   -   -  20  50  50
-  Jawbreaker                 -   -   -   -   1  50  50
-  Zerg Rushogen              -   -   -   -   -  20  20
-  Ruck Sack                  -   -   -   -   -  50  50
-  Beefy For Real             -   -   -   -   -  40  40
-  Glitterbug                 -   -   -   -   -  30  30
+  stages                    4e  4m  4l  5e  5m  5l  7e  7m  7l
+  The Royal Sampler          1   -   1   1   1   -  11  20  20
+  Skilled Dimwit             -   -  25  25  40   -  40  50  50
+  Balance of Pain            -   -   -  13  25   -  25  30  30
+  Big Brain Time             -   -   -   -   -   -   1  50  50
+  Unending Energy            -   -   -   -   -   -   1  50  50
+  Tachion of the Titans      -   -   -   -   -   -   2   2   2
+  Balance of Precision       -   -   -   -   -   -   1  50  50
+  Antifun Spirit             -   -   -   -   -   -   1  10  10
+  Fibers of Absence          -   -   -   -   -   -   1  50  50
+  Vacuous Tissue             -   -   -   -   -   -   1   1   1
+  Circular Criticals         -   -   -   -   -   -   1  20  20
+  Balance of Proficiency     -   -   -   -   -   -   1  50  50
+  Midas Minded               -   -   -   -   -   -  25  50  50
+  Shiny Snitch               -   -   -   -   -   -  20  50  50
+  Jawbreaker                 -   -   -   -   -   -   1  50  50
+  Zerg Rushogen              -   -   -   -   -   -   -  20  20
+  Ruck Sack                  -   -   -   -   -   -   -  50  50
+  Beefy For Real             -   -   -   -   -   -   -  40  40
+  Glitterbug                 -   -   -   -   -   -   -  30  30
 
 atoms                                   # Atom Collider
   stages        7e  7m  7l
@@ -1645,17 +1645,17 @@ artifacts                               # Artifacts
   Bloodclot            -   5   6
 
 gods                                    # Divinity Gods, World 1 to 5 columns from AutoReview's tiers, changed
-  stages        5m  5l  7e  7m  7l
-  Snehebatu      1   1   1   1   1
-  Arctis         1   1   1   1   1
-  Nobisect       1   1   1   1   1
-  Harriep        -   1   1   1   1
-  Goharut        -   1   1   1   1
-  Omniphau       -   -   1   1   1
-  Purrmep        -   -   1   1   1
-  Flutterbis     -   -   1   1   1
-  Kattlekruk     -   -   1   1   1
-  Bagur          -   -   1   1   1
+  stages        5e  5m  5l  7e  7m  7l
+  Snehebatu      1   1   1   1   1   1
+  Arctis         1   1   1   1   1   1
+  Nobisect       1   1   1   1   1   1
+  Harriep        -   1   1   1   1   1
+  Goharut        -   1   1   1   1   1
+  Omniphau       -   -   1   1   1   1
+  Purrmep        -   -   1   1   1   1
+  Flutterbis     -   -   -   1   1   1
+  Kattlekruk     -   -   -   1   1   1
+  Bagur          -   -   -   1   1   1
 
 blessings                               # Divinity Blessings
   stages                  7e   7m   7l

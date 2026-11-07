@@ -12,7 +12,8 @@ aren't enough saves at that stage, and the owner edits the result in crowd.txt.
 What changes on the way:
 - every level above 1 is raised by LEVEL_FACTOR (the game is easier now than when they were set)
   and rounded down to a number a person would pick;
-- their stages (W1, then early, mid and late W2...) become columns; a tier asks for everything
+- their stages (W1, then early, mid and late W2...) become columns, each one stage earlier than
+  theirs (their Early W2 is our Late W1); a tier asks for everything
   its earlier tiers did; a stage that asks the same as the one before is left out;
 - totals with no item behind them (total stamp levels) are left out; counts ("13 star signs",
   "9 Megafeathers") become `@first N`, the first N in the game's order.
@@ -25,11 +26,15 @@ many, at their max), `!Name` (left out of both counts at that stage). A cell of 
 import ast
 import math
 import os
+import re
 import sys
 
 LEVEL_FACTOR = 1.25
 MAX = 1e15
-STAGES = ["1l", "2e", "2m", "2l", "3e", "3m", "3l", "4e", "4m", "4l", "5e", "5m", "5l"]
+# Their stages (W1, Early W2 ... Late W5, Early W6), each moved one stage earlier: their tiers
+# say what you need to start a stage (bubbles tier 1 is "minimum for finishing W2", mapped to
+# Late W3), so what they expect by Early W2 is what a player finishes World 1 with.
+STAGES = ["1m", "1l", "2e", "2m", "2l", "3e", "3m", "3l", "4e", "4m", "4l", "5e", "5m", "5l"]
 STATUE_TIERS = {"Gold": 1, "Onyx": 2, "Zenith": 3}
 
 # Their section (pinchy.Placements attribute) -> our mechanic key.
@@ -63,7 +68,7 @@ def literals(path):
 
 
 def thresholds(path):
-    """pinchy.Placements.sectionThresholds: section attribute -> tier per stage (W1 .. Late W5)."""
+    """pinchy.Placements.sectionThresholds: section attribute -> tier per stage (W1 .. Early W6)."""
     tree = ast.parse(open(path, encoding="utf-8").read())
     for cls in tree.body:
         if isinstance(cls, ast.ClassDef) and cls.name == "Placements":
@@ -124,7 +129,10 @@ def one_tier(section, t):
                     put(n, lv)
             else:
                 for n in names:
-                    put(n, 1)
+                    # Two names run together where a comma is missing in their list
+                    # ("Skelefish Stamp" "Cooked Meal Stamp").
+                    for part in re.split(r"(?<=Stamp)(?=[A-Z])", n):
+                        put(part, 1)
         for n, lv in (t.get("Specific") or {}).items():
             put(n, lv)
     elif section in ("BRIBES",):
