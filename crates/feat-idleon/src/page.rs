@@ -359,9 +359,9 @@ type Rows<'a> = Vec<Vec<&'a crate::review::Owed>>;
 const OWED_ROWS: usize = 8;
 
 /// Should have by now: what players at your world have, from every mechanic and world, that
-/// you don't. A block per world (before yours is what you missed, yours is next up), Early,
-/// Mid and Late inside it, and a row per mechanic: the tier you're on and the tier that stage
-/// asks for. A row opens its card.
+/// you don't. A column per world (before yours is what you missed, yours is next up), each as
+/// wide as its share of the rows, Early, Mid and Late inside it, and a row per mechanic: the
+/// tier you're on and the tier that stage asks for. A row opens its card.
 fn should_have(r: &Review) -> Markup {
     let stages = r.should_have();
     if stages.is_empty() {
@@ -391,8 +391,12 @@ fn should_have(r: &Review) -> Markup {
                 h2 { "Should have by now" }
                 p { (total) " things players have by your world and you don't, oldest first. Click one to open its card." }
             }
+            div.ia-owe-worlds {
             @for (w, ss) in &worlds {
-                div.ia-owe-group style={ "--w: var(--w" (w) ")" } {
+                // Wider for more rows, so the long column (usually your own world) takes two
+                // rows a line instead of running on down the page.
+                @let shown: usize = ss.iter().map(|(_, rows)| rows.len().min(OWED_ROWS)).sum();
+                div.ia-owe-group style={ "--w: var(--w" (w) "); flex-grow: " (shown.max(1)) } {
                     div.ia-owe-head {
                         b { "World " (w) }
                         @if *w < r.world { span.ia-chip.miss { "Missed" } } @else { span.ia-chip.next { "Next up" } }
@@ -412,6 +416,7 @@ fn should_have(r: &Review) -> Markup {
                     }
                 }
             }
+            }
         }
     }
 }
@@ -425,13 +430,13 @@ fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
     let want = g.iter().map(|o| o.tier).max().unwrap_or(0) + 1;
     let tier = if want > here { format!("Tier {here} → {want}") } else { format!("Tier {want}") };
     let items: Vec<&Item> = g.iter().map(|o| &m.items[o.item]).collect();
-    let chip = if items.iter().any(|i| i.state == Step::Ready) {
-        Some(html! { span.ia-chip.ok { "Do now" } })
-    } else if items.iter().all(|i| i.state == Step::Locked) {
-        Some(html! { span.ia-chip.lock { "Locked" } })
-    } else {
-        None
-    };
+    let ready = items.iter().any(|i| i.state == Step::Ready);
+    // Nothing here can move until something else happens: say what (every locked item has a
+    // line on it), the first item's, named when there are several.
+    let need = items.iter().all(|i| i.state == Step::Locked).then(|| items[0].how.as_deref()).flatten().map(|h| match items.len() {
+        1 => h.to_string(),
+        _ => format!("{}: {h}", items[0].name),
+    });
     html! {
         a.ia-task href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) {
             @if let [o] = g {
@@ -442,7 +447,8 @@ fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
                 } @else { span.ia-item-dot {} }
                 span.ia-task-text {
                     b { (i.name) }
-                    span { (m.name) " · " (tier) @if let Some(h) = &i.how { " · " (h) } }
+                    span { (m.name) " · " (tier) @if let (None, Some(h)) = (&need, &i.how) { " · " (h) } }
+                    @if let Some(n) = &need { span.ia-owe-need { (n) } }
                 }
                 span.ia-fig {
                     @if once { "Get it" }
@@ -454,10 +460,11 @@ fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
                 span.ia-task-text {
                     b { (m.name) }
                     span.ia-owe-names { (items.len()) " left: " (items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", ")) }
+                    @if let Some(n) = &need { span.ia-owe-need { (n) } }
                 }
                 span.ia-fig { (tier) }
             }
-            @match chip { Some(c) => (c), None => span {} }
+            @if ready { span.ia-chip.ok { "Do now" } } @else { span {} }
         }
     }
 }
@@ -1164,6 +1171,9 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-owe-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .ia-owe-head b { font-size: 14px; font-weight: 600; color: var(--w); }
 .ia-owe-n { margin-left: auto; font-size: 13px; color: var(--ink-3); }
+.ia-owe-worlds { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 18px 36px; margin-top: 4px; }
+.ia-owe-worlds > .ia-owe-group { flex: 1 1 300px; min-width: 0; margin-top: 0; }
+.ia-owe .ia-task-text .ia-owe-need { color: var(--waiting); }
 .ia-owe-stage { margin-top: 6px; }
 .ia-owe-sub { display: block; margin-top: 8px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
 .ia-owe-stage .ia-task-list { margin-top: 2px; }
@@ -1172,7 +1182,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-owe-names { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Should have by now: columns like the cards below (three on a wide screen, one on a phone),
    each item compact: where it stands under its name, the chip on the right. */
-.ia-owe .ia-task-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); column-gap: 28px; }
+.ia-owe .ia-task-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); column-gap: 28px; }
 .ia-owe .ia-task { grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "i t c" "i f c"; row-gap: 3px; border-bottom: 1px solid var(--edge-1); }
 .ia-owe .ia-task > :first-child { grid-area: i; }
 .ia-owe .ia-task > .ia-task-text { grid-area: t; }

@@ -116,7 +116,8 @@ pub(crate) fn big(n: f64) -> String {
         return "∞".into();
     }
     if n.abs() < 1000.0 {
-        return format!("{}", n.round());
+        // + 0.0 turns -0 into 0 ("You have -0.").
+        return format!("{}", n.round() + 0.0);
     }
     let mut k = ((n.abs().log10() / 3.0).floor() as usize).min(NAMES.len());
     let mut v = n / 1000f64.powi(k as i32);
