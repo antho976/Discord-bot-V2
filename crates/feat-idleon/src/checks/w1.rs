@@ -18,8 +18,6 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
         owl_lasting(save),
         forge(save),
         anvil_points(save),
-        minigame(save, "basketball", "Basketball", "hoops", "HoopShop"),
-        minigame(save, "darts", "Darts", "darts", "DartShop"),
         upgrade_vault(save),
     ]
 }
@@ -616,64 +614,6 @@ fn anvil_points(save: &Save) -> Mechanic {
     m
 }
 
-/// Basketball (Hoops) and Darts shops: levels at `OptLacc[first + i]`. The cost goes up
-/// forever and nothing stops a level, so these have no max.
-/// The cost of the next level in shop points, N.js `Thingies` "HoopsUpgCost" (upgrade 2:
-/// 3 + level/8, the rest 1 + level/20) and "DartsUpgCost" (upgrade 1: 3 + level/0.25,
-/// upgrade 3: 5 + level/0.05, the rest 2 + level/12), each rounded down.
-fn minigame_cost(darts: bool, i: usize, level: f64) -> f64 {
-    let c = match (darts, i) {
-        (false, 2) => 3.0 + level / 8.0,
-        (false, _) => 1.0 + level / 20.0,
-        (true, 1) => 3.0 + level / 0.25,
-        (true, 3) => 5.0 + level / 0.05,
-        (true, _) => 2.0 + level / 12.0,
-    };
-    c.floor()
-}
-
-/// When each upgrade can be picked: once the shop's four levels together reach this. N.js, the
-/// Hoops and Darts panels: upgrade r is picked only if the sum of `OptLacc[first..first + 4]` is
-/// at least the r-th of "0,12,80,200" (Hoops, `GenINFO[112]`) or "0,40,150,250" (Darts,
-/// `GenINFO[120]`). They're written in the panels' code, not in a table the extractor reads.
-const HOOPS_OPENS: [f64; 4] = [0.0, 12.0, 80.0, 200.0];
-const DARTS_OPENS: [f64; 4] = [0.0, 40.0, 150.0, 250.0];
-
-/// The points each shop spends sit just before its levels: `OptLacc[first - 1]`.
-fn minigame(save: &Save, key: &'static str, name: &'static str, extra: &str, picture: &str) -> Mechanic {
-    let shop = GAME.extra("w1").get(extra);
-    let first = shop.and_then(|s| s.get("first")).map(num).unwrap_or(0.0) as usize;
-    let names = shop.and_then(|s| s.get("upgrades")).and_then(Value::as_array).cloned().unwrap_or_default();
-    let darts = extra == "darts";
-    let opens = if darts { DARTS_OPENS } else { HOOPS_OPENS };
-    let points = if first > 0 { save.option(first - 1).max(0.0) } else { 0.0 };
-    let total: f64 = (0..opens.len()).map(|i| save.option(first + i).max(0.0)).sum();
-    let items: Vec<Item> = names
-        .iter()
-        .enumerate()
-        .map(|(i, d)| {
-            let mut it = Item::new(label(&d.as_str().unwrap_or("").replace("}x_", "")), pic(format!("{picture}{i}")), save.option(first + i), 0.0);
-            let need = opens.get(i).copied().unwrap_or(0.0);
-            if total < need {
-                it.how = Some(format!("Opens at {need:.0} total levels (you have {total:.0})."));
-                it.state = State::Locked;
-                return it;
-            }
-            let cost = minigame_cost(darts, i, it.level);
-            it.how = Some(format!("Next level costs {} points.", big(cost)));
-            if cost <= points {
-                it.state = State::Ready;
-            }
-            it
-        })
-        .collect();
-    let text = reach_text(&items, points, |i, lv| if items[i].state == State::Locked { f64::INFINITY } else { minigame_cost(darts, i, lv) }, "Not enough for the next level of any upgrade yet.");
-    let mut m = mech(key, 1, name, pic(format!("{picture}0")), Count::Open, "levels", items);
-    m.have = Some(Have { figure: format!("{} {name} points", big(points)), text });
-    m.note = Some("These upgrades have no cap, and the later ones open as your levels here add up. Points come from playing the minigame.".into());
-    m
-}
-
 /// A vault upgrade's name without the game's info marker: "Natural_Talent_製_(Tap_for_Info)"
 /// is "Natural Talent".
 fn vault_name(s: &str) -> String {
@@ -866,20 +806,6 @@ mod tests {
         assert_eq!((it.state, it.max), (State::Locked, 535.0));
         assert_eq!(it.how.as_deref(), Some("At your cap of 500. Gilded Awnings or the Potluck Pack lifts it."));
         assert!(!m.have.as_ref().unwrap().text.contains("Bigger Damage"));
-    }
-
-    #[test]
-    fn minigame_upgrades_open_as_levels_add_up() {
-        // Hoops points at OptLacc[418], levels at [419..423]: 64 levels, 623 points.
-        let mut opt = vec![0.0; 423];
-        (opt[418], opt[419], opt[420]) = (623.0, 26.0, 38.0);
-        let s = Save::parse(&format!(r#"{{"OptLacc": {opt:?}}}"#)).unwrap();
-        let m = minigame(&s, "basketball", "Basketball", "hoops", "HoopShop");
-        assert_eq!(m.items[1].state, State::Ready);
-        assert_eq!(m.items[2].state, State::Locked);
-        assert_eq!(m.items[2].how.as_deref(), Some("Opens at 80 total levels (you have 64)."));
-        let text = &m.have.as_ref().unwrap().text;
-        assert!(!text.contains(&m.items[2].name) && !text.contains(&m.items[3].name), "{text}");
     }
 
     #[test]

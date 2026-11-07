@@ -15,8 +15,6 @@ table Research
 table ResGridSquares
 table RANDOlist
 picture Feaz\d
-picture HoopShop\d
-picture DartShop\d
 picture VaultUpg\d+
 picture ClassIcons\d+
 table ShopNames
