@@ -352,85 +352,112 @@ fn window(len: usize, current: Option<usize>) -> (usize, usize) {
     (from, from + LADDER)
 }
 
-/// Rows each stage of Should have by now shows before "Show N more", and stages shown before
-/// the rest fold away.
-const OWED_ROWS: usize = 12;
-const OWED_STAGES: usize = 3;
+/// A stage's rows in Should have by now: each a mechanic's items.
+type Rows<'a> = Vec<Vec<&'a crate::review::Owed>>;
+
+/// Rows each stage of Should have by now shows before "Show N more".
+const OWED_ROWS: usize = 8;
 
 /// Should have by now: what players at your world have, from every mechanic and world, that
-/// you don't. Stages before your world are what you missed; your own world's are next up.
+/// you don't. A block per world (before yours is what you missed, yours is next up), Early,
+/// Mid and Late inside it, and a row per mechanic: the tier you're on and the tier that stage
+/// asks for. A row opens its card.
 fn should_have(r: &Review) -> Markup {
-    let groups = r.should_have();
-    if groups.is_empty() {
+    let stages = r.should_have();
+    if stages.is_empty() {
         return html! {};
     }
-    let total: usize = groups.iter().map(|(_, v)| v.len()).sum();
-    let group = |stage: usize, v: &[crate::review::Owed]| {
-        let w = crate::crowd::stage_world(stage);
-        html! {
-            div.ia-owe-group style={ "--w: var(--w" (w) ")" } {
-                div.ia-owe-head {
-                    b { "Expected by " (crate::crowd::stage_label(stage)) }
-                    @if w < r.world { span.ia-chip.miss { "Missed" } } @else { span.ia-chip.next { "Next up" } }
-                    span.ia-owe-n { (v.len()) (if v.len() == 1 { " thing" } else { " things" }) }
-                }
-                div.ia-task-list {
-                    @for o in v.iter().take(OWED_ROWS) { (owed(r, o)) }
-                }
-                @if v.len() > OWED_ROWS {
-                    details.ia-owe-more {
-                        summary { "Show " (v.len() - OWED_ROWS) " more" }
-                        div.ia-task-list { @for o in v.iter().skip(OWED_ROWS) { (owed(r, o)) } }
-                    }
-                }
+    let total: usize = stages.iter().map(|(_, v)| v.len()).sum();
+    // World -> its stages -> a mechanic's items at that stage, in the order the list ranks them.
+    let mut worlds: Vec<(u8, Vec<(usize, Rows)>)> = Vec::new();
+    for (stage, v) in &stages {
+        let w = crate::crowd::stage_world(*stage);
+        let mut rows: Rows = Vec::new();
+        for o in v {
+            match rows.iter_mut().find(|g| g[0].mechanic == o.mechanic) {
+                Some(g) => g.push(o),
+                None => rows.push(vec![o]),
             }
         }
-    };
+        match worlds.last_mut() {
+            Some((lw, ss)) if *lw == w => ss.push((*stage, rows)),
+            _ => worlds.push((w, vec![(*stage, rows)])),
+        }
+    }
+    let things = |n: usize| if n == 1 { "1 thing".to_string() } else { format!("{n} things") };
     html! {
         section.ia-panel.ia-owe {
             div.ia-head {
                 h2 { "Should have by now" }
-                p { (total) " things players have by your world and you don't, oldest first. Missed is from earlier worlds." }
+                p { (total) " things players have by your world and you don't, oldest first. Click one to open its card." }
             }
-            @for (stage, v) in groups.iter().take(OWED_STAGES) { (group(*stage, v)) }
-            @if groups.len() > OWED_STAGES {
-                details.ia-owe-more {
-                    summary { "Show " (groups.len() - OWED_STAGES) " more stages" }
-                    @for (stage, v) in groups.iter().skip(OWED_STAGES) { (group(*stage, v)) }
+            @for (w, ss) in &worlds {
+                div.ia-owe-group style={ "--w: var(--w" (w) ")" } {
+                    div.ia-owe-head {
+                        b { "World " (w) }
+                        @if *w < r.world { span.ia-chip.miss { "Missed" } } @else { span.ia-chip.next { "Next up" } }
+                        span.ia-owe-n { (things(ss.iter().flat_map(|(_, rows)| rows).map(Vec::len).sum())) }
+                    }
+                    @for (stage, rows) in ss {
+                        div.ia-owe-stage {
+                            span.ia-owe-sub { (["Early", "Mid", "Late"][stage % 3]) }
+                            div.ia-task-list { @for g in rows.iter().take(OWED_ROWS) { (owed(r, g)) } }
+                            @if rows.len() > OWED_ROWS {
+                                details.ia-owe-more {
+                                    summary { "Show " (rows.len() - OWED_ROWS) " more" }
+                                    div.ia-task-list { @for g in rows.iter().skip(OWED_ROWS) { (owed(r, g)) } }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-/// One thing you should have: the item, which card it's on (a link that opens it), its line
-/// on how, and where it is against what the stage asks.
-fn owed(r: &Review, o: &crate::review::Owed) -> Markup {
-    let m = &r.mechanics[o.mechanic];
-    let i = &m.items[o.item];
-    let once = i.max <= 1.0 && i.raw.is_none() && m.tier_names.is_none();
+/// One mechanic's row at a stage, a link that opens its card. Several items: the tier you're on
+/// and the one the stage asks for, with what's left; one item: the item and where it stands.
+fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
+    let m = &r.mechanics[g[0].mechanic];
+    let tiers = m.tiers();
+    let here = tiers.iter().position(|t| !t.complete()).unwrap_or(0) + 1;
+    let want = g.iter().map(|o| o.tier).max().unwrap_or(0) + 1;
+    let tier = if want > here { format!("Tier {here} → {want}") } else { format!("Tier {want}") };
+    let items: Vec<&Item> = g.iter().map(|o| &m.items[o.item]).collect();
+    let chip = if items.iter().any(|i| i.state == Step::Ready) {
+        Some(html! { span.ia-chip.ok { "Do now" } })
+    } else if items.iter().all(|i| i.state == Step::Locked) {
+        Some(html! { span.ia-chip.lock { "Locked" } })
+    } else {
+        None
+    };
     html! {
-        div.ia-task {
-            @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {
-                img.left[left_square(p)] src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy" style=[(i.state == Step::Locked).then_some("opacity:.55")];
-            } @else { span.ia-item-dot {} }
-            span.ia-task-text {
-                b { (i.name) }
-                span {
-                    a.ia-owe-card href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) { (m.name) }
-                    @if let Some(h) = &i.how { " · " (h) }
+        a.ia-task href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) {
+            @if let [o] = g {
+                @let i = &m.items[o.item];
+                @let once = i.max <= 1.0 && i.raw.is_none() && m.tier_names.is_none();
+                @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {
+                    img.left[left_square(p)] src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy" style=[(i.state == Step::Locked).then_some("opacity:.55")];
+                } @else { span.ia-item-dot {} }
+                span.ia-task-text {
+                    b { (i.name) }
+                    span { (m.name) " · " (tier) @if let Some(h) = &i.how { " · " (h) } }
                 }
+                span.ia-fig {
+                    @if once { "Get it" }
+                    @else if m.tier_names.is_some() && i.raw.is_none() { (level_text(m, i.level)) " → " (level_text(m, o.target)) }
+                    @else { "Lv " (num(m.tier_level(i))) " → Lv " (num(o.target)) }
+                }
+            } @else {
+                (mark(m))
+                span.ia-task-text {
+                    b { (m.name) }
+                    span.ia-owe-names { (items.len()) " left: " (items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", ")) }
+                }
+                span.ia-fig { (tier) }
             }
-            span.ia-fig {
-                @if once { "Get it" }
-                @else if m.tier_names.is_some() && i.raw.is_none() { (level_text(m, i.level)) " → " (level_text(m, o.target)) }
-                @else { "Lv " (num(m.tier_level(i))) " → Lv " (num(o.target)) }
-            }
-            @match i.state {
-                Step::Ready => span.ia-chip.ok { "Do now" },
-                Step::Locked => span.ia-chip.lock { "Locked" },
-                Step::Unknown => span {},
-            }
+            @match chip { Some(c) => (c), None => span {} }
         }
     }
 }
@@ -849,7 +876,8 @@ if(pb&&t&&navigator.clipboard&&navigator.clipboard.readText){
 // Back from signing in to send a report (?from=signin): check the same save again and land on
 // the report, with what you'd written put back.
 var signin=/[?&]from=signin/.test(location.search);
-try{history.replaceState(null,"",location.pathname+location.hash)}catch(x){}
+// The rest of the address stays (the test account's ?world=).
+try{history.replaceState(null,"",location.pathname+location.search.replace(/([?&])from=signin(&|$)/,function(m,a,b){return b?a:""})+location.hash)}catch(x){}
 var LAST="ia-last-save";
 function keep(s){try{if(s)sessionStorage.setItem(LAST,s);else sessionStorage.removeItem(LAST)}catch(x){try{sessionStorage.removeItem(LAST)}catch(y){}}}
 if(t){
@@ -1136,7 +1164,12 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-owe-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .ia-owe-head b { font-size: 14px; font-weight: 600; color: var(--w); }
 .ia-owe-n { margin-left: auto; font-size: 13px; color: var(--ink-3); }
-.ia-owe-card { color: var(--ink-2); text-underline-offset: 3px; }
+.ia-owe-stage { margin-top: 6px; }
+.ia-owe-sub { display: block; margin-top: 8px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
+.ia-owe-stage .ia-task-list { margin-top: 2px; }
+.ia-owe a.ia-task { color: inherit; text-decoration: none; border-radius: 6px; }
+.ia-owe a.ia-task:hover b, .ia-owe a.ia-task:focus-visible b { text-decoration: underline; text-underline-offset: 3px; }
+.ia-owe-names { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Should have by now: columns like the cards below (three on a wide screen, one on a phone),
    each item compact: where it stands under its name, the chip on the right. */
 .ia-owe .ia-task-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); column-gap: 28px; }

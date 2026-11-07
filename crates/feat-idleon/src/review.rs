@@ -334,6 +334,9 @@ pub struct Owed {
     pub item: usize,
     /// The level that stage asks for.
     pub target: f64,
+    /// The tier of the mechanic's ladder that first asks for it (index into `Mechanic::tiers`,
+    /// numbered from 1 on its card).
+    pub tier: usize,
 }
 
 /// Why a mechanic made the do-next list.
@@ -428,11 +431,11 @@ impl Review {
         for (mi, m) in self.mechanics.iter().enumerate() {
             let Some(l) = &m.crowd else { continue };
             let mut seen = vec![false; m.items.len()];
-            for r in l.rungs.iter().filter(|r| r.world <= self.world) {
+            for (k, r) in l.rungs.iter().enumerate().filter(|(_, r)| r.world <= self.world) {
                 for (ii, (it, &t)) in m.items.iter().zip(&r.targets).enumerate() {
                     if t > 0.0 && !seen[ii] && m.tier_level(it) < t {
                         seen[ii] = true;
-                        by.entry(r.stage).or_default().push(Owed { mechanic: mi, item: ii, target: t });
+                        by.entry(r.stage).or_default().push(Owed { mechanic: mi, item: ii, target: t, tier: k });
                     }
                 }
             }
