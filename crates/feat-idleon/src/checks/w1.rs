@@ -10,6 +10,7 @@ use crate::review::{Have, Raise, State};
 pub fn all(save: &Save) -> Vec<Mechanic> {
     vec![
         statues(save),
+        statue_levels(save),
         bribes(save),
         star_signs(save),
         stamps(save),
@@ -55,6 +56,32 @@ fn statues(save: &Save) -> Mechanic {
     let mut m = mech("statues", 1, "Statues", pic("StatueZ1".into()), Count::Levels, "tiers", items);
     m.tier_names = Some(STATUE_TIERS[1..].iter().map(|s| s.to_string()).collect());
     m.note = Some("Each statue goes Normal, Gold, Onyx, then Zenith. Levels keep going, so Zenith counts as done. The Kachow Statue stops at Onyx: it drops too rarely for the million a Zenith takes.".into());
+    m
+}
+
+/// Statue levels: `StatueLevels_c[i][0]`. Every character has the same levels; the highest is
+/// kept in case a save has them apart. Levels have no cap: the tiers (`crowd.txt`) come from
+/// the highest level any save has for each statue (`crowd::BEST`), from the world that statue
+/// is in, so a statue that is slow to level asks for less.
+fn statue_levels(save: &Save) -> Mechanic {
+    let tiers = save.numbers("StuG", &[]);
+    let chars = characters(save).max(1);
+    let items: Vec<Item> = rows("StatueInfo", &[])
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let level = (0..chars).map(|c| save.numbers(&format!("StatueLevels_{c}"), &[i]).first().copied().unwrap_or(0.0)).fold(0.0, f64::max);
+            let tier = at(&tiers, i).clamp(0.0, 3.0);
+            let prefix = ["Statue", "StatueG", "StatueO", "StatueZ"][tier as usize];
+            let mut it = Item::new(format!("{} Statue", label(text(r, 0))), pic(format!("{prefix}{}", i + 1)), level.min(1e9), 0.0);
+            it.world = later(cell(r, 4) + 1.0, 1);
+            it
+        })
+        .collect();
+    let total: f64 = items.iter().map(|i| i.level).sum();
+    let mut m = mech("statue-levels", 1, "Statue Levels", pic("Statue1".into()), Count::Open, "levels", items);
+    m.have = Some(Have { figure: format!("{} statue levels in all", big(total)), text: "A statue levels up as you drop statues of its kind on it in town.".into() });
+    m.note = Some("Statue levels have no cap. The tiers follow the highest level other players have on each statue, from the world it's in, so a statue that is slow to level asks for less.".into());
     m
 }
 

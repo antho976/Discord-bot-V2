@@ -42,11 +42,20 @@ pub fn stage_label(stage: usize) -> String {
     }
 }
 
+/// Mechanics whose tables come from the best level any save has, not from what half of each
+/// stage has: every item rises a little at every stage, from the stage its world opens, toward
+/// the highest any save has (see the crowd example's `best_curve`). An item that is hard to
+/// level stays low even for the endgame, and its tiers follow. Their tiers are a stage each,
+/// never split into parts.
+pub const BEST: [&str; 1] = ["statue-levels"];
+
 /// One mechanic's table.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Block {
     /// `off` after the key: the table is kept but not used (the mechanic keeps its own ladder).
     pub off: bool,
+    /// A `BEST` mechanic's table: a tier per stage, not split into parts.
+    pub whole: bool,
     /// Its columns, as indexes into `STAGES`, in game order.
     pub stages: Vec<usize>,
     /// Item name to its cells, one per column: `None` for `-` (not asked for at that stage).
@@ -110,7 +119,7 @@ pub fn parse(text: &str) -> (Table, Vec<String>) {
             if table.contains_key(first) {
                 problems.push(format!("line {n}: {first} is listed twice"));
             }
-            let mut b = Block::default();
+            let mut b = Block { whole: BEST.contains(&first), ..Block::default() };
             match words.get(1) {
                 None => {}
                 Some(&"off") => b.off = true,
@@ -283,7 +292,7 @@ impl Ladder {
             if targets.iter().all(|&t| t <= 0.0) || rungs.last().is_some_and(|r| r.targets == targets) {
                 continue;
             }
-            let parts = split(&prev, &targets, &order, PART, MAX_PARTS);
+            let parts = if block.whole { vec![targets.clone()] } else { split(&prev, &targets, &order, PART, MAX_PARTS) };
             let n = parts.len();
             for (p, t) in parts.into_iter().enumerate() {
                 let label = if n == 1 { stage_label(stage) } else { format!("{} · {} of {n}", stage_label(stage), p + 1) };

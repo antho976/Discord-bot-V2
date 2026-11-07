@@ -48,6 +48,41 @@ statues                                 # Statues
   Cauldron Statue        3   3   3   3   3   3
   Dragon Statue          2   3   3   3   3   3
 
+statue-levels                           # Statue Levels, no max
+  stages                1e  1m  1l  2e  2m  2l  3e  3m   3l   4e   4m   4l   5e   5m   5l   6e   6m   6l   7e   7m   7l  end1  end2  max
+  Power Statue           1   5  13  20  35  50  70  95  120  140  180  210  250  290  330  380  430  480  530  590  650  720  780  860
+  Speed Statue           1   6  13  20  35  55  75  95  120  150  180  220  260  300  340  390  440  500  550  620  680  750  820  890
+  Mining Statue          1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880
+  Feasty Statue          1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880
+  Health Statue          1   5  13  20  35  50  70  90  110  140  170  210  240  280  320  370  420  470  520  580  640  700  770  840
+  Lumberbob Statue       1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880
+  Thicc Skin Statue      1   5  12  20  35  50  70  90  110  140  170  200  240  280  320  360  410  460  510  570  630  690  760  820
+  Anvil Statue           1   5  12  20  30  45  65  85  110  130  160  190  230  270  310  350  400  440  500  550  610  670  730  790
+  Battleaxe Statue       1   5  12  20  30  50  65  85  110  130  160  200  230  270  310  350  400  450  500  550  610  670  730  800
+  Kachow Statue          -   -   -   1   1   4   7  12   17   20   30   35   45   55   65   80   95  100  120  140  150  170  190  210
+  Oceanman Statue        -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  650  730  800
+  Ol Reliable Statue     -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  660  730  800
+  Exp Statue             -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  320  370  420  480  540  600  670  730
+  Cauldron Statue        -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  320  370  420  480  540  600  660  730
+  Beholder Statue        -   -   -   1   7  16  25  45   65   90  110  150  180  220  260  310  360  420  470  540  600  670  740  820
+  Bullseye Statue        -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  660  730  800
+  Pecunia Statue         -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  330  380  430  490  540  610  670  740
+  Box Statue             -   -   -   -   -   -   2   8   19   35   55   75  100  140  170  220  260  310  370  430  490  560  640  710
+  Twosoul Statue         -   -   -   -   -   -   2   8   19   35   55   75  100  140  170  220  260  310  370  430  490  560  630  710
+  Ehexpee Statue         -   -   -   -   -   -   2   9   20   35   55   80  110  140  180  230  270  330  380  450  510  590  660  740
+  Seesaw Statue          -   -   -   -   -   -   2   8   19   35   50   75  100  140  170  210  260  310  370  430  490  560  630  710
+  Mutton Statue          -   -   -   -   -   -   -   -    -    3   12   25   45   75  100  140  190  240  300  360  430  510  590  680
+  Egg Statue             -   -   -   -   -   -   -   -    -    3   12   25   45   75  100  140  190  240  300  360  430  500  590  670
+  Dragon Statue          -   -   -   -   -   -   -   -    -    3   13   30   55   85  120  170  220  280  340  420  500  580  680  780
+  Spiral Statue          -   -   -   -   -   -   -   -    -    -    -    -    4   19   40   75  110  170  230  300  380  470  570  690
+  Boat Statue            -   -   -   -   -   -   -   -    -    -    -    -    4   17   40   70  110  160  210  280  360  440  540  640
+  Villager Statue        -   -   -   -   -   -   -   -    -    -    -    -    4   19   40   75  120  170  240  310  390  490  590  700
+  Compost Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   70  120  190  280  380  500  630
+  Stealth Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   70  120  190  280  380  490  630
+  Essence Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   65  120  190  270  370  490  620
+  Spelunky Statue        -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   16   65  140  260  410  590
+  Coral Statue           -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   12   45  100  190  300  430
+
 bribes                                  # Bribes, World 1 to 5 columns from AutoReview's tiers, changed
   stages                       1l  2e  2l  3e  3l  4e  4l  5e  7e  7m  7l  end1  end2  max
   Insider Trading               1   -   1   -   1   -   1   -   1   1   1   1   1   1
@@ -360,20 +395,6 @@ forge                                   # Forge Upgrades
   Forge Exp Gain        85  85  85  85  85  85
   Bar Bonanza           75  75  75  75  75  75
   Puff Puff Go          60  60  60  60  60  60
-
-basketball                              # Basketball, no max
-  stages                                                7e  7m  7l  end1  end2  max
-  Coins dropped by monsters                             30  30  60  110  160  190
-  Damage to Monsters                                    45  45  65   95  120  220
-  Class EXP when killing monsters                        -   -  17   30   35   65
-  Efficiency for all Skills, like Mining and Choppin     -   -   -  120  200  320
-
-darts                                   # Darts, no max
-  stages                                    7e   7m   7l  end1  end2  max
-  Extra Damage against Monsters            140  140  140  310  440  880
-  All Vault upgrades are Cheaper           100  100  100  430  550  680
-  Movement Speed, so you can run faster      1    1    1   10   11   30
-  Talent PTS for the first page              5    5    5   18   20   40
 
 upgrade-vault                           # Upgrade Vault, World 1 to 5 columns from AutoReview's tiers, changed
   stages                          4l  5e   5l   7e   7m   7l  end1  end2  max
@@ -2204,7 +2225,6 @@ beanstalk                               # Gold Food Beanstalk
   Golden Cake                       -   2   2   2   2   2
   Golden Peanut                     -   2   2   2   2   2
   1,000,000 stacks                  -  16  16  16  16  16
-  Golden Sugar Cookie               -   -   -   -   -   -
 
 emperor                                 # Emperor Showdown, no max
   stages                           7e  7m  7l  end1  end2  max
@@ -4085,406 +4105,17 @@ greenstacks                             # Greenstacks
   Job Application                         -   -   -   -   -   1
   Weapon Upgrade Stone IV                 -   -   -   -   -   1
   Magmaspike                              -   -   -   -   -   1
-  Alien Logs                              -   -   -   -   -   -
-  Omega Arcade Ball                       -   -   -   -   -   -
-  Yumyum Desert NPC Completion Token      -   -   -   -   -   -
-  Yumyum Skills Completion Token          -   -   -   -   -   -
-  Yumyum Misc Completion Token            -   -   -   -   -   -
-  Blunderhills NPC Completion Token       -   -   -   -   -   -
-  Blunder Skills Completion Token         -   -   -   -   -   -
-  Blunderhills Misc Completion Token      -   -   -   -   -   -
-  Tundra NPC Completion Token             -   -   -   -   -   -
-  Tundra Skills Completion Token          -   -   -   -   -   -
-  Tundra Misc Completion Token            -   -   -   -   -   -
-  BallJoePickle                           -   -   -   -   -   -
-  Bits                                    -   -   -   -   -   -
-  BobJoePickle                            -   -   -   -   -   -
-  Femur                                   -   -   -   -   -   -
-  Ribcage                                 -   -   -   -   -   -
-  Cranium                                 -   -   -   -   -   -
-  Bovinae                                 -   -   -   -   -   -
-  BoneJoePickle                           -   -   -   -   -   -
-  Fractal Fly                             -   -   -   -   -   -
-  Singularity Spiral                      -   -   -   -   -   -
-  Newbie Card Pack                        -   -   -   -   -   -
-  Ancient Card Pack                       -   -   -   -   -   -
-  Eternal Card Pack                       -   -   -   -   -   -
-  Dungeon Card Pack                       -   -   -   -   -   -
-  Galaxy Card Pack                        -   -   -   -   -   -
-  Smolderin Card Pack                     -   -   -   -   -   -
-  Spirit Card Pack                        -   -   -   -   -   -
-  Cash                                    -   -   -   -   -   -
-  Ice Dollar                              -   -   -   -   -   -
-  Strange Gold Piece                      -   -   -   -   -   -
-  Clam Pearl                              -   -   -   -   -   -
-  Pure Pearl                              -   -   -   -   -   -
-  Sub Class Swap Token                    -   -   -   -   -   -
-  Elite Class Swap Token                  -   -   -   -   -   -
-  Complete Class Redo Token               -   -   -   -   -   -
-  Aegean Coral                            -   -   -   -   -   -
   Gilded Coral                            -   -   -   -   -   -
-  Twisted Coral                           -   -   -   -   -   -
-  Eternal Coral                           -   -   -   -   -   -
-  Filler                                  -   -   -   -   -   -
-  Crimson String                          -   -   -   -   -   -
   Voodofish                               -   -   -   -   -   -
   Tottoise                                -   -   -   -   -   -
   Poison Froge                            -   -   -   -   -   -
   Mutant Crabbo                           -   -   -   -   -   -
-  Crescent Scorpie                        -   -   -   -   -   -
-  Nakeo Moleo                             -   -   -   -   -   -
-  Minervowl                               -   -   -   -   -   -
-  Eternal Lord of The Undying Ember       -   -   -   -   -   -
-  Purbunni                                -   -   -   -   -   -
-  Jade Scarab                             -   -   -   -   -   -
-  Diamond Duck                            -   -   -   -   -   -
-  Desert Topaz                            -   -   -   -   -   -
-  Glacier Quartz                          -   -   -   -   -   -
-  Galaxial Amethyst                       -   -   -   -   -   -
-  Magma Geode                             -   -   -   -   -   -
-  Spirit Diamond                          -   -   -   -   -   -
-  Gem to W7                               -   -   -   -   -   -
-  Delivery Box                            -   -   -   -   -   -
-  Double AFK Gain Ticket                  -   -   -   -   -   -
-  Basement Cube                           -   -   -   -   -   -
-  Dungeon Credits                         -   -   -   -   -   -
-  Dungeon Credits Flurbo Edition          -   -   -   -   -   -
-  Weapon Enhancer                         -   -   -   -   -   -
-  Armor Enhancer                          -   -   -   -   -   -
-  Jewelry Enhancer                        -   -   -   -   -   -
-  Common RNG Item                         -   -   -   -   -   -
-  Uncommon RNG Item                       -   -   -   -   -   -
-  Rare RNG Item                           -   -   -   -   -   -
-  Epic RNG Item                           -   -   -   -   -   -
-  Legendary RNG Item                      -   -   -   -   -   -
-  Poisoned Leg                            -   -   -   -   -   -
-  Minced Bluebeef                         -   -   -   -   -   -
-  Bloated Cyst                            -   -   -   -   -   -
-  Floppy Gizard                           -   -   -   -   -   -
-  Molted Tail                             -   -   -   -   -   -
-  Decomposing Skull                       -   -   -   -   -   -
-  Giant Frog Eye                          -   -   -   -   -   -
-  Eldritch Ripcage                        -   -   -   -   -   -
-  Stardust                                -   -   -   -   -   -
-  Moondust                                -   -   -   -   -   -
-  Solardust                               -   -   -   -   -   -
-  Cooldust                                -   -   -   -   -   -
-  Novadust                                -   -   -   -   -   -
-  Emperor Ribbon                          -   -   -   -   -   -
-  Anvil Tab 4                             -   -   -   -   -   -
-  Anvil Tab 5                             -   -   -   -   -   -
-  Anvil Tab 6                             -   -   -   -   -   -
-  Anvil Tab 7                             -   -   -   -   -   -
-  Kachow Statue                           -   -   -   -   -   -
-  Medium Experience Balloon               -   -   -   -   -   -
-  Large Experience Balloon                -   -   -   -   -   -
-  Smithing Exp                            -   -   -   -   -   -
-  Not Yet                                 -   -   -   -   -   -
-  Trench fish                             -   -   -   -   -   -
-  Giftybread Man                          -   -   -   -   -   -
-  Chogg Nog                               -   -   -   -   -   -
-  Candy Canes                             -   -   -   -   -   -
-  Mistleberries                           -   -   -   -   -   -
-  Golden Sugar Cookie                     -   -   -   -   -   -
-  Hotdog                                  -   -   -   -   -   -
-  Big Cake                                -   -   -   -   -   -
-  Cranberry Jam                           -   -   -   -   -   -
-  Crabby Cake Supreme                     -   -   -   -   -   -
-  Small EXP Potion                        -   -   -   -   -   -
-  Decent EXP Potion                       -   -   -   -   -   -
-  Marvelous Obol Stack                    -   -   -   -   -   -
-  Dungeon Loot Dice                       -   -   -   -   -   -
-  Bossius Obol Stack                      -   -   -   -   -   -
-  Hyper Obol Stack                        -   -   -   -   -   -
-  Sand of Time                            -   -   -   -   -   -
-  Hyper Obol Stack Square Edition         -   -   -   -   -   -
-  Funny 2hr Fishy                         -   -   -   -   -   -
-  Funny 2hr Feather                       -   -   -   -   -   -
-  Quality Obol Stack                      -   -   -   -   -   -
-  Grassy Gene Spiral                      -   -   -   -   -   -
-  YumYumy Gene Spiral                     -   -   -   -   -   -
-  Tundric Gene Spiral                     -   -   -   -   -   -
-  Nebulous Gene Spiral                    -   -   -   -   -   -
-  Statue Coupon                           -   -   -   -   -   -
-  Gooey Triangle                          -   -   -   -   -   -
-  Gooey Square                            -   -   -   -   -   -
-  Quartz Nullagon                         -   -   -   -   -   -
-  Quartz Brillagon                        -   -   -   -   -   -
-  Gooey Pentagon                          -   -   -   -   -   -
-  Gooey Hexagon                           -   -   -   -   -   -
-  Gooey Heptagon                          -   -   -   -   -   -
-  Gooey Nonagon                           -   -   -   -   -   -
-  Quartz Prismagon                        -   -   -   -   -   -
-  Quartz Cubigon                          -   -   -   -   -   -
-  Quartz Pointagon                        -   -   -   -   -   -
-  Quartz Octergon                         -   -   -   -   -   -
-  Hat Premiumifier                        -   -   -   -   -   -
-  Ice A La Crem                           -   -   -   -   -   -
-  Cosmic Storage Chest                    -   -   -   -   -   -
-  Garbage                                 -   -   -   -   -   -
-  Bottle                                  -   -   -   -   -   -
-  Resource Coupon                         -   -   -   -   -   -
-  Really Really Resource Coupon           -   -   -   -   -   -
-  Keychain Fragment                       -   -   -   -   -   -
-  Copper Twine                            -   -   -   -   -   -
-  Needledrop                              -   -   -   -   -   -
-  Scripticus Spoons                       -   -   -   -   -   -
-  Silver Twine                            -   -   -   -   -   -
-  Leafy Vines                             -   -   -   -   -   -
-  Fun Flags                               -   -   -   -   -   -
-  Electrical Wiring                       -   -   -   -   -   -
-  Loot Dice                               -   -   -   -   -   -
-  Mayonnaise Bottle                       -   -   -   -   -   -
-  Motherlode Ore                          -   -   -   -   -   -
-  Everlog                                 -   -   -   -   -   -
-  Easy Blunderhills NPC Token             -   -   -   -   -   -
-  Krunk Token                             -   -   -   -   -   -
-  Tiki Chief Token                        -   -   -   -   -   -
-  Sproutinald Token                       -   -   -   -   -   -
-  Dog Bone Token                          -   -   -   -   -   -
-  Dazey Token                             -   -   -   -   -   -
-  TP Pete Token                           -   -   -   -   -   -
-  Bandit Bob Token                        -   -   -   -   -   -
-  Snake Jar Token                         -   -   -   -   -   -
-  Whattso Token                           -   -   -   -   -   -
-  Cowbo Jones Token                       -   -   -   -   -   -
-  Med Blunderhills NPC Token              -   -   -   -   -   -
-  Carpetiem Token                         -   -   -   -   -   -
-  Goldric Token                           -   -   -   -   -   -
-  Fishpaste Token                         -   -   -   -   -   -
-  Wellington Token                        -   -   -   -   -   -
-  Loominadi Token                         -   -   -   -   -   -
-  Djonnut Token                           -   -   -   -   -   -
-  Scubidew Token                          -   -   -   -   -   -
-  Cattleprod Token                        -   -   -   -   -   -
-  Easy Yumyum Dez NPC Token               -   -   -   -   -   -
-  Med Yumyum Dez NPC Token                -   -   -   -   -   -
-  Hard Blunderhills NPC Token             -   -   -   -   -   -
-  Hard Yumyum Dez NPC Token               -   -   -   -   -   -
-  Lonely Hunter Token                     -   -   -   -   -   -
-  Hoggi Token                             -   -   -   -   -   -
-  Bellows Token                           -   -   -   -   -   -
-  Snouts Token                            -   -   -   -   -   -
-  Shuvelle Token                          -   -   -   -   -   -
-  Yondergreen Token                       -   -   -   -   -   -
-  Bill Brr Token                          -   -   -   -   -   -
-  Crystalswine Token                      -   -   -   -   -   -
-  Easy FB Tundra NPC Token                -   -   -   -   -   -
-  Stiltzcho Token                         -   -   -   -   -   -
-  Med FB Tundra NPC Token                 -   -   -   -   -   -
-  Hard FB Tundra NPC Token                -   -   -   -   -   -
-  Woodsman Token                          -   -   -   -   -   -
-  Glumlee Token                           -   -   -   -   -   -
-  Papua Piggea Token                      -   -   -   -   -   -
-  FILLER                                  -   -   -   -   -   -
-  Funguy Token                            -   -   -   -   -   -
-  Obol Fragment                           -   -   -   -   -   -
-  Crude Oil                               -   -   -   -   -   -
-  Radioactive Waste                       -   -   -   -   -   -
-  Glumlee's Special Tutorial Oil          -   -   -   -   -   -
-  Eco Friendly Oil                        -   -   -   -   -   -
-  Orblet                                  -   -   -   -   -   -
-  Palm Tree Log                           -   -   -   -   -   -
-  Stone Peanut                            -   -   -   -   -   -
-  Aqua Pearl                              -   -   -   -   -   -
-  Stained Pearl                           -   -   -   -   -   -
-  Shiny Pearl                             -   -   -   -   -   -
-  Black Pearl                             -   -   -   -   -   -
-  Holy Pearl                              -   -   -   -   -   -
-  Divinity Pearl                          -   -   -   -   -   -
-  Gem                                     -   -   -   -   -   -
-  Dense Water                             -   -   -   -   -   -
-  Mining Certificate                      -   -   -   -   -   -
-  Green Tea                               -   -   -   -   -   -
-  Aether Fragment                         -   -   -   -   -   -
-  Arcane Rock                             -   -   -   -   -   -
-  Spirit Offering                         -   -   -   -   -   -
-  Fishbowl                                -   -   -   -   -   -
-  Darts                                   -   -   -   -   -   -
-  Unstable Reliquarium                    -   -   -   -   -   -
-  Urie's Special Childhood Rock           -   -   -   -   -   -
-  Arcane Fragment                         -   -   -   -   -   -
-  Stamina Battery                         -   -   -   -   -   -
-  Cropfall Basket                         -   -   -   -   -   -
-  Forest Villas Flyer Thingy              -   -   -   -   -   -
-  Lucky Candle                            -   -   -   -   -   -
-  Funny 2hr Slice                         -   -   -   -   -   -
-  Giftmas Gift                            -   -   -   -   -   -
-  Glimmerwick Candle                      -   -   -   -   -   -
-  Half Finished Research Papers           -   -   -   -   -   -
-  Edible Coin                             -   -   -   -   -   -
-  Pet Bonus Token                         -   -   -   -   -   -
-  Skeleton Key                            -   -   -   -   -   -
-  Broken Mic                              -   -   -   -   -   -
-  Signed Arrest Warrant                   -   -   -   -   -   -
-  Birthday Card                           -   -   -   -   -   -
-  Pre Crime Box                           -   -   -   -   -   -
-  Bag o Nuts                              -   -   -   -   -   -
-  IOU one W7 Crystal                      -   -   -   -   -   -
-  Giftmas Box                             -   -   -   -   -   -
-  Gem Note                                -   -   -   -   -   -
-  Player Rating With Letter P             -   -   -   -   -   -
-  Player Rating With Letter S             -   -   -   -   -   -
-  Googley Eyes                            -   -   -   -   -   -
-  Dootjat Eye                             -   -   -   -   -   -
-  Silver Antique                          -   -   -   -   -   -
-  Guild Giftbox                           -   -   -   -   -   -
-  Lovey Dovey Letter                      -   -   -   -   -   -
-  Choco Box                               -   -   -   -   -   -
-  Egg Capsule                             -   -   -   -   -   -
-  Gummy Bunny                             -   -   -   -   -   -
-  Goldegg Capsule                         -   -   -   -   -   -
-  Sesame Seed                             -   -   -   -   -   -
-  The Bobber Challenge Scroll             -   -   -   -   -   -
-  Elderly Peanut                          -   -   -   -   -   -
-  Pete the Peanut                         -   -   -   -   -   -
-  Summer Cooler                           -   -   -   -   -   -
-  Class Certificate                       -   -   -   -   -   -
-  Beach Oyster                            -   -   -   -   -   -
-  Skull Coin                              -   -   -   -   -   -
-  Coin                                    -   -   -   -   -   -
-  Meat Cube                               -   -   -   -   -   -
-  Sand Pile                               -   -   -   -   -   -
-  Buried Treasure                         -   -   -   -   -   -
-  Dootophone                              -   -   -   -   -   -
-  Damaged Cog                             -   -   -   -   -   -
-  Refurbished Cog                         -   -   -   -   -   -
-  Shuvelle's Vote                         -   -   -   -   -   -
-  Scouting Report                         -   -   -   -   -   -
-  Yondergreens Vote                       -   -   -   -   -   -
-  Bill Brr's Vote                         -   -   -   -   -   -
-  Signed Contract                         -   -   -   -   -   -
-  Shovel                                  -   -   -   -   -   -
-  2021 Giftmas Box                        -   -   -   -   -   -
-  Pile of Processor Chips                 -   -   -   -   -   -
-  Strung Jewels                           -   -   -   -   -   -
-  Bottled World Town Teleport             -   -   -   -   -   -
-  Skull                                   -   -   -   -   -   -
-  Phone Box                               -   -   -   -   -   -
-  Gem Envelope                            -   -   -   -   -   -
-  Bottled Wind                            -   -   -   -   -   -
-  Gaming Fertilizer                       -   -   -   -   -   -
-  Rift Tear                               -   -   -   -   -   -
-  Spring Baggie                           -   -   -   -   -   -
-  Silver Pocketwatch                      -   -   -   -   -   -
-  Gold Pocketwatch                        -   -   -   -   -   -
-  Halloween Treat                         -   -   -   -   -   -
-  Filler bc I messed up                   -   -   -   -   -   -
-  Crop Transfer Ticket                    -   -   -   -   -   -
-  Compost Bag                             -   -   -   -   -   -
-  Summoner Stone                          -   -   -   -   -   -
-  Blue Tome Pages                         -   -   -   -   -   -
-  Red Tome Pages                          -   -   -   -   -   -
-  Anniversary Box                         -   -   -   -   -   -
-  Basketball                              -   -   -   -   -   -
-  Secret Map                              -   -   -   -   -   -
-  Golden Oyster                           -   -   -   -   -   -
-  Event Point                             -   -   -   -   -   -
-  Picnic Token                            -   -   -   -   -   -
-  Blinding Lantern                        -   -   -   -   -   -
-  Golden Gift                             -   -   -   -   -   -
-  Giftmas Present                         -   -   -   -   -   -
-  Worship Floppy Disc                     -   -   -   -   -   -
-  Temple Torch                            -   -   -   -   -   -
-  Aethermoon                              -   -   -   -   -   -
-  Charred Bone                            -   -   -   -   -   -
-  Charred Fragment                        -   -   -   -   -   -
-  Prisma Bubble                           -   -   -   -   -   -
-  Parchment of Enchantment                -   -   -   -   -   -
-  Parchment of Cease and Desist           -   -   -   -   -   -
-  Leafy Marble                            -   -   -   -   -   -
-  Sandy Marble                            -   -   -   -   -   -
-  Frosty Marble                           -   -   -   -   -   -
-  Sparkly Marble                          -   -   -   -   -   -
-  Toasty Marble                           -   -   -   -   -   -
-  Wispy Marble                            -   -   -   -   -   -
-  Briny Marble                            -   -   -   -   -   -
-  NoNotYety Marble                        -   -   -   -   -   -
   Crosslink Salt                          -   -   -   -   -   -
   Propagated Salt                         -   -   -   -   -   -
-  Anionic Salt                            -   -   -   -   -   -
-  Post Office Box Reseto Magnifico        -   -   -   -   -   -
-  Talent Point Reset Potion               -   -   -   -   -   -
-  Secretstone                             -   -   -   -   -   -
-  Sculpting Tools                         -   -   -   -   -   -
-  Guilding Tools                          -   -   -   -   -   -
-  Onyx Tools                              -   -   -   -   -   -
-  Zenith Tools                            -   -   -   -   -   -
-  Spice                                   -   -   -   -   -   -
-  Starlight Ore                           -   -   -   -   -   -
-  Armor Upgrade Stone G                   -   -   -   -   -   -
-  Armor Upgrade Stone V                   -   -   -   -   -   -
   Armor Upgrade Stone VI                  -   -   -   -   -   -
-  Armor Upgrade Stone VII                 -   -   -   -   -   -
   Easter Armor Stone                      -   -   -   -   -   -
-  Giftmas Helmet Upgrade Stone            -   -   -   -   -   -
-  Warped Helmet Upgrade Stone             -   -   -   -   -   -
-  Premium AGI Stone                       -   -   -   -   -   -
-  Premium LUK Stone                       -   -   -   -   -   -
-  Premium Stone Refunder                  -   -   -   -   -   -
-  Premium STR Stone                       -   -   -   -   -   -
-  Premium Bonus Swapper                   -   -   -   -   -   -
-  Premium WIS Stone                       -   -   -   -   -   -
-  Giftmas Tool Upgrade Stone              -   -   -   -   -   -
-  Tool Upgrade Stone III                  -   -   -   -   -   -
-  Tool Upgrade Stone IV                   -   -   -   -   -   -
-  Tool Upgrade Stone V                    -   -   -   -   -   -
-  Tool Upgrade Stone VI                   -   -   -   -   -   -
-  Tool Upgrade Stone VII                  -   -   -   -   -   -
   Easter Tool Upgrade Stone               -   -   -   -   -   -
-  Tempest Bow Stone 60 PCT                -   -   -   -   -   -
-  Tempest Bow Stone 30 PCT                -   -   -   -   -   -
-  Tempest Bow Stone 10 PCT                -   -   -   -   -   -
-  Tempest Ring Stone 60 PCT               -   -   -   -   -   -
-  Tempest Ring Stone 30 PCT               -   -   -   -   -   -
-  Tempest Ring Stone 10 PCT               -   -   -   -   -   -
-  Weapon Upgrade Stone C                  -   -   -   -   -   -
-  Weapon Upgrade Stone V                  -   -   -   -   -   -
-  Warped Weapon Upgrade Stone             -   -   -   -   -   -
-  Weapon Upgrade Stone VI                 -   -   -   -   -   -
-  Weapon Upgrade Stone VII                -   -   -   -   -   -
   Easter Weapon Stone                     -   -   -   -   -   -
-  Singulon                                -   -   -   -   -   -
-  Doubulon                                -   -   -   -   -   -
-  Verdon                                  -   -   -   -   -   -
-  Bludon                                  -   -   -   -   -   -
-  Massivon                                -   -   -   -   -   -
-  Aurion                                  -   -   -   -   -   -
-  Talent Point Tab 1                      -   -   -   -   -   -
-  Talent Point Tab 2                      -   -   -   -   -   -
-  Talent Point Tab 3                      -   -   -   -   -   -
-  Talent Point Tab 4                      -   -   -   -   -   -
-  Talent Point Tab 5                      -   -   -   -   -   -
-  Talent Point Special Tab                -   -   -   -   -   -
-  1 HR Time Candy                         -   -   -   -   -   -
-  Spirit Time Candy                       -   -   -   -   -   -
-  2 HR Time Candy                         -   -   -   -   -   -
-  4 HR Time Candy                         -   -   -   -   -   -
-  12 HR Time Candy                        -   -   -   -   -   -
-  24 HR Time Candy                        -   -   -   -   -   -
-  72 HR Time Candy                        -   -   -   -   -   -
-  Steamy Time Candy                       -   -   -   -   -   -
-  Spooky Time Candy                       -   -   -   -   -   -
-  Cosmic Time Candy                       -   -   -   -   -   -
-  Colosseum Ticket                        -   -   -   -   -   -
-  Broken Weapon                           -   -   -   -   -   -
-  Dried Paint Blob                        -   -   -   -   -   -
-  Engraved Bullet                         -   -   -   -   -   -
-  Wispy Tree Log                          -   -   -   -   -   -
-  Error Item                              -   -   -   -   -   -
-  Medallion                               -   -   -   -   -   -
-  Wormie Weight                           -   -   -   -   -   -
-  Dynamite                                -   -   -   -   -   -
-  Not Dynamite                            -   -   -   -   -   -
-  Triple Threat                           -   -   -   -   -   -
-  Fat Albert                              -   -   -   -   -   -
-  Iron Hook                               -   -   -   -   -   -
-  One Pound of Steel                      -   -   -   -   -   -
-  One Pound of Feathers                   -   -   -   -   -   -
-  Literal Elephant                        -   -   -   -   -   -
-  Anvil Reset Whetstone                   -   -   -   -   -   -
-  Experience                              -   -   -   -   -   -
-  Skill Experience                        -   -   -   -   -   -
   Pirate Ship Figurine                    -   -   -   -   -   -
 
 secret-path                             # Secret Class Path

@@ -48,6 +48,41 @@ statues                                 # Statues
   Cauldron Statue        3   3   3   3   3   3
   Dragon Statue          2   3   3   3   3   3
 
+statue-levels                           # Statue Levels, no max
+  stages                1e  1m  1l  2e  2m  2l  3e  3m   3l   4e   4m   4l   5e   5m   5l   6e   6m   6l   7e   7m   7l  end1  end2  max
+  Power Statue           1   5  13  20  35  50  70  95  120  140  180  210  250  290  330  380  430  480  530  590  650  720  780  860  # new since the last run
+  Speed Statue           1   6  13  20  35  55  75  95  120  150  180  220  260  300  340  390  440  500  550  620  680  750  820  890  # new since the last run
+  Mining Statue          1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880  # new since the last run
+  Feasty Statue          1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880  # new since the last run
+  Health Statue          1   5  13  20  35  50  70  90  110  140  170  210  240  280  320  370  420  470  520  580  640  700  770  840  # new since the last run
+  Lumberbob Statue       1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880  # new since the last run
+  Thicc Skin Statue      1   5  12  20  35  50  70  90  110  140  170  200  240  280  320  360  410  460  510  570  630  690  760  820  # new since the last run
+  Anvil Statue           1   5  12  20  30  45  65  85  110  130  160  190  230  270  310  350  400  440  500  550  610  670  730  790  # new since the last run
+  Battleaxe Statue       1   5  12  20  30  50  65  85  110  130  160  200  230  270  310  350  400  450  500  550  610  670  730  800  # new since the last run
+  Kachow Statue          -   -   -   1   1   4   7  12   17   20   30   35   45   55   65   80   95  100  120  140  150  170  190  210  # new since the last run
+  Oceanman Statue        -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  650  730  800  # new since the last run
+  Ol Reliable Statue     -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  660  730  800  # new since the last run
+  Exp Statue             -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  320  370  420  480  540  600  670  730  # new since the last run
+  Cauldron Statue        -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  320  370  420  480  540  600  660  730  # new since the last run
+  Beholder Statue        -   -   -   1   7  16  25  45   65   90  110  150  180  220  260  310  360  420  470  540  600  670  740  820  # new since the last run
+  Bullseye Statue        -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  660  730  800  # new since the last run
+  Pecunia Statue         -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  330  380  430  490  540  610  670  740  # new since the last run
+  Box Statue             -   -   -   -   -   -   2   8   19   35   55   75  100  140  170  220  260  310  370  430  490  560  640  710  # new since the last run
+  Twosoul Statue         -   -   -   -   -   -   2   8   19   35   55   75  100  140  170  220  260  310  370  430  490  560  630  710  # new since the last run
+  Ehexpee Statue         -   -   -   -   -   -   2   9   20   35   55   80  110  140  180  230  270  330  380  450  510  590  660  740  # new since the last run
+  Seesaw Statue          -   -   -   -   -   -   2   8   19   35   50   75  100  140  170  210  260  310  370  430  490  560  630  710  # new since the last run
+  Mutton Statue          -   -   -   -   -   -   -   -    -    3   12   25   45   75  100  140  190  240  300  360  430  510  590  680  # new since the last run
+  Egg Statue             -   -   -   -   -   -   -   -    -    3   12   25   45   75  100  140  190  240  300  360  430  500  590  670  # new since the last run
+  Dragon Statue          -   -   -   -   -   -   -   -    -    3   13   30   55   85  120  170  220  280  340  420  500  580  680  780  # new since the last run
+  Spiral Statue          -   -   -   -   -   -   -   -    -    -    -    -    4   19   40   75  110  170  230  300  380  470  570  690  # new since the last run
+  Boat Statue            -   -   -   -   -   -   -   -    -    -    -    -    4   17   40   70  110  160  210  280  360  440  540  640  # new since the last run
+  Villager Statue        -   -   -   -   -   -   -   -    -    -    -    -    4   19   40   75  120  170  240  310  390  490  590  700  # new since the last run
+  Compost Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   70  120  190  280  380  500  630  # new since the last run
+  Stealth Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   70  120  190  280  380  490  630  # new since the last run
+  Essence Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   65  120  190  270  370  490  620  # new since the last run
+  Spelunky Statue        -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   16   65  140  260  410  590  # new since the last run
+  Coral Statue           -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   12   45  100  190  300  430  # new since the last run
+
 bribes                                  # Bribes, World 1 to 5 columns from AutoReview's tiers, changed
   stages                       1l  2e  2l  3e  3l  4e  4l  5e  7e  7m  7l  end1  end2  max
   Insider Trading               1   -   1   -   1   -   1   -   1   1   1   1   1   1
@@ -360,20 +395,6 @@ forge                                   # Forge Upgrades
   Forge Exp Gain        85  85  85  85  85  85
   Bar Bonanza           75  75  75  75  75  75
   Puff Puff Go          60  60  60  60  60  60
-
-basketball                              # Basketball, no max
-  stages                                                7e  7m  7l  end1  end2  max
-  Coins dropped by monsters                             30  30  60  110  160  190
-  Damage to Monsters                                    45  45  65   95  120  220
-  Class EXP when killing monsters                        -   -  17   30   35   65
-  Efficiency for all Skills, like Mining and Choppin     -   -   -  120  200  320
-
-darts                                   # Darts, no max
-  stages                                    7e   7m   7l  end1  end2  max
-  Extra Damage against Monsters            140  140  140  310  440  880
-  All Vault upgrades are Cheaper           100  100  100  430  550  680
-  Movement Speed, so you can run faster      1    1    1   10   11   30
-  Talent PTS for the first page              5    5    5   18   20   40
 
 upgrade-vault                           # Upgrade Vault, World 1 to 5 columns from AutoReview's tiers, changed
   stages                          4l  5e   5l   7e   7m   7l  end1  end2  max
@@ -2204,7 +2225,6 @@ beanstalk                               # Gold Food Beanstalk
   Golden Cake                       -   2   2   2   2   2
   Golden Peanut                     -   2   2   2   2   2
   1,000,000 stacks                  -  16  16  16  16  16
-  Golden Sugar Cookie               -   -   -   -   -   -  # no save has it yet
 
 emperor                                 # Emperor Showdown, no max
   stages                           7e  7m  7l  end1  end2  max
@@ -4085,406 +4105,17 @@ greenstacks                             # Greenstacks
   Job Application                         -   -   -   -   -   1
   Weapon Upgrade Stone IV                 -   -   -   -   -   1
   Magmaspike                              -   -   -   -   -   1
-  Alien Logs                              -   -   -   -   -   -  # no save has it yet
-  Omega Arcade Ball                       -   -   -   -   -   -  # no save has it yet
-  Yumyum Desert NPC Completion Token      -   -   -   -   -   -  # no save has it yet
-  Yumyum Skills Completion Token          -   -   -   -   -   -  # no save has it yet
-  Yumyum Misc Completion Token            -   -   -   -   -   -  # no save has it yet
-  Blunderhills NPC Completion Token       -   -   -   -   -   -  # no save has it yet
-  Blunder Skills Completion Token         -   -   -   -   -   -  # no save has it yet
-  Blunderhills Misc Completion Token      -   -   -   -   -   -  # no save has it yet
-  Tundra NPC Completion Token             -   -   -   -   -   -  # no save has it yet
-  Tundra Skills Completion Token          -   -   -   -   -   -  # no save has it yet
-  Tundra Misc Completion Token            -   -   -   -   -   -  # no save has it yet
-  BallJoePickle                           -   -   -   -   -   -  # no save has it yet
-  Bits                                    -   -   -   -   -   -  # no save has it yet
-  BobJoePickle                            -   -   -   -   -   -  # no save has it yet
-  Femur                                   -   -   -   -   -   -  # no save has it yet
-  Ribcage                                 -   -   -   -   -   -  # no save has it yet
-  Cranium                                 -   -   -   -   -   -  # no save has it yet
-  Bovinae                                 -   -   -   -   -   -  # no save has it yet
-  BoneJoePickle                           -   -   -   -   -   -  # no save has it yet
-  Fractal Fly                             -   -   -   -   -   -  # no save has it yet
-  Singularity Spiral                      -   -   -   -   -   -  # no save has it yet
-  Newbie Card Pack                        -   -   -   -   -   -  # no save has it yet
-  Ancient Card Pack                       -   -   -   -   -   -  # no save has it yet
-  Eternal Card Pack                       -   -   -   -   -   -  # no save has it yet
-  Dungeon Card Pack                       -   -   -   -   -   -  # no save has it yet
-  Galaxy Card Pack                        -   -   -   -   -   -  # no save has it yet
-  Smolderin Card Pack                     -   -   -   -   -   -  # no save has it yet
-  Spirit Card Pack                        -   -   -   -   -   -  # no save has it yet
-  Cash                                    -   -   -   -   -   -  # no save has it yet
-  Ice Dollar                              -   -   -   -   -   -  # no save has it yet
-  Strange Gold Piece                      -   -   -   -   -   -  # no save has it yet
-  Clam Pearl                              -   -   -   -   -   -  # no save has it yet
-  Pure Pearl                              -   -   -   -   -   -  # no save has it yet
-  Sub Class Swap Token                    -   -   -   -   -   -  # no save has it yet
-  Elite Class Swap Token                  -   -   -   -   -   -  # no save has it yet
-  Complete Class Redo Token               -   -   -   -   -   -  # no save has it yet
-  Aegean Coral                            -   -   -   -   -   -  # no save has it yet
   Gilded Coral                            -   -   -   -   -   -  # no save has it yet
-  Twisted Coral                           -   -   -   -   -   -  # no save has it yet
-  Eternal Coral                           -   -   -   -   -   -  # no save has it yet
-  Filler                                  -   -   -   -   -   -  # no save has it yet
-  Crimson String                          -   -   -   -   -   -  # no save has it yet
   Voodofish                               -   -   -   -   -   -  # no save has it yet
   Tottoise                                -   -   -   -   -   -  # no save has it yet
   Poison Froge                            -   -   -   -   -   -  # no save has it yet
   Mutant Crabbo                           -   -   -   -   -   -  # no save has it yet
-  Crescent Scorpie                        -   -   -   -   -   -  # no save has it yet
-  Nakeo Moleo                             -   -   -   -   -   -  # no save has it yet
-  Minervowl                               -   -   -   -   -   -  # no save has it yet
-  Eternal Lord of The Undying Ember       -   -   -   -   -   -  # no save has it yet
-  Purbunni                                -   -   -   -   -   -  # no save has it yet
-  Jade Scarab                             -   -   -   -   -   -  # no save has it yet
-  Diamond Duck                            -   -   -   -   -   -  # no save has it yet
-  Desert Topaz                            -   -   -   -   -   -  # no save has it yet
-  Glacier Quartz                          -   -   -   -   -   -  # no save has it yet
-  Galaxial Amethyst                       -   -   -   -   -   -  # no save has it yet
-  Magma Geode                             -   -   -   -   -   -  # no save has it yet
-  Spirit Diamond                          -   -   -   -   -   -  # no save has it yet
-  Gem to W7                               -   -   -   -   -   -  # no save has it yet
-  Delivery Box                            -   -   -   -   -   -  # no save has it yet
-  Double AFK Gain Ticket                  -   -   -   -   -   -  # no save has it yet
-  Basement Cube                           -   -   -   -   -   -  # no save has it yet
-  Dungeon Credits                         -   -   -   -   -   -  # no save has it yet
-  Dungeon Credits Flurbo Edition          -   -   -   -   -   -  # no save has it yet
-  Weapon Enhancer                         -   -   -   -   -   -  # no save has it yet
-  Armor Enhancer                          -   -   -   -   -   -  # no save has it yet
-  Jewelry Enhancer                        -   -   -   -   -   -  # no save has it yet
-  Common RNG Item                         -   -   -   -   -   -  # no save has it yet
-  Uncommon RNG Item                       -   -   -   -   -   -  # no save has it yet
-  Rare RNG Item                           -   -   -   -   -   -  # no save has it yet
-  Epic RNG Item                           -   -   -   -   -   -  # no save has it yet
-  Legendary RNG Item                      -   -   -   -   -   -  # no save has it yet
-  Poisoned Leg                            -   -   -   -   -   -  # no save has it yet
-  Minced Bluebeef                         -   -   -   -   -   -  # no save has it yet
-  Bloated Cyst                            -   -   -   -   -   -  # no save has it yet
-  Floppy Gizard                           -   -   -   -   -   -  # no save has it yet
-  Molted Tail                             -   -   -   -   -   -  # no save has it yet
-  Decomposing Skull                       -   -   -   -   -   -  # no save has it yet
-  Giant Frog Eye                          -   -   -   -   -   -  # no save has it yet
-  Eldritch Ripcage                        -   -   -   -   -   -  # no save has it yet
-  Stardust                                -   -   -   -   -   -  # no save has it yet
-  Moondust                                -   -   -   -   -   -  # no save has it yet
-  Solardust                               -   -   -   -   -   -  # no save has it yet
-  Cooldust                                -   -   -   -   -   -  # no save has it yet
-  Novadust                                -   -   -   -   -   -  # no save has it yet
-  Emperor Ribbon                          -   -   -   -   -   -  # no save has it yet
-  Anvil Tab 4                             -   -   -   -   -   -  # no save has it yet
-  Anvil Tab 5                             -   -   -   -   -   -  # no save has it yet
-  Anvil Tab 6                             -   -   -   -   -   -  # no save has it yet
-  Anvil Tab 7                             -   -   -   -   -   -  # no save has it yet
-  Kachow Statue                           -   -   -   -   -   -  # no save has it yet
-  Medium Experience Balloon               -   -   -   -   -   -  # no save has it yet
-  Large Experience Balloon                -   -   -   -   -   -  # no save has it yet
-  Smithing Exp                            -   -   -   -   -   -  # no save has it yet
-  Not Yet                                 -   -   -   -   -   -  # no save has it yet
-  Trench fish                             -   -   -   -   -   -  # no save has it yet
-  Giftybread Man                          -   -   -   -   -   -  # no save has it yet
-  Chogg Nog                               -   -   -   -   -   -  # no save has it yet
-  Candy Canes                             -   -   -   -   -   -  # no save has it yet
-  Mistleberries                           -   -   -   -   -   -  # no save has it yet
-  Golden Sugar Cookie                     -   -   -   -   -   -  # no save has it yet
-  Hotdog                                  -   -   -   -   -   -  # no save has it yet
-  Big Cake                                -   -   -   -   -   -  # no save has it yet
-  Cranberry Jam                           -   -   -   -   -   -  # no save has it yet
-  Crabby Cake Supreme                     -   -   -   -   -   -  # no save has it yet
-  Small EXP Potion                        -   -   -   -   -   -  # no save has it yet
-  Decent EXP Potion                       -   -   -   -   -   -  # no save has it yet
-  Marvelous Obol Stack                    -   -   -   -   -   -  # no save has it yet
-  Dungeon Loot Dice                       -   -   -   -   -   -  # no save has it yet
-  Bossius Obol Stack                      -   -   -   -   -   -  # no save has it yet
-  Hyper Obol Stack                        -   -   -   -   -   -  # no save has it yet
-  Sand of Time                            -   -   -   -   -   -  # no save has it yet
-  Hyper Obol Stack Square Edition         -   -   -   -   -   -  # no save has it yet
-  Funny 2hr Fishy                         -   -   -   -   -   -  # no save has it yet
-  Funny 2hr Feather                       -   -   -   -   -   -  # no save has it yet
-  Quality Obol Stack                      -   -   -   -   -   -  # no save has it yet
-  Grassy Gene Spiral                      -   -   -   -   -   -  # no save has it yet
-  YumYumy Gene Spiral                     -   -   -   -   -   -  # no save has it yet
-  Tundric Gene Spiral                     -   -   -   -   -   -  # no save has it yet
-  Nebulous Gene Spiral                    -   -   -   -   -   -  # no save has it yet
-  Statue Coupon                           -   -   -   -   -   -  # no save has it yet
-  Gooey Triangle                          -   -   -   -   -   -  # no save has it yet
-  Gooey Square                            -   -   -   -   -   -  # no save has it yet
-  Quartz Nullagon                         -   -   -   -   -   -  # no save has it yet
-  Quartz Brillagon                        -   -   -   -   -   -  # no save has it yet
-  Gooey Pentagon                          -   -   -   -   -   -  # no save has it yet
-  Gooey Hexagon                           -   -   -   -   -   -  # no save has it yet
-  Gooey Heptagon                          -   -   -   -   -   -  # no save has it yet
-  Gooey Nonagon                           -   -   -   -   -   -  # no save has it yet
-  Quartz Prismagon                        -   -   -   -   -   -  # no save has it yet
-  Quartz Cubigon                          -   -   -   -   -   -  # no save has it yet
-  Quartz Pointagon                        -   -   -   -   -   -  # no save has it yet
-  Quartz Octergon                         -   -   -   -   -   -  # no save has it yet
-  Hat Premiumifier                        -   -   -   -   -   -  # no save has it yet
-  Ice A La Crem                           -   -   -   -   -   -  # no save has it yet
-  Cosmic Storage Chest                    -   -   -   -   -   -  # no save has it yet
-  Garbage                                 -   -   -   -   -   -  # no save has it yet
-  Bottle                                  -   -   -   -   -   -  # no save has it yet
-  Resource Coupon                         -   -   -   -   -   -  # no save has it yet
-  Really Really Resource Coupon           -   -   -   -   -   -  # no save has it yet
-  Keychain Fragment                       -   -   -   -   -   -  # no save has it yet
-  Copper Twine                            -   -   -   -   -   -  # no save has it yet
-  Needledrop                              -   -   -   -   -   -  # no save has it yet
-  Scripticus Spoons                       -   -   -   -   -   -  # no save has it yet
-  Silver Twine                            -   -   -   -   -   -  # no save has it yet
-  Leafy Vines                             -   -   -   -   -   -  # no save has it yet
-  Fun Flags                               -   -   -   -   -   -  # no save has it yet
-  Electrical Wiring                       -   -   -   -   -   -  # no save has it yet
-  Loot Dice                               -   -   -   -   -   -  # no save has it yet
-  Mayonnaise Bottle                       -   -   -   -   -   -  # no save has it yet
-  Motherlode Ore                          -   -   -   -   -   -  # no save has it yet
-  Everlog                                 -   -   -   -   -   -  # no save has it yet
-  Easy Blunderhills NPC Token             -   -   -   -   -   -  # no save has it yet
-  Krunk Token                             -   -   -   -   -   -  # no save has it yet
-  Tiki Chief Token                        -   -   -   -   -   -  # no save has it yet
-  Sproutinald Token                       -   -   -   -   -   -  # no save has it yet
-  Dog Bone Token                          -   -   -   -   -   -  # no save has it yet
-  Dazey Token                             -   -   -   -   -   -  # no save has it yet
-  TP Pete Token                           -   -   -   -   -   -  # no save has it yet
-  Bandit Bob Token                        -   -   -   -   -   -  # no save has it yet
-  Snake Jar Token                         -   -   -   -   -   -  # no save has it yet
-  Whattso Token                           -   -   -   -   -   -  # no save has it yet
-  Cowbo Jones Token                       -   -   -   -   -   -  # no save has it yet
-  Med Blunderhills NPC Token              -   -   -   -   -   -  # no save has it yet
-  Carpetiem Token                         -   -   -   -   -   -  # no save has it yet
-  Goldric Token                           -   -   -   -   -   -  # no save has it yet
-  Fishpaste Token                         -   -   -   -   -   -  # no save has it yet
-  Wellington Token                        -   -   -   -   -   -  # no save has it yet
-  Loominadi Token                         -   -   -   -   -   -  # no save has it yet
-  Djonnut Token                           -   -   -   -   -   -  # no save has it yet
-  Scubidew Token                          -   -   -   -   -   -  # no save has it yet
-  Cattleprod Token                        -   -   -   -   -   -  # no save has it yet
-  Easy Yumyum Dez NPC Token               -   -   -   -   -   -  # no save has it yet
-  Med Yumyum Dez NPC Token                -   -   -   -   -   -  # no save has it yet
-  Hard Blunderhills NPC Token             -   -   -   -   -   -  # no save has it yet
-  Hard Yumyum Dez NPC Token               -   -   -   -   -   -  # no save has it yet
-  Lonely Hunter Token                     -   -   -   -   -   -  # no save has it yet
-  Hoggi Token                             -   -   -   -   -   -  # no save has it yet
-  Bellows Token                           -   -   -   -   -   -  # no save has it yet
-  Snouts Token                            -   -   -   -   -   -  # no save has it yet
-  Shuvelle Token                          -   -   -   -   -   -  # no save has it yet
-  Yondergreen Token                       -   -   -   -   -   -  # no save has it yet
-  Bill Brr Token                          -   -   -   -   -   -  # no save has it yet
-  Crystalswine Token                      -   -   -   -   -   -  # no save has it yet
-  Easy FB Tundra NPC Token                -   -   -   -   -   -  # no save has it yet
-  Stiltzcho Token                         -   -   -   -   -   -  # no save has it yet
-  Med FB Tundra NPC Token                 -   -   -   -   -   -  # no save has it yet
-  Hard FB Tundra NPC Token                -   -   -   -   -   -  # no save has it yet
-  Woodsman Token                          -   -   -   -   -   -  # no save has it yet
-  Glumlee Token                           -   -   -   -   -   -  # no save has it yet
-  Papua Piggea Token                      -   -   -   -   -   -  # no save has it yet
-  FILLER                                  -   -   -   -   -   -  # no save has it yet
-  Funguy Token                            -   -   -   -   -   -  # no save has it yet
-  Obol Fragment                           -   -   -   -   -   -  # no save has it yet
-  Crude Oil                               -   -   -   -   -   -  # no save has it yet
-  Radioactive Waste                       -   -   -   -   -   -  # no save has it yet
-  Glumlee's Special Tutorial Oil          -   -   -   -   -   -  # no save has it yet
-  Eco Friendly Oil                        -   -   -   -   -   -  # no save has it yet
-  Orblet                                  -   -   -   -   -   -  # no save has it yet
-  Palm Tree Log                           -   -   -   -   -   -  # no save has it yet
-  Stone Peanut                            -   -   -   -   -   -  # no save has it yet
-  Aqua Pearl                              -   -   -   -   -   -  # no save has it yet
-  Stained Pearl                           -   -   -   -   -   -  # no save has it yet
-  Shiny Pearl                             -   -   -   -   -   -  # no save has it yet
-  Black Pearl                             -   -   -   -   -   -  # no save has it yet
-  Holy Pearl                              -   -   -   -   -   -  # no save has it yet
-  Divinity Pearl                          -   -   -   -   -   -  # no save has it yet
-  Gem                                     -   -   -   -   -   -  # no save has it yet
-  Dense Water                             -   -   -   -   -   -  # no save has it yet
-  Mining Certificate                      -   -   -   -   -   -  # no save has it yet
-  Green Tea                               -   -   -   -   -   -  # no save has it yet
-  Aether Fragment                         -   -   -   -   -   -  # no save has it yet
-  Arcane Rock                             -   -   -   -   -   -  # no save has it yet
-  Spirit Offering                         -   -   -   -   -   -  # no save has it yet
-  Fishbowl                                -   -   -   -   -   -  # no save has it yet
-  Darts                                   -   -   -   -   -   -  # no save has it yet
-  Unstable Reliquarium                    -   -   -   -   -   -  # no save has it yet
-  Urie's Special Childhood Rock           -   -   -   -   -   -  # no save has it yet
-  Arcane Fragment                         -   -   -   -   -   -  # no save has it yet
-  Stamina Battery                         -   -   -   -   -   -  # no save has it yet
-  Cropfall Basket                         -   -   -   -   -   -  # no save has it yet
-  Forest Villas Flyer Thingy              -   -   -   -   -   -  # no save has it yet
-  Lucky Candle                            -   -   -   -   -   -  # no save has it yet
-  Funny 2hr Slice                         -   -   -   -   -   -  # no save has it yet
-  Giftmas Gift                            -   -   -   -   -   -  # no save has it yet
-  Glimmerwick Candle                      -   -   -   -   -   -  # no save has it yet
-  Half Finished Research Papers           -   -   -   -   -   -  # no save has it yet
-  Edible Coin                             -   -   -   -   -   -  # no save has it yet
-  Pet Bonus Token                         -   -   -   -   -   -  # no save has it yet
-  Skeleton Key                            -   -   -   -   -   -  # no save has it yet
-  Broken Mic                              -   -   -   -   -   -  # no save has it yet
-  Signed Arrest Warrant                   -   -   -   -   -   -  # no save has it yet
-  Birthday Card                           -   -   -   -   -   -  # no save has it yet
-  Pre Crime Box                           -   -   -   -   -   -  # no save has it yet
-  Bag o Nuts                              -   -   -   -   -   -  # no save has it yet
-  IOU one W7 Crystal                      -   -   -   -   -   -  # no save has it yet
-  Giftmas Box                             -   -   -   -   -   -  # no save has it yet
-  Gem Note                                -   -   -   -   -   -  # no save has it yet
-  Player Rating With Letter P             -   -   -   -   -   -  # no save has it yet
-  Player Rating With Letter S             -   -   -   -   -   -  # no save has it yet
-  Googley Eyes                            -   -   -   -   -   -  # no save has it yet
-  Dootjat Eye                             -   -   -   -   -   -  # no save has it yet
-  Silver Antique                          -   -   -   -   -   -  # no save has it yet
-  Guild Giftbox                           -   -   -   -   -   -  # no save has it yet
-  Lovey Dovey Letter                      -   -   -   -   -   -  # no save has it yet
-  Choco Box                               -   -   -   -   -   -  # no save has it yet
-  Egg Capsule                             -   -   -   -   -   -  # no save has it yet
-  Gummy Bunny                             -   -   -   -   -   -  # no save has it yet
-  Goldegg Capsule                         -   -   -   -   -   -  # no save has it yet
-  Sesame Seed                             -   -   -   -   -   -  # no save has it yet
-  The Bobber Challenge Scroll             -   -   -   -   -   -  # no save has it yet
-  Elderly Peanut                          -   -   -   -   -   -  # no save has it yet
-  Pete the Peanut                         -   -   -   -   -   -  # no save has it yet
-  Summer Cooler                           -   -   -   -   -   -  # no save has it yet
-  Class Certificate                       -   -   -   -   -   -  # no save has it yet
-  Beach Oyster                            -   -   -   -   -   -  # no save has it yet
-  Skull Coin                              -   -   -   -   -   -  # no save has it yet
-  Coin                                    -   -   -   -   -   -  # no save has it yet
-  Meat Cube                               -   -   -   -   -   -  # no save has it yet
-  Sand Pile                               -   -   -   -   -   -  # no save has it yet
-  Buried Treasure                         -   -   -   -   -   -  # no save has it yet
-  Dootophone                              -   -   -   -   -   -  # no save has it yet
-  Damaged Cog                             -   -   -   -   -   -  # no save has it yet
-  Refurbished Cog                         -   -   -   -   -   -  # no save has it yet
-  Shuvelle's Vote                         -   -   -   -   -   -  # no save has it yet
-  Scouting Report                         -   -   -   -   -   -  # no save has it yet
-  Yondergreens Vote                       -   -   -   -   -   -  # no save has it yet
-  Bill Brr's Vote                         -   -   -   -   -   -  # no save has it yet
-  Signed Contract                         -   -   -   -   -   -  # no save has it yet
-  Shovel                                  -   -   -   -   -   -  # no save has it yet
-  2021 Giftmas Box                        -   -   -   -   -   -  # no save has it yet
-  Pile of Processor Chips                 -   -   -   -   -   -  # no save has it yet
-  Strung Jewels                           -   -   -   -   -   -  # no save has it yet
-  Bottled World Town Teleport             -   -   -   -   -   -  # no save has it yet
-  Skull                                   -   -   -   -   -   -  # no save has it yet
-  Phone Box                               -   -   -   -   -   -  # no save has it yet
-  Gem Envelope                            -   -   -   -   -   -  # no save has it yet
-  Bottled Wind                            -   -   -   -   -   -  # no save has it yet
-  Gaming Fertilizer                       -   -   -   -   -   -  # no save has it yet
-  Rift Tear                               -   -   -   -   -   -  # no save has it yet
-  Spring Baggie                           -   -   -   -   -   -  # no save has it yet
-  Silver Pocketwatch                      -   -   -   -   -   -  # no save has it yet
-  Gold Pocketwatch                        -   -   -   -   -   -  # no save has it yet
-  Halloween Treat                         -   -   -   -   -   -  # no save has it yet
-  Filler bc I messed up                   -   -   -   -   -   -  # no save has it yet
-  Crop Transfer Ticket                    -   -   -   -   -   -  # no save has it yet
-  Compost Bag                             -   -   -   -   -   -  # no save has it yet
-  Summoner Stone                          -   -   -   -   -   -  # no save has it yet
-  Blue Tome Pages                         -   -   -   -   -   -  # no save has it yet
-  Red Tome Pages                          -   -   -   -   -   -  # no save has it yet
-  Anniversary Box                         -   -   -   -   -   -  # no save has it yet
-  Basketball                              -   -   -   -   -   -  # no save has it yet
-  Secret Map                              -   -   -   -   -   -  # no save has it yet
-  Golden Oyster                           -   -   -   -   -   -  # no save has it yet
-  Event Point                             -   -   -   -   -   -  # no save has it yet
-  Picnic Token                            -   -   -   -   -   -  # no save has it yet
-  Blinding Lantern                        -   -   -   -   -   -  # no save has it yet
-  Golden Gift                             -   -   -   -   -   -  # no save has it yet
-  Giftmas Present                         -   -   -   -   -   -  # no save has it yet
-  Worship Floppy Disc                     -   -   -   -   -   -  # no save has it yet
-  Temple Torch                            -   -   -   -   -   -  # no save has it yet
-  Aethermoon                              -   -   -   -   -   -  # no save has it yet
-  Charred Bone                            -   -   -   -   -   -  # no save has it yet
-  Charred Fragment                        -   -   -   -   -   -  # no save has it yet
-  Prisma Bubble                           -   -   -   -   -   -  # no save has it yet
-  Parchment of Enchantment                -   -   -   -   -   -  # no save has it yet
-  Parchment of Cease and Desist           -   -   -   -   -   -  # no save has it yet
-  Leafy Marble                            -   -   -   -   -   -  # no save has it yet
-  Sandy Marble                            -   -   -   -   -   -  # no save has it yet
-  Frosty Marble                           -   -   -   -   -   -  # no save has it yet
-  Sparkly Marble                          -   -   -   -   -   -  # no save has it yet
-  Toasty Marble                           -   -   -   -   -   -  # no save has it yet
-  Wispy Marble                            -   -   -   -   -   -  # no save has it yet
-  Briny Marble                            -   -   -   -   -   -  # no save has it yet
-  NoNotYety Marble                        -   -   -   -   -   -  # no save has it yet
   Crosslink Salt                          -   -   -   -   -   -  # no save has it yet
   Propagated Salt                         -   -   -   -   -   -  # no save has it yet
-  Anionic Salt                            -   -   -   -   -   -  # no save has it yet
-  Post Office Box Reseto Magnifico        -   -   -   -   -   -  # no save has it yet
-  Talent Point Reset Potion               -   -   -   -   -   -  # no save has it yet
-  Secretstone                             -   -   -   -   -   -  # no save has it yet
-  Sculpting Tools                         -   -   -   -   -   -  # no save has it yet
-  Guilding Tools                          -   -   -   -   -   -  # no save has it yet
-  Onyx Tools                              -   -   -   -   -   -  # no save has it yet
-  Zenith Tools                            -   -   -   -   -   -  # no save has it yet
-  Spice                                   -   -   -   -   -   -  # no save has it yet
-  Starlight Ore                           -   -   -   -   -   -  # no save has it yet
-  Armor Upgrade Stone G                   -   -   -   -   -   -  # no save has it yet
-  Armor Upgrade Stone V                   -   -   -   -   -   -  # no save has it yet
   Armor Upgrade Stone VI                  -   -   -   -   -   -  # no save has it yet
-  Armor Upgrade Stone VII                 -   -   -   -   -   -  # no save has it yet
   Easter Armor Stone                      -   -   -   -   -   -  # no save has it yet
-  Giftmas Helmet Upgrade Stone            -   -   -   -   -   -  # no save has it yet
-  Warped Helmet Upgrade Stone             -   -   -   -   -   -  # no save has it yet
-  Premium AGI Stone                       -   -   -   -   -   -  # no save has it yet
-  Premium LUK Stone                       -   -   -   -   -   -  # no save has it yet
-  Premium Stone Refunder                  -   -   -   -   -   -  # no save has it yet
-  Premium STR Stone                       -   -   -   -   -   -  # no save has it yet
-  Premium Bonus Swapper                   -   -   -   -   -   -  # no save has it yet
-  Premium WIS Stone                       -   -   -   -   -   -  # no save has it yet
-  Giftmas Tool Upgrade Stone              -   -   -   -   -   -  # no save has it yet
-  Tool Upgrade Stone III                  -   -   -   -   -   -  # no save has it yet
-  Tool Upgrade Stone IV                   -   -   -   -   -   -  # no save has it yet
-  Tool Upgrade Stone V                    -   -   -   -   -   -  # no save has it yet
-  Tool Upgrade Stone VI                   -   -   -   -   -   -  # no save has it yet
-  Tool Upgrade Stone VII                  -   -   -   -   -   -  # no save has it yet
   Easter Tool Upgrade Stone               -   -   -   -   -   -  # no save has it yet
-  Tempest Bow Stone 60 PCT                -   -   -   -   -   -  # no save has it yet
-  Tempest Bow Stone 30 PCT                -   -   -   -   -   -  # no save has it yet
-  Tempest Bow Stone 10 PCT                -   -   -   -   -   -  # no save has it yet
-  Tempest Ring Stone 60 PCT               -   -   -   -   -   -  # no save has it yet
-  Tempest Ring Stone 30 PCT               -   -   -   -   -   -  # no save has it yet
-  Tempest Ring Stone 10 PCT               -   -   -   -   -   -  # no save has it yet
-  Weapon Upgrade Stone C                  -   -   -   -   -   -  # no save has it yet
-  Weapon Upgrade Stone V                  -   -   -   -   -   -  # no save has it yet
-  Warped Weapon Upgrade Stone             -   -   -   -   -   -  # no save has it yet
-  Weapon Upgrade Stone VI                 -   -   -   -   -   -  # no save has it yet
-  Weapon Upgrade Stone VII                -   -   -   -   -   -  # no save has it yet
   Easter Weapon Stone                     -   -   -   -   -   -  # no save has it yet
-  Singulon                                -   -   -   -   -   -  # no save has it yet
-  Doubulon                                -   -   -   -   -   -  # no save has it yet
-  Verdon                                  -   -   -   -   -   -  # no save has it yet
-  Bludon                                  -   -   -   -   -   -  # no save has it yet
-  Massivon                                -   -   -   -   -   -  # no save has it yet
-  Aurion                                  -   -   -   -   -   -  # no save has it yet
-  Talent Point Tab 1                      -   -   -   -   -   -  # no save has it yet
-  Talent Point Tab 2                      -   -   -   -   -   -  # no save has it yet
-  Talent Point Tab 3                      -   -   -   -   -   -  # no save has it yet
-  Talent Point Tab 4                      -   -   -   -   -   -  # no save has it yet
-  Talent Point Tab 5                      -   -   -   -   -   -  # no save has it yet
-  Talent Point Special Tab                -   -   -   -   -   -  # no save has it yet
-  1 HR Time Candy                         -   -   -   -   -   -  # no save has it yet
-  Spirit Time Candy                       -   -   -   -   -   -  # no save has it yet
-  2 HR Time Candy                         -   -   -   -   -   -  # no save has it yet
-  4 HR Time Candy                         -   -   -   -   -   -  # no save has it yet
-  12 HR Time Candy                        -   -   -   -   -   -  # no save has it yet
-  24 HR Time Candy                        -   -   -   -   -   -  # no save has it yet
-  72 HR Time Candy                        -   -   -   -   -   -  # no save has it yet
-  Steamy Time Candy                       -   -   -   -   -   -  # no save has it yet
-  Spooky Time Candy                       -   -   -   -   -   -  # no save has it yet
-  Cosmic Time Candy                       -   -   -   -   -   -  # no save has it yet
-  Colosseum Ticket                        -   -   -   -   -   -  # no save has it yet
-  Broken Weapon                           -   -   -   -   -   -  # no save has it yet
-  Dried Paint Blob                        -   -   -   -   -   -  # no save has it yet
-  Engraved Bullet                         -   -   -   -   -   -  # no save has it yet
-  Wispy Tree Log                          -   -   -   -   -   -  # no save has it yet
-  Error Item                              -   -   -   -   -   -  # no save has it yet
-  Medallion                               -   -   -   -   -   -  # no save has it yet
-  Wormie Weight                           -   -   -   -   -   -  # no save has it yet
-  Dynamite                                -   -   -   -   -   -  # no save has it yet
-  Not Dynamite                            -   -   -   -   -   -  # no save has it yet
-  Triple Threat                           -   -   -   -   -   -  # no save has it yet
-  Fat Albert                              -   -   -   -   -   -  # no save has it yet
-  Iron Hook                               -   -   -   -   -   -  # no save has it yet
-  One Pound of Steel                      -   -   -   -   -   -  # no save has it yet
-  One Pound of Feathers                   -   -   -   -   -   -  # no save has it yet
-  Literal Elephant                        -   -   -   -   -   -  # no save has it yet
-  Anvil Reset Whetstone                   -   -   -   -   -   -  # no save has it yet
-  Experience                              -   -   -   -   -   -  # no save has it yet
-  Skill Experience                        -   -   -   -   -   -  # no save has it yet
   Pirate Ship Figurine                    -   -   -   -   -   -  # no save has it yet
 
 secret-path                             # Secret Class Path

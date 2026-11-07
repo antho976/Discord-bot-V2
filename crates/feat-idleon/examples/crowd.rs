@@ -66,9 +66,19 @@ fn main() {
     let mut ids: HashMap<String, u32> = HashMap::new();
     let mut read: Vec<(u8, f64, std::time::SystemTime, Levels)> = Vec::new();
     let mut skipped = 0;
+    // Items some save has greenstacked or holds 1M of, for greenstacks.txt.
+    let mut stacked: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for p in std::env::args().skip(1) {
         let Ok(text) = std::fs::read_to_string(&p) else { skipped += 1; continue };
         let Ok(save) = Save::parse(&text) else { skipped += 1; continue };
+        let list = |key: &str| save.get(key).and_then(|v| v.as_array()).map(|a| a.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect::<Vec<_>>()).unwrap_or_default();
+        stacked.extend(list("GreenStacks").into_iter().filter(|id| !id.is_empty()));
+        let qty = save.numbers("ChestQuantity", &[]);
+        let mut held: HashMap<String, f64> = HashMap::new();
+        for (k, id) in list("ChestOrder").into_iter().enumerate() {
+            *held.entry(id).or_default() += qty.get(k).copied().unwrap_or(0.0);
+        }
+        stacked.extend(held.into_iter().filter(|(id, n)| !id.is_empty() && *n >= 1e6).map(|(id, _)| id));
         let when = std::fs::metadata(&p).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
         let world = feat_idleon::world_reached(&save);
         let levels: f64 = (0..save.characters()).map(|i| save.numbers(&format!("Lv0_{i}"), &[]).first().copied().unwrap_or(0.0).max(0.0)).sum();
@@ -160,94 +170,104 @@ fn main() {
                 continue;
             }
         }
-        // The base's columns for stages short of saves, matched to these rows.
-        let maxes: HashMap<&str, f64> = m.items.iter().chain(&m.later).filter(|i| i.raw.is_none() && i.max > 0.0).map(|i| (i.name.as_str(), i.max)).collect();
-        let from_base: HashMap<usize, (Vec<Option<f64>>, Vec<f64>)> = base
-            .get(m.key)
-            .map(|b| {
-                b.stages
-                    .iter()
-                    .filter(|&&s| counts[s] < MIN_SAVES)
-                    .map(|&s| (s, base_column(b, s, &rows, &maxes, m.key, &mut unmatched, &mut fuzzy)))
-                    .collect()
-            })
-            .unwrap_or_default();
-        // Columns: stages with enough saves, the base's for stages without, and any stage with a
-        // hand edit in it.
-        let mut cols = stages.clone();
-        cols.extend(from_base.keys().copied());
-        if let Some(b) = had {
-            cols.extend(b.stages.iter().copied());
-        }
-        cols.sort_unstable();
-        cols.dedup();
-        if cols.is_empty() {
-            continue;
-        }
+        // Columns, every row's cell per column, how much each row matters there, whether any
+        // save has it, and the base columns used.
+        let (cols, table, prio, anyone, from_base) = if crowd::BEST.contains(&m.key) {
+            let (cols, table) = best_table(m, &rows, &ids, &seen);
+            let anyone = table.iter().map(|r| r.iter().any(Option::is_some)).collect();
+            let prio = vec![vec![0.0; cols.len()]; rows.len()];
+            (cols, table, prio, anyone, HashMap::new())
+        } else {
+            // The base's columns for stages short of saves, matched to these rows.
+            let maxes: HashMap<&str, f64> = m.items.iter().chain(&m.later).filter(|i| i.raw.is_none() && i.max > 0.0).map(|i| (i.name.as_str(), i.max)).collect();
+            let from_base: HashMap<usize, (Vec<Option<f64>>, Vec<f64>)> = base
+                .get(m.key)
+                .map(|b| {
+                    b.stages
+                        .iter()
+                        .filter(|&&s| counts[s] < MIN_SAVES)
+                        .map(|&s| (s, base_column(b, s, &rows, &maxes, m.key, &mut unmatched, &mut fuzzy)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            // Columns: stages with enough saves, the base's for stages without, and any stage with a
+            // hand edit in it.
+            let mut cols = stages.clone();
+            cols.extend(from_base.keys().copied());
+            if let Some(b) = had {
+                cols.extend(b.stages.iter().copied());
+            }
+            cols.sort_unstable();
+            cols.dedup();
+            if cols.is_empty() {
+                continue;
+            }
 
+            let row_ids: Vec<Option<u32>> = rows.iter().map(|n| ids.get(n).copied()).collect();
+            let level = |x: &Seen, r: usize| row_ids[r].and_then(|id| x.levels.get(m.key)?.get(&id).copied()).unwrap_or(0.0);
+            let anyone: Vec<bool> = (0..rows.len()).map(|r| seen.iter().any(|x| level(x, r) > 0.0)).collect();
+            let mut table: Vec<Vec<Option<f64>>> = vec![vec![None; cols.len()]; rows.len()];
+            // How much each row matters at each stage, higher first: the share of the stage's saves
+            // that have it, or for a base column, how early AutoReview's tiers ask for it.
+            let mut prio: Vec<Vec<f64>> = vec![vec![0.0; cols.len()]; rows.len()];
+            let mut floor = vec![0.0f64; rows.len()];
+            for (k, &s) in cols.iter().enumerate() {
+                let here: Vec<&Seen> = match s.checked_sub(crowd::ENDGAME) {
+                    Some(0 | 1) => seen.iter().filter(|x| x.stage == late7).collect(),
+                    Some(_) => seen.iter().collect(),
+                    None => seen.iter().filter(|x| x.stage == s).collect(),
+                };
+                let n = here.len();
+                if n < MIN_SAVES {
+                    if let Some((col, rank)) = from_base.get(&s) {
+                        for r in 0..rows.len() {
+                            table[r][k] = col[r];
+                            prio[r][k] = -rank[r];
+                        }
+                    }
+                    continue;
+                }
+                // lv[r][j]: row r's level in save j; sorted[r]: highest first.
+                let lv: Vec<Vec<f32>> = (0..rows.len()).map(|r| here.iter().map(|x| level(x, r)).collect()).collect();
+                let sorted: Vec<Vec<f32>> = lv.iter().map(|v| { let mut v = v.clone(); v.sort_by(|a, b| b.total_cmp(a)); v }).collect();
+                // Each item asks for the level a share `q` of the stage has. Starting from half,
+                // `q` rises (asking less, and dropping what fewer players have started) until at
+                // least half the stage has the whole tier done: a tier is what a typical player at
+                // that stage has all of, not each item's own median.
+                let mut targets = floor.clone();
+                let mut chose = 1.0;
+                // The endgame: per item, the level the top quarter of Late World 7 has, then the top
+                // tenth, then the highest any save has; never under the tier before, so nothing
+                // there is already asked for by World 7.
+                if let Some(e) = s.checked_sub(crowd::ENDGAME) {
+                    let top = [0.25, 0.10, 0.0][e.min(2)];
+                    let at = ((top * n as f64).ceil() as usize).clamp(1, n) - 1;
+                    targets = (0..rows.len()).map(|r| crowd::nice(f64::from(sorted[r][at])).max(floor[r]).min(maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX))).collect();
+                }
+                for q in (10..=20).map(|t| f64::from(t) * 0.05).filter(|_| !crowd::endgame(s)) {
+                    chose = q;
+                    let at = ((q * n as f64).ceil() as usize).clamp(1, n) - 1;
+                    targets = (0..rows.len()).map(|r| crowd::nice(f64::from(sorted[r][at])).max(floor[r]).min(maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX))).collect();
+                    let met = (0..n).filter(|&j| (0..rows.len()).all(|r| targets[r] <= 0.0 || f64::from(lv[r][j]) >= targets[r])).count();
+                    if met * 2 >= n {
+                        break;
+                    }
+                }
+                if std::env::var("VERBOSE").is_ok() {
+                    let asked = targets.iter().filter(|t| **t > 0.0).count();
+                    eprintln!("{:<28} {}  q {:.2}  asks {asked} of {}", m.key, STAGES[s], chose, rows.len());
+                }
+                for r in 0..rows.len() {
+                    table[r][k] = (targets[r] > 0.0).then_some(targets[r]);
+                    prio[r][k] = (0..n).filter(|&j| f64::from(lv[r][j]) >= targets[r]).count() as f64 / n as f64;
+                }
+                floor = targets;
+            }
+            (cols, table, prio, anyone, from_base)
+        };
         let mut gen_block = Block::new(cols.clone());
         let mut block = Block::new(cols.clone());
         block.off = had.is_some_and(|b| b.off);
-        let row_ids: Vec<Option<u32>> = rows.iter().map(|n| ids.get(n).copied()).collect();
-        let level = |x: &Seen, r: usize| row_ids[r].and_then(|id| x.levels.get(m.key)?.get(&id).copied()).unwrap_or(0.0);
-        let anyone: Vec<bool> = (0..rows.len()).map(|r| seen.iter().any(|x| level(x, r) > 0.0)).collect();
-        let mut table: Vec<Vec<Option<f64>>> = vec![vec![None; cols.len()]; rows.len()];
-        // How much each row matters at each stage, higher first: the share of the stage's saves
-        // that have it, or for a base column, how early AutoReview's tiers ask for it.
-        let mut prio: Vec<Vec<f64>> = vec![vec![0.0; cols.len()]; rows.len()];
-        let mut floor = vec![0.0f64; rows.len()];
-        for (k, &s) in cols.iter().enumerate() {
-            let here: Vec<&Seen> = match s.checked_sub(crowd::ENDGAME) {
-                Some(0 | 1) => seen.iter().filter(|x| x.stage == late7).collect(),
-                Some(_) => seen.iter().collect(),
-                None => seen.iter().filter(|x| x.stage == s).collect(),
-            };
-            let n = here.len();
-            if n < MIN_SAVES {
-                if let Some((col, rank)) = from_base.get(&s) {
-                    for r in 0..rows.len() {
-                        table[r][k] = col[r];
-                        prio[r][k] = -rank[r];
-                    }
-                }
-                continue;
-            }
-            // lv[r][j]: row r's level in save j; sorted[r]: highest first.
-            let lv: Vec<Vec<f32>> = (0..rows.len()).map(|r| here.iter().map(|x| level(x, r)).collect()).collect();
-            let sorted: Vec<Vec<f32>> = lv.iter().map(|v| { let mut v = v.clone(); v.sort_by(|a, b| b.total_cmp(a)); v }).collect();
-            // Each item asks for the level a share `q` of the stage has. Starting from half,
-            // `q` rises (asking less, and dropping what fewer players have started) until at
-            // least half the stage has the whole tier done: a tier is what a typical player at
-            // that stage has all of, not each item's own median.
-            let mut targets = floor.clone();
-            let mut chose = 1.0;
-            // The endgame: per item, the level the top quarter of Late World 7 has, then the top
-            // tenth, then the highest any save has; never under the tier before, so nothing
-            // there is already asked for by World 7.
-            if let Some(e) = s.checked_sub(crowd::ENDGAME) {
-                let top = [0.25, 0.10, 0.0][e.min(2)];
-                let at = ((top * n as f64).ceil() as usize).clamp(1, n) - 1;
-                targets = (0..rows.len()).map(|r| crowd::nice(f64::from(sorted[r][at])).max(floor[r]).min(maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX))).collect();
-            }
-            for q in (10..=20).map(|t| f64::from(t) * 0.05).filter(|_| !crowd::endgame(s)) {
-                chose = q;
-                let at = ((q * n as f64).ceil() as usize).clamp(1, n) - 1;
-                targets = (0..rows.len()).map(|r| crowd::nice(f64::from(sorted[r][at])).max(floor[r]).min(maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX))).collect();
-                let met = (0..n).filter(|&j| (0..rows.len()).all(|r| targets[r] <= 0.0 || f64::from(lv[r][j]) >= targets[r])).count();
-                if met * 2 >= n {
-                    break;
-                }
-            }
-            if std::env::var("VERBOSE").is_ok() {
-                let asked = targets.iter().filter(|t| **t > 0.0).count();
-                eprintln!("{:<28} {}  q {:.2}  asks {asked} of {}", m.key, STAGES[s], chose, rows.len());
-            }
-            for r in 0..rows.len() {
-                table[r][k] = (targets[r] > 0.0).then_some(targets[r]);
-                prio[r][k] = (0..n).filter(|&j| f64::from(lv[r][j]) >= targets[r]).count() as f64 / n as f64;
-            }
-            floor = targets;
-        }
         // Rows most important first: by the first stage that asks for them, then by how much
         // they matter there, then the game's order. Each stage's parts follow this order.
         let mut by_prio: Vec<usize> = (0..rows.len()).collect();
@@ -324,6 +344,7 @@ fn main() {
     if !per_account.is_empty() {
         eprintln!("left out, their items differ per account: {}", per_account.join(", "));
     }
+    add_greenstacks(&format!("{dir}/greenstacks.txt"), &stacked);
     std::fs::write(&path, out).expect("write crowd.txt");
     std::fs::write(&gen_path, gen_out).expect("write crowd.gen.txt");
     eprintln!("wrote {written} mechanics from {total} saves to {path}; {hand_kept} rows keep hand edits");
@@ -381,6 +402,59 @@ fn base_column(b: &Block, stage: usize, rows: &[String], maxes: &HashMap<&str, f
         }
     }
     (col, rank)
+}
+
+/// Share of a `crowd::BEST` item's best level asked for at `stage`, for an item from `world`:
+/// nothing before the world opens, then rising with the square of the stages since, to the
+/// whole best at the last stage (`max`). Squared, so the early stages after it opens ask for
+/// little and most of the climb comes late, as levels get easier with more of the game open.
+fn best_curve(world: u8, stage: usize) -> f64 {
+    let open = usize::from(world.clamp(1, 7) - 1) * 3;
+    if stage < open {
+        return 0.0;
+    }
+    let f = (stage - open + 1) as f64 / (STAGES.len() - open) as f64;
+    f * f
+}
+
+/// A `crowd::BEST` mechanic's table: every stage a column, each cell its share (`best_curve`)
+/// of the highest level any save has for that row.
+fn best_table(m: &feat_idleon::review::Mechanic, rows: &[String], ids: &HashMap<String, u32>, seen: &[Seen]) -> (Vec<usize>, Vec<Vec<Option<f64>>>) {
+    let world: HashMap<&str, u8> = m.items.iter().chain(&m.later).map(|i| (i.name.as_str(), i.world.unwrap_or(m.world))).collect();
+    let cols: Vec<usize> = (0..STAGES.len()).collect();
+    let table = rows
+        .iter()
+        .map(|name| {
+            let best = ids.get(name).map_or(0.0, |id| seen.iter().filter_map(|x| x.levels.get(m.key)?.get(id).copied()).fold(0.0f32, f32::max));
+            let w = world.get(name.as_str()).copied().unwrap_or(m.world);
+            cols.iter().map(|&s| {
+                let f = best_curve(w, s);
+                (f > 0.0 && best > 0.0).then(|| crowd::nice(f64::from(best) * f).max(1.0))
+            }).collect()
+        })
+        .collect();
+    (cols, table)
+}
+
+/// Adds to `greenstacks.txt` the stackable items some save has greenstacked or holds 1M of
+/// that it doesn't list yet; a `-ID` line keeps an item out.
+fn add_greenstacks(path: &str, stacked: &std::collections::BTreeSet<String>) {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let named: std::collections::HashSet<&str> = text.lines().map(|l| l.split('#').next().unwrap_or("").trim().trim_start_matches('-').trim()).filter(|l| !l.is_empty()).collect();
+    let stackable: std::collections::HashSet<&str> = feat_idleon::stackable_items().into_iter().collect();
+    let new: Vec<&String> = stacked.iter().filter(|id| stackable.contains(id.as_str()) && !named.contains(id.as_str())).collect();
+    if new.is_empty() {
+        return;
+    }
+    let mut out = text.clone();
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    for id in &new {
+        let _ = writeln!(out, "{id:<24}# {}", feat_idleon::item_name(id).unwrap_or(id));
+    }
+    std::fs::write(path, out).expect("write greenstacks.txt");
+    eprintln!("greenstacks.txt: added {} ({})", new.len(), new.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", "));
 }
 
 fn write_block(out: &mut String, key: &str, name: &str, note: &str, b: &Block, lines: &[(String, Vec<Option<f64>>, &str)]) {
