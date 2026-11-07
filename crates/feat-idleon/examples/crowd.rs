@@ -157,7 +157,7 @@ fn main() {
         }
         // The base's columns for stages short of saves, matched to these rows.
         let maxes: HashMap<&str, f64> = m.items.iter().chain(&m.later).filter(|i| i.raw.is_none() && i.max > 0.0).map(|i| (i.name.as_str(), i.max)).collect();
-        let from_base: HashMap<usize, Vec<Option<f64>>> = base
+        let from_base: HashMap<usize, (Vec<Option<f64>>, Vec<f64>)> = base
             .get(m.key)
             .map(|b| {
                 b.stages
@@ -187,14 +187,18 @@ fn main() {
         let level = |x: &Seen, r: usize| row_ids[r].and_then(|id| x.levels.get(m.key)?.get(&id).copied()).unwrap_or(0.0);
         let anyone: Vec<bool> = (0..rows.len()).map(|r| seen.iter().any(|x| level(x, r) > 0.0)).collect();
         let mut table: Vec<Vec<Option<f64>>> = vec![vec![None; cols.len()]; rows.len()];
+        // How much each row matters at each stage, higher first: the share of the stage's saves
+        // that have it, or for a base column, how early AutoReview's tiers ask for it.
+        let mut prio: Vec<Vec<f64>> = vec![vec![0.0; cols.len()]; rows.len()];
         let mut floor = vec![0.0f64; rows.len()];
         for (k, &s) in cols.iter().enumerate() {
             let here: Vec<&Seen> = seen.iter().filter(|x| x.stage == s).collect();
             let n = here.len();
             if n < MIN_SAVES {
-                if let Some(col) = from_base.get(&s) {
+                if let Some((col, rank)) = from_base.get(&s) {
                     for r in 0..rows.len() {
                         table[r][k] = col[r];
+                        prio[r][k] = -rank[r];
                     }
                 }
                 continue;
@@ -223,11 +227,21 @@ fn main() {
             }
             for r in 0..rows.len() {
                 table[r][k] = (targets[r] > 0.0).then_some(targets[r]);
+                prio[r][k] = (0..n).filter(|&j| f64::from(lv[r][j]) >= targets[r]).count() as f64 / n as f64;
             }
             floor = targets;
         }
+        // Rows most important first: by the first stage that asks for them, then by how much
+        // they matter there, then the game's order. Each stage's parts follow this order.
+        let mut by_prio: Vec<usize> = (0..rows.len()).collect();
+        let first = |r: usize| table[r].iter().position(Option::is_some).unwrap_or(usize::MAX);
+        by_prio.sort_by(|&a, &b| first(a).cmp(&first(b)).then_with(|| {
+            let k = first(a);
+            if k == usize::MAX { std::cmp::Ordering::Equal } else { prio[b][k].total_cmp(&prio[a][k]) }
+        }).then(a.cmp(&b)));
         let mut lines = Vec::new();
-        for (r, name) in rows.iter().enumerate() {
+        for r in by_prio {
+            let name = &rows[r];
             let anyone = anyone[r];
             let generated = table[r].clone();
             let mut cells = generated.clone();
@@ -301,8 +315,11 @@ fn main() {
 /// One base column for these rows: `@first N` is the first N rows (found, level 1),
 /// `@first-max N` the first N at their max, neither counting a `!Name`; named rows match by name, letters
 /// and digits only, else by the most words in common. A cell of 1e15 is the item's max.
-fn base_column(b: &Block, stage: usize, rows: &[String], maxes: &HashMap<&str, f64>, key: &str, unmatched: &mut Vec<String>, fuzzy: &mut Vec<String>) -> Vec<Option<f64>> {
+fn base_column(b: &Block, stage: usize, rows: &[String], maxes: &HashMap<&str, f64>, key: &str, unmatched: &mut Vec<String>, fuzzy: &mut Vec<String>) -> (Vec<Option<f64>>, Vec<f64>) {
     let mut col: Vec<Option<f64>> = vec![None; rows.len()];
+    // Where each row comes in AutoReview's tiers (lower first): their row order, then counts in
+    // game order after them.
+    let mut rank: Vec<f64> = (0..rows.len()).map(|r| (b.rows.len() + r) as f64).collect();
     let norm = |s: &str| s.chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_lowercase();
     let words = |s: &str| s.split(|c: char| !c.is_ascii_alphanumeric()).filter(|w| w.len() >= 3).map(str::to_lowercase).collect::<Vec<_>>();
     let at_max = |r: usize| maxes.get(rows[r].as_str()).copied();
@@ -315,7 +332,7 @@ fn base_column(b: &Block, stage: usize, rows: &[String], maxes: &HashMap<&str, f
             col[r] = if max { at_max(r).or(Some(1.0)) } else { Some(col[r].unwrap_or(0.0).max(1.0)) };
         }
     }
-    for (name, _) in &b.rows {
+    for (pos, (name, _)) in b.rows.iter().enumerate() {
         if name.starts_with(['@', '!']) {
             continue;
         }
@@ -336,6 +353,7 @@ fn base_column(b: &Block, stage: usize, rows: &[String], maxes: &HashMap<&str, f
             Some(r) => {
                 let v = if v >= 1e15 { at_max(r).unwrap_or(1.0) } else { v.min(at_max(r).unwrap_or(f64::MAX)) };
                 col[r] = Some(col[r].unwrap_or(0.0).max(v));
+                rank[r] = rank[r].min(pos as f64);
             }
             None => {
                 let note = format!("{key}: {name}");
@@ -345,7 +363,7 @@ fn base_column(b: &Block, stage: usize, rows: &[String], maxes: &HashMap<&str, f
             }
         }
     }
-    col
+    (col, rank)
 }
 
 fn write_block(out: &mut String, key: &str, name: &str, note: &str, b: &Block, lines: &[(String, Vec<Option<f64>>, &str)]) {

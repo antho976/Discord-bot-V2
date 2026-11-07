@@ -101,6 +101,12 @@ impl Item {
     }
 }
 
+/// A count ladder adds about this many at a time, in at most this many tiers.
+const COUNT_STEP: usize = 5;
+const MAX_COUNT_TIERS: usize = 12;
+/// The most parts one milestone of a level ladder becomes.
+const MAX_LEVEL_PARTS: usize = 4;
+
 /// How a mechanic's progress adds up.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Count {
@@ -184,12 +190,15 @@ impl Mechanic {
         v
     }
 
-    /// The ladder, easiest rung first. Empty for mechanics with no max. Three kinds:
-    /// - the game's own tiers (`tier_names`): every item at tier 1, then 2...;
-    /// - things you buy or find once (`Count::Done`, or every max 1): the first fifth in game
-    ///   order (roughly the order the game unlocks them), then two fifths, up to all;
-    /// - levels: every item started, then a quarter, half, three quarters of its own max, then
-    ///   maxed. Per item, so one expensive item holds back only its own share.
+    /// The ladder, easiest rung first. Empty for mechanics with no max. With a table from other
+    /// players' saves (`crowd`), a tier per stage of the game. Without, three kinds, each in
+    /// small steps so a tier is a plan, not a wall:
+    /// - things you buy or find once (`Count::Done`, or every max 1): about five more at a time
+    ///   (at most 12 tiers), any of them, so one rare item never holds every later tier back;
+    /// - the game's own tiers (`tier_names`): Gold, then Onyx..., each in parts of about 8
+    ///   items in game order (roughly the order the game unlocks them);
+    /// - levels: started, a quarter, half, three quarters of each item's own max, then maxed,
+    ///   each in parts the same way. Per item, so one expensive item holds back only its share.
     pub fn tiers(&self) -> Vec<Tier> {
         if let Some(l) = &self.crowd {
             return self.crowd_tiers(l).into_iter().map(|(t, _)| t).collect();
@@ -198,11 +207,9 @@ impl Mechanic {
             return Vec::new();
         }
         let n = self.items.len();
-        // Things you get once: a count of how many, in fifths. Which ones doesn't matter, so one
-        // rare item never holds every later tier back.
         if self.tier_names.is_none() && (self.count == Count::Done || self.items.iter().all(|i| i.max <= 1.0)) {
             let done = self.items.iter().filter(|i| i.done()).count();
-            let steps = n.min(5);
+            let steps = n.div_ceil(COUNT_STEP).clamp(n.min(5), MAX_COUNT_TIERS);
             let mut out: Vec<Tier> = Vec::new();
             for k in 1..=steps {
                 let need = (n * k).div_ceil(steps);
@@ -214,27 +221,39 @@ impl Mechanic {
             }
             return out;
         }
-        let mut rungs: Vec<(String, Vec<f64>)> = Vec::new();
+        // Each milestone: (its name, every item's target at it).
+        let mut steps: Vec<(String, Vec<f64>)> = Vec::new();
         if let Some(names) = &self.tier_names {
             for (k, name) in names.iter().enumerate() {
                 let lv = (k + 1) as f64;
-                rungs.push((format!("All at {name}"), self.items.iter().map(|i| lv.min(i.max)).collect()));
+                steps.push((name.clone(), self.items.iter().map(|i| lv.min(i.max)).collect()));
             }
         } else {
             let same = self.items.iter().all(|i| i.max == self.items[0].max);
-            for (f, word) in [(0.0, "started"), (0.25, "at a quarter of the max"), (0.5, "at half the max"), (0.75, "at three quarters of the max"), (1.0, "maxed")] {
+            for (f, word) in [(0.0, "Started"), (0.25, "A quarter of the max"), (0.5, "Half the max"), (0.75, "Three quarters of the max"), (1.0, "Maxed")] {
                 let targets: Vec<f64> = self.items.iter().map(|i| if f == 0.0 { i.max.min(1.0) } else { (i.max * f).ceil().max(1.0) }).collect();
                 let label = match (n, same) {
                     (1, _) if f == 0.0 => "Started".to_string(),
                     (1, _) => format!("{} {}", crate::page::num(targets[0]), self.unit),
-                    (_, true) if f == 1.0 => format!("All at the max, {}", crate::page::num(targets[0])),
-                    (_, true) if f > 0.0 => format!("All to Lv {}", crate::page::num(targets[0])),
-                    _ => format!("All {word}"),
+                    (_, true) if f == 1.0 => format!("Max, Lv {}", crate::page::num(targets[0])),
+                    (_, true) if f > 0.0 => format!("Lv {}", crate::page::num(targets[0])),
+                    _ => word.to_string(),
                 };
-                rungs.push((label, targets));
+                steps.push((label, targets));
             }
         }
-        rungs.dedup_by(|b, a| a.1 == b.1);
+        steps.dedup_by(|b, a| a.1 == b.1);
+        let order: Vec<usize> = (0..n).collect();
+        let mut rungs: Vec<(String, Vec<f64>)> = Vec::new();
+        let mut prev = vec![0.0; n];
+        for (name, targets) in steps {
+            let parts = crate::crowd::split(&prev, &targets, &order, crate::crowd::PART, MAX_LEVEL_PARTS);
+            let k = parts.len();
+            for (p, t) in parts.into_iter().enumerate() {
+                rungs.push((if k == 1 { name.clone() } else { format!("{name} · {} of {k}", p + 1) }, t));
+            }
+            prev = targets;
+        }
         rungs
             .into_iter()
             .map(|(label, targets)| {
@@ -254,11 +273,11 @@ impl Mechanic {
             let met = asked().filter(|(i, t)| i.crowd_level() >= **t).count();
             Tier { label, targets: Some(targets), met, need }
         };
-        let mut out: Vec<(Tier, Option<u8>)> = l.rungs.iter().map(|(label, w, t)| (tier(label.clone(), t.clone()), Some(*w))).collect();
+        let mut out: Vec<(Tier, Option<u8>)> = l.rungs.iter().map(|r| (tier(r.label.clone(), r.targets.clone()), Some(r.world))).collect();
         // Items with a real level of their own have no max in those units (stamps, bubbles).
         if self.count != Count::Open && self.items.iter().any(|i| i.max > 0.0) && self.items.iter().all(|i| i.raw.is_none()) {
             let max: Vec<f64> = self.items.iter().map(|i| i.max).collect();
-            if l.rungs.last().is_none_or(|r| r.2 != max) {
+            if l.rungs.last().is_none_or(|r| r.targets != max) {
                 out.push((tier("Everything maxed".to_string(), max), None));
             }
         }
@@ -307,6 +326,16 @@ impl Mechanic {
     }
 }
 
+/// Something the ranking expects by your world that you don't have yet.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Owed {
+    pub mechanic: usize,
+    /// Index into the mechanic's `items`.
+    pub item: usize,
+    /// The level that stage asks for.
+    pub target: f64,
+}
+
 /// Why a mechanic made the do-next list.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Why {
@@ -351,7 +380,7 @@ impl Review {
             for m in &mut mechanics {
                 // Only when the table has a tier for your world or an earlier one: until there are
                 // saves from earlier worlds, an account short of World 7 keeps the game-max ladder.
-                m.crowd = table.get(m.key).and_then(|b| Ladder::new(b, &m.items)).filter(|l| l.rungs.iter().any(|r| r.1 <= world));
+                m.crowd = table.get(m.key).and_then(|b| Ladder::new(b, &m.items)).filter(|l| l.rungs.iter().any(|r| r.world <= world));
             }
         });
         crate::expected::with(|worlds| {
@@ -387,6 +416,38 @@ impl Review {
     /// One world's average share, `None` when it has no mechanics with a max.
     pub fn world_share(&self, world: u8) -> Option<f64> {
         world_avg(&self.mechanics, world)
+    }
+
+    /// What the ranking (`crowd.txt`) expects by your world that you don't have, from every
+    /// mechanic and every world, grouped by the stage that first asks for it (index into
+    /// `crowd::STAGES`), earliest stage first. Each item shows once, under the earliest stage
+    /// it falls short of, with that stage's level. Inside a stage: what you can do now first,
+    /// then the rest, the locked ones last, in game order.
+    pub fn should_have(&self) -> Vec<(usize, Vec<Owed>)> {
+        let mut by: std::collections::BTreeMap<usize, Vec<Owed>> = std::collections::BTreeMap::new();
+        for (mi, m) in self.mechanics.iter().enumerate() {
+            let Some(l) = &m.crowd else { continue };
+            let mut seen = vec![false; m.items.len()];
+            for r in l.rungs.iter().filter(|r| r.world <= self.world) {
+                for (ii, (it, &t)) in m.items.iter().zip(&r.targets).enumerate() {
+                    if t > 0.0 && !seen[ii] && m.tier_level(it) < t {
+                        seen[ii] = true;
+                        by.entry(r.stage).or_default().push(Owed { mechanic: mi, item: ii, target: t });
+                    }
+                }
+            }
+        }
+        let rank = |o: &Owed| match self.mechanics[o.mechanic].items[o.item].state {
+            State::Ready => 0,
+            State::Unknown => 1,
+            State::Locked => 2,
+        };
+        by.into_iter()
+            .map(|(stage, mut v)| {
+                v.sort_by_key(|o| (rank(o), self.mechanics[o.mechanic].world.wrapping_sub(1), o.mechanic));
+                (stage, v)
+            })
+            .collect()
     }
 
     /// Mechanics with a tier overdue for the world you're in, grouped by the world that tier
@@ -550,7 +611,7 @@ mod tests {
     fn tiers_are_per_item_and_skip_repeats() {
         let m = mech("atoms", 3, &[(70.0, 70.0), (17.0, 70.0), (0.0, 70.0)]);
         let t = m.tiers();
-        assert_eq!(t.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["All started", "All to Lv 18", "All to Lv 35", "All to Lv 53", "All at the max, 70"]);
+        assert_eq!(t.iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), ["Started", "Lv 18", "Lv 35", "Lv 53", "Max, Lv 70"]);
         assert_eq!(t[0].need, 3);
         assert_eq!(t[0].met, 2);
         assert_eq!(t[1].met, 1);
@@ -565,6 +626,20 @@ mod tests {
         assert!(t[3].complete() && !t[4].complete());
         assert_eq!((t[4].met, t[4].need), (9, 10));
         assert_eq!(d.tasks(&t[4]).len(), 1);
+        // Many items at one milestone come in parts of about 8, in game order, no "All" step.
+        let big = mech("research", 7, &[(0.0, 20.0); 20]);
+        let t = big.tiers();
+        assert_eq!(t[0].label, "Started · 1 of 3");
+        assert_eq!(t.len(), 15);
+        assert!(t.iter().all(|t| !t.label.starts_with("All")));
+        assert_eq!(big.tasks(&t[0]).len(), 7);
+        // Count ladders: about five more at a time, at most 12 tiers.
+        let mut c = mech("bribes", 1, &[(0.0, 1.0); 40]);
+        c.count = Count::Done;
+        assert_eq!(c.tiers().len(), 8);
+        let mut g = mech("greenstacks", 0, &[(0.0, 1.0); 867]);
+        g.count = Count::Done;
+        assert_eq!(g.tiers().len(), 12);
     }
 
     #[test]

@@ -194,11 +194,54 @@ pub fn nice(x: f64) -> f64 {
     }
 }
 
-/// A mechanic's ladder from its table: per tier, its label, the world it belongs to and the
-/// level each item needs (in item order, 0 for not asked).
+/// One tier of a ladder from a table.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rung {
+    /// "Early World 7", or "Early World 7 · 2 of 4" for a part of a big stage.
+    pub label: String,
+    pub world: u8,
+    /// Index into `STAGES`.
+    pub stage: usize,
+    /// The level each item needs, in item order; 0 for not asked.
+    pub targets: Vec<f64>,
+}
+
+/// A mechanic's ladder from its table: a tier per stage, a stage that asks for many new things
+/// split into parts of about `PART` (see `split`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ladder {
-    pub rungs: Vec<(String, u8, Vec<f64>)>,
+    pub rungs: Vec<Rung>,
+}
+
+/// Items a tier adds at most before it's split into parts, and the most parts a step becomes.
+pub const PART: usize = 8;
+pub const MAX_PARTS: usize = 10;
+
+/// The parts of one step from `prev` to `next` (targets in item order): the items it raises,
+/// taken in `order` (best first), a part at a time, each part keeping the ones before it. One
+/// part (just `next`) when it raises `part` items or fewer.
+pub fn split(prev: &[f64], next: &[f64], order: &[usize], part: usize, max_parts: usize) -> Vec<Vec<f64>> {
+    let raised: Vec<usize> = order.iter().copied().filter(|&i| next.get(i).copied().unwrap_or(0.0) > prev.get(i).copied().unwrap_or(0.0)).collect();
+    let n = raised.len();
+    if n <= part {
+        return vec![next.to_vec()];
+    }
+    let parts = n.div_ceil(part).min(max_parts.max(1));
+    let size = n.div_ceil(parts);
+    let mut out = Vec::with_capacity(parts);
+    let mut cur = prev.to_vec();
+    cur.resize(next.len(), 0.0);
+    for chunk in raised.chunks(size) {
+        for &i in chunk {
+            cur[i] = next[i];
+        }
+        out.push(cur.clone());
+    }
+    // Items the order left out (none, when it covers every item) arrive with the last part.
+    if let Some(last) = out.last_mut() {
+        *last = next.to_vec();
+    }
+    out
 }
 
 impl Ladder {
@@ -211,7 +254,11 @@ impl Ladder {
             return None;
         }
         let rows: Vec<Option<&[Option<f64>]>> = items.iter().map(|i| block.row(&i.name)).collect();
-        let mut rungs: Vec<(String, u8, Vec<f64>)> = Vec::new();
+        // Priority: the table's row order (the generator writes rows most important first).
+        let mut order: Vec<usize> = (0..items.len()).collect();
+        order.sort_by_key(|&i| block.index.get(&items[i].name).copied().unwrap_or(usize::MAX));
+        let mut rungs: Vec<Rung> = Vec::new();
+        let mut prev = vec![0.0; items.len()];
         for (col, &stage) in block.stages.iter().enumerate() {
             let targets: Vec<f64> = items
                 .iter()
@@ -221,10 +268,16 @@ impl Ladder {
                     if i.max > 0.0 && i.raw.is_none() { t.min(i.max) } else { t }
                 })
                 .collect();
-            if targets.iter().all(|&t| t <= 0.0) || rungs.last().is_some_and(|r| r.2 == targets) {
+            if targets.iter().all(|&t| t <= 0.0) || rungs.last().is_some_and(|r| r.targets == targets) {
                 continue;
             }
-            rungs.push((stage_label(stage), stage_world(stage), targets));
+            let parts = split(&prev, &targets, &order, PART, MAX_PARTS);
+            let n = parts.len();
+            for (p, t) in parts.into_iter().enumerate() {
+                let label = if n == 1 { stage_label(stage) } else { format!("{} · {} of {n}", stage_label(stage), p + 1) };
+                rungs.push(Rung { label, world: stage_world(stage), stage, targets: t });
+            }
+            prev = targets;
         }
         (!rungs.is_empty()).then_some(Ladder { rungs })
     }
@@ -279,8 +332,20 @@ bad
         let items = vec![Item::new("A", None, 5.0, 10.0), Item::new("B", None, 0.0, 15.0), Item::new("C", None, 0.0, 10.0)];
         let l = Ladder::new(&t["m"], &items).unwrap();
         assert_eq!(l.rungs.len(), 2);
-        assert_eq!(l.rungs[0], ("Early World 7".into(), 7, vec![5.0, 0.0, 0.0]));
-        assert_eq!(l.rungs[1].2, vec![9.0, 15.0, 0.0]);
+        assert_eq!(l.rungs[0], Rung { label: "Early World 7".into(), world: 7, stage: 18, targets: vec![5.0, 0.0, 0.0] });
+        assert_eq!(l.rungs[1].targets, vec![9.0, 15.0, 0.0]);
+        // A stage that raises many items comes in parts, in the table's row order.
+        let mut text = String::from("m\n  stages 7e\n");
+        for k in (0..20).rev() {
+            text.push_str(&format!("  I{k}  5\n"));
+        }
+        let (big, _) = parse(&text);
+        let items: Vec<Item> = (0..20).map(|k| Item::new(format!("I{k}"), None, 0.0, 10.0)).collect();
+        let l = Ladder::new(&big["m"], &items).unwrap();
+        assert_eq!(l.rungs.iter().map(|r| r.label.as_str()).collect::<Vec<_>>(), ["Early World 7 · 1 of 3", "Early World 7 · 2 of 3", "Early World 7 · 3 of 3"]);
+        // Rows run I19 down to I0, so the first part asks for the last items.
+        assert!(l.rungs[0].targets[19] > 0.0 && l.rungs[0].targets[0] == 0.0);
+        assert!(l.rungs[2].targets.iter().all(|&t| t == 5.0));
         let mut off = t["m"].clone();
         off.off = true;
         assert_eq!(Ladder::new(&off, &items), None);

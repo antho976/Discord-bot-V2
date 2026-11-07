@@ -265,6 +265,7 @@ fn done(guild: u64, r: &Review) -> Markup {
                 }
             }
         }
+        (should_have(r))
         @if !r.next.is_empty() {
             section.ia-panel {
                 div.ia-head {
@@ -336,6 +337,103 @@ fn done(guild: u64, r: &Review) -> Markup {
 
 /// Not started chips shown before "Show N more".
 const FRESH: usize = 8;
+
+/// Tiers a card's ladder shows at once, and later tiers its "After that" lists.
+const LADDER: usize = 6;
+const LATER: usize = 5;
+
+/// Which tiers a ladder shows: `LADDER` of them, starting one before the current tier (the last
+/// done one, for context), all of them when they fit. `(from, to)`, `to` exclusive.
+fn window(len: usize, current: Option<usize>) -> (usize, usize) {
+    if len <= LADDER {
+        return (0, len);
+    }
+    let from = current.map_or(len - LADDER, |c| c.saturating_sub(1)).min(len - LADDER);
+    (from, from + LADDER)
+}
+
+/// Rows each stage of Should have by now shows before "Show N more", and stages shown before
+/// the rest fold away.
+const OWED_ROWS: usize = 6;
+const OWED_STAGES: usize = 3;
+
+/// Should have by now: what players at your world have, from every mechanic and world, that
+/// you don't. Stages before your world are what you missed; your own world's are next up.
+fn should_have(r: &Review) -> Markup {
+    let groups = r.should_have();
+    if groups.is_empty() {
+        return html! {};
+    }
+    let total: usize = groups.iter().map(|(_, v)| v.len()).sum();
+    let group = |stage: usize, v: &[crate::review::Owed]| {
+        let w = crate::crowd::stage_world(stage);
+        html! {
+            div.ia-owe-group style={ "--w: var(--w" (w) ")" } {
+                div.ia-owe-head {
+                    b { "Expected by " (crate::crowd::stage_label(stage)) }
+                    @if w < r.world { span.ia-chip.miss { "Missed" } } @else { span.ia-chip.next { "Next up" } }
+                    span.ia-owe-n { (v.len()) (if v.len() == 1 { " thing" } else { " things" }) }
+                }
+                div.ia-task-list {
+                    @for o in v.iter().take(OWED_ROWS) { (owed(r, o)) }
+                }
+                @if v.len() > OWED_ROWS {
+                    details.ia-owe-more {
+                        summary { "Show " (v.len() - OWED_ROWS) " more" }
+                        div.ia-task-list { @for o in v.iter().skip(OWED_ROWS) { (owed(r, o)) } }
+                    }
+                }
+            }
+        }
+    };
+    html! {
+        section.ia-panel.ia-owe {
+            div.ia-head {
+                h2 { "Should have by now" }
+                p { (total) " things players have by your world and you don't, oldest first. Missed is from earlier worlds." }
+            }
+            @for (stage, v) in groups.iter().take(OWED_STAGES) { (group(*stage, v)) }
+            @if groups.len() > OWED_STAGES {
+                details.ia-owe-more {
+                    summary { "Show " (groups.len() - OWED_STAGES) " more stages" }
+                    @for (stage, v) in groups.iter().skip(OWED_STAGES) { (group(*stage, v)) }
+                }
+            }
+        }
+    }
+}
+
+/// One thing you should have: the item, which card it's on (a link that opens it), its line
+/// on how, and where it is against what the stage asks.
+fn owed(r: &Review, o: &crate::review::Owed) -> Markup {
+    let m = &r.mechanics[o.mechanic];
+    let i = &m.items[o.item];
+    let once = i.max <= 1.0 && i.raw.is_none() && m.tier_names.is_none();
+    html! {
+        div.ia-task {
+            @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {
+                img.left[left_square(p)] src={ "/idleon/pic/" (p) ".png" } alt="" loading="lazy" style=[(i.state == Step::Locked).then_some("opacity:.55")];
+            } @else { span.ia-item-dot {} }
+            span.ia-task-text {
+                b { (i.name) }
+                span {
+                    a.ia-owe-card href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) { (m.name) }
+                    @if let Some(h) = &i.how { " · " (h) }
+                }
+            }
+            span.ia-fig {
+                @if once { "Get it" }
+                @else if m.tier_names.is_some() && i.raw.is_none() { (level_text(m, i.level)) " → " (level_text(m, o.target)) }
+                @else { "Lv " (num(m.tier_level(i))) " → Lv " (num(o.target)) }
+            }
+            @match i.state {
+                Step::Ready => span.ia-chip.ok { "Do now" },
+                Step::Locked => span.ia-chip.lock { "Locked" },
+                Step::Unknown => span {},
+            }
+        }
+    }
+}
 
 /// A Not started chip: opens its card.
 fn fresh(m: &Mechanic) -> Markup {
@@ -443,8 +541,15 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                     }
                 }
                 @if !tiers.is_empty() {
-                    ol.ia-ladder style={ "--n:" (tiers.len()) } {
-                        @for (k, t) in tiers.iter().enumerate() {
+                    @let (from, to) = window(tiers.len(), current);
+                    @if from > 0 || to < tiers.len() {
+                        p.ia-ladder-note {
+                            "Tiers " (from + 1) "–" (to) " of " (tiers.len())
+                            @if from > 0 { " · " (from) " before these done" }
+                        }
+                    }
+                    ol.ia-ladder style={ "--n:" (to - from) } {
+                        @for (k, t) in tiers.iter().enumerate().skip(from).take(to - from) {
                             li.ia-rung.done[t.complete()].here[current == Some(k)] {
                                 span.ia-rung-k {
                                     "Tier " (k + 1)
@@ -481,7 +586,8 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                                 @if tasks.len() > TASKS { p.ia-note { "And " (tasks.len() - TASKS) " more, in the full list below." } }
                                 @if k + 1 < tiers.len() {
                                     p.ia-later-head { "After that" }
-                                    @for (j, t) in tiers.iter().enumerate().skip(k + 1) { (later(m, j, t)) }
+                                    @for (j, t) in tiers.iter().enumerate().skip(k + 1).take(LATER) { (later(m, j, t)) }
+                                    @if tiers.len() > k + 1 + LATER { p.ia-note { "And " (tiers.len() - k - 1 - LATER) " more tiers after those." } }
                                 }
                             }
                             None if !tiers.is_empty() => { p.ia-note { "Every tier done." } }
@@ -998,6 +1104,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-meter.wide { grid-area: b; }
 .ia-body { padding: 4px 16px 18px; display: flex; flex-direction: column; gap: 18px; }
 .ia-body .ia-note { padding: 0; }
+.ia-ladder-note { font-size: 12px; color: var(--ink-3); margin-bottom: 6px; }
 .ia-ladder { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 8px; }
 .ia-rung { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 11px 13px; border-radius: 10px; background: var(--well); }
 .ia-rung b { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1023,6 +1130,15 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-chip { font: 600 12px var(--sans); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
 .ia-chip.ok { color: var(--live); background: color-mix(in oklab, var(--live) 14%, transparent); }
 .ia-chip.lock { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
+.ia-chip.miss { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
+.ia-chip.next { color: var(--w); background: color-mix(in oklab, var(--w) 14%, transparent); }
+.ia-owe-group + .ia-owe-group, .ia-owe-more .ia-owe-group { margin-top: 18px; }
+.ia-owe-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.ia-owe-head b { font-size: 14px; font-weight: 600; color: var(--w); }
+.ia-owe-n { margin-left: auto; font-size: 13px; color: var(--ink-3); }
+.ia-owe-card { color: var(--ink-2); text-underline-offset: 3px; }
+details.ia-owe-more > summary { margin-top: 10px; cursor: pointer; font-size: 13px; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; list-style: none; }
+details.ia-owe-more > summary::-webkit-details-marker { display: none; }
 .ia-later-head { margin-top: 18px; font-size: 12px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
 .ia-later { display: flex; align-items: baseline; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--edge-1); font-size: 13.5px; }
 .ia-later-k { flex: none; white-space: nowrap; }
@@ -1154,3 +1270,17 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-item { grid-template-columns: 24px minmax(0, 1fr) minmax(44px, 22%) minmax(9ch, auto); gap: 8px; }
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::window;
+
+    #[test]
+    fn a_ladder_shows_six_tiers_around_where_you_are() {
+        assert_eq!(window(4, Some(2)), (0, 4));
+        assert_eq!(window(20, Some(0)), (0, 6));
+        assert_eq!(window(20, Some(9)), (8, 14));
+        assert_eq!(window(20, Some(19)), (14, 20));
+        assert_eq!(window(20, None), (14, 20));
+    }
+}
