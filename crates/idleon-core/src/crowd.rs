@@ -79,8 +79,39 @@ pub type Table = HashMap<String, Block>;
 
 const FILE: &str = include_str!("../crowd.txt");
 
+/// What `set` put in place of the file: the app uses the server's copy, so the owner's edits
+/// reach it without a new app.
+static SYNCED: std::sync::RwLock<Option<std::sync::Arc<Table>>> = std::sync::RwLock::new(None);
+
+/// The file as this build reads it: the copy it carries, or (a debug build) the file on disk.
+pub fn source() -> std::borrow::Cow<'static, str> {
+    #[cfg(debug_assertions)]
+    if let Ok(text) = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/crowd.txt")) {
+        return text.into();
+    }
+    FILE.into()
+}
+
+/// Reads with `text` in place of the file from now on (`None` goes back to the file). Answers
+/// the lines it couldn't read; a text with nothing readable in it changes nothing.
+pub fn set(text: Option<&str>) -> Vec<String> {
+    let Some(t) = text else {
+        *SYNCED.write().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        return Vec::new();
+    };
+    let (read, problems) = parse(t);
+    if read.is_empty() {
+        return if problems.is_empty() { vec!["nothing in it".into()] } else { problems };
+    }
+    *SYNCED.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(std::sync::Arc::new(read));
+    problems
+}
+
 /// Runs `f` with the tables as the file says them now.
 pub fn with<R>(f: impl FnOnce(&Table) -> R) -> R {
+    if let Some(t) = SYNCED.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
+        return f(&t);
+    }
     #[cfg(debug_assertions)]
     {
         let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/crowd.txt"));

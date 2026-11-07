@@ -5,6 +5,7 @@
 //! answered in the same request and never stored. The maxes, names and pictures come from the
 //! game itself (`tools/idleon-extract`), so they follow game updates.
 
+mod app;
 mod limit;
 mod page;
 pub mod steam;
@@ -93,6 +94,12 @@ impl Feature for Idleon {
             .route("/p/{guild}/idleon/report", post(report))
             .route("/p/{guild}/idleon/test", get(test_account))
             .route("/idleon/pic/{id}", get(picture))
+            // The desktop app (see `app`).
+            .route("/idleon/app/info", get(app::info))
+            .route("/idleon/app/tiers", get(app::tiers))
+            .route("/idleon/app/link", post(app::link_start))
+            .route("/idleon/app/link/{code}", get(app::link_collect))
+            .route("/p/{guild}/idleon/link", get(app::link_page).post(app::link_confirm))
     }
 }
 

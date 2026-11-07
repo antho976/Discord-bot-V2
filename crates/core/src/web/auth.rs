@@ -387,8 +387,9 @@ async fn preview_member(State(ctx): State<Ctx>, Query(q): Query<PreviewQuery>) -
 /// Anyone can sign in, so this keeps the table to a few rows per Discord account.
 const MEMBER_SESSIONS_EACH: i64 = 5;
 
-/// A new member session; answers its token for the cookie.
-fn new_member_session(ctx: &Ctx, id: u64, name: &str, avatar: Option<&str>) -> WebResult<String> {
+/// A new member session; answers its token for the cookie (or for the account check app, which
+/// sends it as that cookie).
+pub fn new_member_session(ctx: &Ctx, id: u64, name: &str, avatar: Option<&str>) -> WebResult<String> {
     let session = random_token();
     let now = crate::now_ms();
     ctx.db.with(|c| {
