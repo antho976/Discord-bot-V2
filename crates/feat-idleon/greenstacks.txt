@@ -1,0 +1,455 @@
+# Items that can be greenstacked: held 10M of in the storage chest. The game counts any item
+# that reaches 10M, but many never can in practice (quest items, tokens, time candies, card
+# packs, the Kachow Statue, the Golden Sugar Cookie...). This lists the stackable items that
+# at least one player has greenstacked or held 1,000,000 of; the Greenstacks check only asks
+# for these (and always counts what the game already says is green).
+#
+# One item ID per line, its name after #. Take a line out to stop asking for an item; a line
+# starting with - keeps it out. The crowd example adds every item a save has greenstacked or
+# held 1M of that isn't here yet, unless a - line names it:
+#   cargo run --release -p feat-idleon --example crowd -- <folder of saves>/*.json
+
+AlienTree               # Alien Hive Chunk
+BabaYagaETC             # Baba Yaga Baby Eggs
+BirchTree               # Bleach Logs
+Bug1                    # Fly
+Bug10                   # Dust Mote
+Bug11                   # Dream Particulate
+Bug12                   # Ladybug
+Bug13                   # Firefly
+Bug15                   # Litterbug
+Bug2                    # Butterfly
+Bug3                    # Sentient Cereal
+Bug4                    # Fruitfly
+Bug5                    # Mosquisnow
+Bug6                    # Flycicle
+Bug7                    # Worker Bee
+Bug8                    # Fairy
+Bug9                    # Scarab
+Bullet                  # Bullet
+Bullet3                 # Coldseeker Bullet
+BulletB                 # FMJ Bullet
+ButterBar               # Butter Bar
+Chiz0                   # Chizoar Spike
+Chiz1                   # Chizoar Stalagmite
+Copper                  # Copper Ore
+CopperBar               # Copper Bar
+Coral1                  # Vibrant Coral
+Coral2                  # Glowing Coral
+Coral3                  # Char Coral
+Coral4                  # Neon Coral
+Coral6                  # Gilded Coral
+CraftMat1               # Thread
+CraftMat10              # Lugi Bracket
+CraftMat11              # Purple Screw
+CraftMat12              # Thingymabob
+CraftMat13              # Tangled Cords
+CraftMat14              # PVC Pipe
+CraftMat3               # Cue Tape
+CraftMat5               # Trusty Nails
+CraftMat6               # Boring Brick
+CraftMat7               # Chain Link
+CraftMat8               # Pinion Spur
+CraftMat9               # Leather Hide
+Critter1                # Froge
+Critter10               # Blobfish
+Critter10A              # Voodofish
+Critter11               # Tuttle
+Critter11A              # Tottoise
+Critter1A               # Poison Froge
+Critter2                # Crabbo
+Critter2A               # Mutant Crabbo
+Critter3                # Scorpie
+Critter4                # Mousey
+Critter5                # Owlio
+Critter6                # Pingy
+Critter7                # Bunny
+Critter8                # Dung Beat
+Critter9                # Honker
+Cutter                  # Bolt Cutters
+Dementia                # Dementia Ore
+DementiaBar             # Dementia Bar
+DesertA1                # Pocket Sand
+DesertA1b               # Glass Shard
+DesertA2                # Megalodon Tooth
+DesertA3                # Crabby Cakey
+DesertA3b               # Nuget Cake
+DesertB1                # Coconotnotto
+DesertB2                # Furled Flag
+DesertB3                # Pincer Arm
+DesertB4                # Potato Remains
+DesertC1                # High Steaks
+DesertC2                # Wakka Cherry
+DesertC2b               # Ghost
+DesertC3                # Singlecle
+DesertC4                # Shrapshell
+Dreadlo                 # Dreadlo Ore
+DreadloBar              # Dreadlo Bar
+EfauntDrop1             # Ripped Tunic
+EfauntDrop2             # Ribbed Tunic
+EquipmentSmithingTabs2  # Anvil Tab 2
+EquipmentSmithingTabs3  # Anvil Tab 3
+EquipmentStatues1       # Power Statue
+EquipmentStatues10      # Ol Reliable Statue
+EquipmentStatues11      # Exp Book Statue
+EquipmentStatues12      # Anvil Statue
+EquipmentStatues13      # Cauldron Statue
+EquipmentStatues14      # Beholder Statue
+EquipmentStatues15      # Bullseye Statue
+EquipmentStatues16      # Box Statue
+EquipmentStatues17      # Twosoul Statue
+EquipmentStatues18      # EhExPee Statue
+EquipmentStatues19      # Seesaw Statue
+EquipmentStatues2       # Speed Statue
+EquipmentStatues20      # Pecunia Statue
+EquipmentStatues21      # Mutton Statue
+EquipmentStatues22      # Egg Statue
+EquipmentStatues23      # Battleaxe Statue
+EquipmentStatues24      # Spiral Statue
+EquipmentStatues25      # Boat Statue
+EquipmentStatues26      # Compost Statue
+EquipmentStatues27      # Stealth Statue
+EquipmentStatues28      # Essence Statue
+EquipmentStatues29      # Villager Statue
+EquipmentStatues3       # Mining Statue
+EquipmentStatues30      # Dragon Warrior Statue
+EquipmentStatues31      # Spelunky Statue
+EquipmentStatues32      # Reef Coral Statue
+EquipmentStatues4       # Feasty Statue
+EquipmentStatues5       # Health Statue
+EquipmentStatues7       # Lumberbob Statue
+EquipmentStatues8       # Thicc Skin Statue
+EquipmentStatues9       # Oceanman Statue
+ExpBalloon1             # Small Experience Balloon
+Fish1                   # Goldfish
+Fish10                  # Shellfish
+Fish11                  # Jumbo Shrimp
+Fish12                  # Caulifish
+Fish13                  # Equinox Fish
+Fish2                   # Hermit Can
+Fish3                   # Jellyfish
+Fish4                   # Bloach
+Fish5                   # Skelefish
+Fish6                   # Sand Shark
+Fish7                   # Manta Ray
+Fish8                   # Kraken
+Fish9                   # Icefish
+FoodCatch1              # Buttered Toasted Butter
+FoodChoppin1            # Saucy Logfries
+FoodEvent5              # Cherry Choco
+FoodEvent6              # Lemony Choco
+FoodEvent7              # Minto Choco
+FoodEvent8              # Milk Choco
+FoodFish1               # Slurpin Herm
+FoodG1                  # Golden Jam
+FoodG10                 # Golden Hampter Gummy Candy
+FoodG11                 # Golden Nigiri
+FoodG12                 # Golden Dumpling
+FoodG13                 # Golden Cake
+FoodG14                 # Golden Saltwater Taffy
+FoodG2                  # Golden Kebabs
+FoodG3                  # Golden Meat Pie
+FoodG4                  # Golden Nomwich
+FoodG5                  # Golden Ham
+FoodG6                  # Golden Bread
+FoodG7                  # Golden Ribs
+FoodG8                  # Golden Cheese
+FoodG9                  # Golden Grilled Cheese Nomwich
+FoodHealth1             # Nomwich
+FoodHealth10            # Mountain Bread
+FoodHealth11            # Sheepie Dairy
+FoodHealth12            # Spicy Space Ribs
+FoodHealth13            # Cupcake
+FoodHealth14            # Lemon Slice
+FoodHealth15            # Grilled Cheese Nomwich
+FoodHealth16            # Raw Nigiri
+FoodHealth17            # Dumpling
+FoodHealth18            # Saltwater Taffy
+FoodHealth19            # Sugar Cookie
+FoodHealth2             # Cheezy Pizza
+FoodHealth3             # Hot Dog
+FoodHealth4             # Saucy Weiner
+FoodHealth6             # Kebab Sticks
+FoodHealth7             # Meat Pie
+FoodHealth9             # Yeti Ham
+FoodMining1             # Icing Ironbite
+FoodPotGr1              # Small Speed Potion
+FoodPotGr2              # Average Speed Potion
+FoodPotGr3              # Decent Speed Potion
+FoodPotGr4              # Potent Speed Potion
+FoodPotMana1            # Small Mana Potion
+FoodPotMana2            # Average Mana Potion
+FoodPotMana3            # Decent Mana Potion
+FoodPotMana4            # Potent Mana Potion
+FoodPotOr1              # Small Strength Potion
+FoodPotOr2              # Average Strength Potion
+FoodPotOr3              # Decent Strength Potion
+FoodPotOr4              # Potent Strength Potion
+FoodPotRe1              # Small Life Potion
+FoodPotRe2              # Average Life Potion
+FoodPotRe3              # Decent Life Potion
+FoodPotRe4              # Potent Life Potion
+FoodPotYe2              # Average EXP Potion
+FoodPotYe4              # Potent EXP Potion
+FoodPotYe5              # Quotient EXP Potion
+FoodTrapping1           # Critter Numnums
+FoodWorship1            # Soulble Gum
+Forest1                 # Glublin Ear
+Forest2                 # Plank
+Forest3                 # Bullfrog Horn
+ForestTree              # Forest Fibres
+GalaxyA1                # Purple Mush Cap
+GalaxyA2                # TV Remote
+GalaxyA2b               # Lost Batteries
+GalaxyA3                # Half Eaten Donut
+GalaxyA4                # Genie Lamp
+GalaxyB1                # Bottle Cap
+GalaxyB2                # Wurm Tail
+GalaxyB3                # Tongue Bone
+GalaxyB4                # Crumpled Wrapper
+GalaxyB5                # Smol Worm
+GalaxyC1                # Empty Oyster Shell
+GalaxyC1b               # Pearler Shell
+GalaxyC2                # Wriggly Ball
+GalaxyC3                # Gel Chunk
+GalaxyC4                # Condensed Zap
+Gfoodcoupon             # Gold Food Coupon
+Godshard                # Godshard Ore
+GodshardBar             # Godshard Bar
+Gold                    # Gold Ore
+GoldBar                 # Gold Bar
+GoldricP1               # Casual Confidante
+GoldricP2               # Triumphant Treason
+GoldricP3               # Claiming Cashe
+Grasslands1             # Spore Cap
+Grasslands2             # Frog Leg
+Grasslands3             # Bean Slices
+Grasslands4             # Red Spore Cap
+Hgg                     # Minuteglass
+Iron                    # Iron Ore
+IronBar                 # Iron Bar
+JobApplication          # Job Application
+Jungle1                 # Slime Sludge
+Jungle2                 # Snake Skin
+Jungle3                 # Carrot Cube
+JungleTree              # Jungle Logs
+Key1                    # Forest Villa Key
+Key2                    # Efaunt's Tomb Key
+Key3                    # Chizoar's Cavern Key
+Key4                    # Troll's Enclave Key
+Key5                    # Kruk's Volcano Key
+KrukPart                # Kruk Tooth
+KrukPart2               # Kruk Cavity Tooth
+Ladle                   # Cooking Ladle
+LavaA1                  # Suggma Ashes
+LavaA1b                 # Royal Suggma Urn
+LavaA2                  # Plated Crumbs
+LavaA3                  # Sundried Glass
+LavaA4                  # Cheesy Crumbs
+LavaA5                  # Stilt Pole
+LavaA5b                 # Hampter
+LavaB1                  # Meteorite
+LavaB2                  # Shattered Skull
+LavaB3                  # Orange Slice
+LavaB3b                 # OJ Juice
+LavaB4                  # Molten Lamp
+LavaB5                  # Spitfire
+LavaB6                  # Hard Hat
+LavaC1                  # Wormie Slices
+LavaC2                  # Mongo Worm Slices
+Leaf1                   # Grass Leaf
+Leaf2                   # Twisty Leaf
+Leaf3                   # Arctic Leaf
+Leaf4                   # Galactic Leaf
+Leaf5                   # Magma Leaf
+Leaf6                   # Spirit Leaf
+Line12                  # Its a Boy Celebration
+Line13                  # Its a Girl Celebration
+Line14                  # Its Alright Celebration
+Line3                   # Gold Twine
+Line4                   # Platinum Twine
+Line8                   # Wiener Links
+Line9                   # Zeus Gon Fishin
+Lustre                  # Lustre Ore
+LustreBar               # Lustre Bar
+Marble                  # Marble Ore
+MarbleBar               # Marble Bar
+Meatloaf                # Magic Meatloaf
+MidnightCookie          # Midnight Cookie
+OakTree                 # Oak Logs
+OilBarrel2              # Toxic Sludge
+OilBarrel6              # Magma Barrel
+OilBarrel7              # Plasma Barrel
+PalmTree                # Tropilogs
+Peanut                  # Peanut
+PeanutG                 # Golden Peanut
+PetEgg                  # Mob Egg
+Plat                    # Platinum Ore
+PlatBar                 # Platinum Bar
+Prehistrium             # Prehistrium Ore
+PrehistriumBar          # Prehistrium Bar
+PureWater               # Distilled Water
+Quest110                # Zenith Cluster
+Quest12                 # Wood Board Bone
+Quest13                 # Empty Box
+Quest14                 # Employment Statistics
+Quest15                 # Red Frisbee
+Quest17                 # Amarok Slab
+Quest18                 # Loomi's Room Key
+Quest19                 # Golden Dubloon
+Quest21                 # Time Thingy
+Quest22                 # Corporatube Sub
+Quest23                 # Instablab Follower
+Quest24                 # Cloudsound Follower
+Quest29                 # Chaotic Amarok Slab
+Quest3                  # Ketchup Bottle
+Quest32                 # Monster Rating
+Quest4                  # Mustard Bottle
+Quest41                 # Flowies
+Quest68                 # Bucket of Slush
+Quest7                  # Strange Rock
+Quest78                 # Equinox Mirror
+Quest95                 # Winter Candle
+Refinery1               # Redox Salts
+Refinery2               # Explosive Salts
+Refinery3               # Spontaneity Salts
+Refinery4               # Dioxide Synthesis
+Refinery5               # Purple Salt
+Refinery6               # Nullo Salt
+Refinery7               # Crosslink Salt
+Refinery8               # Propagated Salt
+ResetCompletedS         # Star Talent Reset Potion
+ResetFrag               # Talent Point Reset Fragment
+rtt0                    # Bottled Town Teleport
+SaharanFoal             # Tundra Logs
+Sewers1                 # Corn Kernels
+Sewers1b                # Golden Plop
+Sewers2                 # Rats Tail
+Sewers3                 # Bonemeal
+SilverPen               # Silver Pen
+SnowA1                  # Floof Ploof
+SnowA2                  # Melty Cube
+SnowA2a                 # Yellow Snowflake
+SnowA3                  # Moustache Comb
+SnowA4                  # Ram Wool
+SnowB1                  # Sticky Stick
+SnowB2                  # Mamooth Tusk
+SnowB2a                 # Ice Age 3
+SnowB3                  # Pen
+SnowB4                  # Cracked Glass
+SnowB5                  # Snow Ball
+SnowC1                  # Sippy Straw
+SnowC2                  # Cryosnake Skin
+SnowC3                  # Audio Cord
+SnowC4                  # Contact Lense
+SnowC4a                 # Black Lense
+SnowC5                  # Blood Bone
+Soul1                   # Forest Soul
+Soul2                   # Dune Soul
+Soul3                   # Rooted Soul
+Soul4                   # Frigid Soul
+Soul5                   # Squishy Soul
+Soul6                   # Oozie Soul
+Soul7                   # Breezy Soul
+Soul8                   # Deepsea Soul
+Spelunking0             # Chapter One 'The Fear Within'
+Spelunking1             # Chapter Two 'Decay Surrounds'
+Spelunking2             # Chapter Three 'This is Gospel'
+Spelunking3             # Chapter Four 'No Escape'
+Spelunking4             # Chapter Five 'Sunken Plunder'
+Spelunking5             # Chapter Six 'Kelp Primeval'
+Spelunking6             # Chapter Seven 'Burning Crusade'
+SpiA1                   # Leafy Droplet
+SpiA2                   # Rice Cake
+SpiA2b                  # Stacked Rice Cake
+SpiA3                   # Bamboo
+SpiA4                   # Leafy Horn
+SpiA5                   # Wooden Aortic Mass
+SpiB1                   # Leafy Branch
+SpiB2                   # Light Lantern
+SpiB2b                  # Dark Lantern
+SpiB3                   # Troll Flower
+SpiB4                   # Chopped Leek
+SpiC1                   # Shattered Ceramic
+SpiC2                   # Eviscerated Chunk
+SpiD1                   # Royal Yolk
+SpiD2                   # Royal Fabric
+SpiD3                   # Royal Headpiece
+Starfire                # Starfire Ore
+StarfireBar             # Starfire Bar
+StoneA1                 # Armor Upgrade Stone I
+StoneA2                 # Armor Upgrade Stone II
+StoneA2b                # Armor Upgrade Stone B
+StoneA3                 # Armor Upgrade Stone III
+StoneA3b                # Armor Upgrade Stone C
+StoneA4                 # Armor Upgrade Stone IV
+StoneA6                 # Armor Upgrade Stone SK
+StoneA7                 # Armor Upgrade Stone VI
+StoneAe                 # Easter Armor Stone
+StoneAeB                # Summer Armor Stone
+StoneHelm1              # Helmet Upgrade Stone I
+StoneHelm7              # Helmet Upgrade Stone SK
+StoneT1                 # Tool Upgrade Stone I
+StoneT1eb               # Summer Tool Upgrade Stone
+StoneT2                 # Tool Upgrade Stone II
+StoneT6                 # Tool Upgrade Stone SK
+StoneTe                 # Easter Tool Upgrade Stone
+StoneW1                 # Weapon Upgrade Stone I
+StoneW2                 # Weapon Upgrade Stone II
+StoneW3                 # Weapon Upgrade Stone III
+StoneW4                 # Weapon Upgrade Stone IV
+StoneW7                 # Weapon Upgrade Stone SK
+StoneWe                 # Easter Weapon Stone
+StoneWeb                # Summer Weapon Stone
+StoneZ1                 # Mystery Upgrade Stone I
+StoneZ2                 # Mystery Upgrade Stone II
+StoneZ3                 # Mystery Upgrade Stone III
+StoneZ4                 # Mystery Upgrade Stone IV
+StumpTree               # Veiny Logs
+ToiletTree              # Potty Rolls
+Tree10                  # Dandielogs
+Tree11                  # Willow Logs
+Tree12                  # Bamboo Logs
+Tree13                  # Effervescent Logs
+Tree14                  # Seaweed Logs
+Tree7                   # Wispy Lumber
+Tree8                   # Cubed Logs
+Tree9                   # Maple Logs
+TreeInterior1           # Stick
+TreeInterior1b          # Woodular Circle
+TreeInterior2           # Acorn
+TrollPart               # Troll Scales
+Void                    # Void Ore
+VoidBar                 # Void Bar
+w7A1                    # Equinox Flesh
+w7A10                   # Fishfork
+w7A11                   # Crabclaw
+w7A12                   # Guardian Mace
+w7A2                    # Doodlefins
+w7A3                    # Earl Tail
+w7A4                    # Cracked Shell
+w7A5                    # Scaled Fragment
+w7A6                    # Clammy Chunk
+w7A7                    # Plastic Litter
+w7A8                    # Pufferflesh
+w7A9                    # Demonflesh
+w7B1                    # Eye of Koi
+w7B10                   # Magmaspike
+w7B11                   # Pirate Mark II
+w7B11b                  # Pirate Anchor
+w7B12                   # Pirate Mark III
+w7B12b                  # Pirate Ship Figurine
+w7B1b                   # Immaculate Eye
+w7B2                    # Bubble N Chains
+w7B3                    # Pirate Emblem I
+w7B4                    # Caviar
+w7B5                    # Jelly Cube
+w7B6                    # Tuft of Kelp
+w7B7                    # Mantacakes
+w7B8                    # Glowfish Tail
+w7B9                    # Ancient Scales
+Weight13                # Crash Box
+Weight3                 # Basic Bobber
+Weight4                 # Dualhook Prongs
+Weight7                 # Massless Unit for Physics Questions
+Weight9                 # Valve Patented Circle Thingies

@@ -280,13 +280,22 @@ pub(super) fn achievement_picture(i: usize) -> Option<String> {
     number_to_letter().get(27 + i / 70).map(|l| format!("TaskAch{l}{}", i % 70 + 1))
 }
 
+/// The items `greenstacks.txt` says can be greenstacked in practice: an ID per line, `#`
+/// comments, `-ID` lines kept out.
+pub fn greenstackable(text: &str) -> HashSet<&str> {
+    text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty() && !l.starts_with('-')).collect()
+}
+
+static GREENSTACKABLE: std::sync::LazyLock<HashSet<&'static str>> = std::sync::LazyLock::new(|| greenstackable(include_str!("../../greenstacks.txt")));
+
 /// Greenstacks: 10M or more of one item in storage. The game keeps every item that has ever
 /// been at 10M in `GreenStacks`, and counts that list. Checked against the stackable items
-/// (`extra.general.stackable`: item types starting b, c or d) in your storage chest
-/// (`ChestOrder`/`ChestQuantity`) plus the ones already on the list, biggest stacks first;
-/// with nothing stored, against every stackable item. An item's picture is its own ID.
+/// (`extra.general.stackable`: item types starting b, c or d) that players can really get to
+/// 10M (`greenstacks.txt`) in your storage chest (`ChestOrder`/`ChestQuantity`), plus the ones
+/// already on the list, biggest stacks first; with nothing stored, against every one of them.
+/// An item's picture is its own ID.
 fn greenstacks(save: &Save) -> Mechanic {
-    let stackable: Vec<&str> = GAME.extra("general").get("stackable").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    let stackable: Vec<&str> = GAME.extra("general").get("stackable").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).filter(|id| GREENSTACKABLE.contains(id)).collect()).unwrap_or_default();
     let green: Vec<&str> = save.get("GreenStacks").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     let order: Vec<&str> = save.get("ChestOrder").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     let qty = save.numbers("ChestQuantity", &[]);
@@ -322,7 +331,7 @@ fn greenstacks(save: &Save) -> Mechanic {
         })
         .collect();
     let mut m = mech("greenstacks", 0, "Greenstacks", None, Count::Done, "green", items);
-    m.note = Some(format!("Out of the stackable items in your storage chest. The game remembers every item that has ever been at 10M: you have {}.", green.len()));
+    m.note = Some(format!("Out of the items in your storage chest that players get to 10M. The game remembers every item that has ever been at 10M: you have {}.", green.len()));
     m
 }
 

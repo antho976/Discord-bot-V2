@@ -24,7 +24,13 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
 
 const STATUE_TIERS: [&str; 4] = ["Normal", "Gold", "Onyx", "Zenith"];
 
-/// Statues: `StuG[i]` is the tier, 0 Normal to 3 Zenith. Levels have no cap, so done is Zenith.
+/// Statues whose Zenith can't be had in practice: the Kachow Statue drops so rarely that no
+/// save holds anywhere near the 1,000,000 its Zenith takes (the most in 119 saves is about
+/// 200,000), so Onyx is its last tier.
+const NO_ZENITH: [&str; 1] = ["KACHOW"];
+
+/// Statues: `StuG[i]` is the tier, 0 Normal to 3 Zenith. Levels have no cap, so done is Zenith
+/// (Onyx for the ones in `NO_ZENITH`).
 fn statues(save: &Save) -> Mechanic {
     let tiers = save.numbers("StuG", &[]);
     let chisels = save.option(69);
@@ -33,11 +39,14 @@ fn statues(save: &Save) -> Mechanic {
         .iter()
         .enumerate()
         .map(|(i, r)| {
+            let top = if NO_ZENITH.contains(&text(r, 0)) { 2.0 } else { 3.0 };
             let tier = at(&tiers, i).clamp(0.0, 3.0);
             let prefix = ["Statue", "StatueG", "StatueO", "StatueZ"][tier as usize];
-            let mut it = Item::new(format!("{} Statue", label(text(r, 0))), pic(format!("{prefix}{}", i + 1)), tier, 3.0);
+            let mut it = Item::new(format!("{} Statue", label(text(r, 0))), pic(format!("{prefix}{}", i + 1)), tier.min(top), top);
             it.level_name = Some(STATUE_TIERS[tier as usize].into());
-            statue_step(&mut it, i, tier, chisels, held(&chest, &format!("EquipmentStatues{}", i + 1)));
+            if tier < top {
+                statue_step(&mut it, i, tier, chisels, held(&chest, &format!("EquipmentStatues{}", i + 1)));
+            }
             // `StatueInfo` col 4 is the statue's world, 0 for World 1.
             it.world = later(cell(r, 4) + 1.0, 1);
             it
@@ -45,7 +54,7 @@ fn statues(save: &Save) -> Mechanic {
         .collect();
     let mut m = mech("statues", 1, "Statues", pic("StatueZ1".into()), Count::Levels, "tiers", items);
     m.tier_names = Some(STATUE_TIERS[1..].iter().map(|s| s.to_string()).collect());
-    m.note = Some("Each statue goes Normal, Gold, Onyx, then Zenith. Levels keep going, so Zenith counts as done.".into());
+    m.note = Some("Each statue goes Normal, Gold, Onyx, then Zenith. Levels keep going, so Zenith counts as done. The Kachow Statue stops at Onyx: it drops too rarely for the million a Zenith takes.".into());
     m
 }
 
