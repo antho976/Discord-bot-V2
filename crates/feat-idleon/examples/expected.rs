@@ -65,7 +65,8 @@ fn main() {
     let mut written = 0;
     for m in order {
         let tiers = m.tiers();
-        if tiers.is_empty() {
+        // A mechanic with a crowd.txt table takes its tiers' worlds from there.
+        if tiers.is_empty() || m.crowd.is_some() {
             continue;
         }
         if m.world != world {

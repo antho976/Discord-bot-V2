@@ -125,6 +125,7 @@ fn bubbles(save: &Save) -> Mechanic {
             let (targets, capped) = bubble_targets(r, world);
             let reached = targets.iter().filter(|t| level >= **t).count();
             let mut it = Item::new(label(text(r, 0)), pic(format!("aUpgrades{colour}{i}")), reached as f64, 5.0);
+            it.raw = Some(level);
             it.level_name = Some(if capped && level > 0.0 {
                 let x2 = cell(r, 2);
                 format!("Lv {} · {:.0}% of its bonus", crate::page::num(level), (100.0 * level / (level + x2)).floor())
