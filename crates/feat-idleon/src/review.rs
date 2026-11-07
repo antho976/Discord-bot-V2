@@ -2,9 +2,8 @@
 //!
 //! Every check reads one mechanic and says how far along it is against the game's own maxes:
 //! the items in it (a vial, a prayer, a grid node), each with its level and its max. The review
-//! then picks what to do next with no other players to compare against: what is furthest
-//! behind the rest of your account in the same world, and cheap finishes (one or two steps from
-//! done).
+//! then compares it with the ranking (`crowd.txt`): each mechanic's tiers, and everything the
+//! ranking expects by your world that you don't have (`Review::should_have`).
 
 use crate::crowd::Ladder;
 use crate::expected::Pace;
@@ -115,7 +114,7 @@ pub enum Count {
     /// Items done: how many are at their max ("31 of 41 bought").
     Done,
     /// No max anywhere (bubbles, refinery ranks): the levels are shown, lowest first, but the
-    /// mechanic stays out of every share and out of Do next. Items keep `max` 0.
+    /// mechanic stays out of every share. Items keep `max` 0.
     Open,
 }
 
@@ -339,28 +338,12 @@ pub struct Owed {
     pub tier: usize,
 }
 
-/// Why a mechanic made the do-next list.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Why {
-    /// It's this far under your average for its world (0.0 to 1.0).
-    Behind { world_avg: f64 },
-    /// Only this many items are left to max.
-    NearlyDone { left: usize },
-}
-
-#[derive(Debug, Clone)]
-pub struct Next {
-    pub mechanic: usize,
-    pub why: Why,
-}
-
 pub struct Review {
     pub name: String,
     pub characters: usize,
     /// The highest world the account has reached, 1 to 7.
     pub world: u8,
     pub mechanics: Vec<Mechanic>,
-    pub next: Vec<Next>,
     /// Mechanics in worlds you've reached with no progress at all: new since you last played,
     /// or skipped. In game order.
     pub not_started: Vec<usize>,
@@ -398,13 +381,11 @@ impl Review {
             }
         });
         let not_started: Vec<usize> = mechanics.iter().enumerate().filter(|(_, m)| m.world > 0 && m.world <= world && m.untouched()).map(|(i, _)| i).collect();
-        let next = pick_next(&mechanics, world, &not_started);
         Review {
             name: save.names.first().cloned().unwrap_or_default(),
             characters: save.characters(),
             world,
             mechanics,
-            next,
             not_started,
             test: false,
         }
@@ -475,62 +456,6 @@ fn world_avg(mechanics: &[Mechanic], world: u8) -> Option<f64> {
     (!ms.is_empty()).then(|| ms.iter().sum::<f64>() / ms.len() as f64)
 }
 
-/// How many the do-next list shows.
-pub const NEXT: usize = 6;
-
-/// Shops paid in gems (mostly bought with money) or in event points (only while an event runs):
-/// never a "do next", however far behind they are. Their cards still show them.
-const NOT_NEXT: &[&str] = &["gem-shop", "event-shop"];
-
-/// Do next: first, mechanics furthest under their own world's average (the ones the rest of
-/// the account has left behind), earlier worlds first when equal since they cost less; then
-/// cheap finishes, mechanics with one to three items left. Worlds you haven't reached,
-/// finished mechanics and ones not started (they have their own list) never show.
-fn pick_next(mechanics: &[Mechanic], reached: u8, not_started: &[usize]) -> Vec<Next> {
-    let mut behind: Vec<(f64, usize, f64)> = Vec::new();
-    let mut nearly: Vec<(usize, usize)> = Vec::new();
-    for (i, m) in mechanics.iter().enumerate() {
-        if m.world > reached || m.done() || m.total() <= 0.0 || not_started.contains(&i) || NOT_NEXT.contains(&m.key) {
-            continue;
-        }
-        let avg = world_avg(mechanics, m.world).unwrap_or(0.0);
-        let gap = avg - m.share();
-        // Earlier worlds weigh a little more: the same gap there is cheaper to close.
-        let weight = 1.0 + 0.05 * f64::from(reached.saturating_sub(m.world.max(1)));
-        if gap > 0.05 {
-            behind.push((gap * weight, i, avg));
-        }
-        let left = m.items.iter().filter(|it| !it.done()).count();
-        if (1..=3).contains(&left) && m.items.len() >= 5 {
-            nearly.push((left, i));
-        }
-    }
-    behind.sort_by(|a, b| b.0.total_cmp(&a.0));
-    nearly.sort();
-    let mut out: Vec<Next> = Vec::new();
-    // Up to two thirds of the list from what's behind, the rest from cheap finishes.
-    for &(_, i, avg) in behind.iter().take(NEXT * 2 / 3) {
-        out.push(Next { mechanic: i, why: Why::Behind { world_avg: avg } });
-    }
-    for &(left, i) in &nearly {
-        if out.len() >= NEXT {
-            break;
-        }
-        if !out.iter().any(|n| n.mechanic == i) {
-            out.push(Next { mechanic: i, why: Why::NearlyDone { left } });
-        }
-    }
-    for &(_, i, avg) in behind.iter().skip(NEXT * 2 / 3) {
-        if out.len() >= NEXT {
-            break;
-        }
-        if !out.iter().any(|n| n.mechanic == i) {
-            out.push(Next { mechanic: i, why: Why::Behind { world_avg: avg } });
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -557,48 +482,6 @@ mod tests {
     }
 
     #[test]
-    fn behind_its_world_comes_first_and_done_never_shows() {
-        let ms = vec![
-            mech("a", 2, &[(10.0, 10.0), (10.0, 10.0)]),
-            mech("b", 2, &[(9.0, 10.0), (9.0, 10.0)]),
-            mech("c", 2, &[(1.0, 10.0), (1.0, 10.0)]),
-            mech("d", 5, &[(0.0, 10.0)]),
-        ];
-        let next = pick_next(&ms, 2, &[]);
-        assert_eq!(next.first().map(|n| ms[n.mechanic].key), Some("c"));
-        assert!(next.iter().all(|n| ms[n.mechanic].key != "a" && ms[n.mechanic].key != "d"));
-    }
-
-    #[test]
-    fn a_mechanic_is_next_once() {
-        // Four far behind fill the "behind" share; e is both behind and one item from done.
-        let mut e: Vec<(f64, f64)> = vec![(1.0, 1.0); 4];
-        e.push((0.0, 100.0));
-        let ms = vec![
-            mech("x", 2, &[(1.0, 1.0)]),
-            mech("y", 2, &[(1.0, 1.0)]),
-            mech("z", 2, &[(1.0, 1.0)]),
-            mech("a", 2, &[(1.0, 100.0)]),
-            mech("b", 2, &[(1.0, 100.0)]),
-            mech("c", 2, &[(1.0, 100.0)]),
-            mech("d", 2, &[(1.0, 100.0)]),
-            mech("e", 2, &e),
-        ];
-        let next = pick_next(&ms, 2, &[]);
-        let mut seen: Vec<usize> = next.iter().map(|n| n.mechanic).collect();
-        let n = seen.len();
-        seen.sort_unstable();
-        seen.dedup();
-        assert_eq!(seen.len(), n, "{:?}", next.iter().map(|n| ms[n.mechanic].key).collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn paid_shops_are_never_next() {
-        let ms = vec![mech("stamps", 0, &[(10.0, 10.0), (10.0, 10.0)]), mech("gem-shop", 0, &[(0.0, 10.0), (1.0, 10.0)]), mech("event-shop", 0, &[(1.0, 10.0)])];
-        assert!(pick_next(&ms, 7, &[]).is_empty());
-    }
-
-    #[test]
     fn open_mechanics_stay_out_of_shares() {
         let mut m = mech("bubbles", 2, &[(5.0, 0.0), (9.0, 0.0)]);
         m.count = Count::Open;
@@ -606,8 +489,6 @@ mod tests {
         assert_eq!(m.total(), 0.0);
         assert_eq!(m.share(), 0.0);
         assert!(!m.done());
-        let next = pick_next(&[m], 2, &[]);
-        assert!(next.is_empty());
     }
 
     #[test]

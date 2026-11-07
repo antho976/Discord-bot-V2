@@ -40,10 +40,6 @@ fn main() {
                 }
             }
         }
-        println!("  do next:");
-        for n in &r.next {
-            println!("    {} ({:?})", r.mechanics[n.mechanic].name, n.why);
-        }
         // From expected.txt: what's overdue for the account's world, most overdue world first.
         let overdue = r.overdue();
         if !overdue.is_empty() {

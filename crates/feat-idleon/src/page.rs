@@ -1,7 +1,7 @@
 //! The public page: the paste box, then the review.
 //!
 //! The review leads with the answer: how far the account is overall with one bar per world,
-//! then "Do next", then every mechanic by world (tabs switched in the page, no reload), each a
+//! then "Should have by now" (what the ranking expects by your world), then every mechanic by world (tabs switched in the page, no reload), each a
 //! card that opens to its items, least done first. Worlds wear their own colour (data colour,
 //! not decoration): the bars, the meters and the world tags.
 
@@ -12,7 +12,7 @@ use bot_core::web::ui;
 use crate::expected::Pace;
 use crate::game::GAME;
 use crate::pictures;
-use crate::review::{Count, Item, Mechanic, Review, State as Step, Tier, Why};
+use crate::review::{Count, Item, Mechanic, Review, State as Step, Tier};
 
 /// Who's looking, as the closed test sees it.
 pub struct Access {
@@ -236,7 +236,7 @@ fn ask(guild: u64, error: Option<&str>, retry: bool, test: bool) -> Markup {
 
 fn done(guild: u64, r: &Review) -> Markup {
     let worlds: Vec<u8> = (1..=7).chain([0]).filter(|w| r.mechanics.iter().any(|m| m.world == *w)).collect();
-    let start = worlds.iter().copied().find(|w| *w == r.next.first().map_or(r.world, |n| r.mechanics[n.mechanic].world)).unwrap_or(1);
+    let start = worlds.iter().copied().filter(|w| (1..=r.world).contains(w)).max().unwrap_or(1);
     html! {
         @if r.test {
             p.ia-test role="note" {
@@ -266,32 +266,7 @@ fn done(guild: u64, r: &Review) -> Markup {
             }
         }
         (should_have(r))
-        @if !r.next.is_empty() {
-            section.ia-panel {
-                div.ia-head {
-                    h2 { "Do next" }
-                    p { "What the rest of your account has left behind, then the quick finishes" }
-                }
-                ol.ia-next {
-                    @for n in &r.next {
-                        @let m = &r.mechanics[n.mechanic];
-                        li {
-                            a.ia-row href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
-                                (mark(m))
-                                span.ia-row-text {
-                                    b { (m.name) }
-                                    span { (why(m, &n.why)) }
-                                }
-                                span.ia-meter { span style={ "--s:" (share3(m.share())) } {} }
-                                span.ia-fig { (fig(m)) }
-                                span.ia-tag { (world_tag(m.world)) }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // After Do next (the page's answer comes first), and only the first few up front: a
+        // After Should have by now (the page's answer comes first), and only the first few up front: a
         // returning player can have twenty-odd, one per line on a phone.
         @if !r.not_started.is_empty() {
             section.ia-panel {
@@ -749,17 +724,6 @@ fn left_square(id: &str) -> bool {
     LEFT_SQUARE.iter().any(|p| id.starts_with(p))
 }
 
-fn why(m: &Mechanic, w: &Why) -> String {
-    match w {
-        Why::Behind { world_avg } => {
-            let place = if m.world == 0 { "account".to_string() } else { format!("W{}", m.world) };
-            format!("{} done, your {place} average is {}", pct(m.share()), pct(*world_avg))
-        }
-        Why::NearlyDone { left: 1 } => "One left to max".into(),
-        Why::NearlyDone { left } => format!("{left} left to max"),
-    }
-}
-
 fn fig(m: &Mechanic) -> String {
     match m.count {
         Count::Levels => format!("{} / {} {}", num(m.have()), num(m.total()), m.unit),
@@ -811,8 +775,8 @@ pub(crate) fn num(n: f64) -> String {
 /// spans the grid, so every card is measured before and after (FLIP). The opened one is
 /// revealed from its old size rather than stretched and draws on top; cards that only moved up
 /// or down slide; cards that changed column fade in where they land, since sliding them across
-/// their neighbours reads as a double image. Do next and Not
-/// started links switch the world, open the card the same way and scroll to it.
+/// their neighbours reads as a double image. Should have by now
+/// and Not started links switch the world, open the card the same way and scroll to it.
 const JS: &str = r##"(function(){
 var f=document.getElementById("ia-file"),t=document.getElementById("ia-save"),pb=document.getElementById("ia-paste"),er=document.getElementById("ia-err");
 function say(s){if(er){er.textContent=s;er.hidden=false}}
@@ -1037,14 +1001,7 @@ body.ia-pub { background: var(--page); -webkit-tap-highlight-color: transparent;
 .ia-col.off .ia-col-track { background: var(--well); }
 .ia-col.off b { color: var(--ink-3); }
 
-/* Rows: do next and the items. A 28 px mark, the name and its line, a meter, the figure. */
-.ia-next { list-style: none; display: flex; flex-direction: column; padding: 0; margin: 0; }
-.ia-next li + li { border-top: 1px solid var(--edge-1); }
-.ia-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(80px, 22%) auto 34px; align-items: center; gap: 14px; min-height: 54px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; color: var(--ink); transition: background 0.18s; }
-.ia-row:active { transform: scale(0.99); }
-.ia-row-text { display: flex; flex-direction: column; min-width: 0; }
-.ia-row-text b { font-size: 14px; font-weight: 500; }
-.ia-row-text span { font-size: 13px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Rows: the items. A 28 px mark, the name and its line, a meter, the figure. */
 .ia-mark { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; }
 body.ia-pub img.left { object-fit: cover; object-position: left center; }
 .ia-mark.blank { display: block; width: 10px; height: 10px; margin: 9px; border-radius: 50%; background: var(--w); }
@@ -1211,7 +1168,6 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 /* Hover only where there's a pointer to hover with: a tap would leave it stuck on. */
 @media (hover: hover) and (pointer: fine) {
   .ia-lead-line a:hover { color: var(--ink); }
-  .ia-row:hover { background: var(--hover); }
   .ia-tabs label:hover { background: var(--hover); color: var(--ink); }
   .ia-card > summary:hover { background: var(--hover); }
   .ia-card[open] > summary:hover { background: linear-gradient(var(--hover), var(--hover)), var(--raised); }
@@ -1219,7 +1175,7 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-all > summary:hover, .ia-fresh-more > summary:hover { color: var(--ink); }
 }
 @media (hover: none) {
-  .ia-row:active, .ia-tabs label:active { background: var(--hover); }
+  .ia-tabs label:active { background: var(--hover); }
   .ia-card > summary:active { background: linear-gradient(var(--hover), var(--hover)), var(--raised); }
 }
 /* Under 16 px a phone zooms into the box when you tap it. */
@@ -1239,12 +1195,6 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-big { font-size: 48px; }
   .ia-cols { height: 112px; gap: 6px; }
   .ia-ask-actions .btn { flex: 1 1 auto; justify-content: center; }
-  /* Do next: the name and its line get the width; the bar runs under them. */
-  .ia-row { grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "m t g" ". b b"; row-gap: 7px; padding: 10px 6px; }
-  .ia-row > .ia-mark { grid-area: m; } .ia-row > .ia-row-text { grid-area: t; } .ia-row > .ia-tag { grid-area: g; align-self: start; }
-  .ia-row > .ia-meter { grid-area: b; }
-  .ia-row > .ia-fig { display: none; }
-  .ia-row-text span { white-space: normal; }
   /* World tabs: one row that scrolls sideways instead of three rows of tabs. */
   .ia-tabs { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px 12px; padding: 0 16px 2px; scrollbar-width: none; scroll-padding: 0 16px; overscroll-behavior-x: contain; }
   .ia-tabs::-webkit-scrollbar { display: none; }
