@@ -1,0 +1,24 @@
+[package]
+name = "idleon-app"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+description = "The Idleon account check as a desktop app for Linux and Windows."
+
+[[bin]]
+name = "idleon-check"
+path = "src/main.rs"
+
+[dependencies]
+idleon-core = { path = "../idleon-core" }
+serde.workspace = true
+serde_json.workspace = true
+iced = { version = "0.14", default-features = false, features = ["wgpu", "tiny-skia", "crisp", "web-colors", "image-without-codecs", "advanced", "selector", "lazy", "thread-pool", "x11", "wayland"] }
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip", "json"] }
+open = "5"
+image = { version = "0.25", default-features = false, features = ["png"] }
+dirs = "6"
+
+[dev-dependencies]
+iced_test = "0.14"

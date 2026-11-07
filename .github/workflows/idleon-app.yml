@@ -1,0 +1,71 @@
+# The Idleon account check app for Windows and Linux. Builds it on every pull request that
+# touches it (so a Windows break shows before merging), and on a tag `idleon-app-v*` attaches
+# both builds to a GitHub release people download from.
+name: Idleon app
+
+on:
+  pull_request:
+    paths:
+      - crates/idleon-app/**
+      - crates/idleon-core/**
+      - .github/workflows/idleon-app.yml
+  push:
+    tags: ["idleon-app-v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: idleon-app-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            file: idleon-check.exe
+            out: idleon-check-windows.exe
+          - name: Linux
+            os: ubuntu-latest
+            file: idleon-check
+            out: idleon-check-linux
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: idleon-app
+      - name: Build
+        run: cargo build --release -p idleon-app --locked
+      - name: Tests
+        run: cargo test -p idleon-app -p idleon-core --locked
+      - name: Name it
+        shell: bash
+        run: cp target/release/${{ matrix.file }} ${{ matrix.out }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.out }}
+          path: ${{ matrix.out }}
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/idleon-app-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" idleon-check-windows.exe idleon-check-linux --repo "${{ github.repository }}" --title "Idleon account check ${{ github.ref_name }}" --notes "The account check as an app. Windows - idleon-check-windows.exe. Linux - idleon-check-linux (chmod +x it first)."

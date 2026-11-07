@@ -235,5 +235,21 @@ suspended as a fallback; `render.yaml` goes when it's deleted.
 - `crates/feat-*` holds one crate per feature.
 - `crates/render` turns SVG into PNG for the generated images.
 - `crates/app` is the binary.
+- `crates/idleon-core` reads an Idleon save into the account check's review (checks, tiers, the
+  words every screen shows), with no server in it. The page (`feat-idleon`) and the app use it.
+- `crates/idleon-app` is the account check as a desktop app for Linux and Windows (iced). It
+  reads saves on the player's computer and syncs with the bot for tiers and reports.
+
+## The account check app
+
+`cargo run --release -p idleon-app` opens it. Drop a save on the window, open it with Ctrl+O or
+paste it with Ctrl+V; it opens on the last one next time. It asks the bot
+(`IDLEON_CHECK_SERVER`, default `https://anthobot.bid`) for the tiers as deployed, so an edit to
+`crates/idleon-core/crowd.txt` reaches every app with the next deploy, no new app needed.
+Reports go to the server's suggestion box once the player signs in with Discord in their
+browser. `IDLEON_CHECK_OFFLINE=1` keeps it off the network, `IDLEON_CHECK_TRACE=1` prints how
+long each step took, `IDLEON_CHECK_TEST=1` adds the test accounts. Builds for Windows and Linux:
+push a tag `idleon-app-v<version>` and `.github/workflows/idleon-app.yml` attaches both to a
+release. Screenshots and timings without a window: `--example shot` and `--example bench`.
 
 `docs/FEATURES.md` explains how to write a feature.

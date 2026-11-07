@@ -3847,7 +3847,12 @@ static PICTURES: &[(&str, &[u8])] = &[
 ];
 
 pub fn get(id: &str) -> Option<&'static [u8]> {
-    PICTURES.binary_search_by(|(k, _)| (*k).cmp(id)).ok().map(|i| PICTURES[i].1)
+    entry(id).map(|(_, b)| b)
+}
+
+/// The picture's ID as the list keeps it, and its PNG.
+pub fn entry(id: &str) -> Option<(&'static str, &'static [u8])> {
+    PICTURES.binary_search_by(|(k, _)| (*k).cmp(id)).ok().map(|i| PICTURES[i])
 }
 
 pub fn has(id: &str) -> bool {
