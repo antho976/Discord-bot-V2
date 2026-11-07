@@ -31,6 +31,53 @@ pub struct Item {
     /// (stamps have no cap), a bubble's `level` is how many of its bonus targets it has passed.
     /// Tiers from other players' saves (`crowd.txt`) compare this.
     pub raw: Option<f64>,
+    /// Max levels that only a pack you don't own adds (the Potluck Pack's +10 on vault
+    /// upgrades): taken off the max for a player who doesn't buy packs.
+    pub pack_levels: f64,
+    /// Only comes in a gem shop pack, and you don't have it: left out for a player who doesn't
+    /// buy packs.
+    pub pack_only: bool,
+}
+
+/// What the player spends real money on, chosen on the paste box: the tiers leave out what
+/// they won't buy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Packs {
+    /// Everything counts.
+    #[default]
+    Buy,
+    /// Packs already owned count, no new ones: max levels and items only a pack you don't own
+    /// gives are left out.
+    NoMore,
+    /// That, and the Gem Shop leaves Should have by now (gems are mostly bought).
+    Free,
+}
+
+impl Packs {
+    /// From the form's value ("buy", "no-more", "free"); anything else is `Buy`.
+    pub fn from_code(s: &str) -> Packs {
+        match s.trim() {
+            "no-more" => Packs::NoMore,
+            "free" => Packs::Free,
+            _ => Packs::Buy,
+        }
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Packs::Buy => "buy",
+            Packs::NoMore => "no-more",
+            Packs::Free => "free",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Packs::Buy => "I buy packs",
+            Packs::NoMore => "No more packs",
+            Packs::Free => "Free to play",
+        }
+    }
 }
 
 /// Whether an item's next step is open to the player right now.
@@ -83,7 +130,7 @@ impl Tier {
 
 impl Item {
     pub fn new(name: impl Into<String>, picture: Option<String>, level: f64, max: f64) -> Item {
-        Item { name: name.into(), picture, level: level.max(0.0), max: max.max(0.0), level_name: None, how: None, state: State::Unknown, world: None, raw: None }
+        Item { name: name.into(), picture, level: level.max(0.0), max: max.max(0.0), level_name: None, how: None, state: State::Unknown, world: None, raw: None, pack_levels: 0.0, pack_only: false }
     }
 
     pub fn done(&self) -> bool {
@@ -351,13 +398,33 @@ pub struct Review {
     /// A made-up account with nothing in it, for staff to see how the page reads (the page's
     /// Test account links), not a paste.
     pub test: bool,
+    /// What the player buys, as chosen on the paste box.
+    pub packs: Packs,
 }
 
 impl Review {
     /// `world` is the highest world the account has reached (`checks::world_reached`).
     pub fn new(save: &Save, mechanics: Vec<Mechanic>, world: u8) -> Review {
+        Review::with_packs(save, mechanics, world, Packs::Buy)
+    }
+
+    /// `new`, for a player who buys what `packs` says: without packs, what only a pack you
+    /// don't own gives leaves the items before any tier is built (so the tiers stop at the cap
+    /// you can reach), and free to play also takes the Gem Shop off its ranking.
+    pub fn with_packs(save: &Save, mechanics: Vec<Mechanic>, world: u8, packs: Packs) -> Review {
         let world = world.clamp(1, 7);
         let mut mechanics = mechanics;
+        if packs != Packs::Buy {
+            for m in &mut mechanics {
+                m.items.retain(|i| !i.pack_only);
+                for i in &mut m.items {
+                    if i.pack_levels > 0.0 {
+                        i.max = (i.max - i.pack_levels).max(0.0);
+                        i.level = i.level.min(i.max);
+                    }
+                }
+            }
+        }
         for m in &mut mechanics {
             let (now, later): (Vec<Item>, Vec<Item>) = std::mem::take(&mut m.items).into_iter().partition(|i| i.world.is_none_or(|w| w <= world));
             m.items = now;
@@ -370,6 +437,11 @@ impl Review {
                 m.crowd = table.get(m.key).and_then(|b| Ladder::new(b, &m.items)).filter(|l| l.rungs.iter().any(|r| r.world <= world));
             }
         });
+        if packs == Packs::Free {
+            for m in mechanics.iter_mut().filter(|m| m.key == "gem-shop") {
+                m.crowd = None;
+            }
+        }
         crate::expected::with(|worlds| {
             for m in &mut mechanics {
                 m.pace = match &m.crowd {
@@ -389,6 +461,7 @@ impl Review {
             mechanics,
             not_started,
             test: false,
+            packs,
         }
     }
 
@@ -480,6 +553,19 @@ mod tests {
             pace: None,
             crowd: None,
         }
+    }
+
+    #[test]
+    fn without_packs_what_only_a_pack_gives_leaves() {
+        let s = Save::parse(r#"{"OptLacc": []}"#).expect("an empty save");
+        let mut m = mech("upgrade-vault", 1, &[(505.0, 510.0), (0.0, 1.0)]);
+        m.items[0].pack_levels = 10.0;
+        m.items[1].pack_only = true;
+        let r = Review::with_packs(&s, vec![m.clone()], 7, Packs::NoMore);
+        assert_eq!(r.mechanics[0].items.iter().map(|i| (i.level, i.max)).collect::<Vec<_>>(), [(500.0, 500.0)]);
+        let r = Review::with_packs(&s, vec![m], 7, Packs::Buy);
+        assert_eq!((r.mechanics[0].items.len(), r.mechanics[0].items[0].max), (2, 510.0));
+        assert_eq!((Packs::from_code("no-more\r"), Packs::from_code("free"), Packs::from_code("x")), (Packs::NoMore, Packs::Free, Packs::Buy));
     }
 
     #[test]

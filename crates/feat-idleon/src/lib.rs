@@ -206,6 +206,7 @@ async fn form(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, Pa
 #[derive(Deserialize)]
 struct TestQuery {
     world: Option<u8>,
+    packs: Option<String>,
 }
 
 /// A test account: an empty save, everything at 0, seen as a player in the world asked for.
@@ -217,9 +218,10 @@ async fn test_account(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMe
         return Err(WebError::NotFound);
     }
     let world = q.world.unwrap_or(7).clamp(1, 7);
+    let packs = review::Packs::from_code(q.packs.as_deref().unwrap_or(""));
     let html = bot_core::tokio::task::spawn_blocking(move || {
         let s = save::Save::parse(r#"{"OptLacc": []}"#).expect("an empty save reads");
-        let mut review = review::Review::new(&s, checks::all(&s), world);
+        let mut review = review::Review::with_packs(&s, checks::all(&s), world, packs);
         review.test = true;
         page::render(&ctx, guild, &a, page::State::Done(&review)).into_string()
     })
@@ -228,15 +230,22 @@ async fn test_account(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMe
     Ok(bot_core::axum::response::Html(html).into_response())
 }
 
-/// The paste from the request body. The page's form is `text/plain` (`save=<the JSON>`, nothing
-/// escaped), which skips percent-decoding a megabyte; a URL-encoded body still works.
-fn paste(headers: &HeaderMap, body: &[u8]) -> String {
+/// The paste from the request body, and what the player buys. The page's form is `text/plain`
+/// (`packs=<choice>` on its own line first, then `save=<the JSON>`, nothing escaped), which skips
+/// percent-decoding a megabyte; a URL-encoded body still works.
+fn paste(headers: &HeaderMap, body: &[u8]) -> (String, review::Packs) {
     if plain(headers) {
         let raw = String::from_utf8_lossy(body);
-        let raw = raw.strip_prefix("save=").unwrap_or(&raw);
-        return raw.trim().to_string();
+        let (packs, rest) = match raw.strip_prefix("packs=").and_then(|r| r.split_once('\n')) {
+            Some((p, rest)) => (review::Packs::from_code(p), rest),
+            None => (review::Packs::Buy, &raw[..]),
+        };
+        let rest = rest.trim_start();
+        let rest = rest.strip_prefix("save=").unwrap_or(rest);
+        return (rest.trim().to_string(), packs);
     }
-    FormData::parse(body).get("save").map(str::to_string).unwrap_or_default()
+    let form = FormData::parse(body);
+    (form.get("save").map(str::to_string).unwrap_or_default(), review::Packs::from_code(form.get("packs").unwrap_or("")))
 }
 
 fn plain(headers: &HeaderMap) -> bool {
@@ -279,7 +288,7 @@ async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, P
         Ok(Err(_)) => return ask_again(&ctx, guild, &a, save::SaveError::TooBig.message(), false),
         Err(_) => return ask_again(&ctx, guild, &a, "Your save took too long to arrive. Check your connection and try again.", true),
     };
-    let text = paste(&headers, &body);
+    let (text, packs) = paste(&headers, &body);
     drop(body);
     if text.is_empty() {
         return ask_again(&ctx, guild, &a, "Paste your save first.", false);
@@ -298,7 +307,7 @@ async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, P
         let _slot = slot;
         let _pass = pass;
         let review = match save::Save::parse(&text) {
-            Ok(s) => review::Review::new(&s, checks::all(&s), checks::world_reached(&s)),
+            Ok(s) => review::Review::with_packs(&s, checks::all(&s), checks::world_reached(&s), packs),
             Err(e) => return page::render(&ctx, guild, &a, page::State::Ask { error: Some(e.message()), retry: false }).into_string(),
         };
         drop(text);
@@ -391,4 +400,20 @@ async fn picture(Path(id): Path<String>) -> WebResult {
     let id = id.strip_suffix(".png").unwrap_or(&id);
     let bytes = pictures::get(id).ok_or(WebError::NotFound)?;
     Ok(([(header::CONTENT_TYPE, "image/png"), (header::CACHE_CONTROL, "public, max-age=604800")], bytes).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_paste_and_the_packs_choice_come_apart() {
+        let mut plain = HeaderMap::new();
+        plain.insert(header::CONTENT_TYPE, "text/plain".parse().expect("a header"));
+        assert_eq!(paste(&plain, b"packs=free\r\nsave={\"a\": 1}\r\n"), ("{\"a\": 1}".to_string(), review::Packs::Free));
+        assert_eq!(paste(&plain, b"save={\"a\": 1}"), ("{\"a\": 1}".to_string(), review::Packs::Buy));
+        let mut form = HeaderMap::new();
+        form.insert(header::CONTENT_TYPE, "application/x-www-form-urlencoded".parse().expect("a header"));
+        assert_eq!(paste(&form, b"packs=no-more&save=%7B%7D"), ("{}".to_string(), review::Packs::NoMore));
+    }
 }

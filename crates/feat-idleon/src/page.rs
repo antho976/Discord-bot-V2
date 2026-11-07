@@ -12,7 +12,7 @@ use bot_core::web::ui;
 use crate::expected::Pace;
 use crate::game::GAME;
 use crate::pictures;
-use crate::review::{Count, Item, Mechanic, Review, State as Step, Tier};
+use crate::review::{Count, Item, Mechanic, Packs, Review, State as Step, Tier};
 
 /// Who's looking, as the closed test sees it.
 pub struct Access {
@@ -209,6 +209,22 @@ fn ask(guild: u64, error: Option<&str>, retry: bool, test: bool) -> Markup {
             // Sent as plain text: URL-encoding a save triples its size and was a fifth of the
             // server's work per check.
             form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
+                // First in the form so it's the first line of the plain-text body (the server
+                // reads it before the save); shown under the box (CSS order). The page script
+                // remembers the choice in this browser.
+                div.ia-packs role="radiogroup" aria-label="Packs" {
+                    span { "Packs" }
+                    @for (p, tip) in [
+                        (Packs::Buy, "Every tier counts everything."),
+                        (Packs::NoMore, "Leaves out what only a pack you don't own gives: the Potluck Pack's vault levels, pack-only Gallery items."),
+                        (Packs::Free, "That, and the Gem Shop leaves Should have by now."),
+                    ] {
+                        label title=(tip) {
+                            input type="radio" name="packs" value=(p.code()) checked[p == Packs::Buy];
+                            span { (p.label()) }
+                        }
+                    }
+                }
                 textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
                 p.ia-err #ia-err role="alert" hidden[error.is_none()] data-retry[retry] { (error.unwrap_or_default()) }
                 p.ia-note #ia-last hidden { "Filled in with the save you last checked in this tab." }
@@ -250,6 +266,7 @@ fn done(guild: u64, r: &Review) -> Markup {
                 span { "of the maxes this check reads, across " (r.mechanics.iter().filter(|m| m.world <= r.world && m.total() > 0.0).count()) " mechanics" }
                 p.ia-lead-line {
                     "World " (r.world) " · " (r.characters) " characters"
+                    @if r.packs != Packs::Buy { " · " (r.packs.label()) }
                     " · " a.ia-again href={ "/p/" (guild) "/idleon" } { "Check another account" }
                 }
             }
@@ -819,6 +836,12 @@ var signin=/[?&]from=signin/.test(location.search);
 // The rest of the address stays (the test account's ?world=).
 try{history.replaceState(null,"",location.pathname+location.search.replace(/([?&])from=signin(&|$)/,function(m,a,b){return b?a:""})+location.hash)}catch(x){}
 var LAST="ia-last-save";
+// Packs: the choice on the paste box, remembered in this browser, and passed to the test
+// account links.
+var PK="ia-packs";
+function packsLinks(v){document.querySelectorAll(".ia-try a").forEach(function(a){a.href=a.href.replace(/&packs=[^&]*/,"")+(v&&v!=="buy"?"&packs="+v:"")})}
+try{var pv=localStorage.getItem(PK),pr=pv&&document.querySelector('input[name=packs][value="'+pv+'"]');if(pr){pr.checked=true;packsLinks(pv)}}catch(x){}
+document.addEventListener("change",function(e){if(e.target.name!=="packs")return;try{localStorage.setItem(PK,e.target.value)}catch(x){}packsLinks(e.target.value)});
 function keep(s){try{if(s)sessionStorage.setItem(LAST,s);else sessionStorage.removeItem(LAST)}catch(x){try{sessionStorage.removeItem(LAST)}catch(y){}}}
 if(t){
   t.form.addEventListener("submit",function(){keep(t.value)});
@@ -989,7 +1012,15 @@ body.ia-pub { background: var(--page); -webkit-tap-highlight-color: transparent;
 .ia-ask form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .ia-ask textarea { width: 100%; min-height: 150px; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 12.5px/1.5 var(--mono); }
 .ia-ask textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
-.ia-ask-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.ia-ask-actions { order: 2; display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.ia-packs { order: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.ia-packs > span { margin-right: 4px; color: var(--ink-3); }
+.ia-packs label { position: relative; cursor: pointer; }
+.ia-packs input { position: absolute; opacity: 0; pointer-events: none; }
+.ia-packs label span { display: block; padding: 6px 11px; border-radius: 8px; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.ia-packs label:hover span { color: var(--ink); }
+.ia-packs input:checked + span { color: var(--ink); background: color-mix(in oklab, var(--accent) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 55%, transparent); }
+.ia-packs input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 1px; }
 .ia-try { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding-top: 14px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 13px; }
 .ia-try a { color: var(--ink-2); text-underline-offset: 3px; }
 .ia-try a:hover { color: var(--ink); }

@@ -762,6 +762,9 @@ fn upgrade_vault(save: &Save) -> Mechanic {
                 lifts.push("more Glimbo trades");
             }
             let mut it = Item::new(vault_name(text(r, 0)), pic(format!("VaultUpg{i}")), at(&levels, i), max);
+            if !bundle && (base >= 2.0 || slot.is_some()) {
+                it.pack_levels = 10.0;
+            }
             if i >= open_rows {
                 let need = opens_at.get(i).copied().unwrap_or(f64::INFINITY);
                 it.how = Some(format!("Opens at {} total vault levels. You have {}.", big(need), big(total)));
