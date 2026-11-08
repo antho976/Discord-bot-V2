@@ -198,6 +198,13 @@ pub struct Mechanic {
     /// The ladder from other players' saves (`crowd.txt`), set by `Review::new` when the
     /// mechanic has a table there. With it, `tiers` is a tier per stage of the game.
     pub crowd: Option<Ladder>,
+    /// A mechanic with both the game's own tiers (`tier_names`, on `level`) and a ladder from
+    /// other players' saves on `raw` levels (statues: Gold to Zenith, and statue levels): the
+    /// card shows a switch between Levels and Tiers. This is the note for the Levels side;
+    /// `note` is the Tiers side's. See `levels_view` and `tiers_view`.
+    pub levels_note: Option<String>,
+    /// Game tiers drawn whole (Gold, Onyx, Zenith), not in parts of about 8.
+    pub whole_tiers: bool,
 }
 
 impl Mechanic {
@@ -293,7 +300,7 @@ impl Mechanic {
         let mut rungs: Vec<(String, Vec<f64>)> = Vec::new();
         let mut prev = vec![0.0; n];
         for (name, targets) in steps {
-            let parts = crate::crowd::split(&prev, &targets, &order, crate::crowd::PART, MAX_LEVEL_PARTS);
+            let parts = if self.whole_tiers { vec![targets.clone()] } else { crate::crowd::split(&prev, &targets, &order, crate::crowd::PART, MAX_LEVEL_PARTS) };
             let k = parts.len();
             for (p, t) in parts.into_iter().enumerate() {
                 rungs.push((if k == 1 { name.clone() } else { format!("{name} · {} of {k}", p + 1) }, t));
@@ -329,6 +336,32 @@ impl Mechanic {
             }
         }
         out
+    }
+
+    /// Both ladders (`levels_note` set, a crowd ladder and game tiers): the Levels side. Its
+    /// tasks are levels, so the items' tier steps (`how`, `state`) are left off, and the levels
+    /// note stands in for the tiers one.
+    pub fn levels_view(&self) -> Option<Mechanic> {
+        let note = self.levels_note.clone().filter(|_| self.crowd.is_some() && self.tier_names.is_some())?;
+        let mut m = self.clone();
+        m.note = Some(note);
+        for i in &mut m.items {
+            i.how = None;
+            i.state = State::Unknown;
+        }
+        Some(m)
+    }
+
+    /// Both ladders: the Tiers side, the game's own tiers whole, with each item's next step.
+    /// Its pace and side box belong to the levels.
+    pub fn tiers_view(&self) -> Option<Mechanic> {
+        self.levels_note.as_ref().filter(|_| self.crowd.is_some() && self.tier_names.is_some())?;
+        let mut m = self.clone();
+        m.crowd = None;
+        m.pace = None;
+        m.have = None;
+        m.whole_tiers = true;
+        Some(m)
     }
 
     /// The level a tier compares an item on: its real level under a crowd ladder.
@@ -550,6 +583,8 @@ mod tests {
             have: None,
             later: Vec::new(),
             open_order: None,
+            levels_note: None,
+            whole_tiers: false,
             pace: None,
             crowd: None,
         }

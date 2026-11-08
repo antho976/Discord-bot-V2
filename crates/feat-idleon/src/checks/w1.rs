@@ -65,8 +65,12 @@ fn statues(save: &Save) -> Mechanic {
         .collect();
     let mut m = mech("statues", 1, "Statues", pic("StatueZ1".into()), Count::Levels, "tiers", items);
     m.tier_names = Some(STATUE_TIERS[1..].iter().map(|s| s.to_string()).collect());
-    m.note = Some("Each statue goes Normal, Gold, Onyx, then Zenith (the Kachow Statue stops at Onyx: it drops too rarely for the million a Zenith takes); the share counts those. Levels have no cap: the tiers follow the highest level other players have on each statue, from the world it's in, so a statue that is slow to level asks for less.".into());
-    m.have = Some(Have { figure: format!("{} statue levels in all", big(total)), text: "A statue levels up as you drop statues of its kind on it in town.".into() });
+    // Onyx and Zenith each wait on tools given to the Statue Man (`OptLacc[69]` 2 and 3).
+    let tools = |id: &str, need: f64| if chisels < need { format!("Needs the {}", GAME.item_name(id).unwrap_or("tools")) } else { String::new() };
+    m.tier_notes = vec![String::new(), tools("SmithingHammerChisel3", 2.0), tools("SmithingHammerChisel4", 3.0)];
+    m.note = Some("Each statue goes Gold, Onyx, then Zenith. The Kachow Statue stops at Onyx: it drops too rarely for the million a Zenith takes.".into());
+    m.levels_note = Some("Statue levels have no cap. This ladder follows the highest level other players have on each statue, from the world it opens in, so a statue that is slow to level asks for less. A statue levels up as you drop statues of its kind on it in town.".into());
+    m.have = Some(Have { figure: format!("{} statue levels in all", big(total)), text: "The Tiers side shows Gold, Onyx and Zenith, with what each statue needs for its next one.".into() });
     m
 }
 
