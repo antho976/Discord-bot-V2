@@ -47,7 +47,7 @@ pub fn stage_label(stage: usize) -> String {
 /// the highest any save has (see the crowd example's `best_curve`). An item that is hard to
 /// level stays low even for the endgame, and its tiers follow. Their tiers are a stage each,
 /// never split into parts.
-pub const BEST: [&str; 4] = ["statues", "stamps", "owl", "forge"];
+pub const BEST: [&str; 5] = ["statues", "stamps", "owl", "forge", "upgrade-vault"];
 
 /// Mechanics whose items differ from account to account (one per character), so they have no
 /// rows in `crowd.txt`: their ladder is made from each item's own max on the `best_curve`, a
@@ -59,7 +59,12 @@ pub const BY_MAX: [&str; 1] = ["anvil-points"];
 /// stages since, to the whole best at the last stage (`max`). Squared, so the early stages after
 /// it opens ask for little and most of the climb comes late.
 pub fn best_curve(world: u8, stage: usize) -> f64 {
-    let open = usize::from(world.clamp(1, 7) - 1) * 3;
+    curve_from(usize::from(world.clamp(1, 7) - 1) * 3, stage)
+}
+
+/// `best_curve` from a stage rather than a world: the share asked at `stage` of something that
+/// opens at stage `open`.
+pub fn curve_from(open: usize, stage: usize) -> f64 {
     if stage < open {
         return 0.0;
     }

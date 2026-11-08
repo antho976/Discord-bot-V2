@@ -41,6 +41,12 @@ pub fn stackable_items() -> Vec<&'static str> {
     game::GAME.extra("general").get("stackable").and_then(bot_core::serde_json::Value::as_array).map(|a| a.iter().filter_map(bot_core::serde_json::Value::as_str).collect()).unwrap_or_default()
 }
 
+/// Each Upgrade Vault upgrade's name and the total vault levels that open it, for the crowd
+/// example: the vault's tiers open upgrades in the game's order.
+pub fn vault_opens() -> Vec<(String, f64)> {
+    checks::vault_opens()
+}
+
 /// An item's name in the game, for the examples.
 pub fn item_name(id: &str) -> Option<&'static str> {
     game::GAME.item_name(id)

@@ -140,6 +140,12 @@ pub(crate) fn at(v: &[f64], i: usize) -> f64 {
 }
 
 
+/// Each Upgrade Vault upgrade's name and the total vault levels that open it (`UpgradeVault`
+/// col 6), named as the check names them.
+pub fn vault_opens() -> Vec<(String, f64)> {
+    rows("UpgradeVault", &[]).iter().map(|r| (w1::vault_name(text(r, 0)), cell(r, 6))).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

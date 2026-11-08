@@ -408,21 +408,35 @@ fn base_column(b: &Block, stage: usize, rows: &[String], maxes: &HashMap<&str, f
 /// of the highest level any save has for that row.
 fn best_table(m: &feat_idleon::review::Mechanic, rows: &[String], ids: &HashMap<String, u32>, seen: &[Seen]) -> (Vec<usize>, Vec<Vec<Option<f64>>>) {
     let world: HashMap<&str, u8> = m.items.iter().chain(&m.later).map(|i| (i.name.as_str(), i.world.unwrap_or(m.world))).collect();
-    // Found-once items with no level of their own (the owl's Megafeathers) belong to the other
-    // side of the card: no level ladder for them.
-    let once: Vec<&str> = m.items.iter().chain(&m.later).filter(|i| i.max > 0.0 && i.max <= 1.0 && i.raw.is_none()).map(|i| i.name.as_str()).collect();
+    // On a card with a switch, found-once items with no level of their own (the owl's
+    // Megafeathers) belong to the other side: no level ladder for them.
+    let once: Vec<&str> = m.items.iter().chain(&m.later).filter(|i| m.levels_note.is_some() && i.max > 0.0 && i.max <= 1.0 && i.raw.is_none()).map(|i| i.name.as_str()).collect();
     let cols: Vec<usize> = (0..STAGES.len()).collect();
-    let table = rows
-        .iter()
-        .map(|name| {
-            let best = ids.get(name).map_or(0.0, |id| seen.iter().filter_map(|x| x.levels.get(m.key)?.get(id).copied()).fold(0.0f32, f32::max));
-            let w = world.get(name.as_str()).copied().unwrap_or(m.world);
-            cols.iter().map(|&s| {
-                let f = crowd::best_curve(w, s);
-                (f > 0.0 && best > 0.0 && !once.contains(&name.as_str())).then(|| crowd::nice(f64::from(best) * f).max(1.0))
-            }).collect()
-        })
-        .collect();
+    let best: Vec<f64> = rows.iter().map(|name| f64::from(ids.get(name).map_or(0.0, |id| seen.iter().filter_map(|x| x.levels.get(m.key)?.get(id).copied()).fold(0.0f32, f32::max)))).collect();
+    // The stage each row opens at: its world's first, or for the Upgrade Vault, the first stage
+    // where the whole vault on the curve (every upgrade's best at that stage's share) reaches the
+    // total vault levels that open the upgrade, so the tiers open upgrades in the game's order.
+    let mut open: Vec<Option<usize>> = rows.iter().map(|name| (m.key != "upgrade-vault").then(|| usize::from(world.get(name.as_str()).copied().unwrap_or(m.world).clamp(1, 7) - 1) * 3)).collect();
+    let mut table: Vec<Vec<Option<f64>>> = vec![vec![None; cols.len()]; rows.len()];
+    let opens: HashMap<String, f64> = if m.key == "upgrade-vault" { feat_idleon::vault_opens().into_iter().collect() } else { HashMap::new() };
+    for &s in &cols {
+        if m.key == "upgrade-vault" {
+            // Where the vault as a whole stands at this stage: every upgrade's best on the curve.
+            let asked: f64 = best.iter().map(|b| b * crowd::curve_from(0, s)).sum();
+            for r in 0..rows.len() {
+                if open[r].is_none() && opens.get(&rows[r]).is_some_and(|&need| asked >= need) {
+                    open[r] = Some(s);
+                }
+            }
+        }
+        for r in 0..rows.len() {
+            let Some(o) = open[r] else { continue };
+            let f = crowd::curve_from(o, s);
+            if f > 0.0 && best[r] > 0.0 && !once.contains(&rows[r].as_str()) {
+                table[r][s] = Some(crowd::nice(best[r] * f).max(1.0));
+            }
+        }
+    }
     (cols, table)
 }
 

@@ -711,7 +711,7 @@ fn anvil_points(save: &Save) -> Mechanic {
 
 /// A vault upgrade's name without the game's info marker: "Natural_Talent_製_(Tap_for_Info)"
 /// is "Natural Talent".
-fn vault_name(s: &str) -> String {
+pub(super) fn vault_name(s: &str) -> String {
     label(s.split('製').next().unwrap_or(s))
 }
 
