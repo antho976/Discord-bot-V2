@@ -198,6 +198,15 @@ pub struct Mechanic {
     /// The ladder from other players' saves (`crowd.txt`), set by `Review::new` when the
     /// mechanic has a table there. With it, `tiers` is a tier per stage of the game.
     pub crowd: Option<Ladder>,
+    /// A mechanic with both the game's own tiers (`tier_names`, on `level`) and a ladder from
+    /// other players' saves on `raw` levels (statues: Gold to Zenith, and statue levels): the
+    /// card shows a switch between Levels and Tiers. This is the note for the Levels side;
+    /// `note` is the Tiers side's. See `levels_view` and `tiers_view`.
+    pub levels_note: Option<String>,
+    /// Game tiers drawn whole (Gold, Onyx, Zenith), not in parts of about 8.
+    pub whole_tiers: bool,
+    /// What the switch calls the side that isn't Levels: "Tiers" (statues), "Unlock" (stamps).
+    pub other_side: &'static str,
 }
 
 impl Mechanic {
@@ -293,7 +302,7 @@ impl Mechanic {
         let mut rungs: Vec<(String, Vec<f64>)> = Vec::new();
         let mut prev = vec![0.0; n];
         for (name, targets) in steps {
-            let parts = crate::crowd::split(&prev, &targets, &order, crate::crowd::PART, MAX_LEVEL_PARTS);
+            let parts = if self.whole_tiers { vec![targets.clone()] } else { crate::crowd::split(&prev, &targets, &order, crate::crowd::PART, MAX_LEVEL_PARTS) };
             let k = parts.len();
             for (p, t) in parts.into_iter().enumerate() {
                 rungs.push((if k == 1 { name.clone() } else { format!("{name} · {} of {k}", p + 1) }, t));
@@ -322,13 +331,44 @@ impl Mechanic {
         // Endgame tiers belong to no world: nobody is behind for not having them.
         let mut out: Vec<(Tier, Option<u8>)> = l.rungs.iter().map(|r| (tier(r.label.clone(), r.targets.clone()), (!crate::crowd::endgame(r.stage)).then_some(r.world))).collect();
         // Items with a real level of their own have no max in those units (stamps, bubbles).
-        if self.count != Count::Open && self.items.iter().any(|i| i.max > 0.0) && self.items.iter().all(|i| i.raw.is_none()) {
+        // Not on the Levels side of a switch: the maxes there are the other side's (the owl).
+        if self.count != Count::Open && self.levels_note.is_none() && self.items.iter().any(|i| i.max > 0.0) && self.items.iter().all(|i| i.raw.is_none()) {
             let max: Vec<f64> = self.items.iter().map(|i| i.max).collect();
             if l.rungs.last().is_none_or(|r| r.targets != max) {
                 out.push((tier("Everything maxed".to_string(), max), None));
             }
         }
         out
+    }
+
+    /// Both ladders (`levels_note` set and a crowd ladder on `raw` levels): the Levels side. Its
+    /// tasks are levels, so the items' next steps on the other side (`how`, `state`: a statue's
+    /// next tier) are left off, except for what you don't have at all yet (a stamp's where to
+    /// find it); the levels note stands in for the other one.
+    pub fn levels_view(&self) -> Option<Mechanic> {
+        let note = self.levels_note.clone().filter(|_| self.crowd.is_some())?;
+        let mut m = self.clone();
+        m.note = Some(note);
+        // Items with no max (the owl's lasting bonuses) live on this side: theirs stay.
+        for i in m.items.iter_mut().filter(|i| i.level > 0.0 && i.max > 0.0) {
+            i.how = None;
+            i.state = State::Unknown;
+        }
+        Some(m)
+    }
+
+    /// Both ladders: the other side (`other_side`), the game's own ladder (statue tiers whole,
+    /// stamps found), with each item's next step. Its pace and side box belong to the levels.
+    pub fn tiers_view(&self) -> Option<Mechanic> {
+        self.levels_note.as_ref().filter(|_| self.crowd.is_some())?;
+        let mut m = self.clone();
+        m.crowd = None;
+        m.pace = None;
+        m.have = None;
+        m.whole_tiers = true;
+        // Only what this side counts: the owl's lasting bonuses (no max) are the Levels side's.
+        m.items.retain(|i| i.max > 0.0);
+        Some(m)
     }
 
     /// The level a tier compares an item on: its real level under a crowd ladder.
@@ -434,7 +474,8 @@ impl Review {
             for m in &mut mechanics {
                 // Only when the table has a tier for your world or an earlier one: until there are
                 // saves from earlier worlds, an account short of World 7 keeps the game-max ladder.
-                m.crowd = table.get(m.key).and_then(|b| Ladder::new(b, &m.items)).filter(|l| l.rungs.iter().any(|r| r.world <= world));
+                let made = crate::crowd::BY_MAX.contains(&m.key).then(|| crate::crowd::by_max(&m.items, m.world));
+                m.crowd = table.get(m.key).or(made.as_ref()).and_then(|b| Ladder::new(b, &m.items)).filter(|l| l.rungs.iter().any(|r| r.world <= world));
             }
         });
         if packs == Packs::Free {
@@ -550,6 +591,9 @@ mod tests {
             have: None,
             later: Vec::new(),
             open_order: None,
+            levels_note: None,
+            whole_tiers: false,
+            other_side: "Tiers",
             pace: None,
             crowd: None,
         }

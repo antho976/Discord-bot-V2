@@ -42,11 +42,55 @@ pub fn stage_label(stage: usize) -> String {
     }
 }
 
+/// Mechanics whose tables come from the best level any save has, not from what half of each
+/// stage has: every item rises a little at every stage, from the stage its world opens, toward
+/// the highest any save has (see the crowd example's `best_curve`). An item that is hard to
+/// level stays low even for the endgame, and its tiers follow. Their tiers are a stage each,
+/// never split into parts.
+pub const BEST: [&str; 5] = ["statues", "stamps", "owl", "forge", "upgrade-vault"];
+
+/// Mechanics whose items differ from account to account (one per character), so they have no
+/// rows in `crowd.txt`: their ladder is made from each item's own max on the `best_curve`, a
+/// stage at a time from the mechanic's world (`by_max`).
+pub const BY_MAX: [&str; 1] = ["anvil-points"];
+
+/// Share of the best asked for at `stage` for something from `world` (`BEST` tables and
+/// `BY_MAX` ladders): nothing before the world opens, then rising with the square of the
+/// stages since, to the whole best at the last stage (`max`). Squared, so the early stages after
+/// it opens ask for little and most of the climb comes late.
+pub fn best_curve(world: u8, stage: usize) -> f64 {
+    curve_from(usize::from(world.clamp(1, 7) - 1) * 3, stage)
+}
+
+/// `best_curve` from a stage rather than a world: the share asked at `stage` of something that
+/// opens at stage `open`.
+pub fn curve_from(open: usize, stage: usize) -> f64 {
+    if stage < open {
+        return 0.0;
+    }
+    let f = (stage - open + 1) as f64 / (STAGES.len() - open) as f64;
+    f * f
+}
+
+/// A `BY_MAX` mechanic's table, made for these items: every stage a column, each item's max on
+/// the curve, never split into parts.
+pub fn by_max(items: &[Item], world: u8) -> Block {
+    let mut b = Block::new((0..STAGES.len()).collect());
+    b.whole = true;
+    for i in items.iter().filter(|i| i.max > 0.0) {
+        let w = i.world.unwrap_or(world);
+        b.push(i.name.clone(), (0..STAGES.len()).map(|s| { let f = best_curve(w, s); (f > 0.0).then(|| nice(i.max * f).max(1.0)) }).collect());
+    }
+    b
+}
+
 /// One mechanic's table.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Block {
     /// `off` after the key: the table is kept but not used (the mechanic keeps its own ladder).
     pub off: bool,
+    /// A `BEST` mechanic's table: a tier per stage, not split into parts.
+    pub whole: bool,
     /// Its columns, as indexes into `STAGES`, in game order.
     pub stages: Vec<usize>,
     /// Item name to its cells, one per column: `None` for `-` (not asked for at that stage).
@@ -110,7 +154,7 @@ pub fn parse(text: &str) -> (Table, Vec<String>) {
             if table.contains_key(first) {
                 problems.push(format!("line {n}: {first} is listed twice"));
             }
-            let mut b = Block::default();
+            let mut b = Block { whole: BEST.contains(&first), ..Block::default() };
             match words.get(1) {
                 None => {}
                 Some(&"off") => b.off = true,
@@ -283,7 +327,7 @@ impl Ladder {
             if targets.iter().all(|&t| t <= 0.0) || rungs.last().is_some_and(|r| r.targets == targets) {
                 continue;
             }
-            let parts = split(&prev, &targets, &order, PART, MAX_PARTS);
+            let parts = if block.whole { vec![targets.clone()] } else { split(&prev, &targets, &order, PART, MAX_PARTS) };
             let n = parts.len();
             for (p, t) in parts.into_iter().enumerate() {
                 let label = if n == 1 { stage_label(stage) } else { format!("{} · {} of {n}", stage_label(stage), p + 1) };

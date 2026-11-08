@@ -103,7 +103,7 @@ pub(crate) fn pic(p: String) -> Option<String> {
 }
 
 pub(crate) fn mech(key: &'static str, world: u8, name: &'static str, picture: Option<String>, count: Count, unit: &'static str, items: Vec<Item>) -> Mechanic {
-    Mechanic { key, world, name, picture, count, unit, items, note: None, tier_names: None, tier_notes: Vec::new(), raises: Vec::new(), have: None, later: Vec::new(), open_order: None, pace: None, crowd: None }
+    Mechanic { key, world, name, picture, count, unit, items, note: None, tier_names: None, tier_notes: Vec::new(), raises: Vec::new(), have: None, later: Vec::new(), open_order: None, pace: None, crowd: None, levels_note: None, whole_tiers: false, other_side: "Tiers" }
 }
 
 /// A big number the way the game writes it: 400K, 1.5M, 96 Qa. Past the names, 1.2e45.
@@ -139,6 +139,12 @@ pub(crate) fn at(v: &[f64], i: usize) -> f64 {
     v.get(i).copied().unwrap_or(0.0)
 }
 
+
+/// Each Upgrade Vault upgrade's name and the total vault levels that open it (`UpgradeVault`
+/// col 6), named as the check names them.
+pub fn vault_opens() -> Vec<(String, f64)> {
+    rows("UpgradeVault", &[]).iter().map(|r| (w1::vault_name(text(r, 0)), cell(r, 6))).collect()
+}
 
 #[cfg(test)]
 mod tests {

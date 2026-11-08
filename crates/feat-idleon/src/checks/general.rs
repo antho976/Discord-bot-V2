@@ -280,13 +280,84 @@ pub(super) fn achievement_picture(i: usize) -> Option<String> {
     number_to_letter().get(27 + i / 70).map(|l| format!("TaskAch{l}{}", i % 70 + 1))
 }
 
+/// The items `greenstacks.txt` says can be greenstacked in practice: an ID per line, `#`
+/// comments, `-ID` lines kept out.
+pub fn greenstackable(text: &str) -> HashSet<&str> {
+    text.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty() && !l.starts_with('-')).collect()
+}
+
+static GREENSTACKABLE: std::sync::LazyLock<HashSet<&'static str>> = std::sync::LazyLock::new(|| greenstackable(include_str!("../../greenstacks.txt")));
+
+/// Greenstacks you can miss (the owner's list): each item drops only while its quest is open on
+/// a character (the quest named in the 4th column of its `MonsterDrops` rows in N.js), and
+/// each character does a quest once. Finished on the classes that farm it best, the item is
+/// near impossible to get to 10M until late in the game.
+const MISSABLE: [(&str, &[&str]); 14] = [
+    ("GoldricP1", &["Goldric3"]),
+    ("GoldricP2", &["Goldric3"]),
+    ("GoldricP3", &["Goldric3"]),
+    ("Quest23", &["Mutton3", "Mutton4"]),
+    ("Quest24", &["Mutton4"]),
+    ("Quest22", &["Mutton2", "Mutton3", "Mutton4"]),
+    ("Quest4", &["Picnic_Stowaway2"]),
+    ("Quest3", &["Picnic_Stowaway2"]),
+    ("Quest32", &["XxX_Cattleprod_XxX3"]),
+    ("Quest14", &["TP_Pete2"]),
+    ("Quest18", &["Loominadi1"]),
+    ("Quest21", &["Funguy3"]),
+    ("Quest12", &["Dog_Bone1"]),
+    ("Quest7", &["Stiltzcho2"]),
+];
+
+/// Where a missable greenstack stands on each character: the quest giver ("Mutton"), then which
+/// characters have the quest open now (the item drops for them), how many haven't started it,
+/// or that all have finished it. `QuestComplete_c[quest]` is 1 done, 0 open, -1 not started.
+fn missable_status(save: &Save, quests: &[&str]) -> (String, String) {
+    let npc = label(quests[0].trim_end_matches(|c: char| c.is_ascii_digit()).trim_matches(|c: char| c == '_' || c == 'X' || c == 'x'));
+    let (mut open, mut fresh, mut done) = (Vec::new(), 0, 0);
+    for c in 0..characters(save) {
+        let state = |q: &&str| save.get(&format!("QuestComplete_{c}")).and_then(|v| v.get(*q)).map(num).unwrap_or(-1.0);
+        let states: Vec<f64> = quests.iter().map(state).collect();
+        if states.contains(&0.0) {
+            open.push(char_name(save, c));
+        } else if states.iter().any(|&v| v < 0.0) {
+            fresh += 1;
+        } else {
+            done += 1;
+        }
+    }
+    let mut status = Vec::new();
+    if !open.is_empty() {
+        status.push(format!("open now on {}", open.join(", ")));
+    }
+    if fresh > 0 {
+        status.push(format!("not started on {fresh} character{}", if fresh == 1 { "" } else { "s" }));
+    }
+    if open.is_empty() && fresh == 0 && done > 0 {
+        status.push("finished on every character, so it's much harder to get now".into());
+    }
+    (npc, status.join(", "))
+}
+
+/// The line an at-risk missable item carries.
+fn missable_how(save: &Save, quests: &[&str]) -> String {
+    let (npc, status) = missable_status(save, quests);
+    let mut out = format!("Missable: it drops only while {npc}'s quest is open on a character, and each character does it once. Get it to 10M before you finish it on the classes that farm it best.");
+    if !status.is_empty() {
+        let mut c = status.chars();
+        out += &format!(" {}{}.", c.next().map(|f| f.to_uppercase().to_string()).unwrap_or_default(), c.as_str());
+    }
+    out
+}
+
 /// Greenstacks: 10M or more of one item in storage. The game keeps every item that has ever
 /// been at 10M in `GreenStacks`, and counts that list. Checked against the stackable items
-/// (`extra.general.stackable`: item types starting b, c or d) in your storage chest
-/// (`ChestOrder`/`ChestQuantity`) plus the ones already on the list, biggest stacks first;
-/// with nothing stored, against every stackable item. An item's picture is its own ID.
+/// (`extra.general.stackable`: item types starting b, c or d) that players can really get to
+/// 10M (`greenstacks.txt`) in your storage chest (`ChestOrder`/`ChestQuantity`), plus the ones
+/// already on the list, biggest stacks first; with nothing stored, against every one of them.
+/// An item's picture is its own ID.
 fn greenstacks(save: &Save) -> Mechanic {
-    let stackable: Vec<&str> = GAME.extra("general").get("stackable").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
+    let stackable: Vec<&str> = GAME.extra("general").get("stackable").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).filter(|id| GREENSTACKABLE.contains(id)).collect()).unwrap_or_default();
     let green: Vec<&str> = save.get("GreenStacks").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     let order: Vec<&str> = save.get("ChestOrder").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
     let qty = save.numbers("ChestQuantity", &[]);
@@ -300,15 +371,24 @@ fn greenstacks(save: &Save) -> Mechanic {
     for id in &green {
         totals.entry(id).or_default();
     }
+    if !totals.is_empty() {
+        // Missable ones are always listed, stored or not: the warning matters most before you have any.
+        for (id, _) in MISSABLE.iter().filter(|(id, _)| stacks.contains(id)) {
+            totals.entry(id).or_default();
+        }
+    }
     let mut held: Vec<(&str, f64)> = totals.into_iter().collect();
     if held.is_empty() {
         held = stackable.iter().map(|id| (*id, 0.0)).collect();
     }
-    held.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(b.0)));
     let greens: HashSet<&str> = green.iter().copied().collect();
+    let quests = |id: &str| MISSABLE.iter().find(|(m, _)| *m == id).map(|(_, q)| *q);
+    // Missable ones not green yet first, then the biggest stacks.
+    let at_risk = |id: &str, n: f64| quests(id).is_some() && n < 1e7 && !greens.contains(id);
+    held.sort_by(|a, b| at_risk(b.0, b.1).cmp(&at_risk(a.0, a.1)).then(b.1.total_cmp(&a.1)).then(a.0.cmp(b.0)));
     let items = held
-        .into_iter()
-        .map(|(id, n)| {
+        .iter()
+        .map(|&(id, n)| {
             let done = n >= 1e7 || greens.contains(id);
             let name = GAME.item_name(id).map(str::to_string).unwrap_or_else(|| words(id));
             let mut it = Item::new(name, pic(id.to_string()), f64::from(done), 1.0);
@@ -317,12 +397,43 @@ fn greenstacks(save: &Save) -> Mechanic {
                 if n > 0.0 {
                     it.how = Some(format!("{} more in storage makes it green.", short(1e7 - n)));
                 }
+                if let Some(q) = quests(id) {
+                    let more = it.how.take().map(|h| format!(" {h}")).unwrap_or_default();
+                    it.how = Some(format!("{}{more}", missable_how(save, q)));
+                }
             }
             it
         })
         .collect();
+    // The missable ones not green yet, by quest, up top: in the card's list they'd wait for a
+    // tier to ask for them, and by then the quest may be done.
+    let mut risky: Vec<((String, String), Vec<String>)> = Vec::new();
+    for (id, n) in &held {
+        let Some(q) = quests(id).filter(|_| at_risk(id, *n)) else { continue };
+        let name = GAME.item_name(id).map(str::to_string).unwrap_or_else(|| words(id));
+        let key = missable_status(save, q);
+        match risky.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, names)) => names.push(name),
+            None => risky.push((key, vec![name])),
+        }
+    }
+    let have = (!risky.is_empty()).then(|| {
+        let lines: Vec<String> = risky
+            .iter()
+            .map(|((npc, status), names)| {
+                let status = if status.is_empty() { String::new() } else { format!(", {status}") };
+                format!("{} ({npc}{status}).", names.join(", "))
+            })
+            .collect();
+        let n: usize = risky.iter().map(|(_, v)| v.len()).sum();
+        Have {
+            figure: format!("{n} missable not green yet"),
+            text: format!("Each drops only while its quest is open, and a character does a quest once: get it to 10M before finishing the quest on your best farmer. {}", lines.join(" ")),
+        }
+    });
     let mut m = mech("greenstacks", 0, "Greenstacks", None, Count::Done, "green", items);
-    m.note = Some(format!("Out of the stackable items in your storage chest. The game remembers every item that has ever been at 10M: you have {}.", green.len()));
+    m.have = have;
+    m.note = Some(format!("Out of the items in your storage chest that players get to 10M. The game remembers every item that has ever been at 10M: you have {}. Missable ones (they drop only during a one-time quest) are listed first.", green.len()));
     m
 }
 
@@ -495,5 +606,25 @@ mod tests {
         let m = cards(&Save::parse(r#"{"OptLacc": [0], "Cards0": {"Boss3B": 1}}"#).unwrap());
         let it = m.items.iter().find(|i| i.name == "Chaotic Chizoar").unwrap();
         assert_eq!(it.how.as_deref(), Some("1 more card for the next star."));
+    }
+
+    #[test]
+    fn missable_greenstacks_come_first_and_say_where_the_quest_is_open() {
+        // Copper in storage, no Mustard Bottle; Picnic Stowaway's quest is open on the second
+        // character, not started on the first.
+        let s = Save::parse(
+            r#"{"OptLacc": [0], "Lv0_0": [1], "Lv0_1": [1], "ChestOrder": ["Copper"], "ChestQuantity": [5000],
+                "QuestComplete_0": {"Picnic_Stowaway2": -1}, "QuestComplete_1": {"Picnic_Stowaway2": 0}}"#,
+        )
+        .unwrap();
+        let m = greenstacks(&s);
+        assert!(m.items[..MISSABLE.len()].iter().all(|i| i.how.as_deref().is_some_and(|h| h.starts_with("Missable"))));
+        let how = m.items.iter().find(|i| i.name == "Mustard Bottle").and_then(|i| i.how.as_deref()).unwrap();
+        assert!(how.starts_with("Missable: it drops only while Picnic Stowaway's quest is open"), "{how}");
+        assert!(how.ends_with(" Open now on Character 2, not started on 1 character."), "{how}");
+        let have = m.have.as_ref().unwrap();
+        assert_eq!(have.figure, "14 missable not green yet");
+        assert!(have.text.contains("Ketchup Bottle, Mustard Bottle (Picnic Stowaway, open now on Character 2, not started on 1 character)."), "{}", have.text);
+        assert!(m.items.iter().any(|i| i.name == "Copper Ore"));
     }
 }

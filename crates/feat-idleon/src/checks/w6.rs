@@ -609,10 +609,15 @@ fn extra_names(key: &str) -> Vec<&'static str> {
     GAME.extra("w6").get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default()
 }
 
+/// Beanstalk foods nobody can get a stack of: the Golden Sugar Cookie isn't obtainable (none
+/// of 119 saves holds a single one).
+const NO_STACK: [&str; 1] = ["FoodG15"];
+
 /// Gold Food Beanstalk: `Ninja[104][i]` is 0 to 3 for the food at `NinjaInfo[29][2 + 3i]`. A
 /// 10,000 stack gives 1, 100,000 gives 2 (Supersized Gold Beanstacking), 1,000,000 gives 3
 /// (`OptLacc[475]`, set by the beanstalk quest item from Urie in World 7). The first two
 /// stacks are one item per food; the million stacks are one World 7 item for all foods.
+/// Foods in `NO_STACK` can't be stacked in practice and are left out.
 fn beanstalk(save: &Save) -> Mechanic {
     let tiers = save.numbers("Ninja", &[104]);
     let foods = rows("NinjaInfo", &[29]);
@@ -622,9 +627,11 @@ fn beanstalk(save: &Save) -> Mechanic {
     let w7 = save.option(475) >= 1.0;
     let food_ids: Vec<&str> = foods.iter().skip(2).step_by(3).map(|v| v.as_str().unwrap_or("")).collect();
     let food_name = |id: &str| GAME.item_name(id).map_or_else(|| label(id), str::to_string);
+    let possible = |id: &&str| !NO_STACK.contains(id);
     let mut items: Vec<Item> = food_ids
         .iter()
         .enumerate()
+        .filter(|(_, id)| possible(id))
         .map(|(i, &id)| {
             let tier = at(&tiers, i);
             let mut it = Item::new(food_name(id), pic(id.to_string()), tier.min(2.0), 2.0);
@@ -647,20 +654,21 @@ fn beanstalk(save: &Save) -> Mechanic {
         })
         .collect();
     // The million stacks: one item counting the foods at tier 3.
-    let million = food_ids.iter().enumerate().filter(|(i, _)| at(&tiers, *i) >= 3.0).count() as f64;
-    let mut it = Item::new("1,000,000 stacks", pic("FoodG1".into()), million, food_ids.len() as f64);
+    let foods = food_ids.iter().filter(|id| possible(id)).count() as f64;
+    let million = food_ids.iter().enumerate().filter(|(i, id)| possible(id) && at(&tiers, *i) >= 3.0).count() as f64;
+    let mut it = Item::new("1,000,000 stacks", pic("FoodG1".into()), million, foods);
     it.world = Some(7);
     if !w7 {
         it.how = Some("Needs the beanstalk upgrade from Urie's quest in World 7.".into());
         it.state = State::Locked;
     } else if let Some((id, held)) =
-        food_ids.iter().enumerate().filter(|(i, _)| at(&tiers, *i) == 2.0).map(|(_, &id)| (id, item_held(save, id))).max_by(|a, b| a.1.total_cmp(&b.1))
+        food_ids.iter().enumerate().filter(|(i, id)| possible(id) && at(&tiers, *i) == 2.0).map(|(_, &id)| (id, item_held(save, id))).max_by(|a, b| a.1.total_cmp(&b.1))
     {
         it.how = Some(format!("Most held among foods at 100,000: {}, {} of 1M.", food_name(id), big(held)));
         if held >= 1e6 {
             it.state = State::Ready;
         }
-    } else if million < food_ids.len() as f64 {
+    } else if million < foods {
         it.how = Some("A food takes its 1,000,000 stack after its 100,000 one; none is there yet.".into());
     }
     items.push(it);

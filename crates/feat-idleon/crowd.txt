@@ -14,82 +14,48 @@
 # (119 saves; a stage needs 5 to get a column)
 
 statues                                 # Statues
-  stages                7e  7m  7l  end1  end2  max
-  Spelunky Statue        1   3   3   3   3   3
-  Coral Statue           1   2   3   3   3   3
-  Ehexpee Statue         2   3   3   3   3   3
-  Pecunia Statue         2   3   3   3   3   3
-  Mutton Statue          2   3   3   3   3   3
-  Egg Statue             2   3   3   3   3   3
-  Battleaxe Statue       2   3   3   3   3   3
-  Boat Statue            2   3   3   3   3   3
-  Spiral Statue          2   3   3   3   3   3
-  Box Statue             2   3   3   3   3   3
-  Twosoul Statue         2   3   3   3   3   3
-  Seesaw Statue          2   3   3   3   3   3
-  Villager Statue        2   3   3   3   3   3
-  Power Statue           3   3   3   3   3   3
-  Speed Statue           3   3   3   3   3   3
-  Mining Statue          3   3   3   3   3   3
-  Feasty Statue          3   3   3   3   3   3
-  Beholder Statue        3   3   3   3   3   3
-  Compost Statue         2   3   3   3   3   3
-  Stealth Statue         2   3   3   3   3   3
-  Essence Statue         2   3   3   3   3   3
-  Lumberbob Statue       3   3   3   3   3   3
-  Bullseye Statue        3   3   3   3   3   3
-  Health Statue          3   3   3   3   3   3
-  Thicc Skin Statue      3   3   3   3   3   3
-  Oceanman Statue        3   3   3   3   3   3
-  Ol Reliable Statue     3   3   3   3   3   3
-  Kachow Statue          2   2   2   2   2   2
-  Exp Statue             3   3   3   3   3   3
-  Anvil Statue           3   3   3   3   3   3
-  Cauldron Statue        3   3   3   3   3   3
-  Dragon Statue          2   3   3   3   3   3
+  stages                1e  1m  1l  2e  2m  2l  3e  3m   3l   4e   4m   4l   5e   5m   5l   6e   6m   6l   7e   7m   7l  end1  end2  max
+  Power Statue           1   5  13  20  35  50  70  95  120  140  180  210  250  290  330  380  430  480  530  590  650  720  780  860
+  Speed Statue           1   6  13  20  35  55  75  95  120  150  180  220  260  300  340  390  440  500  550  620  680  750  820  890
+  Mining Statue          1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880
+  Feasty Statue          1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880
+  Health Statue          1   5  13  20  35  50  70  90  110  140  170  210  240  280  320  370  420  470  520  580  640  700  770  840
+  Lumberbob Statue       1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880
+  Thicc Skin Statue      1   5  12  20  35  50  70  90  110  140  170  200  240  280  320  360  410  460  510  570  630  690  760  820
+  Anvil Statue           1   5  12  20  30  45  65  85  110  130  160  190  230  270  310  350  400  440  500  550  610  670  730  790
+  Battleaxe Statue       1   5  12  20  30  50  65  85  110  130  160  200  230  270  310  350  400  450  500  550  610  670  730  800
+  Kachow Statue          -   -   -   1   1   4   7  12   17   20   30   35   45   55   65   80   95  100  120  140  150  170  190  210
+  Oceanman Statue        -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  650  730  800
+  Ol Reliable Statue     -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  660  730  800
+  Exp Statue             -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  320  370  420  480  540  600  670  730
+  Cauldron Statue        -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  320  370  420  480  540  600  660  730
+  Beholder Statue        -   -   -   1   7  16  25  45   65   90  110  150  180  220  260  310  360  420  470  540  600  670  740  820
+  Bullseye Statue        -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  660  730  800
+  Pecunia Statue         -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  330  380  430  490  540  610  670  740
+  Box Statue             -   -   -   -   -   -   2   8   19   35   55   75  100  140  170  220  260  310  370  430  490  560  640  710
+  Twosoul Statue         -   -   -   -   -   -   2   8   19   35   55   75  100  140  170  220  260  310  370  430  490  560  630  710
+  Ehexpee Statue         -   -   -   -   -   -   2   9   20   35   55   80  110  140  180  230  270  330  380  450  510  590  660  740
+  Seesaw Statue          -   -   -   -   -   -   2   8   19   35   50   75  100  140  170  210  260  310  370  430  490  560  630  710
+  Mutton Statue          -   -   -   -   -   -   -   -    -    3   12   25   45   75  100  140  190  240  300  360  430  510  590  680
+  Egg Statue             -   -   -   -   -   -   -   -    -    3   12   25   45   75  100  140  190  240  300  360  430  500  590  670
+  Dragon Statue          -   -   -   -   -   -   -   -    -    3   13   30   55   85  120  170  220  280  340  420  500  580  680  780
+  Spiral Statue          -   -   -   -   -   -   -   -    -    -    -    -    4   19   40   75  110  170  230  300  380  470  570  690
+  Boat Statue            -   -   -   -   -   -   -   -    -    -    -    -    4   17   40   70  110  160  210  280  360  440  540  640
+  Villager Statue        -   -   -   -   -   -   -   -    -    -    -    -    4   19   40   75  120  170  240  310  390  490  590  700
+  Compost Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   70  120  190  280  380  500  630
+  Stealth Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   70  120  190  280  380  490  630
+  Essence Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   65  120  190  270  370  490  620
+  Spelunky Statue        -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   16   65  140  260  410  590
+  Coral Statue           -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   12   45  100  190  300  430
 
 bribes                                  # Bribes, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                       1l  2e  2l  3e  3l  4e  4l  5e  7e  7m  7l  end1  end2  max
-  Insider Trading               1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Tracking Chips                1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Mandatory Fire Sale           1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Sleeping on the Job           1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Artificial Demand             1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  The Art of the Deal           1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Overstock Regulations         -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Double Exp Scheme             -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Tagged Indicators             -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Fossil Fuel Legislation       -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Five Aces in the Deck         -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Fake Teleport Tickets         -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  The Art of the Steal          -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Counterfeit Telepassports     -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Weighted Marbles              -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Changing the Code             -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Taxidermied Cog Pouches       -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Guild VIP Fraud               -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Library Double Agent          -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  The Art of the Fail           -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Photoshopped Dmg Range        -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  Glitched Acc Formula          -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  Firewalled Defence            -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  Bottomless Bags               -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  AFKeylogging                  -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  Guild GP Hack                 -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  The Art of the Bail           -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Random Garbage                -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Godlier Creation              -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Fishermaster                  -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Muscles on Muscles            -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Bottle Service                -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Star Scraper                  -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  The Art of the Grail          -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Artifact Pilfering            -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Forge Cap Smuggling           -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Gold from Lead                -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Nugget Fabrication            -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Divine PTS Miscounting        -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Loot Table Tampering          -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  stages    1l  2e  2l  3e  3l  4e  4l  5e  7e  7m  7l  end1  end2  max
+  Set 1      1   -   1   -   1   -   1   -   1   1   1   1   1   1
+  Set 2      -   -   1   -   1   -   1   -   1   1   1   1   1   1
+  Set 3      -   -   -   -   1   -   1   -   1   1   1   1   1   1
+  Set 4      -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Set 5      -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Set 6      -   -   -   -   -   -   -   -   1   1   1   1   1   1
 
 star-signs                              # Star Signs, World 1 to 5 columns from AutoReview's tiers, changed
   stages               3e  3m  4e  4m  5e  5m  7e  7m  7l  end1  end2  max
@@ -174,130 +140,130 @@ star-signs                              # Star Signs, World 1 to 5 columns from 
   Killian Maximus       -   -   -   -   -   -   -   1   1   1   1   1
   Power Bowower         -   -   -   -   -   -   -   1   1   1   1   1
 
-stamps                                  # Stamps, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                      2l  3e  3m  3l  4e  4m  4l  5e  5m  5l   7e   7m   7l  end1  end2  max
-  Mana Stamp                   1   1   1   -   1   1   -   1   1   1   55  120  130  220  270  370
-  Tomahawk Stamp               1   1   1   -   1   1   -   1   1   1   40   75  100  180  200  310
-  Target Stamp                 1   1   1   -   1   1   -   1   1   1   60   75  110  210  280  350
-  Shield Stamp                 1   1   1   -   1   1   -   1   1   1   35   90   95  220  280  330
-  Vitality Stamp               1   1   1   -   1   1   -   1   1   1   40   65   95  200  260  300
-  Choppin' Bag Stamp           1   1   1   -   1   1   -   1   1   1   20  190  240  410  440  550
-  Vendor Stamp                 1   1   1   -   1   1   -   1   1   1   30   80  110  210  290  340
-  Lil' Mining Baggy Stamp      -   1   1   -   1   1   -   1   1   1   20  160  230  360  430  510
-  Anvil Zoomer Stamp           -   -   1   -   1   1   -   1   1   1   15   95   95  200  270  350
-  Matty Bag Stamp              -   -   1   -   1   1   -  35  35  35  120  190  210  490  540  630
-  Fishing Rod Stamp            -   -   -   -   1   1   -   1   1   1    -   95   95  200  260  360
-  Catch Net Stamp              -   -   -   -   1   1   -   1   1   1   25   60  110  200  230  310
-  Pickaxe Stamp                -   -   -   -  40  40   -  40  55  65   85  210  270  470  530  610
-  Hatchet Stamp                -   -   -   -  40  40   -  40  55  65  100  160  210  430  490  610
-  Drippy Drop Stamp            -   -   -   -   -  35   -  50  50  60   40   95  140  220  240  340
-  Fist Stamp                   -   -   -   -   -   -   -   1   1   1   18   35   50  120  180  220
-  Manamoar Stamp               -   -   -   -   -   -   -   1   1   1    3   60   60  150  200  340
-  Longsword Stamp              -   -   -   -   -   -   -   1   1   1   30   90   90  190  220  350
-  Battleaxe Stamp              -   -   -   -   -   -   -   1   1   1   35   90  100  210  240  310
-  Scimitar Stamp               -   -   -   -   -   -   -   1   1   1   12   70   70  160  200  220
-  Bullseye Stamp               -   -   -   -   -   -   -   1   1   1   20   60   80  180  220  350
-  Buckler Stamp                -   -   -   -   -   -   -   1   1   1    -   70   75  190  260  300
-  Twin Ores Stamp              -   -   -   -   -   -   -   1   1   1   10   45   45  160  210  290
-  Duplogs Stamp                -   -   -   -   -   -   -   1   1   1   15   50   50  150  180  240
-  Cool Diggy Tool Stamp        -   -   -   -   -   -   -   1   1   1   30  160  180  400  440  640
-  Swag Swingy Tool Stamp       -   -   -   -   -   -   -   1   1   1   10  120  120  410  490  660
-  Alch Go Brrr Stamp           -   -   -   -   -   -   -   1   1   1   35   65   85  190  220  280
-  Droplots Stamp               -   -   -   -   -   -   -   1   1   1   10   40   70  150  190  290
-  Bugsack Stamp                -   -   -   -   -   -   -   1   1   1   16  120  120  270  300  410
-  Hidey Box Stamp              -   -   -   -   -   -   -   1   1   1   30  140  200  320  380  440
-  Spikemouth Stamp             -   -   -   -   -   -   -   1   1   1   15   30   60  140  180  260
-  Purp Froge Stamp             -   -   -   -   -   -   -   1   1   1    -   55   75  170  210  280
-  Crystallin                   -   -   -   -   -   -   -   1   1   1  120  130  230  370  390  530
-  Talent S Stamp               -   -   -   -   -   -   -   1   1   1    -   30   30  140  160  230
-  Stample Stamp                -   -   -   -   -   -   -   -   1   1   20   60  100  190  240  360
-  Spice Stamp                  -   -   -   -   -   -   -   -   1   1   75  190  310  520  600  690
-  Egg Stamp                    -   -   -   -   -   -   -   -   1   1   45  190  250  510  520  750
-  Mason Jar Stamp              -   -   -   -   -   -   -   -  15  15   40  110  140  290  320  500
-  Sigil Stamp                  -   -   -   -   -   -   -   -   1   1   12  150  190  360  380  510
-  Bag o Heads Stamp            -   -   -   -   -   -   -   -   -   1   20  120  160  260  320  430
-  Skelefish Stamp              -   -   -   -   -   -   -   -   -   1    2    2   30  120  140  260
-  Cooked Meal Stamp            -   -   -   -   -   -   -   -   -   1   60  210  210  490  520  610
-  Card Stamp                   -   -   -   -   -   -   -   -   -  60  100  180  210  390  420  540
-  Agile Stamp                  -   -   -   -   -   -   -   -   -   -    2   18   20  130  160  180
-  Book Stamp                   -   -   -   -   -   -   -   -   -   -   10   40   50  140  210  240
-  Clover Stamp                 -   -   -   -   -   -   -   -   -   -    2   25   30  140  210  270
-  Blackheart Stamp             -   -   -   -   -   -   -   -   -   -   15  120  180  400  460  540
-  Void Sword Stamp             -   -   -   -   -   -   -   -   -   -   10   80   90  240  290  360
-  Captalist Stats Stamp        -   -   -   -   -   -   -   -   -   -   10   80   80  190  290  390
-  Fishhead Stamp               -   -   -   -   -   -   -   -   -   -    5   70   85  170  210  280
-  Buzz Buzz Stamp              -   -   -   -   -   -   -   -   -   -    5   80  110  200  240  310
-  Saw Stamp                    -   -   -   -   -   -   -   -   -   -    3   35   45  130  180  300
-  Flowin Stamp                 -   -   -   -   -   -   -   -   -   -    2   20   50  140  190  200
-  Nest Eggs Stamp              -   -   -   -   -   -   -   -   -   -   10  120  130  340  410  450
-  Sailboat Stamp               -   -   -   -   -   -   -   -   -   -    5   80  100  200  240  270
-  Crop Evo Stamp               -   -   -   -   -   -   -   -   -   -    5   30   70  190  210  270
-  Sneaky Peeky Stamp           -   -   -   -   -   -   -   -   -   -    8   55   95  200  210  320
-  Jade Mint Stamp              -   -   -   -   -   -   -   -   -   -   10   20   70  220  240  370
-  White Essence Stamp          -   -   -   -   -   -   -   -   -   -    8   60   80  190  210  300
-  Dark Triad Essence Stamp     -   -   -   -   -   -   -   -   -   -    8   55   70  180  220  400
-  Forge Stamp                  -   -   -   -   -   -   -   -   -   -   10  120  140  290  370  450
-  Talent IV Stamp              -   -   -   -   -   -   -   -   -   -    2   14   60  150  180  220
-  Refinery Stamp               -   -   -   -   -   -   -   -   -   -   25  100  120  200  230  360
-  Atomic Stamp                 -   -   -   -   -   -   -   -   -   -    8   95  120  250  290  350
-  Kruker Stamp                 -   -   -   -   -   -   -   -   -   -    1    3    6   75  130  200
-  Kapow Stamp                  -   -   -   -   -   -   -   -   -   -   18   35   75  150  180  270
-  Violence Stamp               -   -   -   -   -   -   -   -   -   -   18   50   50  150  180  310
-  Blover Stamp                 -   -   -   -   -   -   -   -   -   -   12   60   80  150  180  250
-  Gilded Axe Stamp             -   -   -   -   -   -   -   -   -   -   18   70   80  190  260  310
-  Tripleshot Stamp             -   -   -   -   -   -   -   -   -   -   20   70  110  300  320  630
-  Maxo Slappo Stamp            -   -   -   -   -   -   -   -   -   -   14   70   90  210  240  280
-  Intellectostampo             -   -   -   -   -   -   -   -   -   -   20   95   95  210  240  370
-  Dementia Sword Stamp         -   -   -   -   -   -   -   -   -   -   10  120  130  270  300  350
-  Smart Dirt Stamp             -   -   -   -   -   -   -   -   -   -   15   95  110  220  250  360
-  High IQ Lumber Stamp         -   -   -   -   -   -   -   -   -   -   30  100  120  200  220  340
-  Banked Pts Stamp             -   -   -   -   -   -   -   -   -   -   18   90  190  290  370  420
-  Ladle Stamp                  -   -   -   -   -   -   -   -   -   -   10  140  260  370  390  550
-  Divine Stamp                 -   -   -   -   -   -   -   -   -   -    8   80  110  220  260  350
-  Multikill Stamp              -   -   -   -   -   -   -   -   -   -   20   65   85  170  200  250
-  Sword Stamp                  -   -   -   -   -   -   -   -   -   -   85  140  150  250  300  430
-  Heart Stamp                  -   -   -   -   -   -   -   -   -   -   40   95  130  220  230  340
-  Sukka Foo                    -   -   -   -   -   -   -   -   -   -   30   30   90  290  310  440
-  Holy Mackerel Stamp          -   -   -   -   -   -   -   -   -   -    -   85   95  200  230  290
-  Gamejoy Stamp                -   -   -   -   -   -   -   -   -   -    -   45   85  170  210  280
-  Potion Stamp                 -   -   -   -   -   -   -   -   -   -    -   25   65  170  230  270
-  DNA Stamp                    -   -   -   -   -   -   -   -   -   -    -    9   55  120  160  210
-  Cavern Resource Stamp        -   -   -   -   -   -   -   -   -   -    -   80  140  300  340  540
-  Study Hall Stamp             -   -   -   -   -   -   -   -   -   -    -   15  150  300  310  350
-  Feather Stamp                -   -   -   -   -   -   -   -   -   -    -  100  100  220  260  280
-  Polearm Stamp                -   -   -   -   -   -   -   -   -   -    -  100  120  250  300  340
-  Hermes Stamp                 -   -   -   -   -   -   -   -   -   -    -   30   60  130  200  210
-  Arcane Stamp                 -   -   -   -   -   -   -   -   -   -    -   35   45  140  180  290
-  Avast Yar Stamp              -   -   -   -   -   -   -   -   -   -    -   70   70  160  210  350
-  Steve Sword                  -   -   -   -   -   -   -   -   -   -    -  150  170  360  440  520
-  Sashe Sidestamp              -   -   -   -   -   -   -   -   -   -    -   90   95  170  210  370
-  Conjocharmo Stamp            -   -   -   -   -   -   -   -   -   -    -  100  130  290  340  480
-  Brainstew Stamps             -   -   -   -   -   -   -   -   -   -    -   60   90  230  260  330
-  Fly Intel Stamp              -   -   -   -   -   -   -   -   -   -    -   80   80  180  190  270
-  Amplestample Stamp           -   -   -   -   -   -   -   -   -   -    -   25   30  130  160  200
-  Lab Tube Stamp               -   -   -   -   -   -   -   -   -   -    -  110  150  370  380  460
-  Multitool Stamp              -   -   -   -   -   -   -   -   -   -    -  130  190  320  330  510
-  Summoner Stone Stamp         -   -   -   -   -   -   -   -   -   -    -    8    8  220  240  320
-  Triad Essence Stamp          -   -   -   -   -   -   -   -   -   -    -   20   95  190  230  330
-  Questin Stamp                -   -   -   -   -   -   -   -   -   -    -   10   60  350  380  450
-  Golden Apple Stamp           -   -   -   -   -   -   -   -   -   -    -  100  100  240  280  340
-  Talent II Stamp              -   -   -   -   -   -   -   -   -   -    -   16   35  130  180  260
-  Talent III Stamp             -   -   -   -   -   -   -   -   -   -    -   20   30  120  150  200
-  Biblio Stamp                 -   -   -   -   -   -   -   -   -   -    -   30   45  140  150  280
-  Golden Sixes Stamp           -   -   -   -   -   -   -   -   -   -    -    -  150  290  320  380
-  Diamond Axe Stamp            -   -   -   -   -   -   -   -   -   -    -    -  120  290  330  430
-  Amber Stamp                  -   -   -   -   -   -   -   -   -   -    -    -   45  150  220  230
-  Little Rock Stamp            -   -   -   -   -   -   -   -   -   -    -    -   60  190  240  290
-  Hardhat Stamp                -   -   -   -   -   -   -   -   -   -    -    -   45  170  190  330
-  Corale Stamp                 -   -   -   -   -   -   -   -   -   -    -    -   90  280  310  390
-  Stat Graph Stamp             -   -   -   -   -   -   -   -   -   -    -    -    -  190  210  290
-  Gud EXP Stamp                -   -   -   -   -   -   -   -   -   -    -    -    -  220  280  310
-  Stat Wallstreet Stamp        -   -   -   -   -   -   -   -   -   -    -    -    -  200  230  250
-  Ball Timer Stamp             -   -   -   -   -   -   -   -   -   -    -    -    -  140  190  250
-  Void Axe Stamp               -   -   -   -   -   -   -   -   -   -    -    -    -  300  360  450
-  Gold Ball Stamp              -   -   -   -   -   -   -   -   -   -    -    -    -  260  310  400
-  Arcade Ball Stamp            -   -   -   -   -   -   -   -   -   -    -    -    -    -  350  420
-  Splosion Stamp               -   -   -   -   -   -   -   -   -   -    -    -    -    -    -  220
+stamps                                  # Stamps
+  stages                      1e  1m  1l  2e  2m  2l  3e  3m  3l   4e   4m   4l   5e   5m   5l   6e   6m   6l   7e   7m   7l  end1  end2  max
+  Mana Stamp                   1   2   5  10  16  20  30  40  50   65   75   90  110  120  140  160  180  210  230  260  280  310  340  370
+  Tomahawk Stamp               1   2   4   8  13  19  25  30  40   50   65   75   90  100  120  130  150  170  190  210  230  260  280  310
+  Target Stamp                 1   2   5   9  15  20  25  35  45   60   70   85  100  110  130  150  170  190  210  240  260  290  320  350
+  Shield Stamp                 1   2   5   9  14  20  25  35  45   55   65   80   95  110  120  140  160  180  200  220  250  270  300  330
+  Longsword Stamp              1   2   5   9  15  20  30  35  50   60   70   85  100  120  130  150  170  200  220  240  270  290  320  350
+  Kapow Stamp                  1   1   4   7  11  16  20  30  35   45   55   65   75   90  100  120  130  150  160  180  200  220  240  270
+  Fist Stamp                   1   1   3   6   9  13  18  20  30   35   45   55   65   75   85   95  110  120  130  150  160  180  200  220
+  Battleaxe Stamp              1   2   4   8  13  19  25  30  40   50   65   75   90  100  120  130  150  170  190  210  230  260  280  310
+  Vitality Stamp               1   2   4   8  13  19  25  30  40   50   60   75   90  100  120  130  150  170  190  210  230  250  280  300
+  Book Stamp                   1   1   3   6  10  15  20  25  30   40   50   60   70   80   95  100  120  130  150  170  180  200  220  240
+  Manamoar Stamp               1   2   5   9  14  20  25  35  45   55   70   85  100  110  130  150  170  190  210  230  260  280  310  340
+  Scimitar Stamp               1   1   3   6   9  14  19  25  30   35   45   55   65   75   85  100  110  120  140  150  170  190  200  220
+  Steve Sword                  1   3   8  14  20  30  40  55  70   90  100  130  150  170  200  230  260  290  320  360  390  430  470  520
+  Anvil Zoomer Stamp           1   2   5   9  15  20  25  35  45   60   70   85  100  110  130  150  170  190  210  240  260  290  320  350
+  Choppin' Bag Stamp           1   3   8  15  20  30  45  60  75   95  110  130  160  180  210  240  270  300  340  380  420  460  500  550
+  Smart Dirt Stamp             1   2   5  10  15  20  30  40  50   60   75   90  100  120  140  160  180  200  220  250  270  300  330  360
+  High IQ Lumber Stamp         1   2   5   9  14  20  25  35  45   55   70   85   95  110  130  150  170  190  210  230  260  280  310  340
+  Questin Stamp                1   3   7  12  19  25  35  50  60   75   90  110  130  150  170  200  220  250  280  310  340  370  410  450
+  Crystallin                   1   3   8  14  20  30  45  55  75   90  110  130  150  180  200  230  260  300  330  370  400  440  490  530
+  Golden Apple Stamp           1   2   5   9  14  20  25  35  45   55   70   85  100  110  130  150  170  190  210  230  260  280  310  340
+  Sword Stamp                  1   3   6  12  18  25  35  45  60   75   90  100  120  140  160  190  210  240  270  300  330  360  390  430
+  Heart Stamp                  1   2   5   9  14  20  25  35  45   55   70   85  100  110  130  150  170  190  210  230  260  280  310  340
+  Sukka Foo                    1   3   6  12  19  25  35  45  60   75   90  110  120  140  170  190  220  240  270  300  330  360  400  440
+  Splosion Stamp               1   1   3   6   9  14  19  25  30   35   45   55   65   75   85  100  110  120  140  150  170  180  200  220
+  Pickaxe Stamp                1   4   9  17  25  35  50  65  85  100  120  150  180  200  240  270  300  340  380  420  470  510  560  610
+  Hatchet Stamp                1   4   9  17  25  35  50  65  85  100  120  150  180  200  240  270  300  340  380  420  470  510  560  610
+  Card Stamp                   1   3   8  15  20  30  45  60  75   90  110  130  150  180  210  240  270  300  330  370  410  450  490  540
+  Agile Stamp                  -   -   -   1   1   3   6  10  15   20   25   30   40   50   60   70   80   90  100  120  130  150  160  180
+  Clover Stamp                 -   -   -   1   2   5   9  15  20   30   35   50   60   75   85  100  120  130  150  170  200  220  240  270
+  Bullseye Stamp               -   -   -   1   3   7  13  20  25   35   50   65   80   95  110  130  150  180  200  230  260  290  320  350
+  Polearm Stamp                -   -   -   1   3   7  12  19  25   35   50   60   75   95  110  130  150  170  200  220  250  280  310  340
+  Arcane Stamp                 -   -   -   1   2   5  10  16  20   30   40   50   65   75   90  110  120  140  160  190  210  230  260  290
+  Stat Graph Stamp             -   -   -   1   2   5  10  16  20   30   40   50   65   80   95  110  130  140  170  190  210  230  260  290
+  Golden Sixes Stamp           -   -   -   1   3   7  13  20  30   40   55   65   85  100  120  140  160  190  220  240  270  310  340  380
+  Stat Wallstreet Stamp        -   -   -   1   2   5   9  14  20   25   35   45   55   70   80   95  110  130  150  160  190  210  230  250
+  Lil' Mining Baggy Stamp      -   -   -   1   4  10  18  25  40   55   70   90  110  130  160  190  220  260  290  330  370  410  460  510
+  Matty Bag Stamp              -   -   -   1   5  12  20  35  50   70   90  110  140  170  200  240  280  320  360  410  460  510  570  630
+  Alch Go Brrr Stamp           -   -   -   1   2   5  10  15  20   30   40   50   60   75   90  100  120  140  160  180  200  220  250  280
+  Brainstew Stamps             -   -   -   1   2   6  11  18  25   35   45   60   70   90  100  120  140  160  190  210  240  270  290  330
+  Drippy Drop Stamp            -   -   -   1   3   6  12  19  25   35   45   60   75   90  110  130  150  170  190  220  240  270  300  340
+  Droplots Stamp               -   -   -   1   2   5  10  16  20   30   40   50   65   80   95  110  130  140  170  190  210  230  260  290
+  Fishing Rod Stamp            -   -   -   1   3   7  13  20  25   40   50   65   80   95  110  130  160  180  200  230  260  290  320  360
+  Fishhead Stamp               -   -   -   1   2   5  10  16  20   30   40   50   60   75   90  100  120  140  160  180  200  230  250  280
+  Catch Net Stamp              -   -   -   1   2   6  11  17  25   30   45   55   70   85  100  120  130  160  180  200  230  250  280  310
+  Fly Intel Stamp              -   -   -   1   2   5   9  15  20   30   35   45   60   70   85  100  120  130  150  170  190  220  240  270
+  Bag o Heads Stamp            -   -   -   1   3   8  15  20  35   45   60   80   95  120  140  160  190  220  250  280  320  350  390  430
+  Holy Mackerel Stamp          -   -   -   1   2   6  10  16  20   30   40   50   65   80   95  110  130  150  170  190  210  240  260  290
+  Bugsack Stamp                -   -   -   1   3   8  15  20  30   45   60   75   90  110  130  150  180  210  240  270  300  340  370  410
+  Buzz Buzz Stamp              -   -   -   1   2   6  11  17  25   35   45   55   70   85  100  120  140  160  180  200  230  250  280  310
+  Amplestample Stamp           -   -   -   1   1   4   7  11  16   20   25   35   45   50   65   75   85  100  110  130  140  160  180  200
+  Skelefish Stamp              -   -   -   1   2   5   9  14  20   25   35   45   55   70   85  100  110  130  150  170  190  210  230  260
+  Mason Jar Stamp              -   -   -   1   4  10  18  25  40   55   70   90  110  130  160  190  220  250  290  320  360  410  450  500
+  Arcade Ball Stamp            -   -   -   1   3   8  15  20  30   45   60   75   95  110  130  160  180  210  240  270  300  340  380  420
+  Gold Ball Stamp              -   -   -   1   3   8  14  20  30   40   55   70   90  100  130  150  170  200  230  260  290  320  360  400
+  Potion Stamp                 -   -   -   1   2   5   9  15  20   30   35   50   60   75   85  100  120  140  150  180  200  220  240  270
+  Ball Timer Stamp             -   -   -   1   2   5   9  14  20   25   35   45   55   65   80   95  110  130  140  160  180  200  230  250
+  Vendor Stamp                 -   -   -   1   3   6  12  19  25   35   45   60   75   90  110  130  150  170  190  220  240  270  300  340
+  Talent II Stamp              -   -   -   1   2   5   9  15  20   25   35   45   60   70   85  100  110  130  150  170  190  220  240  260
+  Talent S Stamp               -   -   -   1   2   4   8  13  19   25   30   40   50   60   75   85  100  110  130  150  170  190  210  230
+  Feather Stamp                -   -   -   -   -   -   1   3   7   14   20   30   40   55   70   85  100  120  140  170  190  220  250  280
+  Violence Stamp               -   -   -   -   -   -   1   3   8   15   20   30   45   60   75   95  110  130  160  180  210  240  270  310
+  Buckler Stamp                -   -   -   -   -   -   1   3   8   15   20   30   45   60   75   95  110  130  160  180  210  240  270  300
+  Hermes Stamp                 -   -   -   -   -   -   1   2   5   10   16   20   30   40   50   65   75   90  110  120  140  160  180  210
+  Avast Yar Stamp              -   -   -   -   -   -   1   4   9   17   25   35   50   65   85  100  130  150  180  210  240  270  310  350
+  Blover Stamp                 -   -   -   -   -   -   1   3   7   12   19   25   35   50   60   75   95  110  130  150  170  200  220  250
+  Twin Ores Stamp              -   -   -   -   -   -   1   3   8   14   20   30   40   55   70   90  100  120  150  170  200  230  260  290
+  Duplogs Stamp                -   -   -   -   -   -   1   2   6   11   18   25   35   45   60   70   85  100  120  140  160  180  210  240
+  Cool Diggy Tool Stamp        -   -   -   -   -   -   1   7  17   30   45   70   95  120  160  190  230  280  330  380  440  500  570  640
+  Swag Swingy Tool Stamp       -   -   -   -   -   -   2   8  18   30   50   70   95  130  160  200  240  290  340  390  450  520  580  660
+  Hidey Box Stamp              -   -   -   -   -   -   1   5  12   20   30   45   65   85  110  130  160  190  220  260  300  340  390  440
+  Purp Froge Stamp             -   -   -   -   -   -   1   3   7   14   20   30   40   55   70   85  100  120  140  170  190  220  250  280
+  Spikemouth Stamp             -   -   -   -   -   -   1   3   7   13   20   25   35   50   65   80   95  110  130  150  180  200  230  260
+  Stample Stamp                -   -   -   -   -   -   1   4  10   17   25   40   50   70   90  110  130  160  180  210  250  280  320  360
+  Saw Stamp                    -   -   -   -   -   -   1   3   8   15   20   30   45   60   75   90  110  130  150  180  210  240  270  300
+  Flowin Stamp                 -   -   -   -   -   -   1   2   5   10   16   20   30   40   50   60   75   90  100  120  140  160  180  200
+  Banked Pts Stamp             -   -   -   -   -   -   1   5  11   20   30   45   60   80  100  120  150  180  210  250  290  330  370  420
+  Talent III Stamp             -   -   -   -   -   -   1   2   5   10   15   20   30   40   50   60   75   90  100  120  140  160  180  200
+  Multikill Stamp              -   -   -   -   -   -   1   3   6   12   19   25   35   45   60   75   90  110  130  150  170  190  220  250
+  Biblio Stamp                 -   -   -   -   -   -   1   3   7   14   20   30   40   55   70   85  100  120  140  170  190  220  250  280
+  Gilded Axe Stamp             -   -   -   -   -   -   -   -   -    1    5   12   20   30   45   65   85  110  130  160  190  230  270  310
+  Diamond Axe Stamp            -   -   -   -   -   -   -   -   -    1    7   17   30   45   65   90  120  150  190  230  270  320  370  430
+  Tripleshot Stamp             -   -   -   -   -   -   -   -   -    2   11   25   40   70  100  130  170  220  280  330  400  470  540  630
+  Blackheart Stamp             -   -   -   -   -   -   -   -   -    2    9   20   35   60   85  110  150  190  240  290  340  400  470  540
+  Cooked Meal Stamp            -   -   -   -   -   -   -   -   -    2   10   20   40   65   95  130  170  220  270  330  390  460  530  610
+  Spice Stamp                  -   -   -   -   -   -   -   -   -    3   12   25   45   75  110  150  190  240  300  370  440  510  600  690
+  Ladle Stamp                  -   -   -   -   -   -   -   -   -    2    9   20   35   60   85  110  150  190  240  290  350  410  470  550
+  Nest Eggs Stamp              -   -   -   -   -   -   -   -   -    2    8   18   30   50   70   95  120  160  200  240  280  330  390  450
+  Egg Stamp                    -   -   -   -   -   -   -   -   -    3   13   30   50   80  120  160  210  270  330  400  480  560  650  750
+  Lab Tube Stamp               -   -   -   -   -   -   -   -   -    2    8   18   30   50   70  100  130  160  200  240  290  340  400  460
+  Sigil Stamp                  -   -   -   -   -   -   -   -   -    2    9   20   35   55   80  110  140  180  220  270  330  380  440  510
+  DNA Stamp                    -   -   -   -   -   -   -   -   -    1    3    8   15   20   30   45   60   75   95  110  130  160  180  210
+  Maxo Slappo Stamp            -   -   -   -   -   -   -   -   -    -    -    -    1    7   17   30   45   70   95  120  160  190  240  280
+  Sashe Sidestamp              -   -   -   -   -   -   -   -   -    -    -    -    2   10   20   40   65   90  120  160  210  260  310  370
+  Intellectostampo             -   -   -   -   -   -   -   -   -    -    -    -    2   10   20   40   60   90  120  160  200  250  310  370
+  Conjocharmo Stamp            -   -   -   -   -   -   -   -   -    -    -    -    3   13   30   50   80  120  160  210  270  330  400  480
+  Dementia Sword Stamp         -   -   -   -   -   -   -   -   -    -    -    -    2    9   20   35   60   85  110  150  190  240  290  350
+  Sailboat Stamp               -   -   -   -   -   -   -   -   -    -    -    -    1    7   16   30   45   65   90  120  150  180  220  270
+  Gamejoy Stamp                -   -   -   -   -   -   -   -   -    -    -    -    1    7   17   30   45   70   95  120  150  190  230  280
+  Divine Stamp                 -   -   -   -   -   -   -   -   -    -    -    -    2    9   20   35   60   85  110  150  190  240  290  350
+  Multitool Stamp              -   -   -   -   -   -   -   -   -    -    -    -    3   14   30   55   85  120  170  220  280  350  420  510
+  Talent IV Stamp              -   -   -   -   -   -   -   -   -    -    -    -    1    6   14   25   35   55   75  100  120  150  190  220
+  Refinery Stamp               -   -   -   -   -   -   -   -   -    -    -    -    2   10   20   40   60   90  120  160  200  250  300  360
+  Cavern Resource Stamp        -   -   -   -   -   -   -   -   -    -    -    -    3   15   30   60   90  130  180  240  300  370  450  540
+  Study Hall Stamp             -   -   -   -   -   -   -   -   -    -    -    -    2    9   20   35   60   85  110  150  190  240  290  350
+  Void Sword Stamp             -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    4   17   40   70  110  160  210  280  360
+  Void Axe Stamp               -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    5   20   50   85  130  200  270  350  450
+  Captalist Stats Stamp        -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    4   19   40   75  120  170  230  300  390
+  Crop Evo Stamp               -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    3   13   30   50   80  120  160  210  270
+  Sneaky Peeky Stamp           -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    4   16   35   60  100  140  190  250  320
+  Jade Mint Stamp              -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    4   18   40   70  110  160  220  290  370
+  Summoner Stone Stamp         -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    4   16   35   60  100  140  190  250  320
+  White Essence Stamp          -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    3   15   30   60   90  130  180  240  300
+  Triad Essence Stamp          -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    4   16   35   65  100  140  200  260  330
+  Dark Triad Essence Stamp     -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    4   19   40   75  120  170  240  310  400
+  Forge Stamp                  -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    5   20   50   85  130  200  270  350  450
+  Atomic Stamp                 -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    4   17   35   65  100  150  210  270  350
+  Gud EXP Stamp                -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    8   35   75  140  210  310
+  Amber Stamp                  -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    6   25   55  100  160  230
+  Little Rock Stamp            -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    8   30   70  130  200  290
+  Hardhat Stamp                -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    9   35   80  140  230  330
+  Kruker Stamp                 -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    5   20   50   85  130  200
+  Corale Stamp                 -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -   10   40   95  170  270  390
 
 statue-flair                            # Statue Flair
   stages                7e  7m  7l  end1  end2  max
@@ -334,139 +300,122 @@ statue-flair                            # Statue Flair
   Spelunky Statue        -   -   -   -   -   -  # no save has it yet
   Coral Statue           -   -   -   -   -   -  # no save has it yet
 
-owl                                     # Owl, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                    2l  3e  7e  7m  7l  end1  end2  max
-  Maple Megafeather          1   -   1   1   1   1   1   1
-  Amethyst Megafeather       -   -   1   1   1   1   1   1
-  Frostraven Megafeather     -   -   1   1   1   1   1   1
-  Phoenix Megafeather        -   -   1   1   1   1   1   1
-  Obsidian Megafeather       -   -   1   1   1   1   1   1
-  Evergreen Megafeather      -   -   1   1   1   1   1   1
-  Pristine Megafeather       -   -   1   1   1   1   1   1
-  Lavathian Megafeather      -   -   1   1   1   1   1   1
-  Midas Megafeather          -   -   1   1   1   1   1   1
-  Fractal Megafeather        -   -   1   1   1   1   1   1
-
-owl-lasting                             # Owl: Lasting Bonuses, no max
-  stages                        7e  7m  7l  end1  end2  max
-  Bonuses of Orion              30  35  40  40  40  40
-  Fractal Megafeather stacks    18  20  25  30  30  30
+owl                                     # Owl
+  stages                        1e  1m  1l  2e  2m  2l  3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Bonuses of Orion               1   1   1   1   1   2   3   4   6   7   9  11  12  14  17  19  20  20  25  30  30  35  40  40
+  Fractal Megafeather stacks     1   1   1   1   1   1   2   3   4   5   6   7   9  10  12  13  15  17  19  20  20  25  25  30
+  Maple Megafeather              -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Amethyst Megafeather           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Frostraven Megafeather         -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Phoenix Megafeather            -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Obsidian Megafeather           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Evergreen Megafeather          -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Pristine Megafeather           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Lavathian Megafeather          -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Midas Megafeather              -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Fractal Megafeather            -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
 
 forge                                   # Forge Upgrades
-  stages                7e  7m  7l  end1  end2  max
-  New Forge Slot        16  16  16  16  16  16
-  Ore Capacity Boost    50  50  50  50  50  50
-  Forge Speed           90  90  90  90  90  90
-  Forge Exp Gain        85  85  85  85  85  85
-  Bar Bonanza           75  75  75  75  75  75
-  Puff Puff Go          60  60  60  60  60  60
+  stages                1e  1m  1l  2e  2m  2l  3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  New Forge Slot         1   1   1   1   1   1   1   1   2   2   3   4   4   5   6   7   8   9  10  11  12  13  14  16
+  Ore Capacity Boost     1   1   1   1   2   3   4   5   7   8  10  12  14  17  19  20  25  25  30  30  35  40  45  50
+  Forge Speed            1   1   1   2   3   5   7  10  12  15  18  20  25  30  35  40  45  50  55  60  65  75  80  90
+  Forge Exp Gain         1   1   1   2   3   5   7   9  11  14  17  20  20  25  30  35  40  45  50  55  65  70  75  85
+  Bar Bonanza            1   1   1   2   3   4   6   8  10  13  15  18  20  25  25  30  35  40  45  50  55  60  65  75
+  Puff Puff Go           1   1   1   1   2   3   5   6   8  10  12  15  17  20  20  25  30  30  35  40  45  50  55  60
 
-basketball                              # Basketball, no max
-  stages                                                7e  7m  7l  end1  end2  max
-  Coins dropped by monsters                             30  30  60  110  160  190
-  Damage to Monsters                                    45  45  65   95  120  220
-  Class EXP when killing monsters                        -   -  17   30   35   65
-  Efficiency for all Skills, like Mining and Choppin     -   -   -  120  200  320
-
-darts                                   # Darts, no max
-  stages                                    7e   7m   7l  end1  end2  max
-  Extra Damage against Monsters            140  140  140  310  440  880
-  All Vault upgrades are Cheaper           100  100  100  430  550  680
-  Movement Speed, so you can run faster      1    1    1   10   11   30
-  Talent PTS for the first page              5    5    5   18   20   40
-
-upgrade-vault                           # Upgrade Vault, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                          4l  5e   5l   7e   7m   7l  end1  end2  max
-  Bigger Damage                  535   -  535  500  500  510  530  530  530
-  Massive Whirl                    1   -    1    1    1    1    1    1    1
-  Rapid Arrows                     1   -    1    1    1    1    1    1    1
-  Dual Fireballs                   1   -    1    1    1    1    1    1    1
-  Weapon Craft                    15   -   15    5    5   15   15   15   15
-  Mining Payday                  110   -  110  100  100  110  110  110  110
-  Baby on Board                   85   -   85   50   50   60   85   85   85
-  Bored to Death                  20   -   20   10   10   20   20   20   20
-  Stamp Bonanza                  110   -  110  100  100  110  110  110  110
-  Drops for Days                  85   -   85   50   50   60   85   85   85
-  Slice N Dice                   110   -  110  100  100  110  110  110  110
-  Go Go Secret Owl               135   -  135  100  135  135  135  135  135
-  Boss Decimation                 60   -   60   25   25   35   60   60   60
-  Sleepy Time                     30   -   30   20   20   30   30   30   30
-  Production Revolution          135   -  135  100  100  110  130  130  130
-  Statue Bonanza                  60   -   60   50   50   60   60   60   60
-  Stick Snapping                  60   -   60   50   50   60   60   60   60
-  Liquid Knowledge               135   -  135  100  100  110  130  130  130
-  Bug Knowledge                  135   -  135  100  100  110  130  130  130
-  Fish Knowledge                 135   -  135  100  100  110  130  130  130
-  Dirty Money                     35   -   35   25   25   35   35   35   35
-  Schoolin' the Fish              30   -   30   20   20   30   30   30   30
-  Straight to Storage              1   -    1    1    1    1    1    1    1
-  Bubble Money                    20   -   20   10   10   20   20   20   20
-  Drip Drip Drip                  30   -   30   20   20   30   30   30   30
-  Active Learning                135   -  135  100  100  110  130  130  130
-  Bug Power En Masse              30   -   30   20   20   30   30   30   30
-  Vial Overtune                   13   -   13    3    3   13   13   13   13
-  Daily Mailbox                   20   -   20   10   10   20   20   20   20
-  Duplicate Entries                1   -    1    1    1    1    1    1    1
-  Major Discount                   -   -  115   90  115  115  115  115  115
-  Monster Tax                      -   -  535  500  535  535  535  535  535
-  Recipe for Profit                -   -   85   50   50   60   85   85   85
-  Stunning Talent                  -   -  135  100  100  110  130  130  130
-  All Armoured Up                  -   -  135  100  100  110  130  130  130
-  Buildie Sheepie                  -   -   30   20   20   30   30   30   30
-  Natural Talent                   -   -    -  200  200  210  230  230  230
-  Steel Guard                      -   -    -  100  100  110  130  130  130
-  Carry Capacity                   -   -    -  100  100  110  110  110  110
-  Knockout                         -   -    -    5    5   15   15   15   15
-  Beeg Forge                       -   -    -  100  100  110  110  110  110
-  Vault Mastery                    -   -    -   50   55   60   60   60   60
-  Storage Slots                    -   -    -   20   20   30   30   30   30
-  Active Murdering                 -   -    -  100  130  135  135  135  135
-  Card Retirement                  -   -    -    1    1    1    1    1    1
-  Go Go Secret Kangaroo Mouse      -   -    -  250  285  285  285  285  285
-  Quest KAPOW                      -   -    -  200  200  210  230  230  230
-  Critters 'n Souls                -   -    -  300  320  335  335  335  335
-  Slight Do-Over                   -   -    -   20   20   30   30   30   30
-  Special Talent                   -   -    -  150  150  160  180  180  180
-  Lab Knowledge                    -   -    -  100  100  110  130  130  130
-  Breeding Knowledge               -   -    -  100  100  110  130  130  130
-  Speedy Sailing                   -   -    -  100  100  110  130  130  130
-  Evolving Talent                  -   -    -  200  200  210  230  230  230
-  Happy Doggy                      -   -    -  100  100  110  130  130  130
-  Foraging Forever                 -   -    -  250  285  285  285  285  285
-  Pet Punchies                     -   -    -  250  260  285  285  285  285
-  Skulltrick                       -   -    -  100  100  110  110  110  110
-  Collection Cashout               -   -    -   20   20   30   30   30   30
-  Vault Mastery II                 -   -    -   50   50   60   60   60   60
-  Ocean Knowledge                  -   -    -  100  100  110  130  130  130
-  Go Go Bubba the Seal             -   -    -  150  330  460  500  530  535
-  Big Blessings                    -   -    -   20   30   40   40   40   40
-  Kitchen Dream-mare               -   -    -  230  420  535  535  535  535
-  Gamer Knowledge                  -   -    -  100  100  110  130  130  130
-  Divinity Points                  -   -    -  100  130  135  135  135  135
-  Smarter Villagers                -   -    -   25   50   60   60   60   60
-  Super Slab                       -   -    -   12   20   30   30   30   30
-  Croppius Evolvius                -   -    -  110  250  260  280  280  280
-  Properly Funded Research         -   -    -    7   10   20   20   20   20
-  Summoning Knowledge              -   -    -   55  100  110  130  130  130
-  24 Karat Foods                   -   -    -   10   35   55   60   60   65
-  Vault Mastery III                -   -    -    8   35   60   60   60   60
-  Wicked Smart                     -   -    -  300  510  535  535  535  535
-  Bullseye                         -   -    -  390  500  510  530  530  530
-  Teh TOM                          -   -    -  180  340  460  500  530  535
-  Cooking Knowledge                -   -    -  280  500  510  530  530  530
-  Artifact Find Chance             -   -    -  190  285  285  285  285  285
-  Sailing Loot                     -   -    -  140  200  210  230  230  230
-  Mega Bits                        -   -    -  160  310  335  335  335  335
-  Divine Knowledge                 -   -    -   95  100  110  130  130  130
-  Better Captains                  -   -    -   95  135  135  135  135  135
-  Farming Knowledge                -   -    -   95  100  110  130  130  130
-  Raw Damage                       -   -    -   55  140  210  220  230  250
-  Finders Keepers                  -   -    -  110  270  285  285  285  285
-  Sneaking Knowledge               -   -    -   65  100  110  130  130  130
-  White Essentials                 -   -    -   85  200  210  230  230  230
-  Bigger Better Beans              -   -    -   15   50   85   85   85   85
-  Rest of the Essentials           -   -    -   50  230  235  235  235  235
-  Topheavy Charms                  -   -    -   25  100  110  130  130  130
+upgrade-vault                           # Upgrade Vault
+  stages                         1e  1m  1l  2e  2m  2l   3e   3m   3l   4e   4m   4l   5e   5m   5l   6e   6m   6l   7e   7m   7l   end1   end2    max
+  Bigger Damage                   1   3   8  14  20  30   45   55   75   90  110  130  150  180  200  230  260  300  330  370  400    440    490    530
+  Natural Talent                  1   1   3   6  10  14   19   25   30   40   45   55   65   75   90  100  110  130  140  160  170    190    210    230
+  Monster Tax                     2   8  18  30  50  75  100  130  160  200  250  300  350  400  460  530  600  670  750  830  920  1,000  1,100  1,200
+  Wicked Smart                    -   1   5  12  20  30   45   65   85  110  130  160  190  230  260  300  350  390  440  490  550    600    660    720
+  Bullseye                        -   1   4   9  16  25   35   45   60   80  100  120  140  170  190  220  250  290  320  360  400    440    480    530
+  Steel Guard                     -   1   1   2   4   6    9   12   16   20   25   30   35   40   50   55   65   70   80   90  100    110    120    130
+  Evolving Talent                 -   1   1   3   7  11   15   20   25   35   40   50   60   75   85   95  110  120  140  160  170    190    210    230
+  Massive Whirl                   -   1   1   1   1   1    1    1    1    1    1    1    1    1    1    1    1    1    1    1    1      1      1      1
+  Rapid Arrows                    -   1   1   1   1   1    1    1    1    1    1    1    1    1    1    1    1    1    1    1    1      1      1      1
+  Dual Fireballs                  -   1   1   1   1   1    1    1    1    1    1    1    1    1    1    1    1    1    1    1    1      1      1      1
+  Weapon Craft                    -   1   1   1   1   1    1    1    1    2    2    3    4    4    5    6    7    8    9   10   11     12     13     15
+  Carry Capacity                  -   1   1   1   3   5    7   10   13   16   20   25   25   35   40   45   50   60   65   75   80     90    100    110
+  Baby on Board                   -   -   1   1   1   2    4    6    8   11   14   17   20   25   25   30   35   40   50   55   60     70     75     85
+  Major Discount                  -   -   1   1   3   6   10   14   20   25   30   40   50   55   65   80   90  100  110  130  140    160    180    200
+  Bored to Death                  -   -   1   1   1   1    1    1    2    2    3    4    5    5    6    8    9   10   11   13   14     16     18     20
+  Knockout                        -   -   -   1   1   1    1    1    1    1    2    2    3    4    4    5    6    7    8    9   11     12     13     15
+  Stamp Bonanza                   -   -   -   1   1   2    3    6    8   12   15   20   20   30   35   40   45   55   60   70   80     90     95    110
+  Mining Payday                   -   -   -   1   1   2    3    6    8   12   15   20   20   30   35   40   45   55   60   70   80     90     95    110
+  Drops for Days                  -   -   -   1   1   1    3    4    6    9   12   15   19   20   25   30   35   40   45   55   60     65     75     85
+  Happy Doggy                     -   -   -   1   1   2    4    7   11   15   19   20   30   35   40   50   60   65   75   85   95    110    120    130
+  Slice N Dice                    -   -   -   -   1   1    2    4    6    9   13   17   20   25   30   35   45   50   60   70   75     85     95    110
+  Go Go Secret Owl                -   -   -   -   1   6   15   25   40   60   80  100  130  160  200  240  280  320  370  420  480    540    600    670
+  Boss Decimation                 -   -   -   -   1   1    1    2    3    5    7    9   12   15   18   20   25   25   30   35   40     45     50     60
+  Sleepy Time                     -   -   -   -   1   1    1    1    1    2    3    4    6    7    9   10   12   14   16   19   20     20     25     30
+  Production Revolution           -   -   -   -   1   1    3    5    8   12   16   20   25   30   40   45   55   65   75   85   95    100    120    130
+  Statue Bonanza                  -   -   -   -   1   1    1    2    3    5    7    9   12   15   18   20   25   25   30   35   40     45     50     60
+  Beeg Forge                      -   -   -   -   -   1    1    2    4    7   10   14   19   20   30   35   40   50   55   65   75     85     95    110
+  Stick Snapping                  -   -   -   -   -   1    1    1    2    4    5    8   10   13   16   20   20   25   30   35   40     45     50     60
+  Liquid Knowledge                -   -   -   -   -   1    1    3    5    9   13   18   20   30   35   45   50   60   70   80   95    100    120    130
+  Bug Knowledge                   -   -   -   -   -   1    1    3    5    9   13   18   20   30   35   45   50   60   70   80   95    100    120    130
+  Fish Knowledge                  -   -   -   -   -   1    1    3    5    9   13   18   20   30   35   45   50   60   70   80   95    100    120    130
+  Dirty Money                     -   -   -   -   -   1    1    1    1    2    3    4    6    7    9   11   13   16   19   20   20     25     30     35
+  Vault Mastery                   -   -   -   -   -   1    1    2    4    6    9   13   17   20   25   30   35   45   50   60   70     75     85     95
+  Storage Slots                   -   -   -   -   -   1    1    1    1    2    3    4    6    7    9   11   13   15   18   20   20     25     30     30
+  Recipe for Profit               -   -   -   -   -   1    1    2    3    5    8   11   15   19   20   25   30   35   45   50   60     65     75     85
+  Schoolin' the Fish              -   -   -   -   -   -    1    1    1    1    2    3    4    5    7    9   11   13   15   18   20     20     25     30
+  Straight to Storage             -   -   -   -   -   -    1    1    1    1    1    1    1    1    1    1    1    1    1    1    1      1      1      1
+  Bubble Money                    -   -   -   -   -   -    1    1    1    1    1    2    3    3    5    6    7    8   10   12   13     15     17     20
+  Drip Drip Drip                  -   -   -   -   -   -    1    1    1    1    2    3    4    5    7    9   11   13   15   18   20     20     25     30
+  Active Learning                 -   -   -   -   -   -    1    1    3    6   10   15   20   25   30   40   50   60   70   80   90    100    120    130
+  Stunning Talent                 -   -   -   -   -   -    1    1    3    6   10   15   20   25   30   40   50   60   70   80   90    100    120    130
+  Bug Power En Masse              -   -   -   -   -   -    1    1    1    1    2    3    4    5    7    9   11   13   15   18   20     20     25     30
+  Vial Overtune                   -   -   -   -   -   -    -    1    1    1    1    1    1    2    2    3    4    5    6    7    8     10     11     13
+  Active Murdering                -   -   -   -   -   -    -    1    3    8   14   20   30   45   55   70   90  110  130  150  180    200    230    260
+  Card Retirement                 -   -   -   -   -   -    -    1    1    1    1    1    1    1    1    1    1    1    1    1    1      1      1      1
+  Go Go Secret Kangaroo Mouse     -   -   -   -   -   -    -    2   11   25   45   70  100  140  180  240  290  350  420  500  580    660    750    850
+  All Armoured Up                 -   -   -   -   -   -    -    1    1    4    7   11   16   20   25   35   45   55   65   75   90    100    110    130
+  Daily Mailbox                   -   -   -   -   -   -    -    1    1    1    1    1    2    3    4    5    6    8    9   11   13     15     17     20
+  Buildie Sheepie                 -   -   -   -   -   -    -    -    1    1    1    1    2    4    5    7    9   11   14   16   19     20     25     30
+  Quest KAPOW                     -   -   -   -   -   -    -    -    1    3    8   14   20   30   40   55   70   90  110  130  150    170    200    230
+  Critters 'n Souls               -   -   -   -   -   -    -    -    3   15   30   60   95  130  180  240  300  380  460  550  640    740    860    970
+  Slight Do-Over                  -   -   -   -   -   -    -    -    1    1    1    1    2    4    5    7    9   11   14   16   19     20     25     30
+  Duplicate Entries               -   -   -   -   -   -    -    -    1    1    1    1    1    1    1    1    1    1    1    1    1      1      1      1
+  Special Talent                  -   -   -   -   -   -    -    -    1    2    6   11   18   25   35   45   55   70   85  100  120    140    160    180
+  Kitchen Dream-mare              -   -   -   -   -   -    -    -    2   10   20   40   65   90  120  160  210  260  310  370  440    510    580    670
+  Lab Knowledge                   -   -   -   -   -   -    -    -    -    1    2    5    9   15   20   25   35   45   60   70   85    100    110    130
+  Foraging Forever                -   -   -   -   -   -    -    -    -    3   13   30   55   85  120  160  220  270  340  410  490    580    670    770
+  Teh TOM                         -   -   -   -   -   -    -    -    -    2    9   20   35   60   85  120  150  200  240  290  350    410    480    550
+  Pet Punchies                    -   -   -   -   -   -    -    -    -    2   11   25   45   70  100  140  180  230  290  350  420    490    570    660
+  Breeding Knowledge              -   -   -   -   -   -    -    -    -    1    2    5    9   15   20   25   35   45   60   70   85    100    110    130
+  Cooking Knowledge               -   -   -   -   -   -    -    -    -    2    9   20   35   55   85  110  150  190  230  280  340    400    460    530
+  Vault Mastery II                -   -   -   -   -   -    -    -    -    -    1    2    4    8   13   18   25   30   40   50   60     70     85    100
+  Speedy Sailing                  -   -   -   -   -   -    -    -    -    -    1    2    6   11   17   20   30   40   55   65   80     95    110    130
+  Artifact Find Chance            -   -   -   -   -   -    -    -    -    -    2   11   25   45   70  100  140  180  230  290  350    420    490    570
+  Skulltrick                      -   -   -   -   -   -    -    -    -    -    -    1    2    5   10   16   20   30   40   50   65     75     90    110
+  Go Go Bubba the Seal            -   -   -   -   -   -    -    -    -    -    -    3   12   25   50   80  110  150  200  260  320    390    460    540
+  Ocean Knowledge                 -   -   -   -   -   -    -    -    -    -    -    1    3    7   12   19   25   35   50   60   75     95    110    130
+  Sailing Loot                    -   -   -   -   -   -    -    -    -    -    -    1    5   12   20   30   50   65   85  110  130    160    200    230
+  Mega Bits                       -   -   -   -   -   -    -    -    -    -    -    3   13   25   50   80  110  160  210  260  320    390    470    550
+  Gamer Knowledge                 -   -   -   -   -   -    -    -    -    -    -    1    3    7   12   19   25   35   50   60   75     95    110    130
+  Collection Cashout              -   -   -   -   -   -    -    -    -    -    -    1    1    1    2    4    6    8   11   14   17     20     25     30
+  Divinity Points                 -   -   -   -   -   -    -    -    -    -    -    -    2   10   20   40   65   95  120  160  210    260    320    380
+  Divine Knowledge                -   -   -   -   -   -    -    -    -    -    -    -    1    3    8   15   20   30   45   60   75     90    110    130
+  Smarter Villagers               -   -   -   -   -   -    -    -    -    -    -    -    1    1    3    6   10   15   20   25   30     40     50     60
+  Super Slab                      -   -   -   -   -   -    -    -    -    -    -    -    1    1    1    3    5    7   10   13   16     20     25     30
+  Better Captains                 -   -   -   -   -   -    -    -    -    -    -    -    2    9   20   35   60   85  120  150  190    240    290    350
+  Big Blessings                   -   -   -   -   -   -    -    -    -    -    -    -    1    1    2    4    6   10   13   17   20     25     30     40
+  Farming Knowledge               -   -   -   -   -   -    -    -    -    -    -    -    -    1    4   10   17   25   40   50   70     90    110    130
+  Croppius Evolvius               -   -   -   -   -   -    -    -    -    -    -    -    -    2    9   20   35   55   80  110  150    190    230    280
+  Properly Funded Research        -   -   -   -   -   -    -    -    -    -    -    -    -    1    1    1    2    4    5    8   10     13     16     20
+  Raw Damage                      -   -   -   -   -   -    -    -    -    -    -    -    -    2    8   19   30   50   75  100  130    170    210    250
+  Finders Keepers                 -   -   -   -   -   -    -    -    -    -    -    -    -    4   16   35   65  100  150  200  260    340    420    510
+  Sneaking Knowledge              -   -   -   -   -   -    -    -    -    -    -    -    -    1    4   10   17   25   40   50   70     90    110    130
+  White Essentials                -   -   -   -   -   -    -    -    -    -    -    -    -    -    2    9   20   35   55   80  110    150    190    230
+  Summoning Knowledge             -   -   -   -   -   -    -    -    -    -    -    -    -    -    1    5   12   20   30   45   65     85    100    130
+  Bigger Better Beans             -   -   -   -   -   -    -    -    -    -    -    -    -    -    1    4    9   16   25   35   50     65     80    100
+  24 Karat Foods                  -   -   -   -   -   -    -    -    -    -    -    -    -    -    1    2    6   10   16   20   30     40     50     65
+  Rest of the Essentials          -   -   -   -   -   -    -    -    -    -    -    -    -    -    4   17   35   70  100  150  210    280    350    430
+  Topheavy Charms                 -   -   -   -   -   -    -    -    -    -    -    -    -    -    1    5   12   20   30   45   65     85    100    130
+  Vault Mastery III               -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    1    2    6   11   18   25     35     45     60
 
 bubbles                                 # Alchemy Bubbles, World 1 to 5 columns from AutoReview's tiers, changed
   stages                3m  3l  4m  4l  5m  5l     7e      7m      7l     end1       end2        max
@@ -2204,7 +2153,6 @@ beanstalk                               # Gold Food Beanstalk
   Golden Cake                       -   2   2   2   2   2
   Golden Peanut                     -   2   2   2   2   2
   1,000,000 stacks                  -  16  16  16  16  16
-  Golden Sugar Cookie               -   -   -   -   -   -  # no save has it yet
 
 emperor                                 # Emperor Showdown, no max
   stages                           7e  7m  7l  end1  end2  max
@@ -3931,13 +3879,13 @@ greenstacks                             # Greenstacks
   Red Frisbee                             -   -   1   1   1   1
   Nullo Salt                              -   -   1   1   1   1
   Chapter Two 'Decay Surrounds'           -   -   1   1   1   1
+  Corporatube Sub                         -   -   -   1   1   1
+  Instablab Follower                      -   -   -   1   1   1
   Cauldron Statue                         -   -   -   1   1   1
   Essence Statue                          -   -   -   1   1   1
   Cheezy Pizza                            -   -   -   1   1   1
   Average Life Potion                     -   -   -   1   1   1
   Lustre Bar                              -   -   -   1   1   1
-  Corporatube Sub                         -   -   -   1   1   1
-  Instablab Follower                      -   -   -   1   1   1
   Explosive Salts                         -   -   -   1   1   1
   Dioxide Synthesis                       -   -   -   1   1   1
   Purple Salt                             -   -   -   1   1   1
@@ -3947,13 +3895,13 @@ greenstacks                             # Greenstacks
   Stealth Statue                          -   -   -   1   1   1
   Starfire Bar                            -   -   -   1   1   1
   Tool Upgrade Stone II                   -   -   -   1   1   1
+  Cloudsound Follower                     -   -   -   1   1   1
   Twosoul Statue                          -   -   -   1   1   1
   Compost Statue                          -   -   -   1   1   1
   Villager Statue                         -   -   -   1   1   1
   Small Experience Balloon                -   -   -   1   1   1
   Yeti Ham                                -   -   -   1   1   1
   Decent Mana Potion                      -   -   -   1   1   1
-  Cloudsound Follower                     -   -   -   1   1   1
   Tool Upgrade Stone I                    -   -   -   1   1   1
   Mystery Upgrade Stone III               -   -   -   1   1   1
   Butter Bar                              -   -   -   1   1   1
@@ -3961,6 +3909,7 @@ greenstacks                             # Greenstacks
   Yellow Snowflake                        -   -   -   1   1   1
   Weapon Upgrade Stone I                  -   -   -   1   1   1
   Weapon Upgrade Stone II                 -   -   -   1   1   1
+  Monster Rating                          -   -   -   1   1   1
   Golden Bread                            -   -   -   1   1   1
   Potent Life Potion                      -   -   -   1   1   1
   Potent EXP Potion                       -   -   -   1   1   1
@@ -3969,40 +3918,39 @@ greenstacks                             # Greenstacks
   Hampter                                 -   -   -   1   1   1
   Toxic Sludge                            -   -   -   1   1   1
   Peanut                                  -   -   -   1   1   1
-  Monster Rating                          -   -   -   1   1   1
   Chapter Three 'This is Gospel'          -   -   -   1   1   1
   Armor Upgrade Stone I                   -   -   -   1   1   1
   Woodular Circle                         -   -   -   1   1   1
-  Golden Cake                             -   -   -   1   1   1
-  Potent Strength Potion                  -   -   -   1   1   1
   Casual Confidante                       -   -   -   1   1   1
   Claiming Cashe                          -   -   -   1   1   1
+  Strange Rock                            -   -   -   1   1   1
+  Golden Cake                             -   -   -   1   1   1
+  Potent Strength Potion                  -   -   -   1   1   1
   Troll's Enclave Key                     -   -   -   1   1   1
   Magma Barrel                            -   -   -   1   1   1
   Plasma Barrel                           -   -   -   1   1   1
   Zenith Cluster                          -   -   -   1   1   1
-  Strange Rock                            -   -   -   1   1   1
   Dualhook Prongs                         -   -   -   1   1   1
-  Seesaw Statue                           -   -   -   1   1   1
-  Icing Ironbite                          -   -   -   1   1   1
   Triumphant Treason                      -   -   -   1   1   1
   Wood Board Bone                         -   -   -   1   1   1
   Time Thingy                             -   -   -   1   1   1
+  Seesaw Statue                           -   -   -   1   1   1
+  Icing Ironbite                          -   -   -   1   1   1
   Clammy Chunk                            -   -   -   1   1   1
+  Ketchup Bottle                          -   -   -   1   1   1
+  Mustard Bottle                          -   -   -   1   1   1
   Bullet                                  -   -   -   1   1   1
   Decent Speed Potion                     -   -   -   1   1   1
   Wiener Links                            -   -   -   1   1   1
-  Ketchup Bottle                          -   -   -   1   1   1
-  Mustard Bottle                          -   -   -   1   1   1
   Ice Age 3                               -   -   -   1   1   1
   Armor Upgrade Stone II                  -   -   -   1   1   1
   Massless Unit for Physics Questions     -   -   -   1   1   1
+  Employment Statistics                   -   -   -   1   1   1
   FMJ Bullet                              -   -   -   1   1   1
   Chizoar Spike                           -   -   -   1   1   1
   Vibrant Coral                           -   -   -   1   1   1
   Nuget Cake                              -   -   -   1   1   1
   Saucy Logfries                          -   -   -   1   1   1
-  Employment Statistics                   -   -   -   1   1   1
   Black Lense                             -   -   -   1   1   1
   Crash Box                               -   -   -   1   1   1
   Reef Coral Statue                       -   -   -   1   1   1
@@ -4027,9 +3975,9 @@ greenstacks                             # Greenstacks
   Helmet Upgrade Stone I                  -   -   -   1   1   1
   Troll Scales                            -   -   -   1   1   1
   Valve Patented Circle Thingies          -   -   -   1   1   1
+  Loomi's Room Key                        -   -   -   1   1   1
   Coldseeker Bullet                       -   -   -   1   1   1
   Ribbed Tunic                            -   -   -   1   1   1
-  Loomi's Room Key                        -   -   -   1   1   1
   Chapter Five 'Sunken Plunder'           -   -   -   1   1   1
   Stacked Rice Cake                       -   -   -   1   1   1
   Chizoar Stalagmite                      -   -   -   1   1   1
@@ -4085,406 +4033,17 @@ greenstacks                             # Greenstacks
   Job Application                         -   -   -   -   -   1
   Weapon Upgrade Stone IV                 -   -   -   -   -   1
   Magmaspike                              -   -   -   -   -   1
-  Alien Logs                              -   -   -   -   -   -  # no save has it yet
-  Omega Arcade Ball                       -   -   -   -   -   -  # no save has it yet
-  Yumyum Desert NPC Completion Token      -   -   -   -   -   -  # no save has it yet
-  Yumyum Skills Completion Token          -   -   -   -   -   -  # no save has it yet
-  Yumyum Misc Completion Token            -   -   -   -   -   -  # no save has it yet
-  Blunderhills NPC Completion Token       -   -   -   -   -   -  # no save has it yet
-  Blunder Skills Completion Token         -   -   -   -   -   -  # no save has it yet
-  Blunderhills Misc Completion Token      -   -   -   -   -   -  # no save has it yet
-  Tundra NPC Completion Token             -   -   -   -   -   -  # no save has it yet
-  Tundra Skills Completion Token          -   -   -   -   -   -  # no save has it yet
-  Tundra Misc Completion Token            -   -   -   -   -   -  # no save has it yet
-  BallJoePickle                           -   -   -   -   -   -  # no save has it yet
-  Bits                                    -   -   -   -   -   -  # no save has it yet
-  BobJoePickle                            -   -   -   -   -   -  # no save has it yet
-  Femur                                   -   -   -   -   -   -  # no save has it yet
-  Ribcage                                 -   -   -   -   -   -  # no save has it yet
-  Cranium                                 -   -   -   -   -   -  # no save has it yet
-  Bovinae                                 -   -   -   -   -   -  # no save has it yet
-  BoneJoePickle                           -   -   -   -   -   -  # no save has it yet
-  Fractal Fly                             -   -   -   -   -   -  # no save has it yet
-  Singularity Spiral                      -   -   -   -   -   -  # no save has it yet
-  Newbie Card Pack                        -   -   -   -   -   -  # no save has it yet
-  Ancient Card Pack                       -   -   -   -   -   -  # no save has it yet
-  Eternal Card Pack                       -   -   -   -   -   -  # no save has it yet
-  Dungeon Card Pack                       -   -   -   -   -   -  # no save has it yet
-  Galaxy Card Pack                        -   -   -   -   -   -  # no save has it yet
-  Smolderin Card Pack                     -   -   -   -   -   -  # no save has it yet
-  Spirit Card Pack                        -   -   -   -   -   -  # no save has it yet
-  Cash                                    -   -   -   -   -   -  # no save has it yet
-  Ice Dollar                              -   -   -   -   -   -  # no save has it yet
-  Strange Gold Piece                      -   -   -   -   -   -  # no save has it yet
-  Clam Pearl                              -   -   -   -   -   -  # no save has it yet
-  Pure Pearl                              -   -   -   -   -   -  # no save has it yet
-  Sub Class Swap Token                    -   -   -   -   -   -  # no save has it yet
-  Elite Class Swap Token                  -   -   -   -   -   -  # no save has it yet
-  Complete Class Redo Token               -   -   -   -   -   -  # no save has it yet
-  Aegean Coral                            -   -   -   -   -   -  # no save has it yet
   Gilded Coral                            -   -   -   -   -   -  # no save has it yet
-  Twisted Coral                           -   -   -   -   -   -  # no save has it yet
-  Eternal Coral                           -   -   -   -   -   -  # no save has it yet
-  Filler                                  -   -   -   -   -   -  # no save has it yet
-  Crimson String                          -   -   -   -   -   -  # no save has it yet
   Voodofish                               -   -   -   -   -   -  # no save has it yet
   Tottoise                                -   -   -   -   -   -  # no save has it yet
   Poison Froge                            -   -   -   -   -   -  # no save has it yet
   Mutant Crabbo                           -   -   -   -   -   -  # no save has it yet
-  Crescent Scorpie                        -   -   -   -   -   -  # no save has it yet
-  Nakeo Moleo                             -   -   -   -   -   -  # no save has it yet
-  Minervowl                               -   -   -   -   -   -  # no save has it yet
-  Eternal Lord of The Undying Ember       -   -   -   -   -   -  # no save has it yet
-  Purbunni                                -   -   -   -   -   -  # no save has it yet
-  Jade Scarab                             -   -   -   -   -   -  # no save has it yet
-  Diamond Duck                            -   -   -   -   -   -  # no save has it yet
-  Desert Topaz                            -   -   -   -   -   -  # no save has it yet
-  Glacier Quartz                          -   -   -   -   -   -  # no save has it yet
-  Galaxial Amethyst                       -   -   -   -   -   -  # no save has it yet
-  Magma Geode                             -   -   -   -   -   -  # no save has it yet
-  Spirit Diamond                          -   -   -   -   -   -  # no save has it yet
-  Gem to W7                               -   -   -   -   -   -  # no save has it yet
-  Delivery Box                            -   -   -   -   -   -  # no save has it yet
-  Double AFK Gain Ticket                  -   -   -   -   -   -  # no save has it yet
-  Basement Cube                           -   -   -   -   -   -  # no save has it yet
-  Dungeon Credits                         -   -   -   -   -   -  # no save has it yet
-  Dungeon Credits Flurbo Edition          -   -   -   -   -   -  # no save has it yet
-  Weapon Enhancer                         -   -   -   -   -   -  # no save has it yet
-  Armor Enhancer                          -   -   -   -   -   -  # no save has it yet
-  Jewelry Enhancer                        -   -   -   -   -   -  # no save has it yet
-  Common RNG Item                         -   -   -   -   -   -  # no save has it yet
-  Uncommon RNG Item                       -   -   -   -   -   -  # no save has it yet
-  Rare RNG Item                           -   -   -   -   -   -  # no save has it yet
-  Epic RNG Item                           -   -   -   -   -   -  # no save has it yet
-  Legendary RNG Item                      -   -   -   -   -   -  # no save has it yet
-  Poisoned Leg                            -   -   -   -   -   -  # no save has it yet
-  Minced Bluebeef                         -   -   -   -   -   -  # no save has it yet
-  Bloated Cyst                            -   -   -   -   -   -  # no save has it yet
-  Floppy Gizard                           -   -   -   -   -   -  # no save has it yet
-  Molted Tail                             -   -   -   -   -   -  # no save has it yet
-  Decomposing Skull                       -   -   -   -   -   -  # no save has it yet
-  Giant Frog Eye                          -   -   -   -   -   -  # no save has it yet
-  Eldritch Ripcage                        -   -   -   -   -   -  # no save has it yet
-  Stardust                                -   -   -   -   -   -  # no save has it yet
-  Moondust                                -   -   -   -   -   -  # no save has it yet
-  Solardust                               -   -   -   -   -   -  # no save has it yet
-  Cooldust                                -   -   -   -   -   -  # no save has it yet
-  Novadust                                -   -   -   -   -   -  # no save has it yet
-  Emperor Ribbon                          -   -   -   -   -   -  # no save has it yet
-  Anvil Tab 4                             -   -   -   -   -   -  # no save has it yet
-  Anvil Tab 5                             -   -   -   -   -   -  # no save has it yet
-  Anvil Tab 6                             -   -   -   -   -   -  # no save has it yet
-  Anvil Tab 7                             -   -   -   -   -   -  # no save has it yet
-  Kachow Statue                           -   -   -   -   -   -  # no save has it yet
-  Medium Experience Balloon               -   -   -   -   -   -  # no save has it yet
-  Large Experience Balloon                -   -   -   -   -   -  # no save has it yet
-  Smithing Exp                            -   -   -   -   -   -  # no save has it yet
-  Not Yet                                 -   -   -   -   -   -  # no save has it yet
-  Trench fish                             -   -   -   -   -   -  # no save has it yet
-  Giftybread Man                          -   -   -   -   -   -  # no save has it yet
-  Chogg Nog                               -   -   -   -   -   -  # no save has it yet
-  Candy Canes                             -   -   -   -   -   -  # no save has it yet
-  Mistleberries                           -   -   -   -   -   -  # no save has it yet
-  Golden Sugar Cookie                     -   -   -   -   -   -  # no save has it yet
-  Hotdog                                  -   -   -   -   -   -  # no save has it yet
-  Big Cake                                -   -   -   -   -   -  # no save has it yet
-  Cranberry Jam                           -   -   -   -   -   -  # no save has it yet
-  Crabby Cake Supreme                     -   -   -   -   -   -  # no save has it yet
-  Small EXP Potion                        -   -   -   -   -   -  # no save has it yet
-  Decent EXP Potion                       -   -   -   -   -   -  # no save has it yet
-  Marvelous Obol Stack                    -   -   -   -   -   -  # no save has it yet
-  Dungeon Loot Dice                       -   -   -   -   -   -  # no save has it yet
-  Bossius Obol Stack                      -   -   -   -   -   -  # no save has it yet
-  Hyper Obol Stack                        -   -   -   -   -   -  # no save has it yet
-  Sand of Time                            -   -   -   -   -   -  # no save has it yet
-  Hyper Obol Stack Square Edition         -   -   -   -   -   -  # no save has it yet
-  Funny 2hr Fishy                         -   -   -   -   -   -  # no save has it yet
-  Funny 2hr Feather                       -   -   -   -   -   -  # no save has it yet
-  Quality Obol Stack                      -   -   -   -   -   -  # no save has it yet
-  Grassy Gene Spiral                      -   -   -   -   -   -  # no save has it yet
-  YumYumy Gene Spiral                     -   -   -   -   -   -  # no save has it yet
-  Tundric Gene Spiral                     -   -   -   -   -   -  # no save has it yet
-  Nebulous Gene Spiral                    -   -   -   -   -   -  # no save has it yet
-  Statue Coupon                           -   -   -   -   -   -  # no save has it yet
-  Gooey Triangle                          -   -   -   -   -   -  # no save has it yet
-  Gooey Square                            -   -   -   -   -   -  # no save has it yet
-  Quartz Nullagon                         -   -   -   -   -   -  # no save has it yet
-  Quartz Brillagon                        -   -   -   -   -   -  # no save has it yet
-  Gooey Pentagon                          -   -   -   -   -   -  # no save has it yet
-  Gooey Hexagon                           -   -   -   -   -   -  # no save has it yet
-  Gooey Heptagon                          -   -   -   -   -   -  # no save has it yet
-  Gooey Nonagon                           -   -   -   -   -   -  # no save has it yet
-  Quartz Prismagon                        -   -   -   -   -   -  # no save has it yet
-  Quartz Cubigon                          -   -   -   -   -   -  # no save has it yet
-  Quartz Pointagon                        -   -   -   -   -   -  # no save has it yet
-  Quartz Octergon                         -   -   -   -   -   -  # no save has it yet
-  Hat Premiumifier                        -   -   -   -   -   -  # no save has it yet
-  Ice A La Crem                           -   -   -   -   -   -  # no save has it yet
-  Cosmic Storage Chest                    -   -   -   -   -   -  # no save has it yet
-  Garbage                                 -   -   -   -   -   -  # no save has it yet
-  Bottle                                  -   -   -   -   -   -  # no save has it yet
-  Resource Coupon                         -   -   -   -   -   -  # no save has it yet
-  Really Really Resource Coupon           -   -   -   -   -   -  # no save has it yet
-  Keychain Fragment                       -   -   -   -   -   -  # no save has it yet
-  Copper Twine                            -   -   -   -   -   -  # no save has it yet
-  Needledrop                              -   -   -   -   -   -  # no save has it yet
-  Scripticus Spoons                       -   -   -   -   -   -  # no save has it yet
-  Silver Twine                            -   -   -   -   -   -  # no save has it yet
-  Leafy Vines                             -   -   -   -   -   -  # no save has it yet
-  Fun Flags                               -   -   -   -   -   -  # no save has it yet
-  Electrical Wiring                       -   -   -   -   -   -  # no save has it yet
-  Loot Dice                               -   -   -   -   -   -  # no save has it yet
-  Mayonnaise Bottle                       -   -   -   -   -   -  # no save has it yet
-  Motherlode Ore                          -   -   -   -   -   -  # no save has it yet
-  Everlog                                 -   -   -   -   -   -  # no save has it yet
-  Easy Blunderhills NPC Token             -   -   -   -   -   -  # no save has it yet
-  Krunk Token                             -   -   -   -   -   -  # no save has it yet
-  Tiki Chief Token                        -   -   -   -   -   -  # no save has it yet
-  Sproutinald Token                       -   -   -   -   -   -  # no save has it yet
-  Dog Bone Token                          -   -   -   -   -   -  # no save has it yet
-  Dazey Token                             -   -   -   -   -   -  # no save has it yet
-  TP Pete Token                           -   -   -   -   -   -  # no save has it yet
-  Bandit Bob Token                        -   -   -   -   -   -  # no save has it yet
-  Snake Jar Token                         -   -   -   -   -   -  # no save has it yet
-  Whattso Token                           -   -   -   -   -   -  # no save has it yet
-  Cowbo Jones Token                       -   -   -   -   -   -  # no save has it yet
-  Med Blunderhills NPC Token              -   -   -   -   -   -  # no save has it yet
-  Carpetiem Token                         -   -   -   -   -   -  # no save has it yet
-  Goldric Token                           -   -   -   -   -   -  # no save has it yet
-  Fishpaste Token                         -   -   -   -   -   -  # no save has it yet
-  Wellington Token                        -   -   -   -   -   -  # no save has it yet
-  Loominadi Token                         -   -   -   -   -   -  # no save has it yet
-  Djonnut Token                           -   -   -   -   -   -  # no save has it yet
-  Scubidew Token                          -   -   -   -   -   -  # no save has it yet
-  Cattleprod Token                        -   -   -   -   -   -  # no save has it yet
-  Easy Yumyum Dez NPC Token               -   -   -   -   -   -  # no save has it yet
-  Med Yumyum Dez NPC Token                -   -   -   -   -   -  # no save has it yet
-  Hard Blunderhills NPC Token             -   -   -   -   -   -  # no save has it yet
-  Hard Yumyum Dez NPC Token               -   -   -   -   -   -  # no save has it yet
-  Lonely Hunter Token                     -   -   -   -   -   -  # no save has it yet
-  Hoggi Token                             -   -   -   -   -   -  # no save has it yet
-  Bellows Token                           -   -   -   -   -   -  # no save has it yet
-  Snouts Token                            -   -   -   -   -   -  # no save has it yet
-  Shuvelle Token                          -   -   -   -   -   -  # no save has it yet
-  Yondergreen Token                       -   -   -   -   -   -  # no save has it yet
-  Bill Brr Token                          -   -   -   -   -   -  # no save has it yet
-  Crystalswine Token                      -   -   -   -   -   -  # no save has it yet
-  Easy FB Tundra NPC Token                -   -   -   -   -   -  # no save has it yet
-  Stiltzcho Token                         -   -   -   -   -   -  # no save has it yet
-  Med FB Tundra NPC Token                 -   -   -   -   -   -  # no save has it yet
-  Hard FB Tundra NPC Token                -   -   -   -   -   -  # no save has it yet
-  Woodsman Token                          -   -   -   -   -   -  # no save has it yet
-  Glumlee Token                           -   -   -   -   -   -  # no save has it yet
-  Papua Piggea Token                      -   -   -   -   -   -  # no save has it yet
-  FILLER                                  -   -   -   -   -   -  # no save has it yet
-  Funguy Token                            -   -   -   -   -   -  # no save has it yet
-  Obol Fragment                           -   -   -   -   -   -  # no save has it yet
-  Crude Oil                               -   -   -   -   -   -  # no save has it yet
-  Radioactive Waste                       -   -   -   -   -   -  # no save has it yet
-  Glumlee's Special Tutorial Oil          -   -   -   -   -   -  # no save has it yet
-  Eco Friendly Oil                        -   -   -   -   -   -  # no save has it yet
-  Orblet                                  -   -   -   -   -   -  # no save has it yet
-  Palm Tree Log                           -   -   -   -   -   -  # no save has it yet
-  Stone Peanut                            -   -   -   -   -   -  # no save has it yet
-  Aqua Pearl                              -   -   -   -   -   -  # no save has it yet
-  Stained Pearl                           -   -   -   -   -   -  # no save has it yet
-  Shiny Pearl                             -   -   -   -   -   -  # no save has it yet
-  Black Pearl                             -   -   -   -   -   -  # no save has it yet
-  Holy Pearl                              -   -   -   -   -   -  # no save has it yet
-  Divinity Pearl                          -   -   -   -   -   -  # no save has it yet
-  Gem                                     -   -   -   -   -   -  # no save has it yet
-  Dense Water                             -   -   -   -   -   -  # no save has it yet
-  Mining Certificate                      -   -   -   -   -   -  # no save has it yet
-  Green Tea                               -   -   -   -   -   -  # no save has it yet
-  Aether Fragment                         -   -   -   -   -   -  # no save has it yet
-  Arcane Rock                             -   -   -   -   -   -  # no save has it yet
-  Spirit Offering                         -   -   -   -   -   -  # no save has it yet
-  Fishbowl                                -   -   -   -   -   -  # no save has it yet
-  Darts                                   -   -   -   -   -   -  # no save has it yet
-  Unstable Reliquarium                    -   -   -   -   -   -  # no save has it yet
-  Urie's Special Childhood Rock           -   -   -   -   -   -  # no save has it yet
-  Arcane Fragment                         -   -   -   -   -   -  # no save has it yet
-  Stamina Battery                         -   -   -   -   -   -  # no save has it yet
-  Cropfall Basket                         -   -   -   -   -   -  # no save has it yet
-  Forest Villas Flyer Thingy              -   -   -   -   -   -  # no save has it yet
-  Lucky Candle                            -   -   -   -   -   -  # no save has it yet
-  Funny 2hr Slice                         -   -   -   -   -   -  # no save has it yet
-  Giftmas Gift                            -   -   -   -   -   -  # no save has it yet
-  Glimmerwick Candle                      -   -   -   -   -   -  # no save has it yet
-  Half Finished Research Papers           -   -   -   -   -   -  # no save has it yet
-  Edible Coin                             -   -   -   -   -   -  # no save has it yet
-  Pet Bonus Token                         -   -   -   -   -   -  # no save has it yet
-  Skeleton Key                            -   -   -   -   -   -  # no save has it yet
-  Broken Mic                              -   -   -   -   -   -  # no save has it yet
-  Signed Arrest Warrant                   -   -   -   -   -   -  # no save has it yet
-  Birthday Card                           -   -   -   -   -   -  # no save has it yet
-  Pre Crime Box                           -   -   -   -   -   -  # no save has it yet
-  Bag o Nuts                              -   -   -   -   -   -  # no save has it yet
-  IOU one W7 Crystal                      -   -   -   -   -   -  # no save has it yet
-  Giftmas Box                             -   -   -   -   -   -  # no save has it yet
-  Gem Note                                -   -   -   -   -   -  # no save has it yet
-  Player Rating With Letter P             -   -   -   -   -   -  # no save has it yet
-  Player Rating With Letter S             -   -   -   -   -   -  # no save has it yet
-  Googley Eyes                            -   -   -   -   -   -  # no save has it yet
-  Dootjat Eye                             -   -   -   -   -   -  # no save has it yet
-  Silver Antique                          -   -   -   -   -   -  # no save has it yet
-  Guild Giftbox                           -   -   -   -   -   -  # no save has it yet
-  Lovey Dovey Letter                      -   -   -   -   -   -  # no save has it yet
-  Choco Box                               -   -   -   -   -   -  # no save has it yet
-  Egg Capsule                             -   -   -   -   -   -  # no save has it yet
-  Gummy Bunny                             -   -   -   -   -   -  # no save has it yet
-  Goldegg Capsule                         -   -   -   -   -   -  # no save has it yet
-  Sesame Seed                             -   -   -   -   -   -  # no save has it yet
-  The Bobber Challenge Scroll             -   -   -   -   -   -  # no save has it yet
-  Elderly Peanut                          -   -   -   -   -   -  # no save has it yet
-  Pete the Peanut                         -   -   -   -   -   -  # no save has it yet
-  Summer Cooler                           -   -   -   -   -   -  # no save has it yet
-  Class Certificate                       -   -   -   -   -   -  # no save has it yet
-  Beach Oyster                            -   -   -   -   -   -  # no save has it yet
-  Skull Coin                              -   -   -   -   -   -  # no save has it yet
-  Coin                                    -   -   -   -   -   -  # no save has it yet
-  Meat Cube                               -   -   -   -   -   -  # no save has it yet
-  Sand Pile                               -   -   -   -   -   -  # no save has it yet
-  Buried Treasure                         -   -   -   -   -   -  # no save has it yet
-  Dootophone                              -   -   -   -   -   -  # no save has it yet
-  Damaged Cog                             -   -   -   -   -   -  # no save has it yet
-  Refurbished Cog                         -   -   -   -   -   -  # no save has it yet
-  Shuvelle's Vote                         -   -   -   -   -   -  # no save has it yet
-  Scouting Report                         -   -   -   -   -   -  # no save has it yet
-  Yondergreens Vote                       -   -   -   -   -   -  # no save has it yet
-  Bill Brr's Vote                         -   -   -   -   -   -  # no save has it yet
-  Signed Contract                         -   -   -   -   -   -  # no save has it yet
-  Shovel                                  -   -   -   -   -   -  # no save has it yet
-  2021 Giftmas Box                        -   -   -   -   -   -  # no save has it yet
-  Pile of Processor Chips                 -   -   -   -   -   -  # no save has it yet
-  Strung Jewels                           -   -   -   -   -   -  # no save has it yet
-  Bottled World Town Teleport             -   -   -   -   -   -  # no save has it yet
-  Skull                                   -   -   -   -   -   -  # no save has it yet
-  Phone Box                               -   -   -   -   -   -  # no save has it yet
-  Gem Envelope                            -   -   -   -   -   -  # no save has it yet
-  Bottled Wind                            -   -   -   -   -   -  # no save has it yet
-  Gaming Fertilizer                       -   -   -   -   -   -  # no save has it yet
-  Rift Tear                               -   -   -   -   -   -  # no save has it yet
-  Spring Baggie                           -   -   -   -   -   -  # no save has it yet
-  Silver Pocketwatch                      -   -   -   -   -   -  # no save has it yet
-  Gold Pocketwatch                        -   -   -   -   -   -  # no save has it yet
-  Halloween Treat                         -   -   -   -   -   -  # no save has it yet
-  Filler bc I messed up                   -   -   -   -   -   -  # no save has it yet
-  Crop Transfer Ticket                    -   -   -   -   -   -  # no save has it yet
-  Compost Bag                             -   -   -   -   -   -  # no save has it yet
-  Summoner Stone                          -   -   -   -   -   -  # no save has it yet
-  Blue Tome Pages                         -   -   -   -   -   -  # no save has it yet
-  Red Tome Pages                          -   -   -   -   -   -  # no save has it yet
-  Anniversary Box                         -   -   -   -   -   -  # no save has it yet
-  Basketball                              -   -   -   -   -   -  # no save has it yet
-  Secret Map                              -   -   -   -   -   -  # no save has it yet
-  Golden Oyster                           -   -   -   -   -   -  # no save has it yet
-  Event Point                             -   -   -   -   -   -  # no save has it yet
-  Picnic Token                            -   -   -   -   -   -  # no save has it yet
-  Blinding Lantern                        -   -   -   -   -   -  # no save has it yet
-  Golden Gift                             -   -   -   -   -   -  # no save has it yet
-  Giftmas Present                         -   -   -   -   -   -  # no save has it yet
-  Worship Floppy Disc                     -   -   -   -   -   -  # no save has it yet
-  Temple Torch                            -   -   -   -   -   -  # no save has it yet
-  Aethermoon                              -   -   -   -   -   -  # no save has it yet
-  Charred Bone                            -   -   -   -   -   -  # no save has it yet
-  Charred Fragment                        -   -   -   -   -   -  # no save has it yet
-  Prisma Bubble                           -   -   -   -   -   -  # no save has it yet
-  Parchment of Enchantment                -   -   -   -   -   -  # no save has it yet
-  Parchment of Cease and Desist           -   -   -   -   -   -  # no save has it yet
-  Leafy Marble                            -   -   -   -   -   -  # no save has it yet
-  Sandy Marble                            -   -   -   -   -   -  # no save has it yet
-  Frosty Marble                           -   -   -   -   -   -  # no save has it yet
-  Sparkly Marble                          -   -   -   -   -   -  # no save has it yet
-  Toasty Marble                           -   -   -   -   -   -  # no save has it yet
-  Wispy Marble                            -   -   -   -   -   -  # no save has it yet
-  Briny Marble                            -   -   -   -   -   -  # no save has it yet
-  NoNotYety Marble                        -   -   -   -   -   -  # no save has it yet
   Crosslink Salt                          -   -   -   -   -   -  # no save has it yet
   Propagated Salt                         -   -   -   -   -   -  # no save has it yet
-  Anionic Salt                            -   -   -   -   -   -  # no save has it yet
-  Post Office Box Reseto Magnifico        -   -   -   -   -   -  # no save has it yet
-  Talent Point Reset Potion               -   -   -   -   -   -  # no save has it yet
-  Secretstone                             -   -   -   -   -   -  # no save has it yet
-  Sculpting Tools                         -   -   -   -   -   -  # no save has it yet
-  Guilding Tools                          -   -   -   -   -   -  # no save has it yet
-  Onyx Tools                              -   -   -   -   -   -  # no save has it yet
-  Zenith Tools                            -   -   -   -   -   -  # no save has it yet
-  Spice                                   -   -   -   -   -   -  # no save has it yet
-  Starlight Ore                           -   -   -   -   -   -  # no save has it yet
-  Armor Upgrade Stone G                   -   -   -   -   -   -  # no save has it yet
-  Armor Upgrade Stone V                   -   -   -   -   -   -  # no save has it yet
   Armor Upgrade Stone VI                  -   -   -   -   -   -  # no save has it yet
-  Armor Upgrade Stone VII                 -   -   -   -   -   -  # no save has it yet
   Easter Armor Stone                      -   -   -   -   -   -  # no save has it yet
-  Giftmas Helmet Upgrade Stone            -   -   -   -   -   -  # no save has it yet
-  Warped Helmet Upgrade Stone             -   -   -   -   -   -  # no save has it yet
-  Premium AGI Stone                       -   -   -   -   -   -  # no save has it yet
-  Premium LUK Stone                       -   -   -   -   -   -  # no save has it yet
-  Premium Stone Refunder                  -   -   -   -   -   -  # no save has it yet
-  Premium STR Stone                       -   -   -   -   -   -  # no save has it yet
-  Premium Bonus Swapper                   -   -   -   -   -   -  # no save has it yet
-  Premium WIS Stone                       -   -   -   -   -   -  # no save has it yet
-  Giftmas Tool Upgrade Stone              -   -   -   -   -   -  # no save has it yet
-  Tool Upgrade Stone III                  -   -   -   -   -   -  # no save has it yet
-  Tool Upgrade Stone IV                   -   -   -   -   -   -  # no save has it yet
-  Tool Upgrade Stone V                    -   -   -   -   -   -  # no save has it yet
-  Tool Upgrade Stone VI                   -   -   -   -   -   -  # no save has it yet
-  Tool Upgrade Stone VII                  -   -   -   -   -   -  # no save has it yet
   Easter Tool Upgrade Stone               -   -   -   -   -   -  # no save has it yet
-  Tempest Bow Stone 60 PCT                -   -   -   -   -   -  # no save has it yet
-  Tempest Bow Stone 30 PCT                -   -   -   -   -   -  # no save has it yet
-  Tempest Bow Stone 10 PCT                -   -   -   -   -   -  # no save has it yet
-  Tempest Ring Stone 60 PCT               -   -   -   -   -   -  # no save has it yet
-  Tempest Ring Stone 30 PCT               -   -   -   -   -   -  # no save has it yet
-  Tempest Ring Stone 10 PCT               -   -   -   -   -   -  # no save has it yet
-  Weapon Upgrade Stone C                  -   -   -   -   -   -  # no save has it yet
-  Weapon Upgrade Stone V                  -   -   -   -   -   -  # no save has it yet
-  Warped Weapon Upgrade Stone             -   -   -   -   -   -  # no save has it yet
-  Weapon Upgrade Stone VI                 -   -   -   -   -   -  # no save has it yet
-  Weapon Upgrade Stone VII                -   -   -   -   -   -  # no save has it yet
   Easter Weapon Stone                     -   -   -   -   -   -  # no save has it yet
-  Singulon                                -   -   -   -   -   -  # no save has it yet
-  Doubulon                                -   -   -   -   -   -  # no save has it yet
-  Verdon                                  -   -   -   -   -   -  # no save has it yet
-  Bludon                                  -   -   -   -   -   -  # no save has it yet
-  Massivon                                -   -   -   -   -   -  # no save has it yet
-  Aurion                                  -   -   -   -   -   -  # no save has it yet
-  Talent Point Tab 1                      -   -   -   -   -   -  # no save has it yet
-  Talent Point Tab 2                      -   -   -   -   -   -  # no save has it yet
-  Talent Point Tab 3                      -   -   -   -   -   -  # no save has it yet
-  Talent Point Tab 4                      -   -   -   -   -   -  # no save has it yet
-  Talent Point Tab 5                      -   -   -   -   -   -  # no save has it yet
-  Talent Point Special Tab                -   -   -   -   -   -  # no save has it yet
-  1 HR Time Candy                         -   -   -   -   -   -  # no save has it yet
-  Spirit Time Candy                       -   -   -   -   -   -  # no save has it yet
-  2 HR Time Candy                         -   -   -   -   -   -  # no save has it yet
-  4 HR Time Candy                         -   -   -   -   -   -  # no save has it yet
-  12 HR Time Candy                        -   -   -   -   -   -  # no save has it yet
-  24 HR Time Candy                        -   -   -   -   -   -  # no save has it yet
-  72 HR Time Candy                        -   -   -   -   -   -  # no save has it yet
-  Steamy Time Candy                       -   -   -   -   -   -  # no save has it yet
-  Spooky Time Candy                       -   -   -   -   -   -  # no save has it yet
-  Cosmic Time Candy                       -   -   -   -   -   -  # no save has it yet
-  Colosseum Ticket                        -   -   -   -   -   -  # no save has it yet
-  Broken Weapon                           -   -   -   -   -   -  # no save has it yet
-  Dried Paint Blob                        -   -   -   -   -   -  # no save has it yet
-  Engraved Bullet                         -   -   -   -   -   -  # no save has it yet
-  Wispy Tree Log                          -   -   -   -   -   -  # no save has it yet
-  Error Item                              -   -   -   -   -   -  # no save has it yet
-  Medallion                               -   -   -   -   -   -  # no save has it yet
-  Wormie Weight                           -   -   -   -   -   -  # no save has it yet
-  Dynamite                                -   -   -   -   -   -  # no save has it yet
-  Not Dynamite                            -   -   -   -   -   -  # no save has it yet
-  Triple Threat                           -   -   -   -   -   -  # no save has it yet
-  Fat Albert                              -   -   -   -   -   -  # no save has it yet
-  Iron Hook                               -   -   -   -   -   -  # no save has it yet
-  One Pound of Steel                      -   -   -   -   -   -  # no save has it yet
-  One Pound of Feathers                   -   -   -   -   -   -  # no save has it yet
-  Literal Elephant                        -   -   -   -   -   -  # no save has it yet
-  Anvil Reset Whetstone                   -   -   -   -   -   -  # no save has it yet
-  Experience                              -   -   -   -   -   -  # no save has it yet
-  Skill Experience                        -   -   -   -   -   -  # no save has it yet
   Pirate Ship Figurine                    -   -   -   -   -   -  # no save has it yet
 
 secret-path                             # Secret Class Path
