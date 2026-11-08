@@ -15,7 +15,6 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
         stamps(save),
         statue_flair(save),
         owl(save),
-        owl_lasting(save),
         forge(save),
         anvil_points(save),
         upgrade_vault(save),
@@ -566,21 +565,28 @@ fn owl(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("owl", 1, "Owl", pic("Feaz0".into()), Count::Done, "earned", items);
-    m.note = Some(format!(
-        "The ten kinds of Megafeather; you have {owned:.0} in all. Fractal ones keep stacking past the tenth: see Owl: Lasting Bonuses."
-    ));
+    // The two that last (no cap) join the card on its Levels side; the share counts the ten
+    // kinds of Megafeather (Count::Levels: the lasting two have max 0).
+    let (lasting, have) = owl_lasting(save);
+    let mut items: Vec<Item> = items;
+    items.extend(lasting);
+    let mut m = mech("owl", 1, "Owl", pic("Feaz0".into()), Count::Levels, "earned", items);
+    m.note = Some(format!("The ten kinds of Megafeather; you have {owned:.0} in all. Fractal ones keep stacking past the tenth: see the Levels side."));
+    m.levels_note = Some("Bonuses of Orion and Fractal Megafeather stacks have no cap and never reset with a Feather Restart or a Great Mega Reset. This ladder follows the highest other players have.".into());
+    m.other_side = "Megafeathers";
+    m.have = Some(have);
     m
 }
 
-/// The two Owl things that outlast every Feather Restart and have no cap (N.js "OwlBonuses"
+/// The two Owl things that outlast every Feather Restart and have no cap, for the Owl card's
+/// Levels side (N.js "OwlBonuses"
 /// and "OwlMegafeather"): Bonuses of Orion (`OptLacc[255]`, the upgrade that "never resets";
 /// the six bonuses each get a level every sixth purchase) and Fractal Megafeather stacks (each
 /// Megafeather past the tenth makes Orion's bonuses 0.5x bigger: 6 + 0.5 × (count - 10) times).
 /// Costs are N.js `OwlCost` without its discounts: `Owlz[t]` col 1 × col 2^level, in feathers
 /// (`OptLacc[253]`), for t 1 (Bonuses of Orion) and 8 (The Great Mega Reset, level = your
 /// Megafeathers, `OptLacc[262]`).
-fn owl_lasting(save: &Save) -> Mechanic {
+fn owl_lasting(save: &Save) -> (Vec<Item>, Have) {
     let owlz = rows("Owlz", &[]);
     let cost = |t: usize, level: f64| owlz.get(t).map_or(f64::INFINITY, |r| cell(r, 1) * cell(r, 2).powf(level));
     let feathers = save.option(253).max(0.0);
@@ -596,10 +602,7 @@ fn owl_lasting(save: &Save) -> Mechanic {
         "Each Great Mega Reset past the tenth adds one, +0.5x to Orion's bonuses. Next costs {} feathers before discounts.",
         big(cost(8, mega))
     ));
-    let mut m = mech("owl-lasting", 1, "Owl: Lasting Bonuses", pic("Feaz9".into()), Count::Open, "levels", vec![bonuses, fractal]);
-    m.have = Some(Have { figure: format!("{} feathers", big(feathers)), text: "Feathers reset with every Feather Restart; these two stay.".into() });
-    m.note = Some("Neither has a cap, and neither resets with a Feather Restart or a Great Mega Reset.".into());
-    m
+    (vec![bonuses, fractal], Have { figure: format!("{} feathers", big(feathers)), text: "Feathers reset with every Feather Restart; Bonuses of Orion and Fractal stacks stay.".into() })
 }
 
 /// Forge upgrades: `ForgeLV[i]`; the game stops each at `RANDOlist[42][i]` and shows

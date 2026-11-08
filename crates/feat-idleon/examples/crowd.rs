@@ -174,7 +174,7 @@ fn main() {
         // save has it, and the base columns used.
         let (cols, table, prio, anyone, from_base) = if crowd::BEST.contains(&m.key) {
             let (cols, table) = best_table(m, &rows, &ids, &seen);
-            let anyone = table.iter().map(|r| r.iter().any(Option::is_some)).collect();
+            let anyone = rows.iter().map(|n| ids.get(n).is_some_and(|id| seen.iter().any(|x| x.levels.get(m.key).and_then(|l| l.get(id)).is_some_and(|v| *v > 0.0)))).collect();
             let prio = vec![vec![0.0; cols.len()]; rows.len()];
             (cols, table, prio, anyone, HashMap::new())
         } else {
@@ -421,6 +421,9 @@ fn best_curve(world: u8, stage: usize) -> f64 {
 /// of the highest level any save has for that row.
 fn best_table(m: &feat_idleon::review::Mechanic, rows: &[String], ids: &HashMap<String, u32>, seen: &[Seen]) -> (Vec<usize>, Vec<Vec<Option<f64>>>) {
     let world: HashMap<&str, u8> = m.items.iter().chain(&m.later).map(|i| (i.name.as_str(), i.world.unwrap_or(m.world))).collect();
+    // Found-once items with no level of their own (the owl's Megafeathers) belong to the other
+    // side of the card: no level ladder for them.
+    let once: Vec<&str> = m.items.iter().chain(&m.later).filter(|i| i.max > 0.0 && i.max <= 1.0 && i.raw.is_none()).map(|i| i.name.as_str()).collect();
     let cols: Vec<usize> = (0..STAGES.len()).collect();
     let table = rows
         .iter()
@@ -429,7 +432,7 @@ fn best_table(m: &feat_idleon::review::Mechanic, rows: &[String], ids: &HashMap<
             let w = world.get(name.as_str()).copied().unwrap_or(m.world);
             cols.iter().map(|&s| {
                 let f = best_curve(w, s);
-                (f > 0.0 && best > 0.0).then(|| crowd::nice(f64::from(best) * f).max(1.0))
+                (f > 0.0 && best > 0.0 && !once.contains(&name.as_str())).then(|| crowd::nice(f64::from(best) * f).max(1.0))
             }).collect()
         })
         .collect();

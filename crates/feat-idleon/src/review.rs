@@ -331,7 +331,8 @@ impl Mechanic {
         // Endgame tiers belong to no world: nobody is behind for not having them.
         let mut out: Vec<(Tier, Option<u8>)> = l.rungs.iter().map(|r| (tier(r.label.clone(), r.targets.clone()), (!crate::crowd::endgame(r.stage)).then_some(r.world))).collect();
         // Items with a real level of their own have no max in those units (stamps, bubbles).
-        if self.count != Count::Open && self.items.iter().any(|i| i.max > 0.0) && self.items.iter().all(|i| i.raw.is_none()) {
+        // Not on the Levels side of a switch: the maxes there are the other side's (the owl).
+        if self.count != Count::Open && self.levels_note.is_none() && self.items.iter().any(|i| i.max > 0.0) && self.items.iter().all(|i| i.raw.is_none()) {
             let max: Vec<f64> = self.items.iter().map(|i| i.max).collect();
             if l.rungs.last().is_none_or(|r| r.targets != max) {
                 out.push((tier("Everything maxed".to_string(), max), None));
@@ -348,7 +349,8 @@ impl Mechanic {
         let note = self.levels_note.clone().filter(|_| self.crowd.is_some())?;
         let mut m = self.clone();
         m.note = Some(note);
-        for i in m.items.iter_mut().filter(|i| i.level > 0.0) {
+        // Items with no max (the owl's lasting bonuses) live on this side: theirs stay.
+        for i in m.items.iter_mut().filter(|i| i.level > 0.0 && i.max > 0.0) {
             i.how = None;
             i.state = State::Unknown;
         }
@@ -364,6 +366,8 @@ impl Mechanic {
         m.pace = None;
         m.have = None;
         m.whole_tiers = true;
+        // Only what this side counts: the owl's lasting bonuses (no max) are the Levels side's.
+        m.items.retain(|i| i.max > 0.0);
         Some(m)
     }
 
