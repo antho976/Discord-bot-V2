@@ -527,7 +527,7 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                             }
                             label {
                                 input type="radio" name={ "v-" (m.key) } value="tiers";
-                                b { "Tiers" }
+                                b { (m.other_side) }
                                 span.ia-fig { (ladder_fig(tv)) }
                             }
                         }
@@ -657,9 +657,12 @@ fn view(m: &Mechanic, reached: u8, tag: &str) -> Markup {
 }
 
 /// Where a side of the switch stands, for its label and the card head: "Onyx 23 / 32",
-/// "Tier 10 / 24", "All tiers".
+/// "Tier 10 / 24", "86 / 120 unlocked", "All tiers".
 fn ladder_fig(m: &Mechanic) -> String {
     let tiers = m.tiers();
+    if m.crowd.is_none() && m.tier_names.is_none() {
+        return format!("{} / {} {}", num(m.have()), num(m.total()), m.unit);
+    }
     match tiers.iter().position(|t| !t.complete()) {
         Some(k) if m.crowd.is_none() => format!("{} {} / {}", tiers[k].label, tiers[k].met, tiers[k].need),
         Some(k) => format!("Tier {} / {}", k + 1, tiers.len()),
@@ -698,7 +701,13 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
             }
             span.ia-fig {
                 // A one-time thing has no level to show; the chip or the line says the rest.
-                @if m.crowd.is_some() && !(once && i.raw.is_none()) { "Lv " (num(m.tier_level(i))) " → Lv " (num(target)) }
+                // Something not had at all (a stamp not found) is "Unlock": its level 0 says nothing.
+                @if m.crowd.is_some() && !(once && i.raw.is_none()) {
+                    @if i.raw.is_some_and(|r| r <= 0.0) && target <= 1.0 { "Unlock" }
+                    @else if i.raw.is_some_and(|r| r <= 0.0) { "Unlock → Lv " (num(target)) }
+                    @else { "Lv " (num(m.tier_level(i))) " → Lv " (num(target)) }
+                }
+                @else if once && i.raw.is_some() { "Unlock" }
                 @else if once { (i.level_name.as_deref().unwrap_or("")) }
                 @else { (level_text(m, i.level)) " → " (level_text(m, target)) }
             }

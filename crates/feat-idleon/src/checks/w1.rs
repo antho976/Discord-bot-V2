@@ -246,8 +246,8 @@ fn star_picture(sign: usize, found: bool) -> Option<String> {
     })
 }
 
-/// Stamps: `StampLv[tab][i]`. No hard max, so this counts stamps collected; the level shows
-/// beside each.
+/// Stamps: `StampLv[tab][i]`. The share counts stamps unlocked; the level is `raw`, and the
+/// Levels side's ladder (`crowd::BEST`) is on it, like statues.
 fn stamps(save: &Save) -> Mechanic {
     let mut items = Vec::new();
     let mut gone = 0;
@@ -273,11 +273,13 @@ fn stamps(save: &Save) -> Mechanic {
             items.push(it);
         }
     }
-    let mut m = mech("stamps", 1, "Stamps", pic("StampA1".into()), Count::Done, "collected", items);
+    let mut m = mech("stamps", 1, "Stamps", pic("StampA1".into()), Count::Done, "unlocked", items);
     m.note = Some(match gone {
-        0 => "Stamps have no level cap, so this counts the ones you have.".into(),
-        n => format!("Stamps have no level cap, so this counts the ones you have. {n} more exist that nothing in the game gives now (past events, or not out yet), so they aren't counted."),
+        0 => "The stamps you've unlocked.".into(),
+        n => format!("The stamps you've unlocked. {n} more exist that nothing in the game gives now (past events, or not out yet), so they aren't counted."),
     });
+    m.levels_note = Some("Stamp levels have no cap. This ladder follows the highest level other players have on each stamp, from the world you can first get it in, so a stamp that is slow to level asks for less.".into());
+    m.other_side = "Unlock";
     m
 }
 
@@ -365,13 +367,33 @@ fn map_world(map: usize) -> u8 {
     (map / 50 + 1).min(7) as u8
 }
 
-/// The earliest world a monster is fought in: the maps whose `MapAFKtarget` it is.
+/// The earliest world a monster is fought in: the maps whose `MapAFKtarget` it is. Crystal
+/// monsters spawn on any map of their world (`Crystal0` World 1 to `Crystal6` World 7), and
+/// `cave*` ones live in the World 5 caverns.
 pub(super) fn monster_world(mob: &str) -> Option<u8> {
+    if let Some(n) = mob.strip_prefix("Crystal").and_then(|n| n.parse::<u8>().ok()) {
+        return Some((n + 1).min(7));
+    }
+    if mob.starts_with("cave") {
+        return Some(5);
+    }
     rows("MapAFKtarget", &[]).iter().enumerate().filter(|(_, v)| v.as_str() == Some(mob)).map(|(m, _)| map_world(m)).min()
 }
 
+/// The world of the quest givers whose rewards include stamps. The game data has no NPC's map
+/// in a form the extractor reads (it's in the scenes), so this is by hand, checked against
+/// N.js's quest list, which runs through the NPCs world by world (TP Pete to Whattso, Scubidew
+/// to Constructor Crow, Iceland Irwin to Crystalswine, Worldo to Eliteus, Slargon to Rift
+/// Ripper, Nebulyte to Masterius, Potti on).
+const QUEST_NPC_WORLD: &[(&str, u8)] = &[
+    ("Tiki_Chief", 1), ("Mutton", 1), ("Hamish", 1), ("Papua_Piggea", 2), ("Wellington", 2), ("XxX_Cattleprod_XxX", 2),
+    ("Fishpaste", 2), ("Snouts", 3), ("Crystalswine", 3), ("Oinkin", 4), ("Capital_P", 4), ("Pirate_Porkchop", 5), ("Poigu", 5), ("Hoov", 6),
+    ("Sussy_Gene", 6), ("Snootie", 7), ("Bloo_Radley", 7),
+];
+
 /// The earliest world an item can be had in: the town shop that sells it, the monsters that
-/// drop it, World 2 for Arcade prizes. `None` when the data doesn't say.
+/// drop it, World 2 for Arcade prizes and the Fishing Island shop, the world of the quest giver
+/// (`QUEST_NPC_WORLD`). `None` when the data doesn't say.
 pub(super) fn source_world(id: &str) -> Option<u8> {
     let shop = GAME
         .rows("ShopNames")
@@ -380,8 +402,21 @@ pub(super) fn source_world(id: &str) -> Option<u8> {
         .and_then(|k| rows("ShopLocations", &[]).get(k).map(|v| map_world(num(v) as usize)));
     let general = GAME.extra("general");
     let drop = general.get("drops").and_then(|d| d.get(id)).and_then(Value::as_array).and_then(|mobs| mobs.iter().filter_map(Value::as_str).filter_map(monster_world).min());
-    let prize = (general.get("sources").and_then(|x| x.get(id)).and_then(Value::as_str) == Some("arcade")).then_some(2);
-    [shop, drop, prize].into_iter().flatten().min()
+    let prize = match general.get("sources").and_then(|x| x.get(id)).and_then(Value::as_str) {
+        // The Arcade and the Fishing Island (one of the islands you sail to) are World 2's.
+        Some("arcade" | "fishing_island") => Some(2),
+        _ => None,
+    };
+    let quest = general.get("quests").and_then(|q| q.get(id)).and_then(Value::as_array).and_then(|qs| {
+        qs.iter()
+            .filter_map(Value::as_str)
+            .filter_map(|q| {
+                let npc = q.trim_end_matches(|c: char| c.is_ascii_digit());
+                QUEST_NPC_WORLD.iter().find(|(n, _)| *n == npc).map(|(_, w)| *w)
+            })
+            .min()
+    });
+    [shop, drop, prize, quest].into_iter().flatten().min()
 }
 
 /// Where a found-once item comes from, per the game data, in this order: a town shop

@@ -205,6 +205,8 @@ pub struct Mechanic {
     pub levels_note: Option<String>,
     /// Game tiers drawn whole (Gold, Onyx, Zenith), not in parts of about 8.
     pub whole_tiers: bool,
+    /// What the switch calls the side that isn't Levels: "Tiers" (statues), "Unlock" (stamps).
+    pub other_side: &'static str,
 }
 
 impl Mechanic {
@@ -338,24 +340,25 @@ impl Mechanic {
         out
     }
 
-    /// Both ladders (`levels_note` set, a crowd ladder and game tiers): the Levels side. Its
-    /// tasks are levels, so the items' tier steps (`how`, `state`) are left off, and the levels
-    /// note stands in for the tiers one.
+    /// Both ladders (`levels_note` set and a crowd ladder on `raw` levels): the Levels side. Its
+    /// tasks are levels, so the items' next steps on the other side (`how`, `state`: a statue's
+    /// next tier) are left off, except for what you don't have at all yet (a stamp's where to
+    /// find it); the levels note stands in for the other one.
     pub fn levels_view(&self) -> Option<Mechanic> {
-        let note = self.levels_note.clone().filter(|_| self.crowd.is_some() && self.tier_names.is_some())?;
+        let note = self.levels_note.clone().filter(|_| self.crowd.is_some())?;
         let mut m = self.clone();
         m.note = Some(note);
-        for i in &mut m.items {
+        for i in m.items.iter_mut().filter(|i| i.level > 0.0) {
             i.how = None;
             i.state = State::Unknown;
         }
         Some(m)
     }
 
-    /// Both ladders: the Tiers side, the game's own tiers whole, with each item's next step.
-    /// Its pace and side box belong to the levels.
+    /// Both ladders: the other side (`other_side`), the game's own ladder (statue tiers whole,
+    /// stamps found), with each item's next step. Its pace and side box belong to the levels.
     pub fn tiers_view(&self) -> Option<Mechanic> {
-        self.levels_note.as_ref().filter(|_| self.crowd.is_some() && self.tier_names.is_some())?;
+        self.levels_note.as_ref().filter(|_| self.crowd.is_some())?;
         let mut m = self.clone();
         m.crowd = None;
         m.pace = None;
@@ -585,6 +588,7 @@ mod tests {
             open_order: None,
             levels_note: None,
             whole_tiers: false,
+            other_side: "Tiers",
             pace: None,
             crowd: None,
         }

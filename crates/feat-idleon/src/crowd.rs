@@ -47,7 +47,7 @@ pub fn stage_label(stage: usize) -> String {
 /// the highest any save has (see the crowd example's `best_curve`). An item that is hard to
 /// level stays low even for the endgame, and its tiers follow. Their tiers are a stage each,
 /// never split into parts.
-pub const BEST: [&str; 1] = ["statues"];
+pub const BEST: [&str; 2] = ["statues", "stamps"];
 
 /// One mechanic's table.
 #[derive(Debug, Clone, Default, PartialEq)]
