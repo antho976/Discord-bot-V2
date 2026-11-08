@@ -660,7 +660,7 @@ fn level_text(m: &Mechanic, level: f64) -> String {
 }
 
 fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
-    let once = i.max <= 1.0 && m.tier_names.is_none();
+    let once = i.max > 0.0 && i.max <= 1.0 && m.tier_names.is_none();
     html! {
         div.ia-task {
             @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {

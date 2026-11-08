@@ -14,74 +14,39 @@
 # (119 saves; a stage needs 5 to get a column)
 
 statues                                 # Statues
-  stages                7e  7m  7l  end1  end2  max
-  Spelunky Statue        1   3   3   3   3   3
-  Coral Statue           1   2   3   3   3   3
-  Ehexpee Statue         2   3   3   3   3   3
-  Pecunia Statue         2   3   3   3   3   3
-  Mutton Statue          2   3   3   3   3   3
-  Egg Statue             2   3   3   3   3   3
-  Battleaxe Statue       2   3   3   3   3   3
-  Boat Statue            2   3   3   3   3   3
-  Spiral Statue          2   3   3   3   3   3
-  Box Statue             2   3   3   3   3   3
-  Twosoul Statue         2   3   3   3   3   3
-  Seesaw Statue          2   3   3   3   3   3
-  Villager Statue        2   3   3   3   3   3
-  Power Statue           3   3   3   3   3   3
-  Speed Statue           3   3   3   3   3   3
-  Mining Statue          3   3   3   3   3   3
-  Feasty Statue          3   3   3   3   3   3
-  Beholder Statue        3   3   3   3   3   3
-  Compost Statue         2   3   3   3   3   3
-  Stealth Statue         2   3   3   3   3   3
-  Essence Statue         2   3   3   3   3   3
-  Lumberbob Statue       3   3   3   3   3   3
-  Bullseye Statue        3   3   3   3   3   3
-  Health Statue          3   3   3   3   3   3
-  Thicc Skin Statue      3   3   3   3   3   3
-  Oceanman Statue        3   3   3   3   3   3
-  Ol Reliable Statue     3   3   3   3   3   3
-  Kachow Statue          2   2   2   2   2   2
-  Exp Statue             3   3   3   3   3   3
-  Anvil Statue           3   3   3   3   3   3
-  Cauldron Statue        3   3   3   3   3   3
-  Dragon Statue          2   3   3   3   3   3
-
-statue-levels                           # Statue Levels, no max
   stages                1e  1m  1l  2e  2m  2l  3e  3m   3l   4e   4m   4l   5e   5m   5l   6e   6m   6l   7e   7m   7l  end1  end2  max
-  Power Statue           1   5  13  20  35  50  70  95  120  140  180  210  250  290  330  380  430  480  530  590  650  720  780  860  # new since the last run
-  Speed Statue           1   6  13  20  35  55  75  95  120  150  180  220  260  300  340  390  440  500  550  620  680  750  820  890  # new since the last run
-  Mining Statue          1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880  # new since the last run
-  Feasty Statue          1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880  # new since the last run
-  Health Statue          1   5  13  20  35  50  70  90  110  140  170  210  240  280  320  370  420  470  520  580  640  700  770  840  # new since the last run
-  Lumberbob Statue       1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880  # new since the last run
-  Thicc Skin Statue      1   5  12  20  35  50  70  90  110  140  170  200  240  280  320  360  410  460  510  570  630  690  760  820  # new since the last run
-  Anvil Statue           1   5  12  20  30  45  65  85  110  130  160  190  230  270  310  350  400  440  500  550  610  670  730  790  # new since the last run
-  Battleaxe Statue       1   5  12  20  30  50  65  85  110  130  160  200  230  270  310  350  400  450  500  550  610  670  730  800  # new since the last run
-  Kachow Statue          -   -   -   1   1   4   7  12   17   20   30   35   45   55   65   80   95  100  120  140  150  170  190  210  # new since the last run
-  Oceanman Statue        -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  650  730  800  # new since the last run
-  Ol Reliable Statue     -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  660  730  800  # new since the last run
-  Exp Statue             -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  320  370  420  480  540  600  670  730  # new since the last run
-  Cauldron Statue        -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  320  370  420  480  540  600  660  730  # new since the last run
-  Beholder Statue        -   -   -   1   7  16  25  45   65   90  110  150  180  220  260  310  360  420  470  540  600  670  740  820  # new since the last run
-  Bullseye Statue        -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  660  730  800  # new since the last run
-  Pecunia Statue         -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  330  380  430  490  540  610  670  740  # new since the last run
-  Box Statue             -   -   -   -   -   -   2   8   19   35   55   75  100  140  170  220  260  310  370  430  490  560  640  710  # new since the last run
-  Twosoul Statue         -   -   -   -   -   -   2   8   19   35   55   75  100  140  170  220  260  310  370  430  490  560  630  710  # new since the last run
-  Ehexpee Statue         -   -   -   -   -   -   2   9   20   35   55   80  110  140  180  230  270  330  380  450  510  590  660  740  # new since the last run
-  Seesaw Statue          -   -   -   -   -   -   2   8   19   35   50   75  100  140  170  210  260  310  370  430  490  560  630  710  # new since the last run
-  Mutton Statue          -   -   -   -   -   -   -   -    -    3   12   25   45   75  100  140  190  240  300  360  430  510  590  680  # new since the last run
-  Egg Statue             -   -   -   -   -   -   -   -    -    3   12   25   45   75  100  140  190  240  300  360  430  500  590  670  # new since the last run
-  Dragon Statue          -   -   -   -   -   -   -   -    -    3   13   30   55   85  120  170  220  280  340  420  500  580  680  780  # new since the last run
-  Spiral Statue          -   -   -   -   -   -   -   -    -    -    -    -    4   19   40   75  110  170  230  300  380  470  570  690  # new since the last run
-  Boat Statue            -   -   -   -   -   -   -   -    -    -    -    -    4   17   40   70  110  160  210  280  360  440  540  640  # new since the last run
-  Villager Statue        -   -   -   -   -   -   -   -    -    -    -    -    4   19   40   75  120  170  240  310  390  490  590  700  # new since the last run
-  Compost Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   70  120  190  280  380  500  630  # new since the last run
-  Stealth Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   70  120  190  280  380  490  630  # new since the last run
-  Essence Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   65  120  190  270  370  490  620  # new since the last run
-  Spelunky Statue        -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   16   65  140  260  410  590  # new since the last run
-  Coral Statue           -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   12   45  100  190  300  430  # new since the last run
+  Power Statue           1   5  13  20  35  50  70  95  120  140  180  210  250  290  330  380  430  480  530  590  650  720  780  860
+  Speed Statue           1   6  13  20  35  55  75  95  120  150  180  220  260  300  340  390  440  500  550  620  680  750  820  890
+  Mining Statue          1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880
+  Feasty Statue          1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880
+  Health Statue          1   5  13  20  35  50  70  90  110  140  170  210  240  280  320  370  420  470  520  580  640  700  770  840
+  Lumberbob Statue       1   6  13  20  35  55  75  95  120  150  180  220  250  300  340  390  440  490  550  610  670  740  810  880
+  Thicc Skin Statue      1   5  12  20  35  50  70  90  110  140  170  200  240  280  320  360  410  460  510  570  630  690  760  820
+  Anvil Statue           1   5  12  20  30  45  65  85  110  130  160  190  230  270  310  350  400  440  500  550  610  670  730  790
+  Battleaxe Statue       1   5  12  20  30  50  65  85  110  130  160  200  230  270  310  350  400  450  500  550  610  670  730  800
+  Kachow Statue          -   -   -   1   1   4   7  12   17   20   30   35   45   55   65   80   95  100  120  140  150  170  190  210
+  Oceanman Statue        -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  650  730  800
+  Ol Reliable Statue     -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  660  730  800
+  Exp Statue             -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  320  370  420  480  540  600  670  730
+  Cauldron Statue        -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  320  370  420  480  540  600  660  730
+  Beholder Statue        -   -   -   1   7  16  25  45   65   90  110  150  180  220  260  310  360  420  470  540  600  670  740  820
+  Bullseye Statue        -   -   -   1   7  16  25  45   65   85  110  140  180  220  260  300  350  410  460  520  590  660  730  800
+  Pecunia Statue         -   -   -   1   6  15  25  40   60   80  100  130  160  200  240  280  330  380  430  490  540  610  670  740
+  Box Statue             -   -   -   -   -   -   2   8   19   35   55   75  100  140  170  220  260  310  370  430  490  560  640  710
+  Twosoul Statue         -   -   -   -   -   -   2   8   19   35   55   75  100  140  170  220  260  310  370  430  490  560  630  710
+  Ehexpee Statue         -   -   -   -   -   -   2   9   20   35   55   80  110  140  180  230  270  330  380  450  510  590  660  740
+  Seesaw Statue          -   -   -   -   -   -   2   8   19   35   50   75  100  140  170  210  260  310  370  430  490  560  630  710
+  Mutton Statue          -   -   -   -   -   -   -   -    -    3   12   25   45   75  100  140  190  240  300  360  430  510  590  680
+  Egg Statue             -   -   -   -   -   -   -   -    -    3   12   25   45   75  100  140  190  240  300  360  430  500  590  670
+  Dragon Statue          -   -   -   -   -   -   -   -    -    3   13   30   55   85  120  170  220  280  340  420  500  580  680  780
+  Spiral Statue          -   -   -   -   -   -   -   -    -    -    -    -    4   19   40   75  110  170  230  300  380  470  570  690
+  Boat Statue            -   -   -   -   -   -   -   -    -    -    -    -    4   17   40   70  110  160  210  280  360  440  540  640
+  Villager Statue        -   -   -   -   -   -   -   -    -    -    -    -    4   19   40   75  120  170  240  310  390  490  590  700
+  Compost Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   70  120  190  280  380  500  630
+  Stealth Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   70  120  190  280  380  490  630
+  Essence Statue         -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    7   30   65  120  190  270  370  490  620
+  Spelunky Statue        -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   16   65  140  260  410  590
+  Coral Statue           -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   12   45  100  190  300  430
 
 bribes                                  # Bribes, World 1 to 5 columns from AutoReview's tiers, changed
   stages                       1l  2e  2l  3e  3l  4e  4l  5e  7e  7m  7l  end1  end2  max
@@ -3951,13 +3916,13 @@ greenstacks                             # Greenstacks
   Red Frisbee                             -   -   1   1   1   1
   Nullo Salt                              -   -   1   1   1   1
   Chapter Two 'Decay Surrounds'           -   -   1   1   1   1
+  Corporatube Sub                         -   -   -   1   1   1
+  Instablab Follower                      -   -   -   1   1   1
   Cauldron Statue                         -   -   -   1   1   1
   Essence Statue                          -   -   -   1   1   1
   Cheezy Pizza                            -   -   -   1   1   1
   Average Life Potion                     -   -   -   1   1   1
   Lustre Bar                              -   -   -   1   1   1
-  Corporatube Sub                         -   -   -   1   1   1
-  Instablab Follower                      -   -   -   1   1   1
   Explosive Salts                         -   -   -   1   1   1
   Dioxide Synthesis                       -   -   -   1   1   1
   Purple Salt                             -   -   -   1   1   1
@@ -3967,13 +3932,13 @@ greenstacks                             # Greenstacks
   Stealth Statue                          -   -   -   1   1   1
   Starfire Bar                            -   -   -   1   1   1
   Tool Upgrade Stone II                   -   -   -   1   1   1
+  Cloudsound Follower                     -   -   -   1   1   1
   Twosoul Statue                          -   -   -   1   1   1
   Compost Statue                          -   -   -   1   1   1
   Villager Statue                         -   -   -   1   1   1
   Small Experience Balloon                -   -   -   1   1   1
   Yeti Ham                                -   -   -   1   1   1
   Decent Mana Potion                      -   -   -   1   1   1
-  Cloudsound Follower                     -   -   -   1   1   1
   Tool Upgrade Stone I                    -   -   -   1   1   1
   Mystery Upgrade Stone III               -   -   -   1   1   1
   Butter Bar                              -   -   -   1   1   1
@@ -3981,6 +3946,7 @@ greenstacks                             # Greenstacks
   Yellow Snowflake                        -   -   -   1   1   1
   Weapon Upgrade Stone I                  -   -   -   1   1   1
   Weapon Upgrade Stone II                 -   -   -   1   1   1
+  Monster Rating                          -   -   -   1   1   1
   Golden Bread                            -   -   -   1   1   1
   Potent Life Potion                      -   -   -   1   1   1
   Potent EXP Potion                       -   -   -   1   1   1
@@ -3989,40 +3955,39 @@ greenstacks                             # Greenstacks
   Hampter                                 -   -   -   1   1   1
   Toxic Sludge                            -   -   -   1   1   1
   Peanut                                  -   -   -   1   1   1
-  Monster Rating                          -   -   -   1   1   1
   Chapter Three 'This is Gospel'          -   -   -   1   1   1
   Armor Upgrade Stone I                   -   -   -   1   1   1
   Woodular Circle                         -   -   -   1   1   1
-  Golden Cake                             -   -   -   1   1   1
-  Potent Strength Potion                  -   -   -   1   1   1
   Casual Confidante                       -   -   -   1   1   1
   Claiming Cashe                          -   -   -   1   1   1
+  Strange Rock                            -   -   -   1   1   1
+  Golden Cake                             -   -   -   1   1   1
+  Potent Strength Potion                  -   -   -   1   1   1
   Troll's Enclave Key                     -   -   -   1   1   1
   Magma Barrel                            -   -   -   1   1   1
   Plasma Barrel                           -   -   -   1   1   1
   Zenith Cluster                          -   -   -   1   1   1
-  Strange Rock                            -   -   -   1   1   1
   Dualhook Prongs                         -   -   -   1   1   1
-  Seesaw Statue                           -   -   -   1   1   1
-  Icing Ironbite                          -   -   -   1   1   1
   Triumphant Treason                      -   -   -   1   1   1
   Wood Board Bone                         -   -   -   1   1   1
   Time Thingy                             -   -   -   1   1   1
+  Seesaw Statue                           -   -   -   1   1   1
+  Icing Ironbite                          -   -   -   1   1   1
   Clammy Chunk                            -   -   -   1   1   1
+  Ketchup Bottle                          -   -   -   1   1   1
+  Mustard Bottle                          -   -   -   1   1   1
   Bullet                                  -   -   -   1   1   1
   Decent Speed Potion                     -   -   -   1   1   1
   Wiener Links                            -   -   -   1   1   1
-  Ketchup Bottle                          -   -   -   1   1   1
-  Mustard Bottle                          -   -   -   1   1   1
   Ice Age 3                               -   -   -   1   1   1
   Armor Upgrade Stone II                  -   -   -   1   1   1
   Massless Unit for Physics Questions     -   -   -   1   1   1
+  Employment Statistics                   -   -   -   1   1   1
   FMJ Bullet                              -   -   -   1   1   1
   Chizoar Spike                           -   -   -   1   1   1
   Vibrant Coral                           -   -   -   1   1   1
   Nuget Cake                              -   -   -   1   1   1
   Saucy Logfries                          -   -   -   1   1   1
-  Employment Statistics                   -   -   -   1   1   1
   Black Lense                             -   -   -   1   1   1
   Crash Box                               -   -   -   1   1   1
   Reef Coral Statue                       -   -   -   1   1   1
@@ -4047,9 +4012,9 @@ greenstacks                             # Greenstacks
   Helmet Upgrade Stone I                  -   -   -   1   1   1
   Troll Scales                            -   -   -   1   1   1
   Valve Patented Circle Thingies          -   -   -   1   1   1
+  Loomi's Room Key                        -   -   -   1   1   1
   Coldseeker Bullet                       -   -   -   1   1   1
   Ribbed Tunic                            -   -   -   1   1   1
-  Loomi's Room Key                        -   -   -   1   1   1
   Chapter Five 'Sunken Plunder'           -   -   -   1   1   1
   Stacked Rice Cake                       -   -   -   1   1   1
   Chizoar Stalagmite                      -   -   -   1   1   1

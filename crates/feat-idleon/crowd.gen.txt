@@ -14,41 +14,6 @@
 # (119 saves; a stage needs 5 to get a column)
 
 statues                                 # Statues
-  stages                7e  7m  7l  end1  end2  max
-  Spelunky Statue        1   3   3   3   3   3
-  Coral Statue           1   2   3   3   3   3
-  Ehexpee Statue         2   3   3   3   3   3
-  Pecunia Statue         2   3   3   3   3   3
-  Mutton Statue          2   3   3   3   3   3
-  Egg Statue             2   3   3   3   3   3
-  Battleaxe Statue       2   3   3   3   3   3
-  Boat Statue            2   3   3   3   3   3
-  Spiral Statue          2   3   3   3   3   3
-  Box Statue             2   3   3   3   3   3
-  Twosoul Statue         2   3   3   3   3   3
-  Seesaw Statue          2   3   3   3   3   3
-  Villager Statue        2   3   3   3   3   3
-  Power Statue           3   3   3   3   3   3
-  Speed Statue           3   3   3   3   3   3
-  Mining Statue          3   3   3   3   3   3
-  Feasty Statue          3   3   3   3   3   3
-  Beholder Statue        3   3   3   3   3   3
-  Compost Statue         2   3   3   3   3   3
-  Stealth Statue         2   3   3   3   3   3
-  Essence Statue         2   3   3   3   3   3
-  Lumberbob Statue       3   3   3   3   3   3
-  Bullseye Statue        3   3   3   3   3   3
-  Health Statue          3   3   3   3   3   3
-  Thicc Skin Statue      3   3   3   3   3   3
-  Oceanman Statue        3   3   3   3   3   3
-  Ol Reliable Statue     3   3   3   3   3   3
-  Kachow Statue          2   2   2   2   2   2
-  Exp Statue             3   3   3   3   3   3
-  Anvil Statue           3   3   3   3   3   3
-  Cauldron Statue        3   3   3   3   3   3
-  Dragon Statue          2   3   3   3   3   3
-
-statue-levels                           # Statue Levels, no max
   stages                1e  1m  1l  2e  2m  2l  3e  3m   3l   4e   4m   4l   5e   5m   5l   6e   6m   6l   7e   7m   7l  end1  end2  max
   Power Statue           1   5  13  20  35  50  70  95  120  140  180  210  250  290  330  380  430  480  530  590  650  720  780  860
   Speed Statue           1   6  13  20  35  55  75  95  120  150  180  220  260  300  340  390  440  500  550  620  680  750  820  890
@@ -3951,13 +3916,13 @@ greenstacks                             # Greenstacks
   Red Frisbee                             -   -   1   1   1   1
   Nullo Salt                              -   -   1   1   1   1
   Chapter Two 'Decay Surrounds'           -   -   1   1   1   1
+  Corporatube Sub                         -   -   -   1   1   1
+  Instablab Follower                      -   -   -   1   1   1
   Cauldron Statue                         -   -   -   1   1   1
   Essence Statue                          -   -   -   1   1   1
   Cheezy Pizza                            -   -   -   1   1   1
   Average Life Potion                     -   -   -   1   1   1
   Lustre Bar                              -   -   -   1   1   1
-  Corporatube Sub                         -   -   -   1   1   1
-  Instablab Follower                      -   -   -   1   1   1
   Explosive Salts                         -   -   -   1   1   1
   Dioxide Synthesis                       -   -   -   1   1   1
   Purple Salt                             -   -   -   1   1   1
@@ -3967,13 +3932,13 @@ greenstacks                             # Greenstacks
   Stealth Statue                          -   -   -   1   1   1
   Starfire Bar                            -   -   -   1   1   1
   Tool Upgrade Stone II                   -   -   -   1   1   1
+  Cloudsound Follower                     -   -   -   1   1   1
   Twosoul Statue                          -   -   -   1   1   1
   Compost Statue                          -   -   -   1   1   1
   Villager Statue                         -   -   -   1   1   1
   Small Experience Balloon                -   -   -   1   1   1
   Yeti Ham                                -   -   -   1   1   1
   Decent Mana Potion                      -   -   -   1   1   1
-  Cloudsound Follower                     -   -   -   1   1   1
   Tool Upgrade Stone I                    -   -   -   1   1   1
   Mystery Upgrade Stone III               -   -   -   1   1   1
   Butter Bar                              -   -   -   1   1   1
@@ -3981,6 +3946,7 @@ greenstacks                             # Greenstacks
   Yellow Snowflake                        -   -   -   1   1   1
   Weapon Upgrade Stone I                  -   -   -   1   1   1
   Weapon Upgrade Stone II                 -   -   -   1   1   1
+  Monster Rating                          -   -   -   1   1   1
   Golden Bread                            -   -   -   1   1   1
   Potent Life Potion                      -   -   -   1   1   1
   Potent EXP Potion                       -   -   -   1   1   1
@@ -3989,40 +3955,39 @@ greenstacks                             # Greenstacks
   Hampter                                 -   -   -   1   1   1
   Toxic Sludge                            -   -   -   1   1   1
   Peanut                                  -   -   -   1   1   1
-  Monster Rating                          -   -   -   1   1   1
   Chapter Three 'This is Gospel'          -   -   -   1   1   1
   Armor Upgrade Stone I                   -   -   -   1   1   1
   Woodular Circle                         -   -   -   1   1   1
-  Golden Cake                             -   -   -   1   1   1
-  Potent Strength Potion                  -   -   -   1   1   1
   Casual Confidante                       -   -   -   1   1   1
   Claiming Cashe                          -   -   -   1   1   1
+  Strange Rock                            -   -   -   1   1   1
+  Golden Cake                             -   -   -   1   1   1
+  Potent Strength Potion                  -   -   -   1   1   1
   Troll's Enclave Key                     -   -   -   1   1   1
   Magma Barrel                            -   -   -   1   1   1
   Plasma Barrel                           -   -   -   1   1   1
   Zenith Cluster                          -   -   -   1   1   1
-  Strange Rock                            -   -   -   1   1   1
   Dualhook Prongs                         -   -   -   1   1   1
-  Seesaw Statue                           -   -   -   1   1   1
-  Icing Ironbite                          -   -   -   1   1   1
   Triumphant Treason                      -   -   -   1   1   1
   Wood Board Bone                         -   -   -   1   1   1
   Time Thingy                             -   -   -   1   1   1
+  Seesaw Statue                           -   -   -   1   1   1
+  Icing Ironbite                          -   -   -   1   1   1
   Clammy Chunk                            -   -   -   1   1   1
+  Ketchup Bottle                          -   -   -   1   1   1
+  Mustard Bottle                          -   -   -   1   1   1
   Bullet                                  -   -   -   1   1   1
   Decent Speed Potion                     -   -   -   1   1   1
   Wiener Links                            -   -   -   1   1   1
-  Ketchup Bottle                          -   -   -   1   1   1
-  Mustard Bottle                          -   -   -   1   1   1
   Ice Age 3                               -   -   -   1   1   1
   Armor Upgrade Stone II                  -   -   -   1   1   1
   Massless Unit for Physics Questions     -   -   -   1   1   1
+  Employment Statistics                   -   -   -   1   1   1
   FMJ Bullet                              -   -   -   1   1   1
   Chizoar Spike                           -   -   -   1   1   1
   Vibrant Coral                           -   -   -   1   1   1
   Nuget Cake                              -   -   -   1   1   1
   Saucy Logfries                          -   -   -   1   1   1
-  Employment Statistics                   -   -   -   1   1   1
   Black Lense                             -   -   -   1   1   1
   Crash Box                               -   -   -   1   1   1
   Reef Coral Statue                       -   -   -   1   1   1
@@ -4047,9 +4012,9 @@ greenstacks                             # Greenstacks
   Helmet Upgrade Stone I                  -   -   -   1   1   1
   Troll Scales                            -   -   -   1   1   1
   Valve Patented Circle Thingies          -   -   -   1   1   1
+  Loomi's Room Key                        -   -   -   1   1   1
   Coldseeker Bullet                       -   -   -   1   1   1
   Ribbed Tunic                            -   -   -   1   1   1
-  Loomi's Room Key                        -   -   -   1   1   1
   Chapter Five 'Sunken Plunder'           -   -   -   1   1   1
   Stacked Rice Cake                       -   -   -   1   1   1
   Chizoar Stalagmite                      -   -   -   1   1   1

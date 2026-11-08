@@ -10,7 +10,6 @@ use crate::review::{Have, Raise, State};
 pub fn all(save: &Save) -> Vec<Mechanic> {
     vec![
         statues(save),
-        statue_levels(save),
         bribes(save),
         star_signs(save),
         stamps(save),
@@ -30,12 +29,20 @@ const STATUE_TIERS: [&str; 4] = ["Normal", "Gold", "Onyx", "Zenith"];
 /// 200,000), so Onyx is its last tier.
 const NO_ZENITH: [&str; 1] = ["KACHOW"];
 
-/// Statues: `StuG[i]` is the tier, 0 Normal to 3 Zenith. Levels have no cap, so done is Zenith
-/// (Onyx for the ones in `NO_ZENITH`).
+/// Statues: `StuG[i]` is the tier, 0 Normal to 3 Zenith, and the item's level, so the share is
+/// how far the tiers are; done is Zenith (Onyx for the ones in `NO_ZENITH`).
+///
+/// The statue's level is `StatueLevels_c[i][0]`, the same on every character (the highest is
+/// kept in case a save has them apart), kept as `raw`. Levels have no cap, and the ladder
+/// (`crowd.txt`) is on them: from the highest level any save has for each statue
+/// (`crowd::BEST`), from the world that statue is in, so a statue that is slow to level asks
+/// for less.
 fn statues(save: &Save) -> Mechanic {
     let tiers = save.numbers("StuG", &[]);
     let chisels = save.option(69);
     let chest = storage(save);
+    let chars = characters(save).max(1);
+    let mut total = 0.0;
     let items = rows("StatueInfo", &[])
         .iter()
         .enumerate()
@@ -43,8 +50,11 @@ fn statues(save: &Save) -> Mechanic {
             let top = if NO_ZENITH.contains(&text(r, 0)) { 2.0 } else { 3.0 };
             let tier = at(&tiers, i).clamp(0.0, 3.0);
             let prefix = ["Statue", "StatueG", "StatueO", "StatueZ"][tier as usize];
+            let level = (0..chars).map(|c| save.numbers(&format!("StatueLevels_{c}"), &[i]).first().copied().unwrap_or(0.0)).fold(0.0, f64::max).clamp(0.0, 1e9);
+            total += level;
             let mut it = Item::new(format!("{} Statue", label(text(r, 0))), pic(format!("{prefix}{}", i + 1)), tier.min(top), top);
-            it.level_name = Some(STATUE_TIERS[tier as usize].into());
+            it.raw = Some(level);
+            it.level_name = Some(format!("{} · Lv {}", STATUE_TIERS[tier as usize], big(level)));
             if tier < top {
                 statue_step(&mut it, i, tier, chisels, held(&chest, &format!("EquipmentStatues{}", i + 1)));
             }
@@ -55,33 +65,8 @@ fn statues(save: &Save) -> Mechanic {
         .collect();
     let mut m = mech("statues", 1, "Statues", pic("StatueZ1".into()), Count::Levels, "tiers", items);
     m.tier_names = Some(STATUE_TIERS[1..].iter().map(|s| s.to_string()).collect());
-    m.note = Some("Each statue goes Normal, Gold, Onyx, then Zenith. Levels keep going, so Zenith counts as done. The Kachow Statue stops at Onyx: it drops too rarely for the million a Zenith takes.".into());
-    m
-}
-
-/// Statue levels: `StatueLevels_c[i][0]`. Every character has the same levels; the highest is
-/// kept in case a save has them apart. Levels have no cap: the tiers (`crowd.txt`) come from
-/// the highest level any save has for each statue (`crowd::BEST`), from the world that statue
-/// is in, so a statue that is slow to level asks for less.
-fn statue_levels(save: &Save) -> Mechanic {
-    let tiers = save.numbers("StuG", &[]);
-    let chars = characters(save).max(1);
-    let items: Vec<Item> = rows("StatueInfo", &[])
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let level = (0..chars).map(|c| save.numbers(&format!("StatueLevels_{c}"), &[i]).first().copied().unwrap_or(0.0)).fold(0.0, f64::max);
-            let tier = at(&tiers, i).clamp(0.0, 3.0);
-            let prefix = ["Statue", "StatueG", "StatueO", "StatueZ"][tier as usize];
-            let mut it = Item::new(format!("{} Statue", label(text(r, 0))), pic(format!("{prefix}{}", i + 1)), level.min(1e9), 0.0);
-            it.world = later(cell(r, 4) + 1.0, 1);
-            it
-        })
-        .collect();
-    let total: f64 = items.iter().map(|i| i.level).sum();
-    let mut m = mech("statue-levels", 1, "Statue Levels", pic("Statue1".into()), Count::Open, "levels", items);
+    m.note = Some("Each statue goes Normal, Gold, Onyx, then Zenith (the Kachow Statue stops at Onyx: it drops too rarely for the million a Zenith takes); the share counts those. Levels have no cap: the tiers follow the highest level other players have on each statue, from the world it's in, so a statue that is slow to level asks for less.".into());
     m.have = Some(Have { figure: format!("{} statue levels in all", big(total)), text: "A statue levels up as you drop statues of its kind on it in town.".into() });
-    m.note = Some("Statue levels have no cap. The tiers follow the highest level other players have on each statue, from the world it's in, so a statue that is slow to level asks for less.".into());
     m
 }
 
