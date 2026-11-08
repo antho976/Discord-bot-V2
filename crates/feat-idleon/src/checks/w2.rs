@@ -273,6 +273,10 @@ fn pay2win(save: &Save) -> Mechanic {
                 _ => None,
             };
             let mut it = Item::new(name.clone(), picture, *level, *max);
+            // Liquids open at Alchemy 20, 35 and 80: about World 2, 3 and 5.
+            if *kind == 1 {
+                it.ladder_from = [None, None, Some(3), Some(5)][(n - 12) / 2];
+            }
             if *kind == 1 && *level < 0.0 {
                 let need = [0.0, 20.0, 35.0, 80.0][(n - 12) / 2];
                 it.how = Some(format!("Opens when a character reaches Alchemy level {need:.0}; your highest is {alchemy:.0}."));

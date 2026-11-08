@@ -48,11 +48,11 @@ stamps                                  # Stamps (AutoReview)
   Cooked Meal Stamp               -       -       -       -       -       -       -       1
   Card Stamp                      -       -       -       -       -       -       -      60
 
-bribes                                  # Bribes (AutoReview), as sets: a set where they ask for all of it
-  stages     1l      2l      3l      4l
-  Set 1       1       1       1       1
-  Set 2       -       1       1       1
-  Set 3       -       -       1       1
+bribes                                  # Bribes (AutoReview)
+  stages       1l      2l      3l
+  Set 1         1       1       1
+  Set 2         -       1       1
+  Set 3         -       -       1
 
 star-signs                              # Star Signs (AutoReview)
   stages                3e      4e      5e
@@ -105,29 +105,76 @@ upgrade-vault                           # Vault (AutoReview)
   All Armoured Up               -    1e15
   Buildie Sheepie               -    1e15
 
-bubbles                                 # Bubbles (AutoReview)
-  stages                 3m      4m      5m
-  Roid Ragin             15      30      80
-  Warriors Rule           7      16      40
-  Hearty Diggy           15      30      80
-  Wyoming Blood           7      16      25
-  Sploosh Sploosh         7      16      25
-  Stronk Tools           10      20      55
-  Swift Steppin          15      30      80
-  Archer Or Bust          7      16      40
-  Sanic Tools            10      20      55
-  Bug^2                   7      16      25
-  Stable Jenius          15      30      80
-  Mage Is Best            7      16      40
-  Hocus Choppus          15      30      80
-  Molto Loggo             7      16      25
-  Le Brain Tools         10      20      55
-  FMJ                     6      12      18
-  Shaquracy               6      12      18
-  Prowesessary            8      18      50
-  Hammer Hammer           7      17      50
-  Name I Guess            -      12      25
-  All For Kill            -       -      30
+bubbles                                 # Bubbles (AutoReview), every tier, placed by its own note
+  stages                      2e      2m      2l      3e      4e      5e      5l      6e      6m      6l      7e      7m      7l    end1    end2     max
+  Roid Ragin                  15      15      15      30      80     120     180     290     500     700     920   1,000   1,100   1,200   1,200  12,000
+  Warriors Rule                7       7       7      16      40      60      90     140     250     350     560   1,100   1,100   1,100   1,100   6,100
+  Hearty Diggy                15      15      15      30      80     120     180     290     500     700   1,100   1,100   1,100   1,100   1,100  12,000
+  Wyoming Blood                7       7       7      16      25      35      55      85     150     150     150     150     150     150     150     150
+  Sploosh Sploosh              7       7       7      16      25      35      55      85     150     150     150     150     150     150     150     150
+  Stronk Tools                10      10      10      20      55      85     130     200     350     490     780     780     780     780   1,600   8,600
+  Swift Steppin                -      15      15      30      80     120     180     290     500     700     920   1,000   1,100   1,200   1,200  12,000
+  Archer Or Bust               -       7       7      16      40      60      90     140     250     250     560     560     560     560     560   6,100
+  Sanic Tools                  -      10      10      20      55      85      85      85      85      85      85      85      85      85   1,600   8,600
+  Bug^2                        -       7       7      16      25      35      55      85     150     150     150     150     150     150     150     150
+  Stable Jenius                -      15      15      30      80     120     180     290     500     700     920   1,000   1,100   1,200   1,200  12,000
+  Mage Is Best                 -       7       7      16      40      60      90     140     250     350     560   1,100   1,100   1,100   1,100   6,100
+  Hocus Choppus                -      15      15      30      80     120     120     120     500     700   1,100   1,100   1,100   1,100   1,100  12,000
+  Molto Loggo                  -       7       7      16      25      35      55      85     150     150     150     150     150     150     150     150
+  Le Brain Tools               -      10      10      20      55      85     130     200     350     490     780     780     780     780   1,600   8,600
+  FMJ                          -       -       6      12      18      25      35      35      35      35      35      35      35      35      35      35
+  Shaquracy                    -       -       6      12      18      25      35      35      35      35      35      35      35      35      35      35
+  Prowesessary                 -       -       8      18      50      75      75      75      75      75      75      75      75      75      75      75
+  Hammer Hammer                -       -       7      17      50      80     120     120     180     220     370     370     370     370     370  12,000
+  Name I Guess                 -       -       -      12      25      35      50     120     120     120     120     120     120     120     120     120
+  All For Kill                 -       -       -       -      30      80     120     180     200     200     200     200     200     200     200     200
+  Multorange                   -       -       -       -       -       -      55      85     150     210     330     710     710     710     710   3,700
+  Premigreen                   -       -       -       -       -       -      55      85      85      85     330     330     330     330     330   3,700
+  Severapurple                 -       -       -       -       -       -      55      85     150     210     330     710     710     710     710   3,700
+  Dream Of Ironfish            -       -       -       -       -       -       -      85      85     210     330     330     330     330     710   3,700
+  Fly In Mind                  -       -       -       -       -       -       -     110     110     110     110     110     110     110     950   4,900
+  Tree Sleeper                 -       -       -       -       -       -       -       -     200     280     450     450     450     450     950   4,900
+  Laaarrrryyyy                 -       -       -       -       -       -       -       -     180     180     620   1,100   2,300   2,300   2,300  12,000
+  Cookin Roadkill              -       -       -       -       -       -       -       -     130     130     780     780   1,600   1,600   1,600   8,600
+  Startue Exp                  -       -       -       -       -       -       -       -       -       -     300     300     300   1,400   1,400   7,400
+  Droppin Loads                -       -       -       -       -       -       -       -       -       -     350     350     350   1,600   1,600   8,600
+  Buff Boi Talent              -       -       -       -       -       -       -       -       -       -     120     120     250     370     370   1,000
+  Fast Boi Talent              -       -       -       -       -       -       -       -       -       -     120     120     250     370     370   1,000
+  Smart Boi Talent             -       -       -       -       -       -       -       -       -       -     120     120     250     370     370   1,000
+  Big P                        -       -       -       -       -       -       -       -       -       -       -     670   1,100   1,800   1,800   7,400
+  Call Me Bob                  -       -       -       -       -       -       -       -       -       -       -   1,200   3,700   6,200   6,200  12,000
+  Carpenter                    -       -       -       -       -       -       -       -       -       -       -     560   1,100   1,100   1,100   6,100
+  Big Game Hunter              -       -       -       -       -       -       -       -       -       -       -     330     710     710     710   3,700
+  Mr Massacre                  -       -       -       -       -       -       -       -       -       -       -     560   1,100   1,100   1,100   6,100
+  Grind Time                   -       -       -       -       -       -       -       -       -       -       -     620     620   6,200   6,200  12,000
+  Power Trione                 -       -       -       -       -       -       -       -       -       -       -     560     560     560     560     560
+  Power Tritwo                 -       -       -       -       -       -       -       -       -       -       -     560     560     560     560     560
+  Power Trithree               -       -       -       -       -       -       -       -       -       -       -     560     560     560     560     560
+  Cropius Mapper               -       -       -       -       -       -       -       -       -       -       -       -     780     780     780     780
+  Lo Cost Mo Jade              -       -       -       -       -       -       -       -       -       -       -       -     950     950     950     950
+  Essence Boost-Orange         -       -       -       -       -       -       -       -       -       -       -       -     500     500     500     500
+  Essence Boost-Green          -       -       -       -       -       -       -       -       -       -       -       -     500     500     500     500
+  Diamond Chef                 -       -       -       -       -       -       -       -       -       -       -       -   1,100   1,100   1,100   1,100
+  Nickel Of Wisdom             -       -       -       -       -       -       -       -       -       -       -       -       -     150     710   3,700
+  Penny Of Strength            -       -       -       -       -       -       -       -       -       -       -       -       -     150     710   3,700
+  Dollar Of Agility            -       -       -       -       -       -       -       -       -       -       -       -       -     150     710   3,700
+  Slabi Orefish                -       -       -       -       -       -       -       -       -       -       -       -       -       -   1,400   7,400
+  Slabi Strength               -       -       -       -       -       -       -       -       -       -       -       -       -       -   1,400   7,400
+  Tome Strength                -       -       -       -       -       -       -       -       -       -       -       -       -       -   1,400   7,400
+  Slabo Critterbug             -       -       -       -       -       -       -       -       -       -       -       -       -       -   1,400   7,400
+  Slabo Agility                -       -       -       -       -       -       -       -       -       -       -       -       -       -   1,400   7,400
+  Tome Agility                 -       -       -       -       -       -       -       -       -       -       -       -       -       -   1,400   7,400
+  Slabe Logsoul                -       -       -       -       -       -       -       -       -       -       -       -       -       -   1,400   7,400
+  Slabe Wisdom                 -       -       -       -       -       -       -       -       -       -       -       -       -       -   1,400   7,400
+  Endgame Eff III              -       -       -       -       -       -       -       -       -       -       -       -       -       -   1,400   7,400
+  Card Champ                   -       -       -       -       -       -       -       -       -       -       -       -       -       -     950   4,900
+  Endgame Eff II               -       -       -       -       -       -       -       -       -       -       -       -       -       -       -   7,400
+  Tome Wisdom                  -       -       -       -       -       -       -       -       -       -       -       -       -       -       -   7,400
+  Essence Chapter              -       -       -       -       -       -       -       -       -       -       -       -       -       -       -   6,100
+  Quickdraw Quiver             -       -       -       -       -       -       -       -       -       -       -       -       -       -       -   7,400
+  Smarter Spells               -       -       -       -       -       -       -       -       -       -       -       -       -       -       -   7,400
+  Ninja Looter                 -       -       -       -       -       -       -       -       -       -       -       -       -       -       -   7,400
+  Crop Chapter                 -       -       -       -       -       -       -       -       -       -       -       -       -       -       -   6,100
 
 vials                                   # Vials (AutoReview)
   stages             2l      3m      4e      4m      4l      5e      5m      5l

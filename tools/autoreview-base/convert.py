@@ -6,7 +6,7 @@ its authors' permission (2026-11-06) as a base we change, not as is.
 Reads their tier tables (consts/progression_tiers.py) and their world mapping
 (general/pinchy.py) as data only, with `ast.literal_eval` (their code is never run), and writes
 crates/feat-idleon/crowd-base.txt: for World 1 to World 5, a table per mechanic in crowd.txt's
-format. The crowd generator (`--example crowd`) takes a stage's column from here when there
+format (bubbles: every tier, through World 7 and the endgame, see PLACE). The crowd generator (`--example crowd`) takes a stage's column from here when there
 aren't enough saves at that stage, and the owner edits the result in crowd.txt.
 
 What changes on the way:
@@ -37,6 +37,19 @@ MAX = 1e15
 # Late W3), so what they expect by Early W2 is what a player finishes World 1 with.
 STAGES = ["1m", "1l", "2e", "2m", "2l", "3e", "3m", "3l", "4e", "4m", "4l", "5e", "5m", "5l"]
 STATUE_TIERS = {"Gold": 1, "Onyx": 2, "Zenith": 3}
+
+# Bubbles (owner, 2026-11-08): all of their tiers, in their order, placed by what each tier's own
+# note says it is for ("MINIMUM ... for finishing W2", "for starting W3"...), not by their
+# stage table. Alchemy opens in World 2, so their first tier runs through World 2 a colour at a
+# time. Each entry: our stage, their tier, and how many of that tier's four groups (orange,
+# green, purple, utility) it asks for; everything of their earlier tiers comes with it.
+PLACE = {
+    "BUBBLES": [
+        ("2e", 1, 1), ("2m", 1, 3), ("2l", 1, 4), ("3e", 2, 4), ("4e", 3, 4), ("5e", 4, 4), ("5l", 5, 4),
+        ("6e", 6, 4), ("6m", 7, 4), ("6l", 8, 4), ("7e", 9, 4), ("7m", 10, 4), ("7l", 11, 4),
+        ("end1", 12, 4), ("end2", 14, 4), ("max", 15, 4),
+    ],
+}
 
 # Their section (pinchy.Placements attribute) -> our mechanic key.
 SECTIONS = {
@@ -106,8 +119,9 @@ def base_name(name):
     return name.strip()
 
 
-def one_tier(section, t):
-    """One of their tiers as {row: level}; counts as `@first` / `@first-max`, exclusions as `!Name`."""
+def one_tier(section, t, groups=4):
+    """One of their tiers as {row: level}; counts as `@first` / `@first-max`, exclusions as `!Name`.
+    `groups`: bubbles only, how many of the tier's four colour groups to take."""
     need = {}
 
     def put(name, lv):
@@ -115,7 +129,7 @@ def one_tier(section, t):
         need[name] = max(need.get(name, 0), lv)
 
     if section == "BUBBLES":
-        for d in t[2:6]:
+        for d in t[2:2 + groups]:
             for n, lv in d.items():
                 put(n, lv)
         return need
@@ -257,13 +271,22 @@ def main():
         tiers = tiers_of(section, table)
         cols = []
         last = None
-        for i, tier in enumerate(stages[section]):
-            need = {n: (raise_level(v) if not n.startswith(("@", "!")) else v) for n, v in cumulative(tiers, tier).items()}
+        if section in PLACE:
+            plan = []
+            for stage, tier, groups in PLACE[section]:
+                need = cumulative(tiers, tier - 1)
+                for n, lv in one_tier(section, next(r for r in table if r[0] == tier), groups).items():
+                    need[n] = max(need.get(n, 0), lv)
+                plan.append((stage, need))
+        else:
+            plan = [(STAGES[i], cumulative(tiers, tier)) for i, tier in enumerate(stages[section])]
+        for stage, need in plan:
+            need = {n: (raise_level(v) if not n.startswith(("@", "!")) else v) for n, v in need.items()}
             if section == "BRIBES":
                 need = as_sets(need, sets)
             if not need or need == last:
                 continue
-            cols.append((STAGES[i], need))
+            cols.append((stage, need))
             last = need
         if not cols:
             continue
@@ -274,7 +297,7 @@ def main():
                     rows.append(n)
         width = max(len(r) for r in rows) + 2
         out.append("")
-        out.append(f"{key:<40}# {section.replace('_', ' ').title()} (AutoReview)")
+        out.append(f"{key:<40}# {section.replace('_', ' ').title()} (AutoReview)" + (", every tier, placed by its own note" if section in PLACE else ""))
         out.append("  " + "stages".ljust(width) + "".join(f"  {c:>6}" for c, _ in cols))
         for r in rows:
             out.append("  " + r.ljust(width) + "".join(f"  {cell(need.get(r)):>6}" for _, need in cols))

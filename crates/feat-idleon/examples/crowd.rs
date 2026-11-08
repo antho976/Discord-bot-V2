@@ -29,6 +29,10 @@ use feat_idleon::save::Save;
 const MIN_SAVES: usize = 5;
 /// The newest this many saves of a stage count.
 const NEWEST: usize = 300;
+/// Mechanics whose every column comes from the AutoReview base (crowd-base.txt), changed there,
+/// none from the saves (owner, 2026-11-08: bubbles "with an order like scoli's autoreview but
+/// tweaked a bit with the levels").
+const BASE_ONLY: [&str; 1] = ["bubbles"];
 
 /// Per mechanic key, per item name (interned in `names`): its level.
 type Levels = HashMap<&'static str, HashMap<u32, f32>>;
@@ -155,9 +159,11 @@ fn main() {
                 rows.push(name.clone());
             }
         }
-        if rows.is_empty() {
+        // Made per account from each item's max (`crowd::by_max`): no table.
+        if rows.is_empty() || crowd::BY_MAX.contains(&m.key) {
             continue;
         }
+        let only_base = BASE_ONLY.contains(&m.key) && base.contains_key(m.key);
         let had = current.get(m.key);
         // Items that differ from account to account (characters): no crowd tiers.
         if !seen.is_empty() && had.is_none() {
@@ -185,16 +191,17 @@ fn main() {
                 .map(|b| {
                     b.stages
                         .iter()
-                        .filter(|&&s| counts[s] < MIN_SAVES)
+                        .filter(|&&s| only_base || counts[s] < MIN_SAVES)
                         .map(|&s| (s, base_column(b, s, &rows, &maxes, m.key, &mut unmatched, &mut fuzzy)))
                         .collect()
                 })
                 .unwrap_or_default();
             // Columns: stages with enough saves, the base's for stages without, and any stage with a
             // hand edit in it.
-            let mut cols = stages.clone();
+            let mut cols = if only_base { Vec::new() } else { stages.clone() };
             cols.extend(from_base.keys().copied());
-            if let Some(b) = had {
+            // (A base-only table keeps the base's columns: the old ones were the saves'.)
+            if let Some(b) = had.filter(|_| !only_base) {
                 cols.extend(b.stages.iter().copied());
             }
             cols.sort_unstable();
@@ -218,7 +225,7 @@ fn main() {
                     None => seen.iter().filter(|x| x.stage == s).collect(),
                 };
                 let n = here.len();
-                if n < MIN_SAVES {
+                if n < MIN_SAVES || only_base {
                     if let Some((col, rank)) = from_base.get(&s) {
                         for r in 0..rows.len() {
                             table[r][k] = col[r];
@@ -317,6 +324,7 @@ fn main() {
             }
         }
         let count = match (m.count, from_base.is_empty()) {
+            _ if only_base => "every column from AutoReview's tiers, changed",
             (Count::Open, true) => "no max",
             (Count::Open, false) => "no max; World 1 to 5 columns from AutoReview's tiers, changed",
             (_, false) => "World 1 to 5 columns from AutoReview's tiers, changed",

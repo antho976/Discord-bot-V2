@@ -37,6 +37,10 @@ pub struct Item {
     /// Only comes in a gem shop pack, and you don't have it: left out for a player who doesn't
     /// buy packs.
     pub pack_only: bool,
+    /// The world its tiers start in, when that's later than its mechanic's and the item still
+    /// counts before then (a liquid that opens at an Alchemy level, not a world): a ladder made
+    /// from the maxes (`crowd::by_max`) starts its climb there.
+    pub ladder_from: Option<u8>,
 }
 
 /// What the player spends real money on, chosen on the paste box: the tiers leave out what
@@ -130,7 +134,7 @@ impl Tier {
 
 impl Item {
     pub fn new(name: impl Into<String>, picture: Option<String>, level: f64, max: f64) -> Item {
-        Item { name: name.into(), picture, level: level.max(0.0), max: max.max(0.0), level_name: None, how: None, state: State::Unknown, world: None, raw: None, pack_levels: 0.0, pack_only: false }
+        Item { name: name.into(), picture, level: level.max(0.0), max: max.max(0.0), level_name: None, how: None, state: State::Unknown, world: None, raw: None, pack_levels: 0.0, pack_only: false, ladder_from: None }
     }
 
     pub fn done(&self) -> bool {
@@ -376,6 +380,20 @@ impl Mechanic {
         if self.crowd.is_some() { i.crowd_level() } else { i.level }
     }
 
+    /// What tier `k` of `tiers` itself asks for that you don't have yet. For a mechanic whose
+    /// tiers fit on the card (`crowd::FITS`), only what it adds to the tier before it, so a
+    /// tier picked ahead never lists more than it asks; otherwise everything it waits on
+    /// (`tasks`).
+    pub fn tier_tasks<'a>(&'a self, tiers: &[Tier], k: usize) -> Vec<(&'a Item, f64)> {
+        let v = self.tasks(&tiers[k]);
+        if self.crowd.is_none() || !crate::crowd::FITS.contains(&self.key) {
+            return v;
+        }
+        let before = k.checked_sub(1).and_then(|p| tiers[p].targets.as_ref());
+        let pos = |i: &Item| self.items.iter().position(|x| std::ptr::eq(x, i));
+        v.into_iter().filter(|(i, t)| before.and_then(|b| pos(i).map(|p| b[p])).is_none_or(|was| *t > was)).collect()
+    }
+
     /// The items a tier still waits on, the ones you can take now first, then the furthest off.
     /// For a count tier, every item you don't have yet, in the game's order after the ready ones.
     pub fn tasks<'a>(&'a self, tier: &Tier) -> Vec<(&'a Item, f64)> {
@@ -474,7 +492,7 @@ impl Review {
             for m in &mut mechanics {
                 // Only when the table has a tier for your world or an earlier one: until there are
                 // saves from earlier worlds, an account short of World 7 keeps the game-max ladder.
-                let made = crate::crowd::BY_MAX.contains(&m.key).then(|| crate::crowd::by_max(&m.items, m.world));
+                let made = crate::crowd::BY_MAX.contains(&m.key).then(|| crate::crowd::by_max(m.key, &m.items, m.world));
                 m.crowd = table.get(m.key).or(made.as_ref()).and_then(|b| Ladder::new(b, &m.items)).filter(|l| l.rungs.iter().any(|r| r.world <= world));
             }
         });
