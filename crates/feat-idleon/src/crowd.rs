@@ -49,6 +49,36 @@ pub fn stage_label(stage: usize) -> String {
 /// never split into parts.
 pub const BEST: [&str; 4] = ["statues", "stamps", "owl", "forge"];
 
+/// Mechanics whose items differ from account to account (one per character), so they have no
+/// rows in `crowd.txt`: their ladder is made from each item's own max on the `best_curve`, a
+/// stage at a time from the mechanic's world (`by_max`).
+pub const BY_MAX: [&str; 1] = ["anvil-points"];
+
+/// Share of the best asked for at `stage` for something from `world` (`BEST` tables and
+/// `BY_MAX` ladders): nothing before the world opens, then rising with the square of the
+/// stages since, to the whole best at the last stage (`max`). Squared, so the early stages after
+/// it opens ask for little and most of the climb comes late.
+pub fn best_curve(world: u8, stage: usize) -> f64 {
+    let open = usize::from(world.clamp(1, 7) - 1) * 3;
+    if stage < open {
+        return 0.0;
+    }
+    let f = (stage - open + 1) as f64 / (STAGES.len() - open) as f64;
+    f * f
+}
+
+/// A `BY_MAX` mechanic's table, made for these items: every stage a column, each item's max on
+/// the curve, never split into parts.
+pub fn by_max(items: &[Item], world: u8) -> Block {
+    let mut b = Block::new((0..STAGES.len()).collect());
+    b.whole = true;
+    for i in items.iter().filter(|i| i.max > 0.0) {
+        let w = i.world.unwrap_or(world);
+        b.push(i.name.clone(), (0..STAGES.len()).map(|s| { let f = best_curve(w, s); (f > 0.0).then(|| nice(i.max * f).max(1.0)) }).collect());
+    }
+    b
+}
+
 /// One mechanic's table.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Block {

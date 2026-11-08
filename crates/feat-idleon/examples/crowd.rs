@@ -404,19 +404,6 @@ fn base_column(b: &Block, stage: usize, rows: &[String], maxes: &HashMap<&str, f
     (col, rank)
 }
 
-/// Share of a `crowd::BEST` item's best level asked for at `stage`, for an item from `world`:
-/// nothing before the world opens, then rising with the square of the stages since, to the
-/// whole best at the last stage (`max`). Squared, so the early stages after it opens ask for
-/// little and most of the climb comes late, as levels get easier with more of the game open.
-fn best_curve(world: u8, stage: usize) -> f64 {
-    let open = usize::from(world.clamp(1, 7) - 1) * 3;
-    if stage < open {
-        return 0.0;
-    }
-    let f = (stage - open + 1) as f64 / (STAGES.len() - open) as f64;
-    f * f
-}
-
 /// A `crowd::BEST` mechanic's table: every stage a column, each cell its share (`best_curve`)
 /// of the highest level any save has for that row.
 fn best_table(m: &feat_idleon::review::Mechanic, rows: &[String], ids: &HashMap<String, u32>, seen: &[Seen]) -> (Vec<usize>, Vec<Vec<Option<f64>>>) {
@@ -431,7 +418,7 @@ fn best_table(m: &feat_idleon::review::Mechanic, rows: &[String], ids: &HashMap<
             let best = ids.get(name).map_or(0.0, |id| seen.iter().filter_map(|x| x.levels.get(m.key)?.get(id).copied()).fold(0.0f32, f32::max));
             let w = world.get(name.as_str()).copied().unwrap_or(m.world);
             cols.iter().map(|&s| {
-                let f = best_curve(w, s);
+                let f = crowd::best_curve(w, s);
                 (f > 0.0 && best > 0.0 && !once.contains(&name.as_str())).then(|| crowd::nice(f64::from(best) * f).max(1.0))
             }).collect()
         })

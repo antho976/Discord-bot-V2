@@ -620,6 +620,19 @@ fn forge_cost(i: usize, level: f64) -> f64 {
     }
 }
 
+/// Each forge upgrade's picture and what a level does, by `ForgeLV` place. The game draws no
+/// icon per upgrade, so the pictures are what each one works on (the forge, ore, a bar, the
+/// Smithing skill, a gold bar, a card pack); the words are the forge page's own
+/// (`_FurnaceUpgradeText` lines 2 and 3), shortened.
+const FORGE_UPGRADES: [(&str, &str); 6] = [
+    ("ForgeA", "Opens another slot to smelt ores in."),
+    ("Copper", "More ores fit in each slot."),
+    ("CopperBar", "Ores turn to bars 5% faster per level."),
+    ("ClassIcons43", "+1% EXP from anvil production per level."),
+    ("GoldBar", "+1% chance of an extra bar per level."),
+    ("CardPack1", "+1% card drop chance when forging, per level."),
+];
+
 fn forge(save: &Save) -> Mechanic {
     let levels = save.numbers("ForgeLV", &[]);
     let coins = spendable(save);
@@ -630,10 +643,11 @@ fn forge(save: &Save) -> Mechanic {
         .enumerate()
         .map(|(i, mx)| {
             let name = names.get(i).and_then(Value::as_str).map(label).unwrap_or_else(|| format!("Forge upgrade {}", i + 1));
-            let mut it = Item::new(name, None, at(&levels, i), num(mx));
+            let (picture, does) = FORGE_UPGRADES.get(i).copied().unwrap_or(("", ""));
+            let mut it = Item::new(name, pic(picture.to_string()), at(&levels, i), num(mx));
             if !it.done() {
                 let cost = forge_cost(i, it.level);
-                it.how = Some(format!("Next level costs {} coins.", big(cost)));
+                it.how = Some(format!("{does} Next level costs {} coins.", big(cost)).trim().to_string());
                 if cost <= coins {
                     it.state = State::Ready;
                 }
@@ -668,7 +682,7 @@ fn anvil_points(save: &Save) -> Mechanic {
         .map(|i| {
             let s = save.numbers(&format!("AnvilPAstats_{i}"), &[]);
             let (p, q) = (at(&s, 1), at(&s, 2));
-            let mut it = Item::new(format!("{}: Anvil points", char_name(save, i)), class_icon(save, i), p + q, max);
+            let mut it = Item::new(char_name(save, i), class_icon(save, i), p + q, max);
             if p < at(&caps, 0) {
                 let cost = ((p.powi(3) + 50.0) * (1.0 + p / 100.0)).round();
                 it.how = Some(format!("Next coin point costs {} coins.", big(cost)));
