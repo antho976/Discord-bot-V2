@@ -25,6 +25,7 @@ many, at their max), `!Name` (left out of both counts at that stage). A cell of 
 
 import ast
 import math
+import json
 import os
 import re
 import sys
@@ -189,6 +190,25 @@ def one_tier(section, t):
     return need
 
 
+def bribe_sets():
+    """The game's bribe sets, each a list of bribe names: the first set, then the run each "The
+    Art of the..." bribe opens (BribeDescriptions col 4 BribeExpansion, col 5 "first&count");
+    the last row is the game's "no more bribes". From the crate's game data."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(here, "..", "..", "crates", "feat-idleon", "data", "game.json"), encoding="utf-8") as f:
+        rows = json.load(f)["tables"]["BribeDescriptions"][:-1]
+    starts = sorted({0} | {int(r[5].split("&")[0]) for r in rows if r[4] == "BribeExpansion" and int(r[5].split("&")[0]) < len(rows)})
+    ends = starts[1:] + [len(rows)]
+    return [[r[0].replace("_", " ") for r in rows[a:b]] for a, b in zip(starts, ends)]
+
+
+def as_sets(need, sets):
+    """Bribes are bought a set at a time: "Set N" is asked where they ask for every bribe of it."""
+    norm = lambda n: re.sub(r"[^a-z0-9]", "", n.lower())
+    asked = {norm(n) for n in need}
+    return {f"Set {k + 1}": 1 for k, names in enumerate(sets) if all(norm(n) in asked for n in names)}
+
+
 def tiers_of(section, table):
     """Tier number -> its own needs, from a dict keyed by tier or a list of [tier, ...] rows."""
     if isinstance(table, dict):
@@ -228,6 +248,7 @@ def main():
         "# permission as a base: levels raised x%s, their stages as our columns. Written by" % LEVEL_FACTOR,
         "# tools/autoreview-base/convert.py; edit crowd.txt, not this file.",
     ]
+    sets = bribe_sets()
     for section, key in SECTIONS.items():
         table = tables.get(TABLES[section])
         if table is None or section not in stages:
@@ -238,6 +259,8 @@ def main():
         last = None
         for i, tier in enumerate(stages[section]):
             need = {n: (raise_level(v) if not n.startswith(("@", "!")) else v) for n, v in cumulative(tiers, tier).items()}
+            if section == "BRIBES":
+                need = as_sets(need, sets)
             if not need or need == last:
                 continue
             cols.append((STAGES[i], need))

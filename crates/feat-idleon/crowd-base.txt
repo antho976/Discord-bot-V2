@@ -48,34 +48,11 @@ stamps                                  # Stamps (AutoReview)
   Cooked Meal Stamp               -       -       -       -       -       -       -       1
   Card Stamp                      -       -       -       -       -       -       -      60
 
-bribes                                  # Bribes (AutoReview)
-  stages                           1l      2l      3l      4l
-  Insider Trading                   1       1       1       1
-  Tracking Chips                    1       1       1       1
-  Mandatory Fire Sale               1       1       1       1
-  Sleeping On the Job               1       1       1       1
-  Artificial Demand                 1       1       1       1
-  The Art of the Deal               1       1       1       1
-  Overstock Regulations             -       1       1       1
-  Double EXP Scheme                 -       1       1       1
-  Tagged Indicators                 -       1       1       1
-  Fossil Fuel Legislation           -       1       1       1
-  Five Aces in the Deck             -       1       1       1
-  Fake Teleport Tickets             -       1       1       1
-  The Art of the Steal              -       1       1       1
-  Counterfeit Telepassports         -       -       1       1
-  Weighted Marbles                  -       -       1       1
-  Changing the Code                 -       -       1       1
-  Taxidermied Cog Pouches           -       -       1       1
-  Guild VIP Fraud                   -       -       1       1
-  Library Double Agent              -       -       1       1
-  The Art of the Fail               -       -       1       1
-  Photoshopped Dmg Range            -       -       -       1
-  Glitched Acc Formula              -       -       -       1
-  Firewalled Defence                -       -       -       1
-  Bottomless Bags                   -       -       -       1
-  AFKeylogging                      -       -       -       1
-  Guild GP Hack                     -       -       -       1
+bribes                                  # Bribes (AutoReview), as sets: a set where they ask for all of it
+  stages     1l      2l      3l      4l
+  Set 1       1       1       1       1
+  Set 2       -       1       1       1
+  Set 3       -       -       1       1
 
 star-signs                              # Star Signs (AutoReview)
   stages                3e      4e      5e

@@ -99,13 +99,16 @@ fn statue_step(it: &mut Item, i: usize, tier: f64, chisels: f64, stored: f64) {
     }
 }
 
-/// Bribes: `BribeStatus[i]` is 1 when bought. The last row is the game's "no more bribes".
+/// Bribes, a set at a time: you buy every bribe of a set, so a set is one item, done when all
+/// of it is bought (owner: "not really something you plan for anyway, you just buy all of
+/// them"). `BribeStatus[i]` is 1 when bought. The last row is the game's "no more bribes".
 ///
 /// N.js (the bribe shop's buy button): a bribe costs col 2 in coins of the character buying it;
 /// -1 is locked until the "Art of the..." bribe before it (col 4 `BribeExpansion`, col 5
-/// "first&count") opens its set. Two cost 99999999 and also need something else first: row 26
-/// a Fishing Island shop purchase (`OptLacc[165]` at 1), row 33 the Jade Emporium's New Bribes
-/// (`EmporiumBonus(36)`). Once they have it, the 99,999,999 coins is their price.
+/// "first&count") opens its set; the first set is open from the start. Two cost 99999999 and
+/// also need something else first: row 26 a Fishing Island shop purchase (`OptLacc[165]` at
+/// 1), row 33 the Jade Emporium's New Bribes (`EmporiumBonus(36)`). Once they have it, the
+/// 99,999,999 coins is their price.
 fn bribes(save: &Save) -> Mechanic {
     let status = save.numbers("BribeStatus", &[]);
     let table = rows("BribeDescriptions", &[]);
@@ -116,53 +119,68 @@ fn bribes(save: &Save) -> Mechanic {
         33 => super::general::emporium_owned(save, 36),
         _ => false,
     };
-    let opener = |i: usize| {
-        table.iter().take(real).find(|r| {
-            let span: Vec<usize> = text(r, 5).split('&').filter_map(|x| x.parse().ok()).collect();
-            text(r, 4) == "BribeExpansion" && span.len() == 2 && (span[0]..span[0] + span[1]).contains(&i)
-        })
-    };
-    let (mut open, mut affordable) = (0, 0);
-    let items: Vec<Item> = table
+    // Where each set starts: 0, then the first bribe each "Art of the..." opens.
+    let mut starts: Vec<usize> = vec![0];
+    for r in table.iter().take(real) {
+        let span: Vec<usize> = text(r, 5).split('&').filter_map(|x| x.parse().ok()).collect();
+        if text(r, 4) == "BribeExpansion" && span.len() == 2 && span[0] < real && !starts.contains(&span[0]) {
+            starts.push(span[0]);
+        }
+    }
+    starts.sort_unstable();
+    let (mut sets_open, mut sets_affordable) = (0, 0);
+    let items: Vec<Item> = starts
         .iter()
-        .take(real)
         .enumerate()
-        .map(|(i, r)| {
-            let st = at(&status, i);
-            // A bribe's own picture (`BribeO*`) is an empty envelope with a faint stamp: none reads at
-            // this size, so bribes go without.
-            let mut it = Item::new(label(text(r, 0)), None, f64::from(st >= 1.0), 1.0);
-            let cost = cell(r, 2);
-            if st >= 1.0 {
-            } else if st < 0.0 {
-                let by = opener(i).map_or_else(|| "an earlier bribe".to_string(), |o| label(text(o, 0)));
+        .map(|(n, &from)| {
+            let to = starts.get(n + 1).copied().unwrap_or(real);
+            let members: Vec<(usize, &Value)> = (from..to).map(|i| (i, table[i])).collect();
+            let bought = members.iter().filter(|(i, _)| at(&status, *i) >= 1.0).count();
+            let size = members.len();
+            let mut it = Item::new(format!("Set {}", n + 1), None, f64::from(bought == size), 1.0);
+            it.level_name = Some(format!("{bought} of {size} bought"));
+            if bought == size {
+                return it;
+            }
+            // Locked until the bribe before it opens the set.
+            if members.iter().all(|(i, _)| at(&status, *i) < 0.0) {
+                let by = from.checked_sub(1).and_then(|i| table.get(i)).map_or_else(|| "the set before".to_string(), |o| label(text(o, 0)));
                 it.how = Some(format!("Opens when you buy {by}."));
                 it.state = State::Locked;
-            } else if cost == 99_999_999.0 && !opened_another_way(i) {
-                it.how = Some(match i {
-                    26 => "Opens with a purchase in the Fishing Island shop.".into(),
-                    33 => "Opens with New Bribes in the Jade Emporium.".into(),
-                    _ => "Opens another way, not with coins.".into(),
-                });
-                it.state = State::Locked;
-            } else {
-                open += 1;
-                it.how = Some(format!("Costs {} coins.", big(cost)));
-                if cost <= coins {
-                    it.state = State::Ready;
-                    affordable += 1;
+                return it;
+            }
+            let mut left = Vec::new();
+            let mut cost = 0.0;
+            let mut blocked = false;
+            for (i, r) in members.iter().filter(|(i, _)| at(&status, *i) < 1.0) {
+                let price = cell(r, 2);
+                if price == 99_999_999.0 && !opened_another_way(*i) {
+                    blocked = true;
+                    left.push(format!("{} ({})", label(text(r, 0)), if *i == 26 { "a Fishing Island shop purchase opens it" } else if *i == 33 { "New Bribes in the Jade Emporium opens it" } else { "opens another way" }));
+                } else {
+                    cost += price;
+                    left.push(format!("{} ({})", label(text(r, 0)), big(price)));
                 }
+            }
+            sets_open += 1;
+            it.how = Some(if cost > 0.0 { format!("Left: {}. {} coins in all.", left.join(", "), big(cost)) } else { format!("Left: {}.", left.join(", ")) });
+            if blocked && cost == 0.0 {
+                it.state = State::Locked;
+            } else if !blocked && cost <= coins {
+                it.state = State::Ready;
+                sets_affordable += 1;
             }
             it
         })
         .collect();
-    let mut m = mech("bribes", 1, "Bribes", None, Count::Done, "bought", items);
+    let mut m = mech("bribes", 1, "Bribes", None, Count::Done, "sets", items);
+    m.note = Some("Bribes come in sets: the last bribe of a set (The Art of the...) opens the next. A set counts once all of it is bought.".into());
     m.have = Some(coin_have(
         coins,
-        match (open, affordable) {
-            (0, _) => "Every bribe open to you is bought.".into(),
-            (_, 0) => "Not enough for any bribe open to you yet.".into(),
-            _ => format!("Enough for {affordable} of the bribes open to you."),
+        match (sets_open, sets_affordable) {
+            (0, _) => "Every set open to you is bought.".into(),
+            (_, 0) => "Not enough to finish a set open to you yet.".into(),
+            _ => "Enough to buy the rest of the set open to you.".into(),
         },
     ));
     m
@@ -848,7 +866,23 @@ mod tests {
         for (flag, state) in [(0.0, State::Locked), (1.0, State::Ready)] {
             opt[165] = flag;
             let s = Save::parse(&format!(r#"{{"OptLacc": {opt:?}, "BribeStatus": {status:?}, "MoneyBANK": 2e8}}"#)).unwrap();
-            assert_eq!(bribes(&s).items[26].state, state);
+            // The Art of the Bail closes the fourth set.
+            let set = &bribes(&s).items[3];
+            assert_eq!((set.name.as_str(), set.state), ("Set 4", state));
+            assert_eq!(set.level_name.as_deref(), Some("6 of 7 bought"));
         }
+    }
+
+    #[test]
+    fn a_set_is_done_once_all_of_it_is_bought_and_names_what_opens_the_next() {
+        // The first set (0..6) bought, the second opened but empty, the rest closed.
+        let status: Vec<f64> = (0..41).map(|i| if i < 6 { 1.0 } else if i < 13 { 0.0 } else { -1.0 }).collect();
+        let s = Save::parse(&format!(r#"{{"OptLacc": [0], "BribeStatus": {status:?}}}"#)).unwrap();
+        let m = bribes(&s);
+        assert_eq!(m.items.len(), 6);
+        assert!(m.items[0].done());
+        assert!(m.items[1].how.as_deref().unwrap().starts_with("Left: Overstock Regulations (20K), Double Exp Scheme"));
+        assert_eq!(m.items[2].how.as_deref(), Some("Opens when you buy The Art of the Steal."));
+        assert_eq!(m.items[2].state, State::Locked);
     }
 }

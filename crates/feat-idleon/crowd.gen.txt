@@ -49,47 +49,13 @@ statues                                 # Statues
   Coral Statue           -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    -   12   45  100  190  300  430
 
 bribes                                  # Bribes, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                       1l  2e  2l  3e  3l  4e  4l  5e  7e  7m  7l  end1  end2  max
-  Insider Trading               1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Tracking Chips                1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Mandatory Fire Sale           1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Sleeping on the Job           1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Artificial Demand             1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  The Art of the Deal           1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Overstock Regulations         -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Double Exp Scheme             -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Tagged Indicators             -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Fossil Fuel Legislation       -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Five Aces in the Deck         -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Fake Teleport Tickets         -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  The Art of the Steal          -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Counterfeit Telepassports     -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Weighted Marbles              -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Changing the Code             -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Taxidermied Cog Pouches       -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Guild VIP Fraud               -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Library Double Agent          -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  The Art of the Fail           -   -   -   -   1   -   1   -   1   1   1   1   1   1
-  Photoshopped Dmg Range        -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  Glitched Acc Formula          -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  Firewalled Defence            -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  Bottomless Bags               -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  AFKeylogging                  -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  Guild GP Hack                 -   -   -   -   -   -   1   -   1   1   1   1   1   1
-  The Art of the Bail           -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Random Garbage                -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Godlier Creation              -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Fishermaster                  -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Muscles on Muscles            -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Bottle Service                -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Star Scraper                  -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  The Art of the Grail          -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Artifact Pilfering            -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Forge Cap Smuggling           -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Gold from Lead                -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Nugget Fabrication            -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Divine PTS Miscounting        -   -   -   -   -   -   -   -   1   1   1   1   1   1
-  Loot Table Tampering          -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  stages    1l  2e  2l  3e  3l  4e  4l  5e  7e  7m  7l  end1  end2  max
+  Set 1      1   -   1   -   1   -   1   -   1   1   1   1   1   1
+  Set 2      -   -   1   -   1   -   1   -   1   1   1   1   1   1
+  Set 3      -   -   -   -   1   -   1   -   1   1   1   1   1   1
+  Set 4      -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Set 5      -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Set 6      -   -   -   -   -   -   -   -   1   1   1   1   1   1
 
 star-signs                              # Star Signs, World 1 to 5 columns from AutoReview's tiers, changed
   stages               3e  3m  4e  4m  5e  5m  7e  7m  7l  end1  end2  max
