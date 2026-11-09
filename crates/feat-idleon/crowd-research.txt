@@ -359,3 +359,36 @@ construction                            # Construction (W3–4 lane): 3D Printer
   Poisonic Elder          -   -   -   -   -   -   -   -   -   5  12  20
   Atom Collider           -   -   -   -   -   -   -   -   -   1   1   3
   Pantheon Shrine         -   -   -   -   -   -   -   -   -   -   3   5
+
+trap-boxes                              # Trap Boxes (W3–4 lane): the W5 saves have the first four, the W6 ones up to Royal; Silkskin is often skipped
+  stages                 3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l
+  Cardboard Traps         1   1   1   1   1   1   1   1   1   1   1   1
+  Wooden Traps            -   -   1   1   1   1   1   1   1   1   1   1
+  Natural Traps           -   -   -   -   1   1   1   1   1   1   1   1
+  Silkskin Traps          -   -   -   -   -   1   1   1   1   1   1   1
+  Steel Traps             -   -   -   -   -   -   -   -   -   1   1   1
+  Meaty Traps             -   -   -   -   -   -   -   -   -   -   1   1
+  Royal Traps             -   -   -   -   -   -   -   -   -   -   -   1
+
+worship-skulls                          # Worship Skulls (W3–4 lane): from the W5 and W6 saves
+  stages                 3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l
+  Wax Skull               1   1   1   1   1   1   1   1   1   1   1   1
+  Horned Skull            -   -   -   -   1   1   1   1   1   1   1   1
+  Prickle Skull           -   -   -   -   -   -   -   1   1   1   1   1
+  Ceramic Skull           -   -   -   -   -   -   -   -   1   1   1   1
+  Manifested Skull        -   -   -   -   -   -   -   -   -   1   1   1
+  Slush Skull             -   -   -   -   -   -   -   -   -   -   1   1
+  Glauss Skull            -   -   -   -   -   -   -   -   -   -   1   1
+  Luciferian Skull        -   -   -   -   -   -   -   -   -   -   -   1
+
+shrines                                 # Shrines (W3–4 lane): the W5 saves have four or five at Lv 4 or 5, the W6 ones all nine at 9 to 17
+  stages                 3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l
+  Woodular Shrine         1   1   2   2   3   3   4   6   9  12  15
+  Isaccian Shrine         -   1   1   2   2   3   4   6   9  12  15
+  Crystal Shrine          -   -   1   1   2   3   4   6   9  12  15
+  Pantheon Shrine         -   -   -   1   1   2   4   5   8  11  14
+  Clover Shrine           -   -   -   -   1   2   3   5   8  11  14
+  Summereading Shrine     -   -   -   -   -   1   1   3   6  10  12
+  Crescent Shrine         -   -   -   -   -   -   -   1   5  10  12
+  Undead Shrine           -   -   -   -   -   -   -   -   3   8  11
+  Primordial Shrine       -   -   -   -   -   -   -   -   1   6  10
