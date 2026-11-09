@@ -253,9 +253,30 @@ summoning-stones                        # Summoning Stones and Endless
   Red stone                  1
   Endless battles won       60
 
+meals                                   # Meals (W3–4 lane): the W5/W6 saves have 4 to 8 meals
+  stages       4e  4m  4l  5e  5m  5l  6e
+  Cabbage       1   1   1   1   5  11  11
+  Corndog       -   1   1   1   5  11  11
+  @any 1        2   3   4   5   6   8  15
+  @any 11       -   -   -   -   1   3   8
+
 breeding-pets                           # Breeding (W3–4 lane): the W5/W6 saves lag on World 3 and 4 eggs
   stages          4e  4m  4l  5e  5m  5l  6e  6m  6l
   World 1 pets     3   5   7   8   9  11  13  14  16
   World 2 pets     -   -   1   1   2   4   8  12  14
   World 3 pets     -   -   -   -   -   1   2   6  10
   World 4 pets     -   -   -   1   1   1   1   1   2
+
+shiny                                   # Shiny (W3–4 lane): opens with Paint Bucket (Breeding Lv 40)
+  stages       5l  6e  6m  6l
+  Wode Board    1   2   4   6
+  Tyson         -   1   3   5
+  @any 1        2   4   8  15
+  @any 5        -   -   2   5
+
+lab-chips                               # Lab chips (W3–4 lane): two a week from the shop rotation
+  stages              4m  4l  5e  5m  5l  6e  6m
+  Silkrode Nanochip    -   -   -   1   1   1   1
+  Omega Nanochip       -   -   -   -   1   1   1
+  Omega Motherboard    -   -   -   -   -   1   1
+  @any 1               1   2   3   4   5   6   8

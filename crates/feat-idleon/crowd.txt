@@ -1014,82 +1014,17 @@ armor-sets                              # Armor Sets
   Kattlekruk Set      -   -   -   -   1   1   1   1   1   1
   Prehistoric Set     -   -   -   -   -   1   1   1   1   1
 
-meals                                   # Meals
-  stages             4m  5m  6m   7e   7m   7l  end1  end2  max
-  Turkey of Thank     3  19  50  110  120  140  150  150  160
-  Egg                 3  19  50  100  120  140  150  150  160
-  Salad               3  19  50   90  120  140  150  150  160
-  Pie                 3  19  50  100  120  140  150  150  150
-  Frenk Fries         3  19  50   90  120  140  150  150  150
-  Spaghetti           3  19  50   90  120  140  150  150  150
-  Corn                3  19  50   90  120  140  150  150  150
-  Garlic Bread        3  19  50   90  120  140  150  150  150
-  Garlicles Bread     3  19  50   90  120  140  150  150  150
-  Pizza               3  19  50   90  120  140  150  150  150
-  Apple               3  19  50   90  120  140  150  150  150
-  Pancakes            3  19  50   90  120  140  150  150  150
-  Corndog             3  19  50  100  120  140  150  150  150
-  Cabbage             3  19  50  100  120  140  150  150  150
-  Potato P Pastry     3  19  50   90  110  140  150  150  150
-  Dango               3  19  50   90  110  140  150  150  150
-  Sourish Fish        3  19  50   90  110  140  150  150  150
-  Octoplop            3  19  50   90  110  140  150  150  150
-  Croissant           3  19  50   90  110  140  150  150  150
-  Canopy              3  19  50   90  110  130  150  150  150
-  Cannoli             3  19  50   95  110  140  140  150  150
-  Cheese              3  19  50   95  110  140  140  150  150
-  Sawdust             3  19  50   95  110  130  140  150  150
-  Eggplant            3  19  50   95  110  130  140  150  150
-  Cheesy Bread        2  17  45   95  110  140  140  150  150
-  Wild Boar           3  19  50   95  110  140  140  150  150
-  Donut               2  17  45   90  110  140  140  150  150
-  Riceball            2  17  45   90  110  140  140  150  150
-  Cauliflower         2  17  45   90  110  130  140  150  150
-  Durian Fruit        2  17  45   90  110  130  140  150  150
-  Orange              2  17  45   90  110  130  140  140  150
-  Bunt Cake           2  17  45   90  110  130  140  150  150
-  Chocala Truffle     2  17  45   90  110  130  140  140  150
-  Leek                2  17  45   90  110  130  140  140  150
-  Fortune Cookie      2  17  45   90  110  130  140  140  150
-  Pretzel             2  17  45   95  110  130  140  140  150
-  Sea Urchin          2  17  45   90  110  130  140  140  150
-  Mashed Potato       2  17  45   90  110  130  140  140  150
-  Mutton              2  15  40   90  110  130  140  140  150
-  Wedding Cake        2  17  45   95  110  130  140  140  150
-  Eel                 2  17  45   90  110  130  140  140  150
-  Whipped Cocoa       2  17  45   90  110  130  140  140  150
-  Onion               2  17  45   90  110  130  140  150  150
-  Soda                2  17  45  100  110  130  140  150  150
-  Sushi Roll          2  17  45   90  110  130  140  150  150
-  Buncha Banana       2  17  45   90  110  130  140  150  150
-  Pumpkin             2  15  40   90  110  130  140  150  150
-  Cotton Candy        2  15  40   90  110  130  140  150  150
-  Massive Fig         2  15  40   90  110  130  140  150  150
-  Chef Geustloaf      2  17  45   90  110  130  140  140  150
-  Kiwi Fruit          2  15  40   90  110  130  140  140  150
-  Popped Corn         2  15  40   90  110  130  140  140  150
-  Double Cherry       2  15  40  100  110  130  140  140  150
-  Ratatouey           2  15  40   90  110  130  140  150  150
-  Giant Tomato        2  15  40   90  110  130  140  150  150
-  Wrath Grapes        2  15  40   90  110  130  140  150  150
-  Sausy Sausage       3  20  55   90  110  130  140  140  150
-  Seasoned Marrow     3  20  55   90  110  130  140  150  150
-  Sticky Bun          3  20  55   90  110  130  140  150  150
-  Frazzleberry        3  20  55   90  110  130  140  150  150
-  MrLoin Steak        3  20  55   90  110  130  140  150  150
-  Large Pohayoh       3  20  55   90  110  130  140  140  150
-  Bill Jack Pep       3  20  55   90  110  130  140  140  150
-  Burned Mello        3  20  60   95  110  130  140  150  150
-  Yumi Peachring      4  25  60  100  110  130  140  140  150
-  Plumpcakes          3  20  55   90  110  130  140  150  150
-  Nyanborgir          3  20  55   90  110  130  140  150  150
-  Tempura Shrimp      2  15  35   60  110  130  140  150  150
-  Woahtermelon        2  12  30   50  110  130  140  140  150
-  Cookies             1  11  25   45  110  130  140  140  150
-  Singing Seed        2  12  30   50  110  130  140  140  150
-  Tasty Treat         3  20  55   90  110  130  140  150  150
-  Giga Chip           3  20  55   90  110  130  140  140  150
-  Divorce Cake        3  20  55   90  110  130  140  140  150
+meals                                   # Meals, counts; World 1 to 5 columns from crowd-research.txt
+  stages      4e  4m  4l  5e  5m  5l  6e  6m   7e   7m   7l  end1  end2  max
+  Cabbage      1   1   1   1   5  11  11  50  110  120  140  150  150  150
+  Corndog      -   1   1   1   5  11  11  50  110  120  140  150  150  150
+  @any 1       2   3   4   5   6   8  15  55   70   70   70   70   70   70  # new since the last run
+  @any 11      -   -   -   -   1   3   8  55   70   70   70   70   70   70  # new since the last run
+  @any 30      -   3   7  13  20  30  40  55   70   70   70   70   70   70  # new since the last run
+  @any 60      -   -   -   -   -   -   -   -   70   70   70   70   70   70  # new since the last run
+  @any 90      -   -   -   -   -   -   -   -   65   70   70   70   70   70  # new since the last run
+  @any 120     -   -   -   -   -   -   -   -    -   25   70   70   70   70  # new since the last run
+  @any 150     -   -   -   -   -   -   -   -    -    -    -   25   45   70  # new since the last run
 
 kitchens                                # Kitchens
   stages        4m  5m  6m  7e  7m  7l  end1  end2  max
@@ -1131,108 +1066,30 @@ jewels                                  # Lab Jewels
   Pure Opal Rhombol            -   -   -   1   1   1   1   1   1
   Black Diamond Ulthurite      -   -   -   -   1   1   1   1   1
 
-lab-chips                               # Lab Chips
-  stages                    4m  5m  6m  7e  7m  7l  end1  end2  max
-  Chocolatey Chip            1   1   1   1   1   1   1   1   1
-  Grounded Nanochip          -   1   1   1   1   1   1   1   1
-  Grounded Motherboard       -   1   1   1   1   1   1   1   1
-  Conductive Motherboard     -   1   1   1   1   1   1   1   1
-  Conductive Software        -   1   1   1   1   1   1   1   1
-  Silkrode Nanochip          -   1   1   1   1   1   1   1   1
-  Conductive Nanochip        -   -   1   1   1   1   1   1   1
-  Conductive Processor       -   -   1   1   1   1   1   1   1
-  Galvanic Nanochip          -   -   1   1   1   1   1   1   1
-  Galvanic Motherboard       -   -   1   1   1   1   1   1   1
-  Galvanic Processor         -   -   1   1   1   1   1   1   1
-  Wood Chip                  -   -   1   1   1   1   1   1   1
-  Grounded Software          -   -   1   1   1   1   1   1   1
-  Grounded Processor         -   -   1   1   1   1   1   1   1
-  Silkrode Motherboard       -   -   -   1   1   1   1   1   1
-  Silkrode Software          -   -   -   1   1   1   1   1   1
-  Poker Chip                 -   -   -   1   1   1   1   1   1
-  Omega Nanochip             -   -   -   1   1   1   1   1   1
-  Potato Chip                -   -   -   1   1   1   1   1   1
-  Galvanic Software          -   -   -   1   1   1   1   1   1
-  Omega Motherboard          -   -   -   -   1   1   1   1   1
-  Silkrode Processor         -   -   -   -   1   1   1   1   1
+lab-chips                               # Lab Chips, counts; World 1 to 5 columns from crowd-research.txt
+  stages               4m  4l  5e  5m  5l  6e  6m  7e  7m  7l  end1  end2  max
+  Silkrode Nanochip     -   -   -   1   1   1   1   1   1   1   1   1   1
+  Omega Nanochip        -   -   -   -   1   1   1   1   1   1   1   1   1
+  Omega Motherboard     -   -   -   -   -   1   1   1   1   1   1   1   1
+  @any 1                1   2   3   4   5   6   7  17  20  20  20  20  20  # new since the last run
 
 breeding-pets                           # Breeding Pets, World 1 to 5 columns from crowd-research.txt
   stages          4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
-  World 1 pets     3   5   7   8   9  11  13  14  16  17  17  17  17  17  17  # new since the last run
-  World 2 pets     -   -   1   1   2   4   8  12  14  17  17  17  17  17  17  # new since the last run
-  World 4 pets     -   -   -   1   1   1   1   1   2  16  16  16  16  16  16  # new since the last run
-  World 3 pets     -   -   -   -   -   1   2   6  10  18  18  18  18  18  18  # new since the last run
+  World 1 pets     3   5   7   8   9  11  13  14  16  17  17  17  17  17  17
+  World 2 pets     -   -   1   1   2   4   8  12  14  17  17  17  17  17  17
+  World 4 pets     -   -   -   1   1   1   1   1   2  16  16  16  16  16  16
+  World 3 pets     -   -   -   -   -   1   2   6  10  18  18  18  18  18  18
 
-shiny                                   # Shiny Pets
-  stages               4m  5m  6m  7e  7m  7l  end1  end2  max
-  Red Mushroom          1   1   1   3   8  18  20  20  25
-  Baby Boa              1   1   2   4   5  17  20  20  25
-  Sheepie               1   1   4   7   9  20  20  20  25
-  Bored Bean            -   1   1   3   5  17  20  20  25
-  Slime                 -   1   2   4   5  17  20  20  25
-  Mr Pig                -   1   3   4   6  10  20  20  25
-  Carrotman             -   1   3   4   6  17  20  20  25
-  Glublin               -   1   3   5   7  12  20  20  25
-  Wode Board            -   2   5   8  10  20  20  25  30
-  Gigafrog              -   1   3   4   6  18  20  20  25
-  Wild Boar             -   2   6   9  11  14  20  20  25
-  Walking Stick         -   2   6   9  11  14  20  20  25
-  Nutto                 -   1   4   6   8  10  20  20  25
-  Poop                  -   2   5   8  10  12  20  20  25
-  Rat                   -   3   8  12  15  18  20  20  25
-  Mimic                 -   2   5   8  10  12  20  20  25
-  Crabcake              -   2   7  11  14  17  20  20  20
-  Mafioso               -   2   5   8  10  12  20  20  25
-  Mallay                -   2   5   8  10  12  20  20  25
-  Sand Castle           -   2   6   9  11  14  20  20  20
-  Pincermin             -   2   5   8  10  12  20  20  20
-  Mashed Potato         -   2   7  11  14  17  20  20  20
-  Tyson                 -   2   7  11  13  16  20  20  25
-  Whale                 -   2   7  11  13  16  20  20  25
-  Moonmoon              -   2   6  10  12  15  20  20  25
-  Sand Giant            -   2   7  11  13  16  20  20  25
-  Snelbie               -   1   4   7   9  11  20  20  25
-  Dig Doug              -   2   5   9  10  13  20  20  25
-  Beefie                -   2   5   8  10  12  20  20  20
-  Crescent Spud         -   1   3   4   6  19  20  25  30
-  Chippy                -   2   6  10  12  15  20  20  20
-  Frost Flake           -   2   5   8  10  12  20  20  20
-  Sir Stache            -   1   1   2   3  10  20  20  20
-  Xylobone              -   2   7  11  13  16  20  20  20
-  Bunny                 -   2   5   9  10  13  20  20  20
-  Bloque                -   1   1   1   1  17  20  20  20
-  Mamooth               -   2   5   9  10  13  20  20  25
-  Snowman               -   2   6  10  12  15  20  20  20
-  Penguin               -   1   1   2   3  11  20  20  20
-  Thermister            -   2   5   9  10  13  20  20  20
-  Quenchie              -   2   5   9  11  19  20  20  30
-  Cryosnake             -   2   5   8  10  12  20  20  20
-  Mechanical Mouse      -   2   5   9  10  13  20  20  20
-  Bop Box               -   1   4   7   9  11  20  20  20
-  Neyeptune             -   1   4   7   9  11  20  20  25
-  Dedotated Ram         -   2   6   9  11  14  20  20  20
-  Bloodbone             -   1   4   7   9  11  20  20  20
-  Panda                 -   1   4   7   9  11  20  20  20
-  Purp Mushroom         -   2   6  10  12  15  20  20  20
-  TV                    -   2   5   9  10  13  20  20  20
-  Donut                 -   2   7  11  13  16  20  20  20
-  Demon Genie           -   2   6  10  12  15  20  20  20
-  Flying Worm           -   2   6  10  12  15  20  20  20
-  Dog                   -   2   6  10  12  15  20  20  20
-  Soda Can              -   2   5   9  10  13  20  20  20
-  Gelatinous Cuboid     -   2   5   9  10  13  20  20  20
-  Choccie               -   2   6   9  11  14  20  20  20
-  Biggole Wurm          -   2   6  10  12  15  20  20  20
-  Cool Bird             -   2   6  10  12  15  20  20  20
-  Clammie               -   2   5   9  10  13  20  20  20
-  Octodar               -   2   6  10  12  15  20  20  20
-  Flombeige             -   2   6  10  12  15  20  20  20
-  Stilted Seeker        -   2   6   9  11  14  20  20  20
-  Hedgehog              -   2   6  10  12  15  20  20  20
-  Green Mushroom        -   -   2   7   7  20  20  25  30
-  Squirrel              -   -   2   3   7  11  20  20  25
-  Frog                  -   -   1   1   1  12  20  20  25
-  Sandy Pot             -   -   1   1   1  15  20  20  25
+shiny                                   # Shiny Pets, counts; World 1 to 5 columns from crowd-research.txt
+  stages        4m  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Wode Board     1   1   1   2   2   6   6  13  20  20  25  30
+  Tyson          1   1   -   1   1   5   5  10  20  20  20  25
+  @any 1         -   1   2   4   4  15  30  65  65  65  65  65  # new since the last run
+  @any 5         -   -   -   -   -   5  30  65  65  65  65  65  # new since the last run
+  @any 10        -   -   -   -   -   -  14  50  65  65  65  65  # new since the last run
+  @any 15        -   -   -   -   -   -   1  25  65  65  65  65  # new since the last run
+  @any 20        -   -   -   -   -   -   -   3  45  65  65  65  # new since the last run
+  @any 25        -   -   -   -   -   -   -   -   -   -   3  25  # new since the last run
 
 breeding-upgrades                       # Breeding Upgrades
   stages                        4m  5m  6m  7e  7m  7l  end1  end2  max

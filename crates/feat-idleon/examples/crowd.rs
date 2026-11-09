@@ -39,20 +39,31 @@ const BASE_ONLY: [&str; 1] = ["bubbles"];
 /// tier that names items makes you chase them; a count lets you take the cheapest.
 /// Artifacts: which one a sailing chest drops, and in which form, is luck (2026-11-09); a level is
 /// a form, Found (1) to Verisimilitude (7). Pristine charms drop at random in Sneaking.
-const COUNTS: [(&str, &[f64]); 4] = [
+const COUNTS: [(&str, &[f64]); 7] = [
     ("vials", &[1.0, 4.0, 7.0, 10.0, 13.0]),
     ("arcade", &[10.0, 25.0, 50.0, 100.0]),
     ("artifacts", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]),
     ("pristine-charms", &[1.0]),
+    // Chips come two a week from the lab's shop rotation; shiny pets from luck in the Fenceyard;
+    // meals by cost, the cheapest first ("every meal to 11, then 30": Diamond Chef counts them).
+    ("lab-chips", &[1.0]),
+    ("shiny", &[1.0, 5.0, 10.0, 15.0, 20.0, 25.0]),
+    ("meals", &[1.0, 11.0, 30.0, 60.0, 90.0, 120.0, 150.0]),
 ];
 /// In a `COUNTS` mechanic, the items still asked for by name, to get as soon as you can (owner,
 /// 2026-11-08: Gold Ball Gain, Refinery Speed; Drop Rate is the next most maxed in the saves).
 /// Any other named row typed into `crowd.txt` by hand stays too.
 /// Artifacts (2026-11-09): Fauxory Tusk raises the chance to find artifacts and Genie Lamp what
 /// each chest is worth, so both speed up the rest; both come from the first two islands.
-const FIRST: [(&str, &[&str]); 2] = [
+const FIRST: [(&str, &[&str]); 5] = [
     ("arcade", &["Gold Ball Gain", "Drop Rate", "Refinery Speed"]),
     ("artifacts", &["Fauxory Tusk", "Genie Lamp"]),
+    // Omega chips double a card's bonus; Silkrode Nanochip a star sign's (docs/idleon-research.md).
+    ("lab-chips", &["Omega Nanochip", "Omega Motherboard", "Silkrode Nanochip"]),
+    // Wode Board's shiny bonus speeds up every shiny; Tyson's raises every meal.
+    ("shiny", &["Wode Board", "Tyson"]),
+    // Cabbage: cooking speed per ten kitchen levels; Corndog: meal cooking speed.
+    ("meals", &["Cabbage", "Corndog"]),
 ];
 
 /// Per mechanic key, per item name (interned in `names`): its level.
