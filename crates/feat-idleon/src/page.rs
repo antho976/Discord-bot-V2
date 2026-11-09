@@ -468,28 +468,29 @@ fn pace_line(p: &Pace, reached: u8) -> Option<String> {
 
 /// Mechanics drawn as one card behind a switch, like Stamps' Levels / Unlock (owner,
 /// 2026-11-08: Cauldron Upgrades and Pay2Win, "fold that in"): per card, each side's mechanic
-/// and the side's name, the card's own mechanic first. The card sits in its first mechanic's
-/// world tab. A side whose mechanic the save doesn't have is left out.
-const FOLD: &[&[(&str, &str)]] = &[&[("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win")]];
+/// and the side's name, the card's own mechanic first, then the card's title ("" keeps the
+/// first mechanic's name). The card sits in its first mechanic's world tab. A side whose
+/// mechanic the save doesn't have is left out.
+const FOLD: &[(&[(&str, &str)], &str)] = &[(&[("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win")], "")];
 
 /// Most sides a switch has (the page's CSS has a rule per side).
 const SIDES: usize = 6;
 
 /// The key of the card a mechanic is drawn in: its own, or the one it's folded into.
 fn card_key(key: &str) -> &str {
-    FOLD.iter().find(|f| f[1..].iter().any(|s| s.0 == key)).map_or(key, |f| f[0].0)
+    FOLD.iter().find(|f| f.0[1..].iter().any(|s| s.0 == key)).map_or(key, |f| f.0[0].0)
 }
 
 /// For a folded mechanic, the side of its card's switch it's on (links open that side).
 fn side_of(key: &str) -> Option<usize> {
-    FOLD.iter().find_map(|f| f.iter().position(|s| s.0 == key).filter(|&k| k > 0))
+    FOLD.iter().find_map(|f| f.0.iter().position(|s| s.0 == key).filter(|&k| k > 0))
 }
 
 /// The other mechanics folded into `key`'s card, with their sides' names.
 fn folded<'a>(r: &'a Review, key: &str) -> Vec<(&'static str, &'a Mechanic)> {
     FOLD.iter()
-        .find(|f| f[0].0 == key)
-        .map(|f| f[1..].iter().filter_map(|s| r.mechanics.iter().find(|p| p.key == s.0).map(|p| (s.1, p))).collect())
+        .find(|f| f.0[0].0 == key)
+        .map(|f| f.0[1..].iter().filter_map(|s| r.mechanics.iter().find(|p| p.key == s.0).map(|p| (s.1, p))).collect())
         .unwrap_or_default()
 }
 
@@ -497,11 +498,12 @@ fn card(m: &Mechanic, partners: &[(&'static str, &Mechanic)], reached: u8) -> Ma
     let tiers = m.tiers();
     let current = tiers.iter().position(|t| !t.complete());
     let hold = ON_HOLD.contains(&m.key);
-    let fold = (!partners.is_empty()).then(|| FOLD.iter().find(|f| f[0].0 == m.key)).flatten();
+    let fold = (!partners.is_empty()).then(|| FOLD.iter().find(|f| f.0[0].0 == m.key)).flatten();
+    let title = fold.map(|f| f.1).filter(|t| !t.is_empty()).unwrap_or(m.name);
     // Sides behind a switch: statues and stamps show the game's tiers and a ladder on levels;
     // a folded card shows its mechanics. (label, the side's mechanic)
     let split: Option<Vec<(&str, Mechanic)>> = match fold {
-        Some(f) => Some(std::iter::once((f[0].1, m.clone())).chain(partners.iter().map(|(l, p)| (*l, (*p).clone()))).take(SIDES).collect()),
+        Some(f) => Some(std::iter::once((f.0[0].1, m.clone())).chain(partners.iter().map(|(l, p)| (*l, (*p).clone()))).take(SIDES).collect()),
         None => m.levels_view().zip(m.tiers_view()).map(|(lv, tv)| vec![("Levels", lv), (m.other_side, tv)]),
     };
     let all = || std::iter::once(m).chain(partners.iter().map(|p| p.1));
@@ -513,7 +515,7 @@ fn card(m: &Mechanic, partners: &[(&'static str, &Mechanic)], reached: u8) -> Ma
             summary {
                 (mark(m))
                 span.ia-card-name {
-                    b { (m.name) }
+                    b { (title) }
                     // The tier you're on, numbered as the ladder numbers it ("Tier 3 · you're here").
                     span {
                         @if fold.is_some() { (fig(m)) } @else if let Some((_, tv)) = split.as_ref().and_then(|s| s.last()) { (ladder_fig(tv)) } @else { (fig(m)) }
