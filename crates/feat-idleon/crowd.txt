@@ -3933,20 +3933,20 @@ companions                              # Companions, counts
   @any 1     -   1   3   6  10  16  35  60  85  90  90  90
 
 guild                                   # Guild Bonuses
-  stages               1m  2m  3m  4m  5m  6m   7e   7m   7l  end1  end2  max
-  Star Dazzle           1   1   1   2   3   5    5   50   50   50   50   50
-  Skilley Skillet       1   8  20  35  60  90  110  130  130  200  200  200
-  Guild Gifts           -   1   3   6  10  16   35  100  100  100  100  100
-  Gold Charm            -   1   3   7  11  17   20   50   50   50   50   50
-  Stat Runes            -   -   1   2   4   7   10   50   50   50   50   50
-  Rucksack              -   -   1   3   5   8   20   50   50   50   50   50
-  Power of Pow          -   -   1   3   5   8    8   50   50   50   50   50
-  REM Fighting          -   -   2   4   7  11   11   50   50   50   50   50
-  Multi Tool            -   -   2   4   6  10   10   50   50   50   50   50
-  Sleepy Skiller        -   -   1   3   5   8    8   50   50   50   50   50
-  Coin Supercharger     -   -   1   3   5   8    8  100  100  100  100  100
-  C2 Card Spotter       -   -   1   3   5   8    9   50   50   50   50   50
-  Bestone               -   -   1   2   4   6   13   50   50   50   50   50
-  Craps                 -   -   1   3   5   8    8   50   50   50   50   50
-  Anotha One            -   -   1   2   4   7    7   50   50   50   50   50
-  Make or Break         -   -   -   1   2   3    3   50   50   50   50   50
+  stages               1m  2m  3m  4m  5m  6m  7e   7m   7l  end1  end2  max
+  Star Dazzle           1   1   1   2   3   5   5   50   50   50   50   50
+  Skilley Skillet       1   8  20  35  60   -   -  130  130  200  200  200
+  Guild Gifts           -   1   3   6  10  16  35  100  100  100  100  100
+  Gold Charm            -   1   3   7  11  17  20   50   50   50   50   50
+  Stat Runes            -   -   1   2   4   7  10   50   50   50   50   50
+  Rucksack              -   -   1   3   5   8  20   50   50   50   50   50
+  Power of Pow          -   -   1   3   5   8   8   50   50   50   50   50
+  REM Fighting          -   -   2   4   7  11  11   50   50   50   50   50
+  Multi Tool            -   -   2   4   6  10  10   50   50   50   50   50
+  Sleepy Skiller        -   -   1   3   5   8   8   50   50   50   50   50
+  Coin Supercharger     -   -   1   3   5   8   8  100  100  100  100  100
+  C2 Card Spotter       -   -   1   3   5   8   9   50   50   50   50   50
+  Bestone               -   -   1   2   4   6  13   50   50   50   50   50
+  Craps                 -   -   1   3   5   8   8   50   50   50   50   50
+  Anotha One            -   -   1   2   4   7   7   50   50   50   50   50
+  Make or Break         -   -   -   1   2   3   3   50   50   50   50   50
