@@ -540,4 +540,25 @@ bad
         assert_eq!(l.rungs[3].count, Some((1, 10.0)));
         assert!(l.rungs[3].targets.iter().all(|&t| t == 0.0));
     }
+
+    /// Nothing in `crowd.txt` is asked before its mechanic's world, or before its item's own
+    /// world when that comes later (owner, 2026-11-09: Statue Flair's tiers started in World 6).
+    #[test]
+    fn crowd_txt_asks_nothing_before_its_world() {
+        let empty = crate::save::Save::parse(r#"{"OptLacc": []}"#).expect("an empty save");
+        let (table, _) = parse(FILE);
+        let open = |w: u8| usize::from(w.clamp(1, 7) - 1) * 3;
+        let mut early = Vec::new();
+        for m in crate::run_checks(&empty) {
+            let Some(b) = table.get(m.key) else { continue };
+            for (name, cells) in &b.rows {
+                let item = m.items.iter().chain(&m.later).find(|i| &i.name == name).and_then(|i| i.world);
+                let from = open(item.unwrap_or(m.world).max(m.world));
+                if let Some(k) = (0..b.stages.len()).find(|&k| b.stages[k] < from && cells[k].is_some()) {
+                    early.push(format!("{} {name}: {} (opens {})", m.key, STAGES[b.stages[k]], STAGES[from]));
+                }
+            }
+        }
+        assert!(early.is_empty(), "asked before its world ({}):\n{}", early.len(), early.join("\n"));
+    }
 }

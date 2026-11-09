@@ -299,6 +299,10 @@ fn main() {
             }
             cols.sort_unstable();
             cols.dedup();
+            // Nothing before the mechanic opens: a column there (kept from the last run, or the
+            // whole of World 6 for a World 7 mechanic) only reads levels the game hands out
+            // before you can play it, such as the three observations every save starts with.
+            cols.retain(|&s| s >= open);
             if cols.is_empty() {
                 continue;
             }
@@ -499,6 +503,15 @@ fn main() {
                             run = run.max(cell.unwrap_or(0.0)).max(1.0);
                             *cell = Some(run);
                         }
+                    }
+                }
+            }
+            // Nor an item before its own world opens, whatever the saves or the research say.
+            for (r, row) in table.iter_mut().enumerate() {
+                let from = item_open.get(rows[r].as_str()).copied().unwrap_or(0);
+                for (k, cell) in row.iter_mut().enumerate() {
+                    if cols[k] < from {
+                        *cell = None;
                     }
                 }
             }

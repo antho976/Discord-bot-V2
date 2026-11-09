@@ -272,39 +272,39 @@ stamps                                  # Stamps
   Corale Stamp                 -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -   10   40   95  170  270  390
 
 statue-flair                            # Statue Flair
-  stages                6m  7e  7m  7l  end1  end2  max
-  Speed Statue           1   1   1   2   3   3   3
-  Mining Statue          1   1   1   2   3   3   4
-  Feasty Statue          1   1   1   2   3   3   4
-  Power Statue           2   2   2   3   3   4   4
-  Health Statue          -   -   1   1   3   3   3
-  Lumberbob Statue       -   -   1   2   3   3   3
-  Thicc Skin Statue      -   -   -   1   3   3   3
-  Battleaxe Statue       -   -   -   1   2   2   3
-  Anvil Statue           -   -   -   1   2   3   3
-  Kachow Statue          -   -   -   -   1   2   2
-  Dragon Statue          -   -   -   -   1   1   2
-  Oceanman Statue        -   -   -   -   1   2   2
-  Ol Reliable Statue     -   -   -   -   1   2   2
-  Exp Statue             -   -   -   -   -   1   2
-  Cauldron Statue        -   -   -   -   -   1   2
-  Beholder Statue        -   -   -   -   -   1   1
-  Bullseye Statue        -   -   -   -   -   1   2
-  Box Statue             -   -   -   -   -   1   1
-  Seesaw Statue          -   -   -   -   -   1   1
-  Pecunia Statue         -   -   -   -   -   1   2
-  Twosoul Statue         -   -   -   -   -   -   2
-  Ehexpee Statue         -   -   -   -   -   -   1
-  Mutton Statue          -   -   -   -   -   -   -  # no save has it yet
-  Egg Statue             -   -   -   -   -   -   -  # no save has it yet
-  Spiral Statue          -   -   -   -   -   -   -  # no save has it yet
-  Boat Statue            -   -   -   -   -   -   -  # no save has it yet
-  Compost Statue         -   -   -   -   -   -   -  # no save has it yet
-  Stealth Statue         -   -   -   -   -   -   -  # no save has it yet
-  Essence Statue         -   -   -   -   -   -   -  # no save has it yet
-  Villager Statue        -   -   -   -   -   -   -  # no save has it yet
-  Spelunky Statue        -   -   -   -   -   -   -  # no save has it yet
-  Coral Statue           -   -   -   -   -   -   -  # no save has it yet
+  stages                7e  7m  7l  end1  end2  max
+  Speed Statue           1   1   2   3   3   3
+  Mining Statue          1   1   2   3   3   4
+  Feasty Statue          1   1   2   3   3   4
+  Power Statue           2   2   3   3   4   4
+  Health Statue          -   1   1   3   3   3
+  Lumberbob Statue       -   1   2   3   3   3
+  Thicc Skin Statue      -   -   1   3   3   3
+  Battleaxe Statue       -   -   1   2   2   3
+  Anvil Statue           -   -   1   2   3   3
+  Kachow Statue          -   -   -   1   2   2
+  Dragon Statue          -   -   -   1   1   2
+  Oceanman Statue        -   -   -   1   2   2
+  Ol Reliable Statue     -   -   -   1   2   2
+  Exp Statue             -   -   -   -   1   2
+  Cauldron Statue        -   -   -   -   1   2
+  Beholder Statue        -   -   -   -   1   1
+  Bullseye Statue        -   -   -   -   1   2
+  Box Statue             -   -   -   -   1   1
+  Seesaw Statue          -   -   -   -   1   1
+  Pecunia Statue         -   -   -   -   1   2
+  Twosoul Statue         -   -   -   -   -   2
+  Ehexpee Statue         -   -   -   -   -   1
+  Mutton Statue          -   -   -   -   -   -  # no save has it yet
+  Egg Statue             -   -   -   -   -   -  # no save has it yet
+  Spiral Statue          -   -   -   -   -   -  # no save has it yet
+  Boat Statue            -   -   -   -   -   -  # no save has it yet
+  Compost Statue         -   -   -   -   -   -  # no save has it yet
+  Stealth Statue         -   -   -   -   -   -  # no save has it yet
+  Essence Statue         -   -   -   -   -   -  # no save has it yet
+  Villager Statue        -   -   -   -   -   -  # no save has it yet
+  Spelunky Statue        -   -   -   -   -   -  # no save has it yet
+  Coral Statue           -   -   -   -   -   -  # no save has it yet
 
 owl                                     # Owl
   stages                        1e  1m  1l  2e  2m  2l  3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
@@ -1198,30 +1198,30 @@ rift-bonuses                            # Rift Bonuses
   Cooking Mastery       -   -   -   1   1   1   1   1   1
 
 cape-vine                               # Cape Vine
-  stages                             6m  7e  7m  7l  end1  end2  max
-  Radiant Amarok Backstabber          -   -   -   -   1   1   1
-  Gilded Efaunt Dislodged Tusks       -   -   -   -   1   1   1
-  Blighted Chizoar Shard Cape         -   -   -   -   1   1   1
-  Cascading Scaled Cape of Krieg      -   -   -   -   1   1   1
-  Giant Rose                          -   -   -   -   1   1   1
-  Blooming Vine                       -   -   -   -   1   1   1
-  Eternal Flames of The Divine        -   -   -   -   1   1   1
-  Giant Nightshade                    -   -   -   -   1   1   1
-  Timeless Watch                      -   -   -   -   1   1   1
-  Gilded Emperor Wings                -   -   -   -   1   1   1
-  Chains of the Gilded Vaultguard     -   -   -   -   1   1   1
-  Dragonroll Mantlepiece              -   -   -   -   1   1   1
-  Beeg Egg                            -   -   -   -   1   1   1
-  Crystal Crescent                    -   -   -   -   1   1   1
-  Bladed Rucksack                     -   -   -   -   1   1   1
-  Lovely Balloon                      -   -   -   -   1   1   1
-  Angel Wings                         -   -   -   -   -   1   1
-  Easter Egg Backpack                 -   -   -   -   -   1   1
-  Molten Cloak                        -   -   -   -   -   1   1
-  Giant Violet                        -   -   -   -   -   1   1
-  Riftwalker Wings                    -   -   -   -   -   1   1
-  Phoenix Wings                       -   -   -   -   -   1   1
-  Giant Starflower                    -   -   -   -   -   -   -
+  stages                             7e  7m  7l  end1  end2  max
+  Radiant Amarok Backstabber          -   -   -   1   1   1
+  Gilded Efaunt Dislodged Tusks       -   -   -   1   1   1
+  Blighted Chizoar Shard Cape         -   -   -   1   1   1
+  Cascading Scaled Cape of Krieg      -   -   -   1   1   1
+  Giant Rose                          -   -   -   1   1   1
+  Blooming Vine                       -   -   -   1   1   1
+  Eternal Flames of The Divine        -   -   -   1   1   1
+  Giant Nightshade                    -   -   -   1   1   1
+  Timeless Watch                      -   -   -   1   1   1
+  Gilded Emperor Wings                -   -   -   1   1   1
+  Chains of the Gilded Vaultguard     -   -   -   1   1   1
+  Dragonroll Mantlepiece              -   -   -   1   1   1
+  Beeg Egg                            -   -   -   1   1   1
+  Crystal Crescent                    -   -   -   1   1   1
+  Bladed Rucksack                     -   -   -   1   1   1
+  Lovely Balloon                      -   -   -   1   1   1
+  Angel Wings                         -   -   -   -   1   1
+  Easter Egg Backpack                 -   -   -   -   1   1
+  Molten Cloak                        -   -   -   -   1   1
+  Giant Violet                        -   -   -   -   1   1
+  Riftwalker Wings                    -   -   -   -   1   1
+  Phoenix Wings                       -   -   -   -   1   1
+  Giant Starflower                    -   -   -   -   -   -
 
 artifacts                               # Artifacts, counts; World 1 to 5 columns from crowd-research.txt
   stages          5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
@@ -1590,67 +1590,67 @@ farm-market                             # Day and Night Market, World 1 to 5 col
   Value GMO           -   -   -   -   90  150  180  180  190
 
 exotic-market                           # Exotic Market, no max
-  stages             6m  7e   7m   7l    end1    end2     max
-  Plump Database      -  18  140  450   9,200   9,200   9,500
-  Better Exotic       -   -   16  180  12,000  19,000  26,000
-  Sproutluck IV       -   -   12  150   4,600   4,600   6,300
-  Largumes II         -   -   20  270   7,600   7,600  14,000
-  Freexotic           -   -   25  270   9,100   9,100  13,000
-  Scienterrific       -   -   12  370   6,500  16,000  19,000
-  Geneology IV        -   -    -  140   3,100   8,600   9,800
-  Bountiful II        -   -    -  120   3,800   4,000   4,300
-  Stableroot II       -   -    -   70   3,000   3,000   4,400
-  Legumioso I         -   -    -  110   4,200   4,200   4,700
-  Legumioso III       -   -    -  250   4,500   4,500   6,200
-  Stalk Value I       -   -    -  100   4,400   4,400   4,400
-  Stalk Value II      -   -    -  230   6,100   9,700  17,000
-  Stalk Value III     -   -    -  380   6,400   6,400   6,400
-  Grapevine           -   -    -   90     930     930   5,400
-  Bonemeal Soil       -   -    -   95   1,600   6,000  13,000
-  Sproutluck I        -   -    -   65   3,200   4,600   9,100
-  Sproutluck III      -   -    -   10   1,500   1,500   6,000
-  Geneology I         -   -    -  330   2,000   6,900   9,000
-  Geneology II        -   -    -  180   4,100   4,100   7,400
-  Geneology V         -   -    -   15   2,800   3,900   4,300
-  Stableroot III      -   -    -  140   4,000   4,000  10,000
-  Vigouroot I         -   -    -  100   3,200   3,200   4,500
-  Datadigging         -   -    -  240   3,600   3,600   4,300
-  Legumioso II        -   -    -    6     610     610     610
-  Largumes I          -   -    -  140   3,900   3,900   4,100
-  Farmer Brain        -   -    -   85   3,100   3,100   5,500
-  Evergrow II         -   -    -  190   4,000   4,000   5,000
-  Double Petal II     -   -    -   90   3,100   4,500  12,000
-  Better Day I        -   -    -   20   2,900   2,900   4,200
-  Better Day II       -   -    -   75   2,100   2,100   4,100
-  Better Night I      -   -    -  140   3,300   3,300   8,700
-  Better Night II     -   -    -  230   4,100   4,100   4,200
-  Gravel Pound        -   -    -  210   5,600   5,600  12,000
-  4 Leaf Clover       -   -    -  110   1,500   1,800   4,600
-  Prisma Petal        -   -    -  170   4,000   4,000   7,900
-  Exalted Eldou       -   -    -  160   5,500   5,500   9,200
-  Potent Hemlock      -   -    -  100   1,300   1,300   4,500
-  Pommelion Seed      -   -    -   50   1,700   2,600   4,700
-  Snapegrass          -   -    -    -   1,200   1,200   3,200
-  Sproutluck II       -   -    -    -   2,200   3,500   5,000
-  Geneology III       -   -    -    -   1,700   6,000   9,200
-  Stableroot I        -   -    -    -   1,200   1,200   4,000
-  Vigouroot II        -   -    -    -      90      90   2,100
-  Farmer Knowhow      -   -    -    -   1,200   3,000   3,400
-  Evergrow I          -   -    -    -   3,300   3,300   6,300
-  Double Petal I      -   -    -    -     600   1,200   3,100
-  Gogogrow            -   -    -    -   4,400   5,300   7,700
-  Bountiful III       -   -    -    -   3,300   3,300   5,700
-  Briar Patch         -   -    -    -     350     350   2,700
-  Sap Surge           -   -    -    -   1,900   1,900   6,200
-  5 Leaf Clover       -   -    -    -     460     460   2,000
-  Bud Courier         -   -    -    -     490     490   2,100
-  Studious Spore      -   -    -    -   2,200   2,200   5,000
-  Intelleaf           -   -    -    -     460     460   3,100
-  Hollow Trunk        -   -    -    -     280     280   1,000
-  Force Of Nautre     -   -    -    -     760   4,500   7,000
-  Purple Grass        -   -    -    -   2,300   6,400  14,000
-  Gold Figleaf        -   -    -    -     140     140     520
-  Bountiful I         -   -    -    -       -       -     250
+  stages             7e   7m   7l    end1    end2     max
+  Plump Database     18  140  450   9,200   9,200   9,500
+  Better Exotic       -   16  180  12,000  19,000  26,000
+  Sproutluck IV       -   12  150   4,600   4,600   6,300
+  Largumes II         -   20  270   7,600   7,600  14,000
+  Freexotic           -   25  270   9,100   9,100  13,000
+  Scienterrific       -   12  370   6,500  16,000  19,000
+  Geneology IV        -    -  140   3,100   8,600   9,800
+  Bountiful II        -    -  120   3,800   4,000   4,300
+  Stableroot II       -    -   70   3,000   3,000   4,400
+  Legumioso I         -    -  110   4,200   4,200   4,700
+  Legumioso III       -    -  250   4,500   4,500   6,200
+  Stalk Value I       -    -  100   4,400   4,400   4,400
+  Stalk Value II      -    -  230   6,100   9,700  17,000
+  Stalk Value III     -    -  380   6,400   6,400   6,400
+  Grapevine           -    -   90     930     930   5,400
+  Bonemeal Soil       -    -   95   1,600   6,000  13,000
+  Sproutluck I        -    -   65   3,200   4,600   9,100
+  Sproutluck III      -    -   10   1,500   1,500   6,000
+  Geneology I         -    -  330   2,000   6,900   9,000
+  Geneology II        -    -  180   4,100   4,100   7,400
+  Geneology V         -    -   15   2,800   3,900   4,300
+  Stableroot III      -    -  140   4,000   4,000  10,000
+  Vigouroot I         -    -  100   3,200   3,200   4,500
+  Datadigging         -    -  240   3,600   3,600   4,300
+  Legumioso II        -    -    6     610     610     610
+  Largumes I          -    -  140   3,900   3,900   4,100
+  Farmer Brain        -    -   85   3,100   3,100   5,500
+  Evergrow II         -    -  190   4,000   4,000   5,000
+  Double Petal II     -    -   90   3,100   4,500  12,000
+  Better Day I        -    -   20   2,900   2,900   4,200
+  Better Day II       -    -   75   2,100   2,100   4,100
+  Better Night I      -    -  140   3,300   3,300   8,700
+  Better Night II     -    -  230   4,100   4,100   4,200
+  Gravel Pound        -    -  210   5,600   5,600  12,000
+  4 Leaf Clover       -    -  110   1,500   1,800   4,600
+  Prisma Petal        -    -  170   4,000   4,000   7,900
+  Exalted Eldou       -    -  160   5,500   5,500   9,200
+  Potent Hemlock      -    -  100   1,300   1,300   4,500
+  Pommelion Seed      -    -   50   1,700   2,600   4,700
+  Snapegrass          -    -    -   1,200   1,200   3,200
+  Sproutluck II       -    -    -   2,200   3,500   5,000
+  Geneology III       -    -    -   1,700   6,000   9,200
+  Stableroot I        -    -    -   1,200   1,200   4,000
+  Vigouroot II        -    -    -      90      90   2,100
+  Farmer Knowhow      -    -    -   1,200   3,000   3,400
+  Evergrow I          -    -    -   3,300   3,300   6,300
+  Double Petal I      -    -    -     600   1,200   3,100
+  Gogogrow            -    -    -   4,400   5,300   7,700
+  Bountiful III       -    -    -   3,300   3,300   5,700
+  Briar Patch         -    -    -     350     350   2,700
+  Sap Surge           -    -    -   1,900   1,900   6,200
+  5 Leaf Clover       -    -    -     460     460   2,000
+  Bud Courier         -    -    -     490     490   2,100
+  Studious Spore      -    -    -   2,200   2,200   5,000
+  Intelleaf           -    -    -     460     460   3,100
+  Hollow Trunk        -    -    -     280     280   1,000
+  Force Of Nautre     -    -    -     760   4,500   7,000
+  Purple Grass        -    -    -   2,300   6,400  14,000
+  Gold Figleaf        -    -    -     140     140     520
+  Bountiful I         -    -    -       -       -     250
 
 land-rank-upgrades                      # Land Rank Upgrades, no max; World 1 to 5 columns from crowd-research.txt
   stages                   6l  7e   7m   7l   end1   end2    max
@@ -1864,889 +1864,889 @@ summoning-stones                        # Summoning Stones and Endless, no max; 
   Cyan stone              -    2    4    5    5    5    5
 
 research                                # Research Grid
-  stages                             6m  7e  7m  7l  end1  end2  max
-  See 'Em All                         -   1   1   1   1   1   1
-  All Night Studying                  -   2   2   2   2   2   2
-  Takin' Notes                        -   3   4   4   4   4   4
-  Oracular Spectacular                -   1   1   2   2   2   2
-  Game Design 101                     -   1   2   3   3   3   3
-  Transcendent Artifacts              -   1   1   1   1   1   1
-  Mr Minehead Linguistics             -   1   1   1   4   4   4
-  Glimbo Linguistics                  -   1   1   1   1   1   1
-  Sharp Eye                           -   1   1   2   4   4   4
-  Tiny Cogs                           -   1   1   1   4   4   4
-  Observationalistic                  -   1   4   4   4   4   4
-  Optical Monocle                     -   1   2   4   4   4   4
-  Game Design 102                     -   1   3   4   4   4   4
-  Smart Eye                           -   1   3   3   3   3   3
-  Pts Every Ten                       -   1   1   1   1   1   1
-  Kaleidoscope                        -   1   2   4   4   4   4
-  Sticker Depot                       -   1   1   1   3   3   3
-  Rat King of Olde                    -   1   1   1   2   2   2
-  Masterclass Research                -   1   1   1   2   2   2
-  Holding Onto You                    -   1   1   1   3   3   3
-  Spelunking Research                 -   1   1   2   2   2   2
-  Polymer Refinery                    -   -   1   1   2   2   2
-  Gaming Zuperbits                    -   -   1   1   2   2   2
-  The Maw                             -   -   1   1   4   4   4
-  Glimbo Insider Trading Secrets      -   -   1   1   1   1   1
-  Sushi Station Linguistics           -   -   1   1   4   4   4
-  Equinox Nightmares                  -   -   1   1   3   3   3
-  Palettable Crowns                   -   -   1   1   1   1   1
-  Better Button                       -   -   1   1   3   3   3
-  Insta Skips                         -   -   1   1   2   2   2
-  More of that Minehead Money Pls     -   -   1   2   4   4   4
-  Eclectic Sigils                     -   -   1   1   1   1   1
-  Minehead Damagio                    -   -   1   1   3   3   3
-  Well Dressed                        -   -   1   1   2   2   2
-  Divine Design                       -   -   1   1   1   1   1
-  Sticker-it To Em                    -   -   -   1   2   2   2
-  Stickery Crowns                     -   -   -   1   3   3   3
-  Boony Crowns                        -   -   -   1   1   1   1
-  Revival of the Undead Battalion     -   -   -   1   1   1   1
-  Legendary Red Fever                 -   -   -   1   3   3   3
-  Legendary Green Fever               -   -   -   1   3   3   3
-  Glimbo BOGO Offer                   -   -   -   1   2   2   2
-  Royal Rewards                       -   -   -   1   4   4   4
-  Legendary Yellow Fever              -   -   -   1   3   3   3
-  Risky Strategy                      -   -   -   1   2   2   2
-  Depth Charge Rematch                -   -   -   1   4   4   4
-  Minehead Copium                     -   -   -   1   4   4   4
-  Masterius Cookerius                 -   -   -   2   4   4   4
-  Adequate Sized, Actually            -   -   -   -   2   2   2
-  Legendary Brown Fever               -   -   -   -   3   3   3
-  Shakin' It                          -   -   -   -   2   2   2
-  Eclectoplasmaticism                 -   -   -   -   1   1   1
-  Menagerie Missionary                -   -   -   -   4   4   4
-  Lil' Baby Menagerie                 -   -   -   -   4   4   4
-  Daily Operating Procedure           -   -   -   -   4   4   4
-  Day 'N' Nite                        -   -   -   -   2   2   2
-  Cellular Warfare                    -   -   -   -   4   4   4
-  Materials Science                   -   -   -   -   4   4   4
-  Powered Down Research               -   -   -   -   1   1   2
-  Research AFK Gains                  -   -   -   -   2   2   2
-  Jelly Operator Linguistics          -   -   -   -   4   4   4
-  All Quick All Done                  -   -   -   -   -   -   1
+  stages                             7e  7m  7l  end1  end2  max
+  See 'Em All                         1   1   1   1   1   1
+  All Night Studying                  2   2   2   2   2   2
+  Takin' Notes                        3   4   4   4   4   4
+  Oracular Spectacular                1   1   2   2   2   2
+  Game Design 101                     1   2   3   3   3   3
+  Transcendent Artifacts              1   1   1   1   1   1
+  Mr Minehead Linguistics             1   1   1   4   4   4
+  Glimbo Linguistics                  1   1   1   1   1   1
+  Sharp Eye                           1   1   2   4   4   4
+  Tiny Cogs                           1   1   1   4   4   4
+  Observationalistic                  1   4   4   4   4   4
+  Optical Monocle                     1   2   4   4   4   4
+  Game Design 102                     1   3   4   4   4   4
+  Smart Eye                           1   3   3   3   3   3
+  Pts Every Ten                       1   1   1   1   1   1
+  Kaleidoscope                        1   2   4   4   4   4
+  Sticker Depot                       1   1   1   3   3   3
+  Rat King of Olde                    1   1   1   2   2   2
+  Masterclass Research                1   1   1   2   2   2
+  Holding Onto You                    1   1   1   3   3   3
+  Spelunking Research                 1   1   2   2   2   2
+  Polymer Refinery                    -   1   1   2   2   2
+  Gaming Zuperbits                    -   1   1   2   2   2
+  The Maw                             -   1   1   4   4   4
+  Glimbo Insider Trading Secrets      -   1   1   1   1   1
+  Sushi Station Linguistics           -   1   1   4   4   4
+  Equinox Nightmares                  -   1   1   3   3   3
+  Palettable Crowns                   -   1   1   1   1   1
+  Better Button                       -   1   1   3   3   3
+  Insta Skips                         -   1   1   2   2   2
+  More of that Minehead Money Pls     -   1   2   4   4   4
+  Eclectic Sigils                     -   1   1   1   1   1
+  Minehead Damagio                    -   1   1   3   3   3
+  Well Dressed                        -   1   1   2   2   2
+  Divine Design                       -   1   1   1   1   1
+  Sticker-it To Em                    -   -   1   2   2   2
+  Stickery Crowns                     -   -   1   3   3   3
+  Boony Crowns                        -   -   1   1   1   1
+  Revival of the Undead Battalion     -   -   1   1   1   1
+  Legendary Red Fever                 -   -   1   3   3   3
+  Legendary Green Fever               -   -   1   3   3   3
+  Glimbo BOGO Offer                   -   -   1   2   2   2
+  Royal Rewards                       -   -   1   4   4   4
+  Legendary Yellow Fever              -   -   1   3   3   3
+  Risky Strategy                      -   -   1   2   2   2
+  Depth Charge Rematch                -   -   1   4   4   4
+  Minehead Copium                     -   -   1   4   4   4
+  Masterius Cookerius                 -   -   2   4   4   4
+  Adequate Sized, Actually            -   -   -   2   2   2
+  Legendary Brown Fever               -   -   -   3   3   3
+  Shakin' It                          -   -   -   2   2   2
+  Eclectoplasmaticism                 -   -   -   1   1   1
+  Menagerie Missionary                -   -   -   4   4   4
+  Lil' Baby Menagerie                 -   -   -   4   4   4
+  Daily Operating Procedure           -   -   -   4   4   4
+  Day 'N' Nite                        -   -   -   2   2   2
+  Cellular Warfare                    -   -   -   4   4   4
+  Materials Science                   -   -   -   4   4   4
+  Powered Down Research               -   -   -   1   1   2
+  Research AFK Gains                  -   -   -   2   2   2
+  Jelly Operator Linguistics          -   -   -   4   4   4
+  All Quick All Done                  -   -   -   -   -   1
 
 sushi                                   # Sushi Station
-  stages                   6m  7e  7m   7l  end1  end2  max
-  Salt Shaker               -   1   1    1    1    1    1
-  Movement Mittens          -   1   1    1    1    1    1
-  Sushi Service Bonuses     -   1   1    1    1    1    1
-  Combo Meter               -   1   1    1    1    1    1
-  Seared Knowledge          -   1   1    1    1    1    1
-  Sushi Slot                -  20  50   50   50   50   50
-  Superior Sushi Skillz     -  20  35   35   45   45   45
-  Shake N' Bake             -   3  10   10   10   10   10
-  Charcoal Fireplace        -   5  14   15   15   15   15
-  Quickpay Fee              -  20  70  100  110  110  110
-  Quality Freshness         -   6  20   25   25   25   25
-  Hot Slot                  -   8  20   20   20   20   20
-  Milktoast Slot            -   2  12   12   12   12   12
-  Pepper Shaker             -   1   1    1    1    1    1
-  Barium Firelighter        -   1   1    1    1    1    1
-  Heat of the East Wind     -   1   1    1    1    1    1
-  Copper Firelighter        -   -   1    1    1    1    1
-  Saffron Shaker            -   -   1    1    1    1    1
-  Cold Slot                 -   -   2    8    8    8    8
-  Overtuned Fuel            -   -   1    1    1    1    1
-  Bottomless Shakers        -   -  15   20   20   20   20
-  Sasaphrax Saffron         -   -   9   17   20   20   20
-  Potassium Firelighter     -   -   -    1    1    1    1
-  Lithium Firelighter       -   -   -    1    1    1    1
+  stages                   7e  7m   7l  end1  end2  max
+  Salt Shaker               1   1    1    1    1    1
+  Movement Mittens          1   1    1    1    1    1
+  Sushi Service Bonuses     1   1    1    1    1    1
+  Combo Meter               1   1    1    1    1    1
+  Seared Knowledge          1   1    1    1    1    1
+  Sushi Slot               20  50   50   50   50   50
+  Superior Sushi Skillz    20  35   35   45   45   45
+  Shake N' Bake             3  10   10   10   10   10
+  Charcoal Fireplace        5  14   15   15   15   15
+  Quickpay Fee             20  70  100  110  110  110
+  Quality Freshness         6  20   25   25   25   25
+  Hot Slot                  8  20   20   20   20   20
+  Milktoast Slot            2  12   12   12   12   12
+  Pepper Shaker             1   1    1    1    1    1
+  Barium Firelighter        1   1    1    1    1    1
+  Heat of the East Wind     1   1    1    1    1    1
+  Copper Firelighter        -   1    1    1    1    1
+  Saffron Shaker            -   1    1    1    1    1
+  Cold Slot                 -   2    8    8    8    8
+  Overtuned Fuel            -   1    1    1    1    1
+  Bottomless Shakers        -  15   20   20   20   20
+  Sasaphrax Saffron         -   9   17   20   20   20
+  Potassium Firelighter     -   -    1    1    1    1
+  Lithium Firelighter       -   -    1    1    1    1
 
 sushi-types                             # Sushi Types
-  stages                     6m  7e  7m  7l  end1  end2  max
-  Fish Eggs                   -   1   1   1   1   1   1
-  Eggroll                     -   1   1   1   1   1   1
-  Egg Maki                    -   1   1   1   1   1   1
-  Sashimi                     -   1   1   1   1   1   1
-  Tuna Maki                   -   1   1   1   1   1   1
-  Salmon Uramaki              -   1   1   1   1   1   1
-  Salmon Maki                 -   1   1   1   1   1   1
-  Cucumber Uramaki            -   1   1   1   1   1   1
-  Cucumber Maki               -   1   1   1   1   1   1
-  Onigiri                     -   1   1   1   1   1   1
-  Toro Slice                  -   1   1   1   1   1   1
-  Toro Nigiri                 -   1   1   1   1   1   1
-  Beef Nigiri                 -   1   1   1   1   1   1
-  Beef Tobo Nigiri            -   1   1   1   1   1   1
-  Tobiko Maki                 -   1   1   1   1   1   1
-  Tobiko Temaki               -   1   1   1   1   1   1
-  Tobiko Cluster              -   1   1   1   1   1   1
-  Tobo Sardine                -   1   1   1   1   1   1
-  Tobo Twins                  -   1   1   1   1   1   1
-  Live Squid                  -   1   1   1   1   1   1
-  Live Octopus                -   1   1   1   1   1   1
-  Calamari Ring               -   1   1   1   1   1   1
-  Bluefin Ring                -   1   1   1   1   1   1
-  Tobo Tamago                 -   1   1   1   1   1   1
-  Tako Sashimi                -   1   1   1   1   1   1
-  Hamachi Sashimi             -   1   1   1   1   1   1
-  Fat Tuna Sashimi            -   1   1   1   1   1   1
-  King Beef Sashimi           -   1   1   1   1   1   1
-  Salmon Sashimi              -   1   1   1   1   1   1
-  Salmon Nigiri               -   1   1   1   1   1   1
-  Fried Bass Nigiri           -   1   1   1   1   1   1
-  Seasoned Bass Nigiri        -   1   1   1   1   1   1
-  Jumbo Shrimp                -   -   1   1   1   1   1
-  Aged Shrimp Nigiri          -   -   1   1   1   1   1
-  Tempura Shrimp              -   -   1   1   1   1   1
-  Ika Sashimi                 -   -   1   1   1   1   1
-  Abalone Sashimi             -   -   1   1   1   1   1
-  Aji Sashimi                 -   -   1   1   1   1   1
-  Aji Aji Sashimi             -   -   1   1   1   1   1
-  Bubba Grand Salmon          -   -   1   1   1   1   1
-  Tobiko Roll                 -   -   1   1   1   1   1
-  Spicy Tuna Roll             -   -   1   1   1   1   1
-  Salmon Uramajor             -   -   1   1   1   1   1
-  Sesame Salmon Muramajor     -   -   1   1   1   1   1
-  Dragon Roll                 -   -   1   1   1   1   1
-  Imaginei Dragonroll         -   -   1   1   1   1   1
-  Dragon Nigiri               -   -   1   1   1   1   1
-  Tamago Nigiri               -   -   1   1   1   1   1
-  Unagi Nigiri                -   -   1   1   1   1   1
-  Soylent Nigiri              -   -   1   1   1   1   1
-  Masago                      -   -   1   1   1   1   1
-  Masago Temaki               -   -   1   1   1   1   1
-  Masagoroll                  -   -   1   1   1   1   1
-  Caviar Supreme              -   -   1   1   1   1   1
-  Dulce Vitiri                -   -   1   1   1   1   1
-  Wasabaisamarama             -   -   1   1   1   1   1
-  Kraken Roll                 -   -   1   1   1   1   1
-  Leviathan Roll              -   -   1   1   1   1   1
-  Golthulu Roll               -   -   1   1   1   1   1
-  Wasomber Nigiri             -   -   1   1   1   1   1
-  Leek Nigiri                 -   -   -   1   1   1   1
-  Atomiroll                   -   -   -   1   1   1   1
-  Octolingo                   -   -   -   1   1   1   1
-  Chromatic Nigiri            -   -   -   1   1   1   1
+  stages                     7e  7m  7l  end1  end2  max
+  Fish Eggs                   1   1   1   1   1   1
+  Eggroll                     1   1   1   1   1   1
+  Egg Maki                    1   1   1   1   1   1
+  Sashimi                     1   1   1   1   1   1
+  Tuna Maki                   1   1   1   1   1   1
+  Salmon Uramaki              1   1   1   1   1   1
+  Salmon Maki                 1   1   1   1   1   1
+  Cucumber Uramaki            1   1   1   1   1   1
+  Cucumber Maki               1   1   1   1   1   1
+  Onigiri                     1   1   1   1   1   1
+  Toro Slice                  1   1   1   1   1   1
+  Toro Nigiri                 1   1   1   1   1   1
+  Beef Nigiri                 1   1   1   1   1   1
+  Beef Tobo Nigiri            1   1   1   1   1   1
+  Tobiko Maki                 1   1   1   1   1   1
+  Tobiko Temaki               1   1   1   1   1   1
+  Tobiko Cluster              1   1   1   1   1   1
+  Tobo Sardine                1   1   1   1   1   1
+  Tobo Twins                  1   1   1   1   1   1
+  Live Squid                  1   1   1   1   1   1
+  Live Octopus                1   1   1   1   1   1
+  Calamari Ring               1   1   1   1   1   1
+  Bluefin Ring                1   1   1   1   1   1
+  Tobo Tamago                 1   1   1   1   1   1
+  Tako Sashimi                1   1   1   1   1   1
+  Hamachi Sashimi             1   1   1   1   1   1
+  Fat Tuna Sashimi            1   1   1   1   1   1
+  King Beef Sashimi           1   1   1   1   1   1
+  Salmon Sashimi              1   1   1   1   1   1
+  Salmon Nigiri               1   1   1   1   1   1
+  Fried Bass Nigiri           1   1   1   1   1   1
+  Seasoned Bass Nigiri        1   1   1   1   1   1
+  Jumbo Shrimp                -   1   1   1   1   1
+  Aged Shrimp Nigiri          -   1   1   1   1   1
+  Tempura Shrimp              -   1   1   1   1   1
+  Ika Sashimi                 -   1   1   1   1   1
+  Abalone Sashimi             -   1   1   1   1   1
+  Aji Sashimi                 -   1   1   1   1   1
+  Aji Aji Sashimi             -   1   1   1   1   1
+  Bubba Grand Salmon          -   1   1   1   1   1
+  Tobiko Roll                 -   1   1   1   1   1
+  Spicy Tuna Roll             -   1   1   1   1   1
+  Salmon Uramajor             -   1   1   1   1   1
+  Sesame Salmon Muramajor     -   1   1   1   1   1
+  Dragon Roll                 -   1   1   1   1   1
+  Imaginei Dragonroll         -   1   1   1   1   1
+  Dragon Nigiri               -   1   1   1   1   1
+  Tamago Nigiri               -   1   1   1   1   1
+  Unagi Nigiri                -   1   1   1   1   1
+  Soylent Nigiri              -   1   1   1   1   1
+  Masago                      -   1   1   1   1   1
+  Masago Temaki               -   1   1   1   1   1
+  Masagoroll                  -   1   1   1   1   1
+  Caviar Supreme              -   1   1   1   1   1
+  Dulce Vitiri                -   1   1   1   1   1
+  Wasabaisamarama             -   1   1   1   1   1
+  Kraken Roll                 -   1   1   1   1   1
+  Leviathan Roll              -   1   1   1   1   1
+  Golthulu Roll               -   1   1   1   1   1
+  Wasomber Nigiri             -   1   1   1   1   1
+  Leek Nigiri                 -   -   1   1   1   1
+  Atomiroll                   -   -   1   1   1   1
+  Octolingo                   -   -   1   1   1   1
+  Chromatic Nigiri            -   -   1   1   1   1
 
 jelly                                   # Jelly Operator
-  stages                            6m  7e  7m  7l  end1  end2  max
-  Amoeba Cell Cultivation            -   1   1   1   1   1   1
-  Plasmid Cell Cultivation           -   1   1   1   1   1   1
-  Ribosome Cell Cultivation          -   1   1   1   1   1   1
-  Slot Unlocking                     -   1   1   1   1   1   1
-  DPS Biometrics                     -   1   1   1   1   1   1
-  Operational Bonuses                -   1   1   1   1   1   1
-  Organelle Cell Cultivation         -   1   1   1   1   1   1
-  Daily Transfusion                  -   9  17  20  20  20  20
-  Another Unlock                     -   5   8  12  13  14  14
-  Cell Mutilation                    -   1   4   7   8   8   8
-  Cell Dialysis                      -   4   7  13  15  15  17
-  Immuno Weakening                   -   -   1   1   1   1   1
-  Critical Status                    -   -   1   1   1   1   1
-  Feverizer                          -   -   2   4   5   5   5
-  Immunoid Cell Cultivation          -   -   1   1   1   1   1
-  Cells of Three, Better They Be     -   -   1   1   1   1   1
-  Stronkroid                         -   -   1  25  45  45  50
-  Virus Cell Cultivation             -   -   -   1   1   1   1
-  Viral Injection                    -   -   -   1   2   2   2
-  Cell Metabolism                    -   -   -   1   3   3   3
-  Mitochondria Cell Cultivation      -   -   -   -   1   1   1
-  Proximity Stimulus                 -   -   -   -   1   1   1
-  Gigacyst Cell Cultivation          -   -   -   -   -   -   -  # no save has it yet
-  Revival Shots                      -   -   -   -   -   -   -  # no save has it yet
+  stages                            7e  7m  7l  end1  end2  max
+  Amoeba Cell Cultivation            1   1   1   1   1   1
+  Plasmid Cell Cultivation           1   1   1   1   1   1
+  Ribosome Cell Cultivation          1   1   1   1   1   1
+  Slot Unlocking                     1   1   1   1   1   1
+  DPS Biometrics                     1   1   1   1   1   1
+  Operational Bonuses                1   1   1   1   1   1
+  Organelle Cell Cultivation         1   1   1   1   1   1
+  Daily Transfusion                  9  17  20  20  20  20
+  Another Unlock                     5   8  12  13  14  14
+  Cell Mutilation                    1   4   7   8   8   8
+  Cell Dialysis                      4   7  13  15  15  17
+  Immuno Weakening                   -   1   1   1   1   1
+  Critical Status                    -   1   1   1   1   1
+  Feverizer                          -   2   4   5   5   5
+  Immunoid Cell Cultivation          -   1   1   1   1   1
+  Cells of Three, Better They Be     -   1   1   1   1   1
+  Stronkroid                         -   1  25  45  45  50
+  Virus Cell Cultivation             -   -   1   1   1   1
+  Viral Injection                    -   -   1   2   2   2
+  Cell Metabolism                    -   -   1   3   3   3
+  Mitochondria Cell Cultivation      -   -   -   1   1   1
+  Proximity Stimulus                 -   -   -   1   1   1
+  Gigacyst Cell Cultivation          -   -   -   -   -   -  # no save has it yet
+  Revival Shots                      -   -   -   -   -   -  # no save has it yet
 
 jelly-obstructions                      # Jelly Operator Obstructions
-  stages              6m  7e  7m  7l  end1  end2  max
-  Longbone             -   1   1   1   1   1   1
-  Jawbone              -   1   1   1   1   1   1
-  Spine                -   1   1   1   1   1   1
-  Antler               -   1   1   1   1   1   1
-  Vertebrae            -   1   1   1   1   1   1
-  Skull                -   1   1   1   1   1   1
-  Mawbone              -   1   1   1   1   1   1
-  Reintler             -   1   1   1   1   1   1
-  Fatbone              -   1   1   1   1   1   1
-  Invertedbrae         -   1   1   1   1   1   1
-  Spinine              -   1   1   1   1   1   1
-  Demonicle            -   1   1   1   1   1   1
-  Ruby Ring            -   1   1   1   1   1   1
-  Starry Bling         -   1   1   1   1   1   1
-  Gold Bangle          -   1   1   1   1   1   1
-  Emerald Broach       -   1   1   1   1   1   1
-  Gildrose             -   1   1   1   1   1   1
-  Opal Pendant         -   1   1   1   1   1   1
-  Crescent Bling       -   -   1   1   1   1   1
-  Sapphire Ring        -   -   1   1   1   1   1
-  Stud Pendant         -   -   1   1   1   1   1
-  Wiltrose             -   -   1   1   1   1   1
-  Morning Glory        -   -   1   1   1   1   1
-  Tiger Eye            -   -   1   1   1   1   1
-  Apol                 -   -   -   1   1   1   1
-  Blubbury             -   -   -   1   1   1   1
-  Pair                 -   -   -   1   1   1   1
-  Mongo                -   -   -   1   1   1   1
-  Strabbury            -   -   -   1   1   1   1
-  Cosmico              -   -   -   1   1   1   1
-  Surrage              -   -   -   1   1   1   1
-  Big Nut              -   -   -   1   1   1   1
-  Splega               -   -   -   1   1   1   1
-  Onyx Apple           -   -   -   1   1   1   1
-  Rassbury             -   -   -   1   1   1   1
-  Diamapair            -   -   -   1   1   1   1
-  Bowling Pin          -   -   -   1   1   1   1
-  Broken Ball          -   -   -   1   1   1   1
-  Sody Can             -   -   -   -   1   1   1
-  Balloon              -   -   -   -   1   1   1
-  Arcade Ticket        -   -   -   -   1   1   1
-  Proball              -   -   -   -   -   1   1
-  Empty Can            -   -   -   -   -   -   1
-  Ceramic Ball         -   -   -   -   -   -   -
-  Loveloon             -   -   -   -   -   -   -  # no save has it yet
-  Mangled Ball         -   -   -   -   -   -   -  # no save has it yet
-  Golden Ticket        -   -   -   -   -   -   -  # no save has it yet
-  Angelpin             -   -   -   -   -   -   -  # no save has it yet
-  Cool Gem             -   -   -   -   -   -   -  # no save has it yet
-  Pointed Prism        -   -   -   -   -   -   -  # no save has it yet
-  Fancy Facet          -   -   -   -   -   -   -  # no save has it yet
-  Smooth Stone         -   -   -   -   -   -   -  # no save has it yet
-  Funky Rock           -   -   -   -   -   -   -  # no save has it yet
-  Quirky Quartz        -   -   -   -   -   -   -  # no save has it yet
-  Janky Jewel          -   -   -   -   -   -   -  # no save has it yet
-  Jaguar Shard         -   -   -   -   -   -   -  # no save has it yet
-  Slick Sphere         -   -   -   -   -   -   -  # no save has it yet
-  Barbed Ball          -   -   -   -   -   -   -  # no save has it yet
-  Jagged Mineral       -   -   -   -   -   -   -  # no save has it yet
-  Conical Crystal      -   -   -   -   -   -   -  # no save has it yet
-  Soldier Shiv         -   -   -   -   -   -   -  # no save has it yet
-  Knightly Rapier      -   -   -   -   -   -   -  # no save has it yet
-  Tribunal Helmet      -   -   -   -   -   -   -  # no save has it yet
-  Sharpened Axe        -   -   -   -   -   -   -  # no save has it yet
-  Hotforge Mace        -   -   -   -   -   -   -  # no save has it yet
-  Lord Shield          -   -   -   -   -   -   -  # no save has it yet
-  Molten Shiv          -   -   -   -   -   -   -  # no save has it yet
-  Damascus Axe         -   -   -   -   -   -   -  # no save has it yet
-  Coldsteel Mace       -   -   -   -   -   -   -  # no save has it yet
-  Radiant Shield       -   -   -   -   -   -   -  # no save has it yet
-  Eloquent Rapier      -   -   -   -   -   -   -  # no save has it yet
-  Centurion Helmet     -   -   -   -   -   -   -  # no save has it yet
+  stages              7e  7m  7l  end1  end2  max
+  Longbone             1   1   1   1   1   1
+  Jawbone              1   1   1   1   1   1
+  Spine                1   1   1   1   1   1
+  Antler               1   1   1   1   1   1
+  Vertebrae            1   1   1   1   1   1
+  Skull                1   1   1   1   1   1
+  Mawbone              1   1   1   1   1   1
+  Reintler             1   1   1   1   1   1
+  Fatbone              1   1   1   1   1   1
+  Invertedbrae         1   1   1   1   1   1
+  Spinine              1   1   1   1   1   1
+  Demonicle            1   1   1   1   1   1
+  Ruby Ring            1   1   1   1   1   1
+  Starry Bling         1   1   1   1   1   1
+  Gold Bangle          1   1   1   1   1   1
+  Emerald Broach       1   1   1   1   1   1
+  Gildrose             1   1   1   1   1   1
+  Opal Pendant         1   1   1   1   1   1
+  Crescent Bling       -   1   1   1   1   1
+  Sapphire Ring        -   1   1   1   1   1
+  Stud Pendant         -   1   1   1   1   1
+  Wiltrose             -   1   1   1   1   1
+  Morning Glory        -   1   1   1   1   1
+  Tiger Eye            -   1   1   1   1   1
+  Apol                 -   -   1   1   1   1
+  Blubbury             -   -   1   1   1   1
+  Pair                 -   -   1   1   1   1
+  Mongo                -   -   1   1   1   1
+  Strabbury            -   -   1   1   1   1
+  Cosmico              -   -   1   1   1   1
+  Surrage              -   -   1   1   1   1
+  Big Nut              -   -   1   1   1   1
+  Splega               -   -   1   1   1   1
+  Onyx Apple           -   -   1   1   1   1
+  Rassbury             -   -   1   1   1   1
+  Diamapair            -   -   1   1   1   1
+  Bowling Pin          -   -   1   1   1   1
+  Broken Ball          -   -   1   1   1   1
+  Sody Can             -   -   -   1   1   1
+  Balloon              -   -   -   1   1   1
+  Arcade Ticket        -   -   -   1   1   1
+  Proball              -   -   -   -   1   1
+  Empty Can            -   -   -   -   -   1
+  Ceramic Ball         -   -   -   -   -   -
+  Loveloon             -   -   -   -   -   -  # no save has it yet
+  Mangled Ball         -   -   -   -   -   -  # no save has it yet
+  Golden Ticket        -   -   -   -   -   -  # no save has it yet
+  Angelpin             -   -   -   -   -   -  # no save has it yet
+  Cool Gem             -   -   -   -   -   -  # no save has it yet
+  Pointed Prism        -   -   -   -   -   -  # no save has it yet
+  Fancy Facet          -   -   -   -   -   -  # no save has it yet
+  Smooth Stone         -   -   -   -   -   -  # no save has it yet
+  Funky Rock           -   -   -   -   -   -  # no save has it yet
+  Quirky Quartz        -   -   -   -   -   -  # no save has it yet
+  Janky Jewel          -   -   -   -   -   -  # no save has it yet
+  Jaguar Shard         -   -   -   -   -   -  # no save has it yet
+  Slick Sphere         -   -   -   -   -   -  # no save has it yet
+  Barbed Ball          -   -   -   -   -   -  # no save has it yet
+  Jagged Mineral       -   -   -   -   -   -  # no save has it yet
+  Conical Crystal      -   -   -   -   -   -  # no save has it yet
+  Soldier Shiv         -   -   -   -   -   -  # no save has it yet
+  Knightly Rapier      -   -   -   -   -   -  # no save has it yet
+  Tribunal Helmet      -   -   -   -   -   -  # no save has it yet
+  Sharpened Axe        -   -   -   -   -   -  # no save has it yet
+  Hotforge Mace        -   -   -   -   -   -  # no save has it yet
+  Lord Shield          -   -   -   -   -   -  # no save has it yet
+  Molten Shiv          -   -   -   -   -   -  # no save has it yet
+  Damascus Axe         -   -   -   -   -   -  # no save has it yet
+  Coldsteel Mace       -   -   -   -   -   -  # no save has it yet
+  Radiant Shield       -   -   -   -   -   -  # no save has it yet
+  Eloquent Rapier      -   -   -   -   -   -  # no save has it yet
+  Centurion Helmet     -   -   -   -   -   -  # no save has it yet
 
 minehead                                # Minehead
-  stages                      6m  7e  7m  7l  end1  end2  max
-  Boom Blocker                 -   1   1   1   1   1   1
-  Grid Expansion               -   5   7   9  11  11  11
-  Multiplier Madness           -   1   1   3   4   4   4
-  Golden Tiles                 -   3   4   6   8   8   9
-  Extra Lives                  -   2   2   3   4   4   4
-  Numbahs                      -   6   7  11  13  13  13
-  Crown Craze                  -   -   1  10  20  25  25
-  Legal Cheating Button        -   -   1   3   5   6   6
-  Triple Crown Hunter          -   -   2  25  50  60  60
-  Clutch Overtime Block        -   -   -   1   1   1   1
-  Classic Flags                -   -   -   1   1   1   1
-  Awesome Additives            -   -   -   2   2   3   3
-  Record Breaking Jackpots     -   -   -   -   -   1   1
+  stages                      7e  7m  7l  end1  end2  max
+  Boom Blocker                 1   1   1   1   1   1
+  Grid Expansion               5   7   9  11  11  11
+  Multiplier Madness           1   1   3   4   4   4
+  Golden Tiles                 3   4   6   8   8   9
+  Extra Lives                  2   2   3   4   4   4
+  Numbahs                      6   7  11  13  13  13
+  Crown Craze                  -   1  10  20  25  25
+  Legal Cheating Button        -   1   3   5   6   6
+  Triple Crown Hunter          -   2  25  50  60  60
+  Clutch Overtime Block        -   -   1   1   1   1
+  Classic Flags                -   -   1   1   1   1
+  Awesome Additives            -   -   2   2   3   3
+  Record Breaking Jackpots     -   -   -   -   1   1
 
 minehead-opponents                      # Minehead Opponents
-  stages           6m  7e  7m  7l  end1  end2  max
-  Bronzehead        -   1   1   1   1   1   1
-  Gemhead           -   1   1   1   1   1   1
-  Yarnhead          -   1   1   1   1   1   1
-  Sashimihead       -   1   1   1   1   1   1
-  Bleckhead         -   1   1   1   1   1   1
-  Saturnhead        -   1   1   1   1   1   1
-  Basshead          -   1   1   1   1   1   1
-  Kelphead          -   1   1   1   1   1   1
-  Snouthead         -   1   1   1   1   1   1
-  Threadhead        -   1   1   1   1   1   1
-  Clownhead         -   1   1   1   1   1   1
-  Goldhead          -   1   1   1   1   1   1
-  Maizehead         -   -   1   1   1   1   1
-  Ironhead          -   -   1   1   1   1   1
-  Purrhead          -   -   -   1   1   1   1
-  Screamhead        -   -   -   1   1   1   1
-  Ballhead          -   -   -   1   1   1   1
-  Grosshead         -   -   -   1   1   1   1
-  Blindhead         -   -   -   1   1   1   1
-  Detahead          -   -   -   -   1   1   1
-  Brainhead         -   -   -   -   1   1   1
-  Raspberryhead     -   -   -   -   1   1   1
-  Leopahead         -   -   -   -   1   1   1
-  Baldhead          -   -   -   -   -   -   1
-  Royalhead         -   -   -   -   -   -   -  # no save has it yet
-  Stouthead         -   -   -   -   -   -   -  # no save has it yet
-  Chillhead         -   -   -   -   -   -   -  # no save has it yet
-  Summerhead        -   -   -   -   -   -   -  # no save has it yet
-  Tentahead         -   -   -   -   -   -   -  # no save has it yet
-  Humungohead       -   -   -   -   -   -   -  # no save has it yet
-  Mr Minehead       -   -   -   -   -   -   -  # no save has it yet
-  Boghead           -   -   -   -   -   -   -  # no save has it yet
+  stages           7e  7m  7l  end1  end2  max
+  Bronzehead        1   1   1   1   1   1
+  Gemhead           1   1   1   1   1   1
+  Yarnhead          1   1   1   1   1   1
+  Sashimihead       1   1   1   1   1   1
+  Bleckhead         1   1   1   1   1   1
+  Saturnhead        1   1   1   1   1   1
+  Basshead          1   1   1   1   1   1
+  Kelphead          1   1   1   1   1   1
+  Snouthead         1   1   1   1   1   1
+  Threadhead        1   1   1   1   1   1
+  Clownhead         1   1   1   1   1   1
+  Goldhead          1   1   1   1   1   1
+  Maizehead         -   1   1   1   1   1
+  Ironhead          -   1   1   1   1   1
+  Purrhead          -   -   1   1   1   1
+  Screamhead        -   -   1   1   1   1
+  Ballhead          -   -   1   1   1   1
+  Grosshead         -   -   1   1   1   1
+  Blindhead         -   -   1   1   1   1
+  Detahead          -   -   -   1   1   1
+  Brainhead         -   -   -   1   1   1
+  Raspberryhead     -   -   -   1   1   1
+  Leopahead         -   -   -   1   1   1
+  Baldhead          -   -   -   -   -   1
+  Royalhead         -   -   -   -   -   -  # no save has it yet
+  Stouthead         -   -   -   -   -   -  # no save has it yet
+  Chillhead         -   -   -   -   -   -  # no save has it yet
+  Summerhead        -   -   -   -   -   -  # no save has it yet
+  Tentahead         -   -   -   -   -   -  # no save has it yet
+  Humungohead       -   -   -   -   -   -  # no save has it yet
+  Mr Minehead       -   -   -   -   -   -  # no save has it yet
+  Boghead           -   -   -   -   -   -  # no save has it yet
 
 coral-reef                              # Coral Reef
-  stages                      6m  7e  7m  7l  end1  end2  max
-  Tome Epilogue Bonus          -   5  10  10  10  10  10
-  Ninja Knowledge (Pillar)     -   6  12  15  15  15  15
-  Grind Time Bubble LVs        -  10  15  15  15  15  15
-  Gallery Bonus and Slots      -   -  10  10  10  10  10
-  Menagerie Shells             -   -   -   4   6   7   7
+  stages                      7e  7m  7l  end1  end2  max
+  Tome Epilogue Bonus          5  10  10  10  10  10
+  Ninja Knowledge (Pillar)     6  12  15  15  15  15
+  Grind Time Bubble LVs       10  15  15  15  15  15
+  Gallery Bonus and Slots      -  10  10  10  10  10
+  Menagerie Shells             -   -   4   6   7   7
 
 zenith                                  # Zenith Market
-  stages            6m  7e  7m   7l  end1  end2  max
-  Kruk Bubbles       -   2   5    5    5    5    5
-  Lamp Boost         -   1  65  140  200  200  200
-  Bubble Boost       -   1  18   25   25   25   25
-  True Zen           -   6  65  110  140  150  150
-  Double Cluster     -   2  50   85  100  100  100
-  Super Dupers       -   1  10   25   25   25   25
-  Classy Gogo        -   -   1   35   75   80  100
-  Most Grandiose     -   -  11   35   50   50   50
-  Woozle Wuzzle      -   -   3   30   30   30   30
-  Kingdomercial      -   -   1   11   20   25   30
-  Giga Symbols       -   -   4   40   70   80   80
-  Lumilicious        -   -   -    -    6   15   15
+  stages            7e  7m   7l  end1  end2  max
+  Kruk Bubbles       2   5    5    5    5    5
+  Lamp Boost         1  65  140  200  200  200
+  Bubble Boost       1  18   25   25   25   25
+  True Zen           6  65  110  140  150  150
+  Double Cluster     2  50   85  100  100  100
+  Super Dupers       1  10   25   25   25   25
+  Classy Gogo        -   1   35   75   80  100
+  Most Grandiose     -  11   35   50   50   50
+  Woozle Wuzzle      -   3   30   30   30   30
+  Kingdomercial      -   1   11   20   25   30
+  Giga Symbols       -   4   40   70   80   80
+  Lumilicious        -   -    -    6   15   15
 
 legend-talents                          # Legend Talents
-  stages                        6m  7e  7m  7l  end1  end2  max
-  Super Talent Points            -   1   1   1   1   1   1
-  Shrine World Order Bill        -   1   1   1   1   1   1
-  Super Duper Talents            -   5   5   5   5   5   5
-  Obsolete No More               -   1   1   1   1   1   1
-  Greatest Drop Party Ever       -   1   4   6   7   7   7
-  Double Aint Enough             -   3   3   5   6   6   6
-  6 O'Clock Crystals             -   1   1   1   1   1   1
-  Daily Shopping Spree           -   2   2   4   6   6   6
-  Extended Database              -   -   3   5   6   6   6
-  Picasso Gaming                 -   -   1   5   5   5   5
-  Flopping a Full House          -   -   5   5   5   5   5
-  May the Best Man Win           -   -   1   1   1   1   1
-  Cog Lover                      -   -   2   2   5   5   5
-  Skillium Fancyson              -   -   2   5   7   7  10
-  Democracy FTW                  -   -   1   1   1   1   1
-  Midusian Appetite              -   -   1   3   3   3   3
-  Furry Friends Forever          -   -   2   3   5   5   5
-  Best Story Ever Told           -   -   3   4   6   6   6
-  Lightning Fast Naps            -   -   1   3   5   5   5
-  Inevitable Builder             -   -   2   4   5   5   8
-  Wowa Woowa                     -   -   5   5   5   5   8
-  The Charms got Rizz            -   -   -   3   5   5   7
-  Davey Jones Returns            -   -   -   4   4   4   4
-  Reduced Jail Sentence          -   -   -   2   2   2   5
-  More Soot More Salt            -   -   -   2   5   5   5
-  Big Sig Fig                    -   -   -   3   6   6   9
-  Familiar Firesale              -   -   -   2   2   2   2
-  Superb Gallerium               -   -   -   2   5   5   5
-  Whats in your Jar?             -   -   -   1   5   5   5
-  Coral Restoration              -   -   -   2   2   2   2
-  Kruk be Bubblin'               -   -   -   6   8   8   8
-  Opa Opal Style                 -   -   -   3   3   3   3
-  1 Slab                         -   -   -   2   2   2   2
-  Purebred Eggs                  -   -   -   1   1   1   1
-  Blessed Be Thy Luck            -   -   -   3   5   5   5
-  Buy One Get One Free           -   -   -   3   5   5   5
-  Blue Ribbon Certification      -   -   -   2   7   7   7
-  Thanatos's Teachings           -   -   -   2   5   5   5
-  Yet Another Printer Multi      -   -   -   1   2   2   2
-  Recycled Particle Upgrades     -   -   -   -   1   1   1
-  Minehead My Beloved            -   -   -   -   6   6   6
-  Two Time Jelly Operation       -   -   -   -   6   6   6
+  stages                        7e  7m  7l  end1  end2  max
+  Super Talent Points            1   1   1   1   1   1
+  Shrine World Order Bill        1   1   1   1   1   1
+  Super Duper Talents            5   5   5   5   5   5
+  Obsolete No More               1   1   1   1   1   1
+  Greatest Drop Party Ever       1   4   6   7   7   7
+  Double Aint Enough             3   3   5   6   6   6
+  6 O'Clock Crystals             1   1   1   1   1   1
+  Daily Shopping Spree           2   2   4   6   6   6
+  Extended Database              -   3   5   6   6   6
+  Picasso Gaming                 -   1   5   5   5   5
+  Flopping a Full House          -   5   5   5   5   5
+  May the Best Man Win           -   1   1   1   1   1
+  Cog Lover                      -   2   2   5   5   5
+  Skillium Fancyson              -   2   5   7   7  10
+  Democracy FTW                  -   1   1   1   1   1
+  Midusian Appetite              -   1   3   3   3   3
+  Furry Friends Forever          -   2   3   5   5   5
+  Best Story Ever Told           -   3   4   6   6   6
+  Lightning Fast Naps            -   1   3   5   5   5
+  Inevitable Builder             -   2   4   5   5   8
+  Wowa Woowa                     -   5   5   5   5   8
+  The Charms got Rizz            -   -   3   5   5   7
+  Davey Jones Returns            -   -   4   4   4   4
+  Reduced Jail Sentence          -   -   2   2   2   5
+  More Soot More Salt            -   -   2   5   5   5
+  Big Sig Fig                    -   -   3   6   6   9
+  Familiar Firesale              -   -   2   2   2   2
+  Superb Gallerium               -   -   2   5   5   5
+  Whats in your Jar?             -   -   1   5   5   5
+  Coral Restoration              -   -   2   2   2   2
+  Kruk be Bubblin'               -   -   6   8   8   8
+  Opa Opal Style                 -   -   3   3   3   3
+  1 Slab                         -   -   2   2   2   2
+  Purebred Eggs                  -   -   1   1   1   1
+  Blessed Be Thy Luck            -   -   3   5   5   5
+  Buy One Get One Free           -   -   3   5   5   5
+  Blue Ribbon Certification      -   -   2   7   7   7
+  Thanatos's Teachings           -   -   2   5   5   5
+  Yet Another Printer Multi      -   -   1   2   2   2
+  Recycled Particle Upgrades     -   -   -   1   1   1
+  Minehead My Beloved            -   -   -   6   6   6
+  Two Time Jelly Operation       -   -   -   6   6   6
 
 spelunk-shop                            # Spelunking Shop
-  stages                                                       6m  7e   7m   7l  end1  end2  max
-  Deep Pockets                                                  -  12   30   40   40   40   40
-  Big Time Stamina                                              -  35   50   50   50   50   50
-  Stamina Resurgence                                            -  50  100  140  150  150  150
-  The Biggest Haul                                              -   1    1    1    1    1    1
-  Auto Button                                                   -   1    1    1    1    1    1
-  Overpow Technique                                             -   1    1    1    1    1    1
-  Less Taxes                                                    -   9   20   20   20   20   20
-  Elixir Slot                                                   -   2    4    4    4    4    4
-  Hidden Elixirs                                                -   1    1    1    1    1    1
-  Partaking in Skull Fluid                                      -   1    3    3    3    3    3
-  Uncanny Ability to Find Narrow Passages                       -   3    8   10   10   10   10
-  Duplicate Elixirs                                             -   2    4    4    4    4    4
-  Nova Blast                                                    -   2   30   30   30   30   30
-  Amber Mitosis                                                 -  13   40   40   40   40   40
-  Grand Discoveries                                             -   1  240  420  460  460  460
-  Unexplainable daily Amber Gains to satiate the playerbase     -  35   50   50   50   50   50
-  New Brand of Elixir                                           -  11   12   12   12   12   12
-  Free Refills                                                  -   8   25   40   40   40   40
-  Shadow Strike                                                 -  11   30   45   50   50   50
-  More Shadow Strikes                                           -  17   50   80   90   90   90
-  Grandiose Amber                                               -   1   50  100  100  100  100
-  Mirage Hardhat                                                -   1   60  100  100  100  100
-  Nova X Elixir Crossover Events                                -   -   30   30   30   30   30
-  Min-Maxed Nova Blasts                                         -   -    1    1    1    1    1
-  Manic Mode                                                    -   -    1    1    1    1    1
-  Elixir Memorization                                           -   -    1    2    3    3    3
-  Grandiose POW                                                 -   -   25   55   60   60   60
-  Grandiose EXP                                                 -   -   65  100  100  100  100
-  Turquoise Hardhat                                             -   -   60  140  170  170  170
-  Amber Be Here                                                 -   -    6   10   10   10   10
-  Manic Efficiency                                              -   -    6   40   50   50   55
-  Stamina Trackometer                                           -   -    3   25   30   30   30
-  Amber-Track                                                   -   -    1   20   25   25   25
-  Grey Hardhat                                                  -   -   90  180  200  200  200
-  Golden Hardhat                                                -   -   80  190  220  220  230
-  Manic POW                                                     -   -   15   50   60   60   65
-  Manic Discoveries                                             -   -   11   45   55   55   55
-  Doublethink Memory                                            -   -    4   35   45   45   45
-  Amber Supply Swap                                             -   -    -    1    1    1    1
-  Royal Hardhat                                                 -   -    -   13   20   20   20
-  Paper Hardhat                                                 -   -    -   20   35   35   40
-  Striped Hardhat                                               -   -    -   20   40   40   45
-  Maxima-Track                                                  -   -    -    6    8    8    8
-  Fire Hardhat                                                  -   -    -   20   35   35   40
+  stages                                                       7e   7m   7l  end1  end2  max
+  Deep Pockets                                                 12   30   40   40   40   40
+  Big Time Stamina                                             35   50   50   50   50   50
+  Stamina Resurgence                                           50  100  140  150  150  150
+  The Biggest Haul                                              1    1    1    1    1    1
+  Auto Button                                                   1    1    1    1    1    1
+  Overpow Technique                                             1    1    1    1    1    1
+  Less Taxes                                                    9   20   20   20   20   20
+  Elixir Slot                                                   2    4    4    4    4    4
+  Hidden Elixirs                                                1    1    1    1    1    1
+  Partaking in Skull Fluid                                      1    3    3    3    3    3
+  Uncanny Ability to Find Narrow Passages                       3    8   10   10   10   10
+  Duplicate Elixirs                                             2    4    4    4    4    4
+  Nova Blast                                                    2   30   30   30   30   30
+  Amber Mitosis                                                13   40   40   40   40   40
+  Grand Discoveries                                             1  240  420  460  460  460
+  Unexplainable daily Amber Gains to satiate the playerbase    35   50   50   50   50   50
+  New Brand of Elixir                                          11   12   12   12   12   12
+  Free Refills                                                  8   25   40   40   40   40
+  Shadow Strike                                                11   30   45   50   50   50
+  More Shadow Strikes                                          17   50   80   90   90   90
+  Grandiose Amber                                               1   50  100  100  100  100
+  Mirage Hardhat                                                1   60  100  100  100  100
+  Nova X Elixir Crossover Events                                -   30   30   30   30   30
+  Min-Maxed Nova Blasts                                         -    1    1    1    1    1
+  Manic Mode                                                    -    1    1    1    1    1
+  Elixir Memorization                                           -    1    2    3    3    3
+  Grandiose POW                                                 -   25   55   60   60   60
+  Grandiose EXP                                                 -   65  100  100  100  100
+  Turquoise Hardhat                                             -   60  140  170  170  170
+  Amber Be Here                                                 -    6   10   10   10   10
+  Manic Efficiency                                              -    6   40   50   50   55
+  Stamina Trackometer                                           -    3   25   30   30   30
+  Amber-Track                                                   -    1   20   25   25   25
+  Grey Hardhat                                                  -   90  180  200  200  200
+  Golden Hardhat                                                -   80  190  220  220  230
+  Manic POW                                                     -   15   50   60   60   65
+  Manic Discoveries                                             -   11   45   55   55   55
+  Doublethink Memory                                            -    4   35   45   45   45
+  Amber Supply Swap                                             -    -    1    1    1    1
+  Royal Hardhat                                                 -    -   13   20   20   20
+  Paper Hardhat                                                 -    -   20   35   35   40
+  Striped Hardhat                                               -    -   20   40   40   45
+  Maxima-Track                                                  -    -    6    8    8    8
+  Fire Hardhat                                                  -    -   20   35   35   40
 
 spelunk-caves                           # Spelunking Cave Bosses
-  stages                6m  7e  7m  7l  end1  end2  max
-  Pebble Cove boss       -   1   1   1   1   1   1
-  Sedimeadow boss        -   1   1   1   1   1   1
-  Rustbelt 03 boss       -   1   1   1   1   1   1
-  Blushpit boss          -   1   1   1   1   1   1
-  Chucklemire boss       -   1   1   1   1   1   1
-  Lunarheim boss         -   1   1   1   1   1   1
-  Bizarrio boss          -   -   1   1   1   1   1
-  Glitter End boss       -   -   1   1   1   1   1
-  Scoutpost boss         -   -   1   1   1   1   1
-  Exiled Throne boss     -   -   -   1   1   1   1
+  stages                7e  7m  7l  end1  end2  max
+  Pebble Cove boss       1   1   1   1   1   1
+  Sedimeadow boss        1   1   1   1   1   1
+  Rustbelt 03 boss       1   1   1   1   1   1
+  Blushpit boss          1   1   1   1   1   1
+  Chucklemire boss       1   1   1   1   1   1
+  Lunarheim boss         1   1   1   1   1   1
+  Bizarrio boss          -   1   1   1   1   1
+  Glitter End boss       -   1   1   1   1   1
+  Scoutpost boss         -   1   1   1   1   1
+  Exiled Throne boss     -   -   1   1   1   1
 
 spelunk-chapters                        # Spelunking Lore Chapters, no max
-  stages                                          6m   7e   7m   7l   end1    end2     max
-  The Fear Within: Base Spelunking Efficiency      -  110  160  880  7,600  12,000  14,000
-  Decay Surrounds: Spelunking EXP gain             -   20   20  260  3,000   5,100   5,500
-  The Fear Within: Total Spelunking Efficiency     -   40   60  410  4,700   7,000   8,500
-  Decay Surrounds: Base Spelunking Efficiency      -   35   75  280  2,400   5,100   8,300
-  This is Gospel: Max Stamina for All Players      -    -   55  300  2,600   4,900   5,400
-  This is Gospel: Extra Overstim Fill Rate         -    -    -   30    400   1,000   1,100
-  This is Gospel: Faster Stamina Regeneration      -    -    -  220  1,400   2,900   2,900
-  Kelp Primeval: Total Amber Found                 -    -    -   20    950     950     990
-  The Fear Within: Faster Spelunking Speed         -    -    -  160  2,000   2,100   3,200
-  Decay Surrounds: Total Spelunking POW            -    -    -  230  3,900   5,800   8,400
-  Decay Surrounds: Total Amber Found               -    -    -   60  1,200   2,300   2,700
-  No Escape: Max Stamina for All Players           -    -    -  120  1,900   1,900   8,000
-  No Escape: Spelunking EXP gain                   -    -    -  120  2,100   3,200   7,700
-  No Escape: Chance to not use up Elixir           -    -    -   70  2,200   2,500   8,700
-  Sunken Plunder: Grand Discovery Chance           -    -    -  120  1,100   1,100   1,700
-  Kelp Primeval: Total Spelunking POW              -    -    -  300  1,800   1,800   1,800
-  Sunken Plunder: Total Spelunking POW             -    -    -    -    120     300     320
-  No Escape: Extra Chapter LVs from Pages          -    -    -    -    840     840   2,900
-  Sunken Plunder: Total Amber Found                -    -    -    -    810     810     910
-  Kelp Primeval: Faster Stamina Regeneration       -    -    -    -    180     180     180
-  Burning Crusade: Spelunking EXP gain             -    -    -    -    430     780   1,300
-  Burning Crusade: Grand Discovery Chance          -    -    -    -    180     300     860
-  Burning Crusade: Total Spelunking POW            -    -    -    -     40      45     260
+  stages                                           7e   7m   7l   end1    end2     max
+  The Fear Within: Base Spelunking Efficiency     110  160  880  7,600  12,000  14,000
+  Decay Surrounds: Spelunking EXP gain             20   20  260  3,000   5,100   5,500
+  The Fear Within: Total Spelunking Efficiency     40   60  410  4,700   7,000   8,500
+  Decay Surrounds: Base Spelunking Efficiency      35   75  280  2,400   5,100   8,300
+  This is Gospel: Max Stamina for All Players       -   55  300  2,600   4,900   5,400
+  This is Gospel: Extra Overstim Fill Rate          -    -   30    400   1,000   1,100
+  This is Gospel: Faster Stamina Regeneration       -    -  220  1,400   2,900   2,900
+  Kelp Primeval: Total Amber Found                  -    -   20    950     950     990
+  The Fear Within: Faster Spelunking Speed          -    -  160  2,000   2,100   3,200
+  Decay Surrounds: Total Spelunking POW             -    -  230  3,900   5,800   8,400
+  Decay Surrounds: Total Amber Found                -    -   60  1,200   2,300   2,700
+  No Escape: Max Stamina for All Players            -    -  120  1,900   1,900   8,000
+  No Escape: Spelunking EXP gain                    -    -  120  2,100   3,200   7,700
+  No Escape: Chance to not use up Elixir            -    -   70  2,200   2,500   8,700
+  Sunken Plunder: Grand Discovery Chance            -    -  120  1,100   1,100   1,700
+  Kelp Primeval: Total Spelunking POW               -    -  300  1,800   1,800   1,800
+  Sunken Plunder: Total Spelunking POW              -    -    -    120     300     320
+  No Escape: Extra Chapter LVs from Pages           -    -    -    840     840   2,900
+  Sunken Plunder: Total Amber Found                 -    -    -    810     810     910
+  Kelp Primeval: Faster Stamina Regeneration        -    -    -    180     180     180
+  Burning Crusade: Spelunking EXP gain              -    -    -    430     780   1,300
+  Burning Crusade: Grand Discovery Chance           -    -    -    180     300     860
+  Burning Crusade: Total Spelunking POW             -    -    -     40      45     260
 
 spelunk-depth                           # Spelunking Depths, no max
-  stages                   6m  7e   7m   7l  end1  end2  max
-  Blushpit                  -  40  140  230  400  400  430
-  Rustbelt 03               -  45  160  230  420  420  460
-  Lunarheim                 -  35  110  140  250  260  290
-  Pebble Cove               -  40  170  230  460  470  470
-  Sedimeadow                -  35  180  230  470  470  490
-  Chucklemire               -  75  140  210  320  360  360
-  Bizarrio                  -   -  110  140  230  230  250
-  Pebble Cove (Manic)       -   -   13   40  170  170  230
-  Glitter End               -   -  150  260  320  320  340
-  Exiled Throne             -   -    -  130  340  340  340
-  Sedimeadow (Manic)        -   -    -   45  150  150  170
-  Blushpit (Manic)          -   -    -   60  180  180  180
-  Rustbelt 03 (Manic)       -   -    -   50  180  180  180
-  Chucklemire (Manic)       -   -    -   65  200  200  270
-  Lunarheim (Manic)         -   -    -   45  200  200  200
-  Bizarrio (Manic)          -   -    -   45  160  160  160
-  Glitter End (Manic)       -   -    -   75  190  190  290
-  Scoutpost                 -   -    -  260  350  350  360
-  Scoutpost (Manic)         -   -    -    7  230  230  230
-  Exiled Throne (Manic)     -   -    -    -  160  160  180
+  stages                   7e   7m   7l  end1  end2  max
+  Blushpit                 40  140  230  400  400  430
+  Rustbelt 03              45  160  230  420  420  460
+  Lunarheim                35  110  140  250  260  290
+  Pebble Cove              40  170  230  460  470  470
+  Sedimeadow               35  180  230  470  470  490
+  Chucklemire              75  140  210  320  360  360
+  Bizarrio                  -  110  140  230  230  250
+  Pebble Cove (Manic)       -   13   40  170  170  230
+  Glitter End               -  150  260  320  320  340
+  Exiled Throne             -    -  130  340  340  340
+  Sedimeadow (Manic)        -    -   45  150  150  170
+  Blushpit (Manic)          -    -   60  180  180  180
+  Rustbelt 03 (Manic)       -    -   50  180  180  180
+  Chucklemire (Manic)       -    -   65  200  200  270
+  Lunarheim (Manic)         -    -   45  200  200  200
+  Bizarrio (Manic)          -    -   45  160  160  160
+  Glitter End (Manic)       -    -   75  190  190  290
+  Scoutpost                 -    -  260  350  350  360
+  Scoutpost (Manic)         -    -    7  230  230  230
+  Exiled Throne (Manic)     -    -    -  160  160  180
 
 advice-fish                             # Advice Fish, no max
-  stages                      6m  7e   7m   7l  end1  end2  max
-  Advice on Life and Death     -  10  210  370  470  470  490
-  Advice on Sleeping           -   -  110  280  380  390  400
-  Advice on Materialism        -   -   20  160  250  290  290
-  Advice on Being Tired        -   -  160  310  420  420  450
-  Advice on Murder One         -   -   95  250  360  360  370
-  Advice on Being Smart        -   -   55  210  330  330  330
-  Advice on Settlement         -   -    -  140  230  260  280
+  stages                      7e   7m   7l  end1  end2  max
+  Advice on Life and Death    10  210  370  470  470  490
+  Advice on Sleeping           -  110  280  380  390  400
+  Advice on Materialism        -   20  160  250  290  290
+  Advice on Being Tired        -  160  310  420  420  450
+  Advice on Murder One         -   95  250  360  360  370
+  Advice on Being Smart        -   55  210  330  330  330
+  Advice on Settlement         -    -  140  230  260  280
 
 clam-work                               # Clam Work Compensations
-  stages                               6m  7e  7m  7l  end1  end2  max
-  +1 Grade for 2 Gallery Slots          -   1   1   1   1   1   1
-  +1 Legend Talent PTS                  -   1   1   1   1   1   1
-  +10 LV/day for Kattlekruk bubbles     -   1   1   1   1   1   1
-  +5% Meritocracy Multi bonus           -   -   1   1   1   1   1
-  +20% extra Daily Coral                -   -   1   1   1   1   1
-  +15 LV/day from Brain Coral           -   -   -   1   1   1   1
-  +3% Gallery Bonus Multi               -   -   -   1   1   1   1
-  +25% Lumi Gains Rate                  -   -   -   1   1   1   1
-  1.25x Research EXP gain               -   -   -   -   -   1   1
-  10x Cooking Speed                     -   -   -   -   -   -   1
-  2x Spelunking POW                     -   -   -   -   -   -   -  # no save has it yet
+  stages                               7e  7m  7l  end1  end2  max
+  +1 Grade for 2 Gallery Slots          1   1   1   1   1   1
+  +1 Legend Talent PTS                  1   1   1   1   1   1
+  +10 LV/day for Kattlekruk bubbles     1   1   1   1   1   1
+  +5% Meritocracy Multi bonus           -   1   1   1   1   1
+  +20% extra Daily Coral                -   1   1   1   1   1
+  +15 LV/day from Brain Coral           -   -   1   1   1   1
+  +3% Gallery Bonus Multi               -   -   1   1   1   1
+  +25% Lumi Gains Rate                  -   -   1   1   1   1
+  1.25x Research EXP gain               -   -   -   -   1   1
+  10x Cooking Speed                     -   -   -   -   -   1
+  2x Spelunking POW                     -   -   -   -   -   -  # no save has it yet
 
 clam-upgrades                           # Clamworks Upgrades, no max
-  stages             6m  7e   7m   7l  end1  end2  max
-  Pure Pearls         -   5   10   19   40   40   70
-  Pearl Value         -  70  100  100  160  160  250
-  Clam Comrades       -   9   12   14   20   20   25
-  Lucky Day           -  25   30   40   60   60   95
-  Multi-scalping      -  15   30   30   55   55  100
-  Frugality           -  25   40   70  120  120  230
-  Encystation Up      -   -    8    9   25   25   70
-  Shinier Pearls      -   -    -    -   25   25   80
-  Reckoning           -   -    -    -   20   35   50
-  Pearl Infection     -   -    -    -   14   14   20
-  Self Affliction     -   -    -    -    2    2    4
-  Cost Dissolving     -   -    -    -    8    8   20
-  Even Better         -   -    -    -   25   25   25
-  Cross Culting       -   -    -    -    6    7   20
-  Anti Inflation      -   -    -    -    -    -   70
-  Gravestart          -   -    -    -    -    -    -  # no save has it yet
-  Swarming            -   -    -    -    -    -    -  # no save has it yet
-  True Scurge         -   -    -    -    -    -    -  # no save has it yet
+  stages             7e   7m   7l  end1  end2  max
+  Pure Pearls         5   10   19   40   40   70
+  Pearl Value        70  100  100  160  160  250
+  Clam Comrades       9   12   14   20   20   25
+  Lucky Day          25   30   40   60   60   95
+  Multi-scalping     15   30   30   55   55  100
+  Frugality          25   40   70  120  120  230
+  Encystation Up      -    8    9   25   25   70
+  Shinier Pearls      -    -    -   25   25   80
+  Reckoning           -    -    -   20   35   50
+  Pearl Infection     -    -    -   14   14   20
+  Self Affliction     -    -    -    2    2    4
+  Cost Dissolving     -    -    -    8    8   20
+  Even Better         -    -    -   25   25   25
+  Cross Culting       -    -    -    6    7   20
+  Anti Inflation      -    -    -    -    -   70
+  Gravestart          -    -    -    -    -    -  # no save has it yet
+  Swarming            -    -    -    -    -    -  # no save has it yet
+  True Scurge         -    -    -    -    -    -  # no save has it yet
 
 coral-kid                               # Coral Kid, no max
-  stages                           6m  7e   7m   7l  end1  end2  max
-  Blessing Max LV                   -  14   55   95  110  110  120
-  Volcano Divinity Link             -  55  140  240  290  290  300
-  God Rank Class EXP                -  20  110  200  250  270  270
-  Minor Link Boost                  -  16   85  190  250  260  260
-  Divinity PTS per Reef Upgrade     -   4  100  170  210  240  250
-  Daily Coral                       -   -   50  110  190  200  210
-  Transmute Base Value              -   -    -    1   30   40   45
-  Singularity Transmute             -   -    -   11   55   60   65
-  Divinity EXP                      -   -    -    -   18   20   25
-  Time Elapsed from AFK Gains       -   -    -    -    1    1    2
-  Lumi Gain                         -   -    -    -    -    -    -  # no save has it yet
-  God Rank DMG                      -   -    -    -    -    -    -  # no save has it yet
+  stages                           7e   7m   7l  end1  end2  max
+  Blessing Max LV                  14   55   95  110  110  120
+  Volcano Divinity Link            55  140  240  290  290  300
+  God Rank Class EXP               20  110  200  250  270  270
+  Minor Link Boost                 16   85  190  250  260  260
+  Divinity PTS per Reef Upgrade     4  100  170  210  240  250
+  Daily Coral                       -   50  110  190  200  210
+  Transmute Base Value              -    -    1   30   40   45
+  Singularity Transmute             -    -   11   55   60   65
+  Divinity EXP                      -    -    -   18   20   25
+  Time Elapsed from AFK Gains       -    -    -    1    1    2
+  Lumi Gain                         -    -    -    -    -    -  # no save has it yet
+  God Rank DMG                      -    -    -    -    -    -  # no save has it yet
 
 dancing-coral                           # Dancing Coral
-  stages                                        6m  7e  7m  7l  end1  end2  max
-  Daily Reef Coral (Woodular Shrine)             -   1   1   1   1   1   1
-  Spelunking POW (Isaccian Shrine)               -   1   1   1   1   1   1
-  Spelunking Amber gain (Crystal Shrine)         -   1   1   1   1   1   1
-  Class EXP gain (Pantheon Shrine)               -   -   1   1   1   1   1
-  Research EXP (Clover Shrine)                   -   -   1   1   1   1   1
-  Minehead DMG & Money (Summereading Shrine)     -   -   -   1   1   1   1
-  Lumi Gains (Crescent Shrine)                   -   -   -   -   1   1   1
+  stages                                        7e  7m  7l  end1  end2  max
+  Daily Reef Coral (Woodular Shrine)             1   1   1   1   1   1
+  Spelunking POW (Isaccian Shrine)               1   1   1   1   1   1
+  Spelunking Amber gain (Crystal Shrine)         1   1   1   1   1   1
+  Class EXP gain (Pantheon Shrine)               -   1   1   1   1   1
+  Research EXP (Clover Shrine)                   -   1   1   1   1   1
+  Minehead DMG & Money (Summereading Shrine)     -   -   1   1   1   1
+  Lumi Gains (Crescent Shrine)                   -   -   -   1   1   1
 
 gallery-trophies                        # Gallery Trophies
-  stages               6m  7e  7m  7l  end1  end2  max
-  Lucky Lad             -   1   1   1   1   1   1
-  Club Member           -   1   1   1   1   1   1
-  Club Maestro          -   1   1   1   1   1   1
-  Original Gamer        -   1   1   1   1   1   1
-  Luckier Lad           -   -   1   1   1   1   1
-  One of the Divine     -   -   1   1   1   1   1
-  Gladiator             -   -   1   1   1   1   1
-  Blunder Hero          -   -   1   1   1   1   1
-  Luckiest Lad          -   -   1   1   1   1   1
-  Dice Dynamo           -   -   1   1   1   1   1
-  Critter Baron         -   -   1   1   1   1   1
-  Heroic Spirit         -   -   -   1   1   1   1
-  Nebula Royal          -   -   -   1   1   1   1
-  Beach Bro             -   -   -   1   1   1   1
-  YumYum Sheriff        -   -   -   1   1   1   1
-  Trailblazer           -   -   -   -   1   1   1
-  Frost Prince          -   -   -   -   1   1   1
-  King of Food          -   -   -   -   1   1   1
-  Ultra Unboxer         -   -   -   -   1   1   1
-  Idle Skiller          -   -   -   -   1   1   1
-  Nine Dart Finish      -   -   -   -   1   1   1
-  Megalodon             -   -   -   -   -   -   -
-  Master of Nothing     -   -   -   -   -   -   -
-  Baller                -   -   -   -   -   -   -
+  stages               7e  7m  7l  end1  end2  max
+  Lucky Lad             1   1   1   1   1   1
+  Club Member           1   1   1   1   1   1
+  Club Maestro          1   1   1   1   1   1
+  Original Gamer        1   1   1   1   1   1
+  Luckier Lad           -   1   1   1   1   1
+  One of the Divine     -   1   1   1   1   1
+  Gladiator             -   1   1   1   1   1
+  Blunder Hero          -   1   1   1   1   1
+  Luckiest Lad          -   1   1   1   1   1
+  Dice Dynamo           -   1   1   1   1   1
+  Critter Baron         -   1   1   1   1   1
+  Heroic Spirit         -   -   1   1   1   1
+  Nebula Royal          -   -   1   1   1   1
+  Beach Bro             -   -   1   1   1   1
+  YumYum Sheriff        -   -   1   1   1   1
+  Trailblazer           -   -   -   1   1   1
+  Frost Prince          -   -   -   1   1   1
+  King of Food          -   -   -   1   1   1
+  Ultra Unboxer         -   -   -   1   1   1
+  Idle Skiller          -   -   -   1   1   1
+  Nine Dart Finish      -   -   -   1   1   1
+  Megalodon             -   -   -   -   -   -
+  Master of Nothing     -   -   -   -   -   -
+  Baller                -   -   -   -   -   -
 
 gallery-podiums                         # Gallery Podiums
-  stages       6m  7e  7m  7l  end1  end2  max
-  Podium 1      -   1   1   1   1   1   1
-  Podium 2      -   1   1   1   1   1   1
-  Podium 3      -   1   1   1   1   1   1
-  Podium 4      -   1   1   1   1   1   1
-  Podium 5      -   1   1   1   1   1   1
-  Podium 6      -   -   1   1   1   1   1
-  Podium 8      -   -   1   1   1   1   1
-  Podium 7      -   -   1   1   1   1   1
-  Podium 9      -   -   1   1   1   1   1
-  Podium 10     -   -   1   1   1   1   1
-  Podium 11     -   -   1   1   1   1   1
-  Podium 12     -   -   1   1   1   1   1
-  Podium 13     -   -   1   1   1   1   1
-  Podium 15     -   -   -   1   1   1   1
-  Podium 14     -   -   -   1   1   1   1
-  Podium 16     -   -   -   1   1   1   1
-  Podium 17     -   -   -   -   -   -   -  # no save has it yet
-  Podium 18     -   -   -   -   -   -   -  # no save has it yet
-  Podium 19     -   -   -   -   -   -   -  # no save has it yet
+  stages       7e  7m  7l  end1  end2  max
+  Podium 1      1   1   1   1   1   1
+  Podium 2      1   1   1   1   1   1
+  Podium 3      1   1   1   1   1   1
+  Podium 4      1   1   1   1   1   1
+  Podium 5      1   1   1   1   1   1
+  Podium 6      -   1   1   1   1   1
+  Podium 8      -   1   1   1   1   1
+  Podium 7      -   1   1   1   1   1
+  Podium 9      -   1   1   1   1   1
+  Podium 10     -   1   1   1   1   1
+  Podium 11     -   1   1   1   1   1
+  Podium 12     -   1   1   1   1   1
+  Podium 13     -   1   1   1   1   1
+  Podium 15     -   -   1   1   1   1
+  Podium 14     -   -   1   1   1   1
+  Podium 16     -   -   1   1   1   1
+  Podium 17     -   -   -   -   -   -  # no save has it yet
+  Podium 18     -   -   -   -   -   -  # no save has it yet
+  Podium 19     -   -   -   -   -   -  # no save has it yet
 
 gallery-nametags                        # Gallery Nametags
-  stages                            6m  7e  7m  7l  end1  end2  max
-  Vman Nametag                       -   1   2   5   5   5   5
-  Falloween Nametag                  -   1   1   1   5   5   5
-  Tome Apprentice Nametag            -   2   3   5   5   5   5
-  Nightshade Nametag                 -   1   1   1   3   4   5
-  Megafeather Nametag                -   1   1   1   5   5   5
-  Tome Journeyman Nametag            -   -   2   5   5   5   5
-  Reliquarium Nametag                -   -   2   5   5   5   5
-  Treasure Nametag                   -   -   1   1   5   5   5
-  Tome Legend Nametag                -   -   -   1   1   1   5
-  Summer Shovel Nametag              -   -   -   1   4   4   5
-  Lovely Day Nametag                 -   -   -   1   5   5   5
-  Gingerbread Nametag                -   -   -   1   5   5   5
-  Singed Nametag                     -   -   -   1   3   3   3
-  Frostyman Nametag                  -   -   -   1   2   2   2
-  Tome Expert Nametag                -   -   -   3   5   5   5
-  Deadbones Nametag                  -   -   -   1   2   4   4
-  Tome Elite Nametag                 -   -   -   1   5   5   5
-  Spring Flowers Nametag             -   -   -   -   1   1   2
-  3rd Anniversary IdleOn Nametag     -   -   -   -   5   5   5
-  4th Anniversary IdleOn Nametag     -   -   -   -   5   5   5
-  5th Anniversary IdleOn Nametag     -   -   -   -   5   5   5
-  Wonderful 5th Year Nametag         -   -   -   -   5   5   5
-  Grand Egg Nametag                  -   -   -   -   1   1   1
-  Island Adventurer Nametag          -   -   -   -   1   1   1
-  Riftwalker Nametag                 -   -   -   -   1   1   1
-  Trash Tuna Nametag                 -   -   -   -   1   1   5
-  Timeless Nametag                   -   -   -   -   2   2   2
-  Balling Nametag                    -   -   -   -   5   5   5
-  Tome Pro Nametag                   -   -   -   -   5   5   5
-  Sweet Chocolate Nametag            -   -   -   -   5   5   5
-  Aethermoon Nametag                 -   -   -   -   2   2   2
-  Cropfall Nametag                   -   -   -   -   3   3   3
-  Pot of Gold Nametag                -   -   -   -   4   4   4
-  Emerald Nametag                    -   -   -   -   5   5   5
-  All That Glitters Nametag          -   -   -   -   4   4   4
-  Snowflake Nametag                  -   -   -   -   4   4   5
-  Spectacular 4th Year Nametag       -   -   -   -   3   3   3
-  Tome Master Nametag                -   -   -   -   4   4   5
-  Spooky Scary Nametag               -   -   -   -   4   4   5
+  stages                            7e  7m  7l  end1  end2  max
+  Vman Nametag                       1   2   5   5   5   5
+  Falloween Nametag                  1   1   1   5   5   5
+  Tome Apprentice Nametag            2   3   5   5   5   5
+  Nightshade Nametag                 1   1   1   3   4   5
+  Megafeather Nametag                1   1   1   5   5   5
+  Tome Journeyman Nametag            -   2   5   5   5   5
+  Reliquarium Nametag                -   2   5   5   5   5
+  Treasure Nametag                   -   1   1   5   5   5
+  Tome Legend Nametag                -   -   1   1   1   5
+  Summer Shovel Nametag              -   -   1   4   4   5
+  Lovely Day Nametag                 -   -   1   5   5   5
+  Gingerbread Nametag                -   -   1   5   5   5
+  Singed Nametag                     -   -   1   3   3   3
+  Frostyman Nametag                  -   -   1   2   2   2
+  Tome Expert Nametag                -   -   3   5   5   5
+  Deadbones Nametag                  -   -   1   2   4   4
+  Tome Elite Nametag                 -   -   1   5   5   5
+  Spring Flowers Nametag             -   -   -   1   1   2
+  3rd Anniversary IdleOn Nametag     -   -   -   5   5   5
+  4th Anniversary IdleOn Nametag     -   -   -   5   5   5
+  5th Anniversary IdleOn Nametag     -   -   -   5   5   5
+  Wonderful 5th Year Nametag         -   -   -   5   5   5
+  Grand Egg Nametag                  -   -   -   1   1   1
+  Island Adventurer Nametag          -   -   -   1   1   1
+  Riftwalker Nametag                 -   -   -   1   1   1
+  Trash Tuna Nametag                 -   -   -   1   1   5
+  Timeless Nametag                   -   -   -   2   2   2
+  Balling Nametag                    -   -   -   5   5   5
+  Tome Pro Nametag                   -   -   -   5   5   5
+  Sweet Chocolate Nametag            -   -   -   5   5   5
+  Aethermoon Nametag                 -   -   -   2   2   2
+  Cropfall Nametag                   -   -   -   3   3   3
+  Pot of Gold Nametag                -   -   -   4   4   4
+  Emerald Nametag                    -   -   -   5   5   5
+  All That Glitters Nametag          -   -   -   4   4   4
+  Snowflake Nametag                  -   -   -   4   4   5
+  Spectacular 4th Year Nametag       -   -   -   3   3   3
+  Tome Master Nametag                -   -   -   4   4   5
+  Spooky Scary Nametag               -   -   -   4   4   5
 
 menagerie-unlocks                       # Menagerie Unlocks
-  stages                                                  6m  7e  7m  7l  end1  end2  max
-  You can now find the Verisimilitude Artifacts            -   1   1   1   1   1   1
-  Spelunking Caverns get a Shortcut every 50 Depths        -   1   1   1   1   1   1
-  Unlock Singularity Mode for the Coral Kid                -   1   1   1   1   1   1
-  Unlock the Pink Jellyfish within the Menagerie           -   -   1   1   1   1   1
-  New Musselini Upgrades at The Clamworks                  -   -   1   1   1   1   1
-  Unlock the Blue Jellyfish within the Menagerie           -   -   1   1   1   1   1
-  Unlock the Red Jellyfish within the Menagerie            -   -   1   1   1   1   1
-  Mobs drop Omega Arcade Balls, 1 in chance                -   -   1   1   1   1   1
-  Unlock the Crucible Mode in the Breeding Arena           -   -   -   1   1   1   1
-  Increases Max LV of the 'Pillar' Coral Reef by +3        -   -   -   1   1   1   1
-  Unlock the Silver Jellyfish within the Menagerie         -   -   -   1   1   1   1
-  +10 Max Shiny LV in Breeding                             -   -   -   1   1   1   1
-  Unlock the Yellow Jellyfish within the Menagerie         -   -   -   1   1   1   1
-  Lv.600+ Sailing Ships become Nightmariners               -   -   -   1   1   1   1
-  Adds 2 new White Legend Talents to Whallamus             -   -   -   1   1   1   1
-  Never lose Stim from starting Spelunking Delves          -   -   -   1   1   1   1
-  Adds a new Atom type to the Atom Collider                -   -   -   -   1   1   1
-  Boosts max Flair LV of Statues to Elegant                -   -   -   -   1   1   1
-  Doubles the 1st trait for Wizards                        -   -   -   -   1   1   1
-  Boost the Max LV of various Legend Talents               -   -   -   -   -   -   1
-  Boost the Max Cooking LV by +10                          -   -   -   -   -   -   -  # no save has it yet
-  Boost the Max Tiny Cog Tier to T11                       -   -   -   -   -   -   -  # no save has it yet
-  Maize and Muffin Sticker Bonuses are now Multi           -   -   -   -   -   -   -  # no save has it yet
-  Unlock the Green Jellyfish within the Menagerie          -   -   -   -   -   -   -  # no save has it yet
-  Adds a new Magnifier to use on Research Observations     -   -   -   -   -   -   -  # no save has it yet
+  stages                                                  7e  7m  7l  end1  end2  max
+  You can now find the Verisimilitude Artifacts            1   1   1   1   1   1
+  Spelunking Caverns get a Shortcut every 50 Depths        1   1   1   1   1   1
+  Unlock Singularity Mode for the Coral Kid                1   1   1   1   1   1
+  Unlock the Pink Jellyfish within the Menagerie           -   1   1   1   1   1
+  New Musselini Upgrades at The Clamworks                  -   1   1   1   1   1
+  Unlock the Blue Jellyfish within the Menagerie           -   1   1   1   1   1
+  Unlock the Red Jellyfish within the Menagerie            -   1   1   1   1   1
+  Mobs drop Omega Arcade Balls, 1 in chance                -   1   1   1   1   1
+  Unlock the Crucible Mode in the Breeding Arena           -   -   1   1   1   1
+  Increases Max LV of the 'Pillar' Coral Reef by +3        -   -   1   1   1   1
+  Unlock the Silver Jellyfish within the Menagerie         -   -   1   1   1   1
+  +10 Max Shiny LV in Breeding                             -   -   1   1   1   1
+  Unlock the Yellow Jellyfish within the Menagerie         -   -   1   1   1   1
+  Lv.600+ Sailing Ships become Nightmariners               -   -   1   1   1   1
+  Adds 2 new White Legend Talents to Whallamus             -   -   1   1   1   1
+  Never lose Stim from starting Spelunking Delves          -   -   1   1   1   1
+  Adds a new Atom type to the Atom Collider                -   -   -   1   1   1
+  Boosts max Flair LV of Statues to Elegant                -   -   -   1   1   1
+  Doubles the 1st trait for Wizards                        -   -   -   1   1   1
+  Boost the Max LV of various Legend Talents               -   -   -   -   -   1
+  Boost the Max Cooking LV by +10                          -   -   -   -   -   -  # no save has it yet
+  Boost the Max Tiny Cog Tier to T11                       -   -   -   -   -   -  # no save has it yet
+  Maize and Muffin Sticker Bonuses are now Multi           -   -   -   -   -   -  # no save has it yet
+  Unlock the Green Jellyfish within the Menagerie          -   -   -   -   -   -  # no save has it yet
+  Adds a new Magnifier to use on Research Observations     -   -   -   -   -   -  # no save has it yet
 
 menagerie-boosts                        # Menagerie Boosts, no max
-  stages                                        6m  7e  7m  7l  end1  end2  max
-  More Menagerie Missions                        -   9   9  18  20  20  20
-  Each Menagerie Rank boosts Lumi/hr by          -   -   8  16  20  20  20
-  Black Stars to use in your Gaming Palette      -   -   1   3   4   4   5
-  Research EXP gains                             -   -  10  20  40  40  40
-  Cooking Speed                                  -   -   2  16  35  35  40
-  Max LV for all Shrines in Construction         -   -   1   2   3   4   4
-  Cheaper summoning upgrades per 50 upg LVs      -   -   -   2   9  11  12
-  Minehead Upgrade Doublers                      -   -   -   1   3   3   3
-  Extra value for all Sailing Treasure           -   -   -   1  18  20  20
-  Jelly Operator Upgrade Doublers                -   -   -   1   2   2   3
-  Organic Labels to use in the Exotic Market     -   -   -   2   6   6   6
-  Forge Speed all the way back in World 1        -   -   -   1   7  13  18
-  Sushi Station Upgrade Doublers                 -   -   -   -   2   2   2
-  All Shiny Critters are worth more              -   -   -   -  10  10  13
-  All Summoning Essence gain                     -   -   -   -   9  11  14
-  Orion's first upgrade is cheaper               -   -   -   -   6   6   9
-  Max LVs for all Atoms                          -   -   -   -   1   1   2
-  Slow Roast Wiz starts at sec every wave        -   -   -   -   8   8   9
-  Poppy's first upgrade is cheaper               -   -   -   -   -   5   5
-  Land Rank EXP for all Farming Plots            -   -   -   -   -   -   -  # no save has it yet
-  Bubba's first upgrade is cheaper               -   -   -   -   -   -   -  # no save has it yet
-  Cooking Mastery EXP gains                      -   -   -   -   -   -   -  # no save has it yet
-  Spelunking POW                                 -   -   -   -   -   -   -  # no save has it yet
-  Class EXP gain                                 -   -   -   -   -   -   -  # no save has it yet
-  Drop Rate                                      -   -   -   -   -   -   -  # no save has it yet
+  stages                                        7e  7m  7l  end1  end2  max
+  More Menagerie Missions                        9   9  18  20  20  20
+  Each Menagerie Rank boosts Lumi/hr by          -   8  16  20  20  20
+  Black Stars to use in your Gaming Palette      -   1   3   4   4   5
+  Research EXP gains                             -  10  20  40  40  40
+  Cooking Speed                                  -   2  16  35  35  40
+  Max LV for all Shrines in Construction         -   1   2   3   4   4
+  Cheaper summoning upgrades per 50 upg LVs      -   -   2   9  11  12
+  Minehead Upgrade Doublers                      -   -   1   3   3   3
+  Extra value for all Sailing Treasure           -   -   1  18  20  20
+  Jelly Operator Upgrade Doublers                -   -   1   2   2   3
+  Organic Labels to use in the Exotic Market     -   -   2   6   6   6
+  Forge Speed all the way back in World 1        -   -   1   7  13  18
+  Sushi Station Upgrade Doublers                 -   -   -   2   2   2
+  All Shiny Critters are worth more              -   -   -  10  10  13
+  All Summoning Essence gain                     -   -   -   9  11  14
+  Orion's first upgrade is cheaper               -   -   -   6   6   9
+  Max LVs for all Atoms                          -   -   -   1   1   2
+  Slow Roast Wiz starts at sec every wave        -   -   -   8   8   9
+  Poppy's first upgrade is cheaper               -   -   -   -   5   5
+  Land Rank EXP for all Farming Plots            -   -   -   -   -   -  # no save has it yet
+  Bubba's first upgrade is cheaper               -   -   -   -   -   -  # no save has it yet
+  Cooking Mastery EXP gains                      -   -   -   -   -   -  # no save has it yet
+  Spelunking POW                                 -   -   -   -   -   -  # no save has it yet
+  Class EXP gain                                 -   -   -   -   -   -  # no save has it yet
+  Drop Rate                                      -   -   -   -   -   -  # no save has it yet
 
 menagerie-missions                      # Menagerie Missions, no max
-  stages                           6m  7e  7m  7l  end1  end2  max
-  Account LV                        -   1   6   7   9   9   9
-  Sneaking Mastery                  -   1   4   6   7   8   8
-  Total Depths, including Manic     -   -   1   5   9  10  10
-  Victories                         -   -   3   5   7   7   7
-  Best Waves                        -   -   1   4   6   6   7
-  God Ranks                         -   -   1   3   4   5   5
-  Turkey Meal LVs                   -   -   2   4   6   6   7
-  Worker Class                      -   -   1   6   7   8   9
-  Minehead wins                     -   -   2   4   5   5   6
-  Successful Operations             -   -   3   5   7   8   8
-  Crops Discovered                  -   -   -   5   6   6   6
-  Sushi Types Cooked                -   -   -   5   5   5   5
-  Button Presses                    -   -   -   4   8   8   8
-  Glimbo Trades                     -   -   -   1   3   5   5
-  Greenstacks                       -   -   -   2   6   6   6
-  Emperor Showdown beaten           -   -   -   2   3   4   4
-  Gaming Bits owned                 -   -   -   2   4   4   4
-  Opals Earned                      -   -   -   2   4   5   6
-  Tome Score                        -   -   -   4   4   4   4
-  Artifact Findings                 -   -   -   3   4   4   4
-  Copper Sample Digits              -   -   -   4   6   7   7
-  Cavern Layer Removals             -   -   -   3   5   5   6
-  Fractal Megafeathers              -   -   -   1   2   3   3
-  Eclectic Megafish                 -   -   -   1   4   4   4
-  Summoning Boss Kills              -   -   -   -   3   3   3
-  Farming Stickers                  -   -   -   -   3   4   4
-  Deathnote Boss PTS                -   -   -   -   2   3   3
-  Rat King Crowns                   -   -   -   -   7   7   7
-  Slab Items                        -   -   -   -   4   4   4
-  Chromatic Megaflesh               -   -   -   -   2   3   5
-  Palette LVs                       -   -   -   -   7   7   7
-  Sigil LVs                         -   -   -   -   -   4   4
-  Total Killroy Prime kills         -   -   -   -   -   -   -  # no save has it yet
+  stages                           7e  7m  7l  end1  end2  max
+  Account LV                        1   6   7   9   9   9
+  Sneaking Mastery                  1   4   6   7   8   8
+  Total Depths, including Manic     -   1   5   9  10  10
+  Victories                         -   3   5   7   7   7
+  Best Waves                        -   1   4   6   6   7
+  God Ranks                         -   1   3   4   5   5
+  Turkey Meal LVs                   -   2   4   6   6   7
+  Worker Class                      -   1   6   7   8   9
+  Minehead wins                     -   2   4   5   5   6
+  Successful Operations             -   3   5   7   8   8
+  Crops Discovered                  -   -   5   6   6   6
+  Sushi Types Cooked                -   -   5   5   5   5
+  Button Presses                    -   -   4   8   8   8
+  Glimbo Trades                     -   -   1   3   5   5
+  Greenstacks                       -   -   2   6   6   6
+  Emperor Showdown beaten           -   -   2   3   4   4
+  Gaming Bits owned                 -   -   2   4   4   4
+  Opals Earned                      -   -   2   4   5   6
+  Tome Score                        -   -   4   4   4   4
+  Artifact Findings                 -   -   3   4   4   4
+  Copper Sample Digits              -   -   4   6   7   7
+  Cavern Layer Removals             -   -   3   5   5   6
+  Fractal Megafeathers              -   -   1   2   3   3
+  Eclectic Megafish                 -   -   1   4   4   4
+  Summoning Boss Kills              -   -   -   3   3   3
+  Farming Stickers                  -   -   -   3   4   4
+  Deathnote Boss PTS                -   -   -   2   3   3
+  Rat King Crowns                   -   -   -   7   7   7
+  Slab Items                        -   -   -   4   4   4
+  Chromatic Megaflesh               -   -   -   2   3   5
+  Palette LVs                       -   -   -   7   7   7
+  Sigil LVs                         -   -   -   -   4   4
+  Total Killroy Prime kills         -   -   -   -   -   -  # no save has it yet
 
 menagerie-jellyfish                     # Menagerie Jellyfish
-  stages                               6m  7e  7m  7l  end1  end2  max
-  Silver Jellyfish: Obol auto-trash     -   -   -  35  55  75  90
-  Silver Jellyfish: Obol bonuses        -   -   -  14  16  30  30
+  stages                               7e  7m  7l  end1  end2  max
+  Silver Jellyfish: Obol auto-trash     -   -  35  55  75  90
+  Silver Jellyfish: Obol bonuses        -   -  14  16  30  30
 
 observations                            # Research Observations
-  stages               6m  7e  7m  7l  end1  end2  max
-  Bored Tree            1   1   1   1   1   1   1
-  Bridge Plank          1   1   1   1   1   1   1
-  Carrot Patch          1   1   1   1   1   1   1
-  Shopping Oyseter      -   1   1   1   1   1   1
-  Salty Seawebs         -   1   1   1   1   1   1
-  Ominous Signage       -   1   1   1   1   1   1
-  Barnacle Brothers     -   1   1   1   1   1   1
-  Canyon Pointerino     -   1   1   1   1   1   1
-  Dogbone Tombstone     -   1   1   1   1   1   1
-  Corange Coral         -   1   1   1   1   1   1
-  Oasis Erosion         -   1   1   1   1   1   1
-  Useless Anchor        -   1   1   1   1   1   1
-  Green Shallowrock     -   1   1   1   1   1   1
-  Broken Spacerocks     -   1   1   1   1   1   1
-  Coraltree Branch      -   1   1   1   1   1   1
-  Tetrino Stones        -   1   1   1   1   1   1
-  Oboe Coral Trio       -   1   1   1   1   1   1
-  Stalagtite            -   1   1   1   1   1   1
-  OG Secret Rock        -   1   1   1   1   1   1
-  Spadespire            -   -   1   1   1   1   1
-  Meenie Cactus         -   -   1   1   1   1   1
-  Seaswept Ruins        -   -   1   1   1   1   1
-  Treeception           -   -   1   1   1   1   1
-  Keymaster             -   -   1   1   1   1   1
-  Happy Piggy           -   -   1   1   1   1   1
-  Space Drip            -   -   1   1   1   1   1
-  Coralcave Coral       -   -   1   1   1   1   1
-  Unblinking Eye        -   -   1   1   1   1   1
-  Monster Decoy         -   -   1   1   1   1   1
-  Standard Stump        -   -   1   1   1   1   1
-  Big Ol Reef           -   -   1   1   1   1   1
-  Oasis Palm            -   -   1   1   1   1   1
-  Stalagmite            -   -   -   1   1   1   1
-  Rope Lamp             -   -   -   1   1   1   1
-  Unremarkable Rock     -   -   -   1   1   1   1
-  Standard Mine         -   -   -   1   1   1   1
-  Ancient Chainrope     -   -   -   1   1   1   1
-  Birchtree Bitty       -   -   -   1   1   1   1
-  Unreachable Grate     -   -   -   -   1   1   1
-  Genuine Deadwood      -   -   -   -   1   1   1
-  Rifty Crystals        -   -   -   -   1   1   1
-  Pirate Flag           -   -   -   -   1   1   1
-  Happy Tree            -   -   -   -   -   1   1
+  stages               7e  7m  7l  end1  end2  max
+  Bored Tree            1   1   1   1   1   1
+  Shopping Oyseter      1   1   1   1   1   1
+  Bridge Plank          1   1   1   1   1   1
+  Carrot Patch          1   1   1   1   1   1
+  Salty Seawebs         1   1   1   1   1   1
+  Ominous Signage       1   1   1   1   1   1
+  Barnacle Brothers     1   1   1   1   1   1
+  Canyon Pointerino     1   1   1   1   1   1
+  Dogbone Tombstone     1   1   1   1   1   1
+  Corange Coral         1   1   1   1   1   1
+  Oasis Erosion         1   1   1   1   1   1
+  Useless Anchor        1   1   1   1   1   1
+  Green Shallowrock     1   1   1   1   1   1
+  Broken Spacerocks     1   1   1   1   1   1
+  Coraltree Branch      1   1   1   1   1   1
+  Tetrino Stones        1   1   1   1   1   1
+  Oboe Coral Trio       1   1   1   1   1   1
+  Stalagtite            1   1   1   1   1   1
+  OG Secret Rock        1   1   1   1   1   1
+  Spadespire            -   1   1   1   1   1
+  Meenie Cactus         -   1   1   1   1   1
+  Seaswept Ruins        -   1   1   1   1   1
+  Treeception           -   1   1   1   1   1
+  Keymaster             -   1   1   1   1   1
+  Happy Piggy           -   1   1   1   1   1
+  Space Drip            -   1   1   1   1   1
+  Coralcave Coral       -   1   1   1   1   1
+  Unblinking Eye        -   1   1   1   1   1
+  Monster Decoy         -   1   1   1   1   1
+  Standard Stump        -   1   1   1   1   1
+  Big Ol Reef           -   1   1   1   1   1
+  Oasis Palm            -   1   1   1   1   1
+  Stalagmite            -   -   1   1   1   1
+  Rope Lamp             -   -   1   1   1   1
+  Unremarkable Rock     -   -   1   1   1   1
+  Standard Mine         -   -   1   1   1   1
+  Ancient Chainrope     -   -   1   1   1   1
+  Birchtree Bitty       -   -   1   1   1   1
+  Unreachable Grate     -   -   -   1   1   1
+  Genuine Deadwood      -   -   -   1   1   1
+  Rifty Crystals        -   -   -   1   1   1
+  Pirate Flag           -   -   -   1   1   1
+  Happy Tree            -   -   -   -   1   1
 
 observation-levels                      # Observation Insight, no max
-  stages               6m  7e  7m  7l  end1  end2  max
-  Shopping Oyseter      -   5   8   8  11  11  13
-  Corange Coral         -   2   5   6  10  10  10
-  Salty Seawebs         -   5   6   7  10  10  11
-  Bored Tree            -   5   6   8  13  13  13
-  Bridge Plank          -   5   5   6  10  10  13
-  Carrot Patch          -   5   5   7  10  10  12
-  Dogbone Tombstone     -   3   4   7  10  10  11
-  Canyon Pointerino     -   3   4   7  10  10  10
-  Ominous Signage       -   4   6   6  11  11  11
-  Barnacle Brothers     -   2   5   6  10  10  10
-  Spadespire            -   -   3   5   9   9   9
-  Seaswept Ruins        -   -   2   4   7   7   7
-  Tetrino Stones        -   -   3   4   8   8   8
-  Oasis Erosion         -   -   4   5  10  10  10
-  Green Shallowrock     -   -   4   4  10  10  10
-  Broken Spacerocks     -   -   4   5  10  10  10
-  Coraltree Branch      -   -   4   6   9   9   9
-  Stalagtite            -   -   3   5  10  10  10
-  Meenie Cactus         -   -   1   5  10  10  10
-  Useless Anchor        -   -   3   4  10  10  10
-  Oboe Coral Trio       -   -   2   4   8   8   8
-  OG Secret Rock        -   -   3   5   8   8   9
-  Treeception           -   -   3   4   7   7   8
-  Keymaster             -   -   2   4   6   6   7
-  Monster Decoy         -   -   -   5   8   8   9
-  Standard Stump        -   -   -   2   7   8   9
-  Big Ol Reef           -   -   -   4   7   8   8
-  Happy Piggy           -   -   -   4  10  10  10
-  Space Drip            -   -   -   3   9   9   9
-  Coralcave Coral       -   -   -   5   9   9   9
-  Unblinking Eye        -   -   -   2  10  10  10
-  Rope Lamp             -   -   -   -   5   7   8
-  Ancient Chainrope     -   -   -   -   5   5   8
-  Stalagmite            -   -   -   -   5   7   7
-  Genuine Deadwood      -   -   -   -   3   3   7
-  Unremarkable Rock     -   -   -   -   6   7   9
-  Standard Mine         -   -   -   -   5   5   7
-  Oasis Palm            -   -   -   -   7   7   8
-  Birchtree Bitty       -   -   -   -   4   4   7
-  Unreachable Grate     -   -   -   -   4   4   7
-  Rifty Crystals        -   -   -   -   2   2   4
-  Pirate Flag           -   -   -   -   4   4   4
-  Happy Tree            -   -   -   -   -   -   5
+  stages               7e  7m  7l  end1  end2  max
+  Shopping Oyseter      5   8   8  11  11  13
+  Corange Coral         2   5   6  10  10  10
+  Salty Seawebs         5   6   7  10  10  11
+  Bored Tree            5   6   8  13  13  13
+  Bridge Plank          5   5   6  10  10  13
+  Carrot Patch          5   5   7  10  10  12
+  Dogbone Tombstone     3   4   7  10  10  11
+  Canyon Pointerino     3   4   7  10  10  10
+  Ominous Signage       4   6   6  11  11  11
+  Barnacle Brothers     2   5   6  10  10  10
+  Spadespire            -   3   5   9   9   9
+  Seaswept Ruins        -   2   4   7   7   7
+  Tetrino Stones        -   3   4   8   8   8
+  Oasis Erosion         -   4   5  10  10  10
+  Green Shallowrock     -   4   4  10  10  10
+  Broken Spacerocks     -   4   5  10  10  10
+  Coraltree Branch      -   4   6   9   9   9
+  Stalagtite            -   3   5  10  10  10
+  Meenie Cactus         -   1   5  10  10  10
+  Useless Anchor        -   3   4  10  10  10
+  Oboe Coral Trio       -   2   4   8   8   8
+  OG Secret Rock        -   3   5   8   8   9
+  Treeception           -   3   4   7   7   8
+  Keymaster             -   2   4   6   6   7
+  Monster Decoy         -   -   5   8   8   9
+  Standard Stump        -   -   2   7   8   9
+  Big Ol Reef           -   -   4   7   8   8
+  Happy Piggy           -   -   4  10  10  10
+  Space Drip            -   -   3   9   9   9
+  Coralcave Coral       -   -   5   9   9   9
+  Unblinking Eye        -   -   2  10  10  10
+  Rope Lamp             -   -   -   5   7   8
+  Ancient Chainrope     -   -   -   5   5   8
+  Stalagmite            -   -   -   5   7   7
+  Genuine Deadwood      -   -   -   3   3   7
+  Unremarkable Rock     -   -   -   6   7   9
+  Standard Mine         -   -   -   5   5   7
+  Oasis Palm            -   -   -   7   7   8
+  Birchtree Bitty       -   -   -   4   4   7
+  Unreachable Grate     -   -   -   4   4   7
+  Rifty Crystals        -   -   -   2   2   4
+  Pirate Flag           -   -   -   4   4   4
+  Happy Tree            -   -   -   -   -   5
 
 posty-notes                             # Posty Notes
-  stages                                                                                                                       6m  7e  7m  7l  end1  end2  max
-  Posty Note 1: Adds a new Magnifier for you to use                                                                             -   1   1   1   1   1   1
-  Posty Note 2: Adds a new shape to your Research Grid, which boosts the bonuses of all squares it touches                      -   1   1   1   1   1   1
-  Posty Note 3: Adds another shape to your Research Grid                                                                        -   1   1   1   1   1   1
-  Posty Note 4: You can now place TWO magnifiers on the same Observation                                                        -   1   1   1   1   1   1
-  Posty Note 5: Adds another shape to your Research Grid                                                                        -   1   1   1   1   1   1
-  Posty Note 6: You now get an additional Grid Point every 10 Research Levels                                                   -   -   1   1   1   1   1
-  Posty Note 7: You can now place THREE magnifiers on the same Observation                                                      -   -   1   1   1   1   1
-  Posty Note 8: Adds another shape to your Research Grid                                                                        -   -   -   1   1   1   1
-  Posty Note 9: You can now rotate your shapes                                                                                  -   -   -   -   1   1   1
-  Posty Note 10: Adds yet another Magnifier to your Clipboard                                                                   -   -   -   -   1   1   1
-  Posty Note 11: Adds another shape to your Research Grid                                                                       -   -   -   -   -   -   -  # no save has it yet
-  Posty Note 12: You can now place TWENTY magnif.... wait, wait no, I meant four... FOUR magnifiers on the same Observation     -   -   -   -   -   -   -  # no save has it yet
-  Posty Note 13: Adds an additional Magnifier to your Clipboard                                                                 -   -   -   -   -   -   -  # no save has it yet
-  Posty Note 14: +1 Magnifier                                                                                                   -   -   -   -   -   -   -  # no save has it yet
+  stages                                                                                                                       7e  7m  7l  end1  end2  max
+  Posty Note 1: Adds a new Magnifier for you to use                                                                             1   1   1   1   1   1
+  Posty Note 2: Adds a new shape to your Research Grid, which boosts the bonuses of all squares it touches                      1   1   1   1   1   1
+  Posty Note 3: Adds another shape to your Research Grid                                                                        1   1   1   1   1   1
+  Posty Note 4: You can now place TWO magnifiers on the same Observation                                                        1   1   1   1   1   1
+  Posty Note 5: Adds another shape to your Research Grid                                                                        1   1   1   1   1   1
+  Posty Note 6: You now get an additional Grid Point every 10 Research Levels                                                   -   1   1   1   1   1
+  Posty Note 7: You can now place THREE magnifiers on the same Observation                                                      -   1   1   1   1   1
+  Posty Note 8: Adds another shape to your Research Grid                                                                        -   -   1   1   1   1
+  Posty Note 9: You can now rotate your shapes                                                                                  -   -   -   1   1   1
+  Posty Note 10: Adds yet another Magnifier to your Clipboard                                                                   -   -   -   1   1   1
+  Posty Note 11: Adds another shape to your Research Grid                                                                       -   -   -   -   -   -  # no save has it yet
+  Posty Note 12: You can now place TWENTY magnif.... wait, wait no, I meant four... FOUR magnifiers on the same Observation     -   -   -   -   -   -  # no save has it yet
+  Posty Note 13: Adds an additional Magnifier to your Clipboard                                                                 -   -   -   -   -   -  # no save has it yet
+  Posty Note 14: +1 Magnifier                                                                                                   -   -   -   -   -   -  # no save has it yet
 
 glimbo                                  # Glimbo Trades, no max
-  stages                         6m  7e  7m   7l  end1  end2  max
-  Wicked Smart                    -  17  95  180  260  270  320
-  Active Murdering                -   1  16   40   75   90  100
-  Go Go Secret Kangaroo Mouse     -   3  25   85  120  120  140
-  Major Discount                  -   -  30   60   75   75   85
-  Monster Tax                     -   -   9   55  140  140  160
-  Vault Mastery                   -   -   3   12   30   30   35
-  Go Go Secret Owl                -   -  45   85  120  120  130
-  Pet Punchies                    -   -   1   17   75   75   85
-  Rest of the Essentials          -   -  17   35   40   45   50
-  Kitchen Dream-mare              -   -  25   80  110  130  130
-  Foraging Forever                -   -  12   35   80   95  120
-  Artifact Find Chance            -   -  13   45   60   65   70
-  Divinity Points                 -   -  13   45   65   65   95
-  Better Captains                 -   -  20   40   60   60   60
-  Finders Keepers                 -   -  55   80  100  100  100
-  Bigger Better Beans             -   -   3   20   45   50   50
-  Teh TOM                         -   -   -    4   20   20   40
-  Mega Bits                       -   -   -   20   55   55   60
-  Critters 'n Souls               -   -   -   25  120  120  160
-  Vault Mastery II                -   -   -   17   35   35   40
-  Go Go Bubba the Seal            -   -   -   25   45   45   50
-  Vault Mastery III               -   -   -    -    -    -    -  # no save has it yet
+  stages                         7e  7m   7l  end1  end2  max
+  Wicked Smart                   17  95  180  260  270  320
+  Active Murdering                1  16   40   75   90  100
+  Go Go Secret Kangaroo Mouse     3  25   85  120  120  140
+  Major Discount                  -  30   60   75   75   85
+  Monster Tax                     -   9   55  140  140  160
+  Vault Mastery                   -   3   12   30   30   35
+  Go Go Secret Owl                -  45   85  120  120  130
+  Pet Punchies                    -   1   17   75   75   85
+  Rest of the Essentials          -  17   35   40   45   50
+  Kitchen Dream-mare              -  25   80  110  130  130
+  Foraging Forever                -  12   35   80   95  120
+  Artifact Find Chance            -  13   45   60   65   70
+  Divinity Points                 -  13   45   65   65   95
+  Better Captains                 -  20   40   60   60   60
+  Finders Keepers                 -  55   80  100  100  100
+  Bigger Better Beans             -   3   20   45   50   50
+  Teh TOM                         -   -    4   20   20   40
+  Mega Bits                       -   -   20   55   55   60
+  Critters 'n Souls               -   -   25  120  120  160
+  Vault Mastery II                -   -   17   35   35   40
+  Go Go Bubba the Seal            -   -   25   45   45   50
+  Vault Mastery III               -   -    -    -    -    -  # no save has it yet
 
 the-button                              # The Button, no max
-  stages     6m  7e   7m   7l  end1  end2  max
-  Presses     -   -  180  260  320  320  330
+  stages     7e   7m   7l  end1  end2  max
+  Presses     -  180  260  320  320  330
 
 cards                                   # Cards, counts
   stages    1m  2m  3m  4m   5m   6m   7e   7m   7l  end1  end2  max
@@ -3042,7 +3042,7 @@ gem-shop                                # Gem Shop, World 1 to 5 columns from cr
   Carry Capacity              -   -   -   -   -   -   -   1   1   1   1   1   1   2   2   2   2   2   4  10  10  10  10
   Food Slot                   -   -   -   -   -   -   -   -   1   1   1   1   1   2   2   2   2   2   2   2   2   2   2
   Richelin Kitchen            -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1   1   1   1   4  10  10  10
-  Instagrow Generator         -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1   4   8   8   8
+  Instagrow Generator         -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   4   8   8   8
   Davey Jones Training        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   8   8   8   8
   Lava Sprouts                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   6   6   6   6
   Plot Of Land                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   3  12  12  12  12
