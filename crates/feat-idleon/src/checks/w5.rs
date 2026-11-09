@@ -207,12 +207,7 @@ fn blessings(save: &Save) -> Mechanic {
         Raise { name: "Jelly Operator reward: 50 successful operations".into(), amount: format!("+{} max levels on every blessing", r.jelly[0].0), owned: r.jelly[0].1 },
         Raise { name: "Jelly Operator reward: 64 successful operations".into(), amount: format!("+{} max levels on every blessing", r.jelly[1].0), owned: r.jelly[1].1 },
     ];
-    m.note = Some(format!(
-        "Every blessing caps at 100, raised by {} from a Minehead reward, {} from the Big Blessings vault upgrade, {} from two Jelly Operator rewards, and 2 per level of Coral Kid's second upgrade. The Coral Kid raise has no limit, so the max here counts the levels you have. Your cap now is {cap}. Snehebatu, Nobisect, Goharut and Kattlekruk take gaming bits; Arctis gold bars; Harriep and Purrmep coins; the rest particles.",
-        r.minehead.0,
-        r.vault.0,
-        r.jelly[0].0 + r.jelly[1].0
-    ));
+    m.note = Some(format!("Every blessing caps at 100 plus the raises below. Your cap now is {cap}."));
     m
 }
 
