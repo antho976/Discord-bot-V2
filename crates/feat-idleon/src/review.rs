@@ -157,8 +157,9 @@ impl Item {
 /// A count ladder adds about this many at a time, in at most this many tiers.
 const COUNT_STEP: usize = 5;
 const MAX_COUNT_TIERS: usize = 12;
-/// The most parts one milestone of a level ladder becomes.
-const MAX_LEVEL_PARTS: usize = 4;
+/// The most parts one milestone of a level ladder becomes: as many as it takes for no tier to
+/// ask more than `crowd::PART` (tier layout B, owner 2026-11-09).
+const MAX_LEVEL_PARTS: usize = usize::MAX;
 
 /// How a mechanic's progress adds up.
 #[derive(Debug, Clone, Copy, PartialEq)]
