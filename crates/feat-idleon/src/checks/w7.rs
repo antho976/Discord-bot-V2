@@ -8,6 +8,7 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
         sushi(save),
         jelly(save),
         minehead(save),
+        minehead_opponents(save),
         coral_reef(save),
         zenith_market(save),
         legend_talents(save),
@@ -1156,6 +1157,57 @@ fn minehead(save: &Save) -> Mechanic {
     let mut m = mech("minehead", 7, "Minehead", pic("MineUpg0".into()), Count::Levels, "levels", items);
     m.have = Some(shop_have(format!("{} Minehead Currency", big(have)), &m.items, &reached, closed.as_deref()));
     m.note = Some("Only the upgrades with a cap. The rest level up without end.".into());
+    m
+}
+
+/// A bonus text from the game with its number put in: `{` is the number, `}` the multiplier
+/// 1 + number/100 ("}x_Drop_Rate" at 10 is "1.1x Drop Rate"). Each `@` line is a sentence of its
+/// own, cut at its "!"; notes in brackets and "Current ..." readouts are left out.
+fn bonus_text(text: &str, v: f64) -> String {
+    let short = |n: f64| {
+        let s = format!("{:.2}", n);
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    };
+    let filled = text.replace('{', &short(v)).replace('}', &short(1.0 + v / 100.0));
+    filled
+        .split('@')
+        .map(|part| clean(part.split('!').next().unwrap_or(part)))
+        .filter(|p| !p.is_empty() && !p.starts_with('(') && !p.starts_with("Current"))
+        .collect::<Vec<_>>()
+        .join(". ")
+}
+
+/// A list the game works through in order, one at a time: `done` of them so far. Each item is
+/// `names[i]`, with what it gives (`texts[i]` filled with `values[i]`) after `verb`.
+fn in_order(done: f64, names: &[String], texts: &[&str], values: &[&str], verb: &str) -> Vec<Item> {
+    names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let mut it = found(name.clone(), None, done > i as f64);
+            let v = values.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+            if let Some(t) = texts.get(i).map(|t| bonus_text(t, v)).filter(|t| !t.is_empty()) {
+                it.how = Some(format!("{verb}: {t}."));
+            }
+            it
+        })
+        .collect()
+}
+
+/// Minehead opponents: `Research[7][4]` is how many are beaten, in order (N.js
+/// `Minehead("BonusQTY")` gives bonus t once it's above t). Opponent t is the head
+/// `Research[11][Research[10][t]]` (`Minehead("MineheadID")`); its bonus is `Research[19][t]`
+/// with the number `Research[20][t]`, and it counts for the whole game.
+fn minehead_opponents(save: &Save) -> Mechanic {
+    let ids = list("Research", 10);
+    let heads = list("Research", 11);
+    let texts = list("Research", 19);
+    let names: Vec<String> = (0..texts.len())
+        .map(|t| ids.get(t).and_then(|i| i.parse::<usize>().ok()).and_then(|i| heads.get(i)).map(|h| label(h)).unwrap_or_else(|| format!("Opponent {}", t + 1)))
+        .collect();
+    let items = in_order(held(save, "Research", &[7, 4]), &names, &texts, &list("Research", 20), "Beating it");
+    let mut m = mech("minehead-opponents", 7, "Minehead Opponents", pic("MineUpg0".into()), Count::Done, "beaten", items);
+    m.note = Some("Opponents come one after another. What each one gives counts for the whole game, not just Minehead.".into());
     m
 }
 
