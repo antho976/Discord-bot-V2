@@ -28,3 +28,5 @@ table CompanionDB
 table GuildBonuses
 # Obols: each page's slots, col 2 shape, col 3 what opens it.
 table ObolXYcoords
+# Star talents: a talent's game name by its id.
+table TalentIconNames
