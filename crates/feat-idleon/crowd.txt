@@ -3934,19 +3934,19 @@ companions                              # Companions, counts
 
 guild                                   # Guild Bonuses
   stages               7e   7m   7l  end1  end2  max
-  Power of Pow          8   50   50   50   50   50  # new since the last run
-  REM Fighting         10   50   50   50   50   50  # new since the last run
-  Multi Tool            8   50   50   50   50   50  # new since the last run
-  Sleepy Skiller        5   50   50   50   50   50  # new since the last run
-  Star Dazzle           5   50   50   50   50   50  # new since the last run
-  Gold Charm           20   50   50   50   50   50  # new since the last run
-  C2 Card Spotter       9   50   50   50   50   50  # new since the last run
-  Rucksack             20   50   50   50   50   50  # new since the last run
-  Coin Supercharger     5  100  100  100  100  100  # new since the last run
-  Bestone              13   50   50   50   50   50  # new since the last run
-  Guild Gifts          35  100  100  100  100  100  # new since the last run
-  Stat Runes           10   50   50   50   50   50  # new since the last run
-  Craps                 8   50   50   50   50   50  # new since the last run
-  Anotha One            1   50   50   50   50   50  # new since the last run
-  Make or Break         -   50   50   50   50   50  # new since the last run
-  Skilley Skillet       -  130  130  200  200  200  # new since the last run
+  Power of Pow          8   50   50   50   50   50
+  REM Fighting         10   50   50   50   50   50
+  Multi Tool            8   50   50   50   50   50
+  Sleepy Skiller        5   50   50   50   50   50
+  Star Dazzle           5   50   50   50   50   50
+  Gold Charm           20   50   50   50   50   50
+  C2 Card Spotter       9   50   50   50   50   50
+  Rucksack             20   50   50   50   50   50
+  Coin Supercharger     5  100  100  100  100  100
+  Bestone              13   50   50   50   50   50
+  Guild Gifts          35  100  100  100  100  100
+  Stat Runes           10   50   50   50   50   50
+  Craps                 8   50   50   50   50   50
+  Anotha One            1   50   50   50   50   50
+  Make or Break         -   50   50   50   50   50
+  Skilley Skillet       -  130  130  200  200  200
