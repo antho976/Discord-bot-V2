@@ -474,6 +474,7 @@ fn pace_line(p: &Pace, reached: u8) -> Option<String> {
 const FOLD: &[(&[(&str, &str)], &str)] = &[
     (&[("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win")], ""),
     (&[("islands", "Islands"), ("fractal-island", "Fractal Island")], "Islands"),
+    (&[("statues", "Statues"), ("statue-flair", "Flair")], ""),
     // World 5 and 6 (2026-11-09): one card per skill, as the game draws it.
     (&[("artifacts", "Artifacts"), ("sailing-islands", "Islands"), ("boats", "Boats"), ("boat-upgrades", "Upgrades")], "Sailing"),
     (&[("blessings", "Blessings"), ("gods", "Gods")], "Divinity"),
