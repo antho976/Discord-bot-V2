@@ -2321,11 +2321,11 @@ minehead-opponents                      # Minehead Opponents
 
 coral-reef                              # Coral Reef
   stages                      6m  7e  7m  7l  end1  end2  max
-  Gallery Bonus and Slots      -   2  10  10  10  10  10  # new since the last run
-  Tome Epilogue Bonus          -   5  10  10  10  10  10  # new since the last run
-  Ninja Knowledge (Pillar)     -   6  12  15  15  15  15  # new since the last run
-  Grind Time Bubble LVs        -  10  15  15  15  15  15  # new since the last run
-  Menagerie Shells             -   -   1   4   5   7   7  # new since the last run
+  Gallery Bonus and Slots      -   2  10  10  10  10  10
+  Tome Epilogue Bonus          -   5  10  10  10  10  10
+  Ninja Knowledge (Pillar)     -   6  12  15  15  15  15
+  Grind Time Bubble LVs        -  10  15  15  15  15  15
+  Menagerie Shells             -   -   1   4   5   7   7
 
 zenith                                  # Zenith Market
   stages            6m  7e  7m   7l  end1  end2  max
@@ -2543,18 +2543,18 @@ clam-upgrades                           # Clamworks Upgrades, no max
 
 coral-kid                               # Coral Kid, no max
   stages                           6m  7e   7m   7l  end1  end2  max
-  Daily Coral                       -  12   50  110  190  190  210  # new since the last run
-  Singularity Transmute             -   1    4   11   55   60   65  # new since the last run
-  Transmute Base Value              -   1    1    1   35   40   45  # new since the last run
-  Divinity EXP                      -   1    4   10   18   18   30  # new since the last run
-  Blessing Max LV                   -  14   55   95  110  110  120  # new since the last run
-  Volcano Divinity Link             -  55  140  240  280  290  300  # new since the last run
-  God Rank Class EXP                -  20  110  200  250  270  270  # new since the last run
-  Minor Link Boost                  -  16   85  190  230  260  260  # new since the last run
-  Divinity PTS per Reef Upgrade     -   4  100  170  210  230  250  # new since the last run
-  Time Elapsed from AFK Gains       -   -    -    -    1    2    3  # new since the last run
-  Lumi Gain                         -   -    -    -    -    -    -  # new since the last run
-  God Rank DMG                      -   -    -    -    -    -    -  # new since the last run
+  Daily Coral                       -  12   50  110  190  190  210
+  Singularity Transmute             -   1    4   11   55   60   65
+  Transmute Base Value              -   1    1    1   35   40   45
+  Divinity EXP                      -   1    4   10   18   18   30
+  Blessing Max LV                   -  14   55   95  110  110  120
+  Volcano Divinity Link             -  55  140  240  280  290  300
+  God Rank Class EXP                -  20  110  200  250  270  270
+  Minor Link Boost                  -  16   85  190  230  260  260
+  Divinity PTS per Reef Upgrade     -   4  100  170  210  230  250
+  Time Elapsed from AFK Gains       -   -    -    -    1    2    3
+  Lumi Gain                         -   -    -    -    -    -    -  # no save has it yet
+  God Rank DMG                      -   -    -    -    -    -    -  # no save has it yet
 
 dancing-coral                           # Dancing Coral
   stages                                        6m  7e  7m  7l  end1  end2  max
