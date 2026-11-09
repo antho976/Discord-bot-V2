@@ -22,3 +22,5 @@ cell PlayerCapacities 2 1
 listed general stackable
 # The Tome: each line its target, its curve and its points.
 table Tome
+# Companions: each one's monster ID, bonus text and value.
+table CompanionDB
