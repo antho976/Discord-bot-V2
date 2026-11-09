@@ -2100,71 +2100,71 @@ sushi                                   # Sushi Station
   Overtuned Fuel            -   -   1    1    1    1    1
 
 sushi-types                             # Sushi Types
-  stages                     7e  7m  7l  end1  end2  max
-  Fish Eggs                   1   1   1   1   1   1
-  Eggroll                     1   1   1   1   1   1
-  Egg Maki                    1   1   1   1   1   1
-  Sashimi                     1   1   1   1   1   1
-  Tuna Maki                   1   1   1   1   1   1
-  Salmon Uramaki              1   1   1   1   1   1
-  Salmon Maki                 1   1   1   1   1   1
-  Cucumber Uramaki            1   1   1   1   1   1
-  Cucumber Maki               1   1   1   1   1   1
-  Onigiri                     1   1   1   1   1   1
-  Toro Slice                  1   1   1   1   1   1
-  Toro Nigiri                 1   1   1   1   1   1
-  Beef Nigiri                 1   1   1   1   1   1
-  Beef Tobo Nigiri            1   1   1   1   1   1
-  Tobiko Maki                 1   1   1   1   1   1
-  Tobiko Temaki               1   1   1   1   1   1
-  Tobiko Cluster              1   1   1   1   1   1
-  Tobo Sardine                1   1   1   1   1   1
-  Tobo Twins                  1   1   1   1   1   1
-  Live Squid                  1   1   1   1   1   1
-  Live Octopus                1   1   1   1   1   1
-  Calamari Ring               1   1   1   1   1   1
-  Bluefin Ring                1   1   1   1   1   1
-  Tobo Tamago                 1   1   1   1   1   1
-  Tako Sashimi                1   1   1   1   1   1
-  Hamachi Sashimi             1   1   1   1   1   1
-  Fat Tuna Sashimi            1   1   1   1   1   1
-  King Beef Sashimi           1   1   1   1   1   1
-  Salmon Sashimi              1   1   1   1   1   1
-  Salmon Nigiri               1   1   1   1   1   1
-  Fried Bass Nigiri           1   1   1   1   1   1
-  Seasoned Bass Nigiri        1   1   1   1   1   1
-  Jumbo Shrimp                -   1   1   1   1   1
-  Aged Shrimp Nigiri          -   1   1   1   1   1
-  Tempura Shrimp              -   1   1   1   1   1
-  Ika Sashimi                 -   1   1   1   1   1
-  Abalone Sashimi             -   1   1   1   1   1
-  Aji Sashimi                 -   1   1   1   1   1
-  Aji Aji Sashimi             -   1   1   1   1   1
-  Bubba Grand Salmon          -   1   1   1   1   1
-  Tobiko Roll                 -   1   1   1   1   1
-  Spicy Tuna Roll             -   1   1   1   1   1
-  Salmon Uramajor             -   1   1   1   1   1
-  Sesame Salmon Muramajor     -   1   1   1   1   1
-  Dragon Roll                 -   1   1   1   1   1
-  Imaginei Dragonroll         -   1   1   1   1   1
-  Dragon Nigiri               -   1   1   1   1   1
-  Tamago Nigiri               -   1   1   1   1   1
-  Unagi Nigiri                -   1   1   1   1   1
-  Soylent Nigiri              -   1   1   1   1   1
-  Masago                      -   1   1   1   1   1
-  Masago Temaki               -   1   1   1   1   1
-  Masagoroll                  -   1   1   1   1   1
-  Caviar Supreme              -   1   1   1   1   1
-  Dulce Vitiri                -   1   1   1   1   1
-  Wasabaisamarama             -   1   1   1   1   1
-  Kraken Roll                 -   1   1   1   1   1
-  Leviathan Roll              -   1   1   1   1   1
-  Golthulu Roll               -   1   1   1   1   1
-  Wasomber Nigiri             -   1   1   1   1   1
-  Leek Nigiri                 -   -   1   1   1   1
-  Atomiroll                   -   -   1   1   1   1
-  Octolingo                   -   -   1   1   1   1
-  Chromatic Nigiri            -   -   1   1   1   1
+  stages                     6m  7e  7m  7l  end1  end2  max
+  Jumbo Shrimp                -   1   1   1   1   1   1
+  Aged Shrimp Nigiri          -   1   1   1   1   1   1
+  Tempura Shrimp              -   1   1   1   1   1   1
+  Ika Sashimi                 -   1   1   1   1   1   1
+  Leek Nigiri                 -   1   1   1   1   1   1
+  Atomiroll                   -   1   1   1   1   1   1
+  Fish Eggs                   -   1   1   1   1   1   1
+  Eggroll                     -   1   1   1   1   1   1
+  Egg Maki                    -   1   1   1   1   1   1
+  Sashimi                     -   1   1   1   1   1   1
+  Tuna Maki                   -   1   1   1   1   1   1
+  Salmon Uramaki              -   1   1   1   1   1   1
+  Salmon Maki                 -   1   1   1   1   1   1
+  Cucumber Uramaki            -   1   1   1   1   1   1
+  Cucumber Maki               -   1   1   1   1   1   1
+  Onigiri                     -   1   1   1   1   1   1
+  Toro Slice                  -   1   1   1   1   1   1
+  Toro Nigiri                 -   1   1   1   1   1   1
+  Beef Nigiri                 -   1   1   1   1   1   1
+  Beef Tobo Nigiri            -   1   1   1   1   1   1
+  Tobiko Maki                 -   1   1   1   1   1   1
+  Tobiko Temaki               -   1   1   1   1   1   1
+  Tobiko Cluster              -   1   1   1   1   1   1
+  Tobo Sardine                -   1   1   1   1   1   1
+  Tobo Twins                  -   1   1   1   1   1   1
+  Live Squid                  -   1   1   1   1   1   1
+  Live Octopus                -   1   1   1   1   1   1
+  Calamari Ring               -   1   1   1   1   1   1
+  Bluefin Ring                -   1   1   1   1   1   1
+  Tobo Tamago                 -   1   1   1   1   1   1
+  Tako Sashimi                -   1   1   1   1   1   1
+  Hamachi Sashimi             -   1   1   1   1   1   1
+  Fat Tuna Sashimi            -   1   1   1   1   1   1
+  King Beef Sashimi           -   1   1   1   1   1   1
+  Salmon Sashimi              -   1   1   1   1   1   1
+  Salmon Nigiri               -   1   1   1   1   1   1
+  Fried Bass Nigiri           -   1   1   1   1   1   1
+  Seasoned Bass Nigiri        -   1   1   1   1   1   1
+  Octolingo                   -   -   1   1   1   1   1
+  Chromatic Nigiri            -   -   1   1   1   1   1
+  Abalone Sashimi             -   -   1   1   1   1   1
+  Aji Sashimi                 -   -   1   1   1   1   1
+  Aji Aji Sashimi             -   -   1   1   1   1   1
+  Bubba Grand Salmon          -   -   1   1   1   1   1
+  Tobiko Roll                 -   -   1   1   1   1   1
+  Spicy Tuna Roll             -   -   1   1   1   1   1
+  Salmon Uramajor             -   -   1   1   1   1   1
+  Sesame Salmon Muramajor     -   -   1   1   1   1   1
+  Dragon Roll                 -   -   1   1   1   1   1
+  Imaginei Dragonroll         -   -   1   1   1   1   1
+  Dragon Nigiri               -   -   1   1   1   1   1
+  Tamago Nigiri               -   -   1   1   1   1   1
+  Unagi Nigiri                -   -   1   1   1   1   1
+  Soylent Nigiri              -   -   1   1   1   1   1
+  Masago                      -   -   1   1   1   1   1
+  Masago Temaki               -   -   1   1   1   1   1
+  Masagoroll                  -   -   1   1   1   1   1
+  Caviar Supreme              -   -   1   1   1   1   1
+  Dulce Vitiri                -   -   1   1   1   1   1
+  Wasabaisamarama             -   -   1   1   1   1   1
+  Kraken Roll                 -   -   1   1   1   1   1
+  Leviathan Roll              -   -   1   1   1   1   1
+  Golthulu Roll               -   -   1   1   1   1   1
+  Wasomber Nigiri             -   -   1   1   1   1   1
 
 jelly                                   # Jelly Operator
   stages                            6m  7e  7m  7l  end1  end2  max
@@ -2194,79 +2194,79 @@ jelly                                   # Jelly Operator
   Revival Shots                      -   -   -   -   -   -   -
 
 jelly-obstructions                      # Jelly Operator Obstructions
-  stages              7e  7m  7l  end1  end2  max
-  Longbone             1   1   1   1   1   1
-  Jawbone              1   1   1   1   1   1
-  Spine                1   1   1   1   1   1
-  Antler               1   1   1   1   1   1
-  Vertebrae            1   1   1   1   1   1
-  Skull                1   1   1   1   1   1
-  Mawbone              1   1   1   1   1   1
-  Reintler             1   1   1   1   1   1
-  Fatbone              1   1   1   1   1   1
-  Invertedbrae         1   1   1   1   1   1
-  Spinine              1   1   1   1   1   1
-  Demonicle            1   1   1   1   1   1
-  Ruby Ring            1   1   1   1   1   1
-  Starry Bling         1   1   1   1   1   1
-  Gold Bangle          1   1   1   1   1   1
-  Emerald Broach       1   1   1   1   1   1
-  Gildrose             1   1   1   1   1   1
-  Opal Pendant         1   1   1   1   1   1
-  Crescent Bling       -   1   1   1   1   1
-  Sapphire Ring        -   1   1   1   1   1
-  Stud Pendant         -   1   1   1   1   1
-  Wiltrose             -   1   1   1   1   1
-  Morning Glory        -   1   1   1   1   1
-  Tiger Eye            -   1   1   1   1   1
-  Apol                 -   -   1   1   1   1
-  Blubbury             -   -   1   1   1   1
-  Pair                 -   -   1   1   1   1
-  Mongo                -   -   1   1   1   1
-  Strabbury            -   -   1   1   1   1
-  Cosmico              -   -   1   1   1   1
-  Surrage              -   -   1   1   1   1
-  Big Nut              -   -   1   1   1   1
-  Splega               -   -   1   1   1   1
-  Onyx Apple           -   -   1   1   1   1
-  Rassbury             -   -   1   1   1   1
-  Diamapair            -   -   1   1   1   1
-  Bowling Pin          -   -   1   1   1   1
-  Broken Ball          -   -   1   1   1   1
-  Sody Can             -   -   -   1   1   1
-  Balloon              -   -   -   1   1   1
-  Arcade Ticket        -   -   -   1   1   1
-  Proball              -   -   -   -   1   1
-  Empty Can            -   -   -   -   -   1
-  Ceramic Ball         -   -   -   -   -   1
-  Loveloon             -   -   -   -   -   -
-  Mangled Ball         -   -   -   -   -   -
-  Golden Ticket        -   -   -   -   -   -
-  Angelpin             -   -   -   -   -   -
-  Cool Gem             -   -   -   -   -   -
-  Pointed Prism        -   -   -   -   -   -
-  Fancy Facet          -   -   -   -   -   -
-  Smooth Stone         -   -   -   -   -   -
-  Funky Rock           -   -   -   -   -   -
-  Quirky Quartz        -   -   -   -   -   -
-  Janky Jewel          -   -   -   -   -   -
-  Jaguar Shard         -   -   -   -   -   -
-  Slick Sphere         -   -   -   -   -   -
-  Barbed Ball          -   -   -   -   -   -
-  Jagged Mineral       -   -   -   -   -   -
-  Conical Crystal      -   -   -   -   -   -
-  Soldier Shiv         -   -   -   -   -   -
-  Knightly Rapier      -   -   -   -   -   -
-  Tribunal Helmet      -   -   -   -   -   -
-  Sharpened Axe        -   -   -   -   -   -
-  Hotforge Mace        -   -   -   -   -   -
-  Lord Shield          -   -   -   -   -   -
-  Molten Shiv          -   -   -   -   -   -
-  Damascus Axe         -   -   -   -   -   -
-  Coldsteel Mace       -   -   -   -   -   -
-  Radiant Shield       -   -   -   -   -   -
-  Eloquent Rapier      -   -   -   -   -   -
-  Centurion Helmet     -   -   -   -   -   -
+  stages              6m  7e  7m  7l  end1  end2  max
+  Longbone             -   1   1   1   1   1   1
+  Jawbone              -   1   1   1   1   1   1
+  Spine                -   1   1   1   1   1   1
+  Antler               -   1   1   1   1   1   1
+  Vertebrae            -   1   1   1   1   1   1
+  Skull                -   1   1   1   1   1   1
+  Mawbone              -   1   1   1   1   1   1
+  Reintler             -   1   1   1   1   1   1
+  Fatbone              -   1   1   1   1   1   1
+  Invertedbrae         -   1   1   1   1   1   1
+  Spinine              -   1   1   1   1   1   1
+  Demonicle            -   1   1   1   1   1   1
+  Ruby Ring            -   1   1   1   1   1   1
+  Starry Bling         -   1   1   1   1   1   1
+  Gold Bangle          -   1   1   1   1   1   1
+  Emerald Broach       -   1   1   1   1   1   1
+  Gildrose             -   1   1   1   1   1   1
+  Opal Pendant         -   1   1   1   1   1   1
+  Apol                 -   -   1   1   1   1   1
+  Blubbury             -   -   1   1   1   1   1
+  Pair                 -   -   1   1   1   1   1
+  Mongo                -   -   1   1   1   1   1
+  Strabbury            -   -   1   1   1   1   1
+  Crescent Bling       -   -   1   1   1   1   1
+  Sapphire Ring        -   -   1   1   1   1   1
+  Stud Pendant         -   -   1   1   1   1   1
+  Wiltrose             -   -   1   1   1   1   1
+  Morning Glory        -   -   1   1   1   1   1
+  Tiger Eye            -   -   1   1   1   1   1
+  Cosmico              -   -   -   1   1   1   1
+  Surrage              -   -   -   1   1   1   1
+  Big Nut              -   -   -   1   1   1   1
+  Splega               -   -   -   1   1   1   1
+  Onyx Apple           -   -   -   1   1   1   1
+  Rassbury             -   -   -   1   1   1   1
+  Diamapair            -   -   -   1   1   1   1
+  Bowling Pin          -   -   -   1   1   1   1
+  Broken Ball          -   -   -   1   1   1   1
+  Sody Can             -   -   -   -   1   1   1
+  Balloon              -   -   -   -   1   1   1
+  Arcade Ticket        -   -   -   -   1   1   1
+  Proball              -   -   -   -   -   1   1
+  Empty Can            -   -   -   -   -   -   1
+  Ceramic Ball         -   -   -   -   -   -   1
+  Loveloon             -   -   -   -   -   -   -
+  Mangled Ball         -   -   -   -   -   -   -
+  Golden Ticket        -   -   -   -   -   -   -
+  Angelpin             -   -   -   -   -   -   -
+  Cool Gem             -   -   -   -   -   -   -
+  Pointed Prism        -   -   -   -   -   -   -
+  Fancy Facet          -   -   -   -   -   -   -
+  Smooth Stone         -   -   -   -   -   -   -
+  Funky Rock           -   -   -   -   -   -   -
+  Quirky Quartz        -   -   -   -   -   -   -
+  Janky Jewel          -   -   -   -   -   -   -
+  Jaguar Shard         -   -   -   -   -   -   -
+  Slick Sphere         -   -   -   -   -   -   -
+  Barbed Ball          -   -   -   -   -   -   -
+  Jagged Mineral       -   -   -   -   -   -   -
+  Conical Crystal      -   -   -   -   -   -   -
+  Soldier Shiv         -   -   -   -   -   -   -
+  Knightly Rapier      -   -   -   -   -   -   -
+  Tribunal Helmet      -   -   -   -   -   -   -
+  Sharpened Axe        -   -   -   -   -   -   -
+  Hotforge Mace        -   -   -   -   -   -   -
+  Lord Shield          -   -   -   -   -   -   -
+  Molten Shiv          -   -   -   -   -   -   -
+  Damascus Axe         -   -   -   -   -   -   -
+  Coldsteel Mace       -   -   -   -   -   -   -
+  Radiant Shield       -   -   -   -   -   -   -
+  Eloquent Rapier      -   -   -   -   -   -   -
+  Centurion Helmet     -   -   -   -   -   -   -
 
 minehead                                # Minehead
   stages                      6m  7e  7m  7l  end1  end2  max
@@ -2285,47 +2285,47 @@ minehead                                # Minehead
   Record Breaking Jackpots     -   -   -   -   -   1   1
 
 minehead-opponents                      # Minehead Opponents
-  stages           7e  7m  7l  end1  end2  max
-  Bronzehead        1   1   1   1   1   1
-  Gemhead           1   1   1   1   1   1
-  Yarnhead          1   1   1   1   1   1
-  Sashimihead       1   1   1   1   1   1
-  Bleckhead         1   1   1   1   1   1
-  Saturnhead        1   1   1   1   1   1
-  Basshead          1   1   1   1   1   1
-  Kelphead          1   1   1   1   1   1
-  Snouthead         1   1   1   1   1   1
-  Threadhead        1   1   1   1   1   1
-  Clownhead         1   1   1   1   1   1
-  Goldhead          1   1   1   1   1   1
-  Maizehead         -   1   1   1   1   1
-  Ironhead          -   1   1   1   1   1
-  Purrhead          -   -   1   1   1   1
-  Screamhead        -   -   1   1   1   1
-  Ballhead          -   -   1   1   1   1
-  Grosshead         -   -   1   1   1   1
-  Blindhead         -   -   1   1   1   1
-  Detahead          -   -   -   1   1   1
-  Brainhead         -   -   -   1   1   1
-  Raspberryhead     -   -   -   1   1   1
-  Leopahead         -   -   -   1   1   1
-  Baldhead          -   -   -   -   1   1
-  Royalhead         -   -   -   -   -   -
-  Stouthead         -   -   -   -   -   -
-  Chillhead         -   -   -   -   -   -
-  Summerhead        -   -   -   -   -   -
-  Tentahead         -   -   -   -   -   -
-  Humungohead       -   -   -   -   -   -
-  Mr Minehead       -   -   -   -   -   -
-  Boghead           -   -   -   -   -   -
+  stages           6m  7e  7m  7l  end1  end2  max
+  Bronzehead        -   1   1   1   1   1   1
+  Gemhead           -   1   1   1   1   1   1
+  Yarnhead          -   1   1   1   1   1   1
+  Sashimihead       -   1   1   1   1   1   1
+  Bleckhead         -   1   1   1   1   1   1
+  Saturnhead        -   1   1   1   1   1   1
+  Basshead          -   1   1   1   1   1   1
+  Kelphead          -   1   1   1   1   1   1
+  Snouthead         -   1   1   1   1   1   1
+  Threadhead        -   1   1   1   1   1   1
+  Clownhead         -   1   1   1   1   1   1
+  Goldhead          -   1   1   1   1   1   1
+  Purrhead          -   -   1   1   1   1   1
+  Screamhead        -   -   1   1   1   1   1
+  Maizehead         -   -   1   1   1   1   1
+  Ironhead          -   -   1   1   1   1   1
+  Ballhead          -   -   -   1   1   1   1
+  Grosshead         -   -   -   1   1   1   1
+  Blindhead         -   -   -   1   1   1   1
+  Detahead          -   -   -   -   1   1   1
+  Brainhead         -   -   -   -   1   1   1
+  Raspberryhead     -   -   -   -   1   1   1
+  Leopahead         -   -   -   -   1   1   1
+  Baldhead          -   -   -   -   -   1   1
+  Royalhead         -   -   -   -   -   -   -
+  Stouthead         -   -   -   -   -   -   -
+  Chillhead         -   -   -   -   -   -   -
+  Summerhead        -   -   -   -   -   -   -
+  Tentahead         -   -   -   -   -   -   -
+  Humungohead       -   -   -   -   -   -   -
+  Mr Minehead       -   -   -   -   -   -   -
+  Boghead           -   -   -   -   -   -   -
 
 coral-reef                              # Coral Reef
-  stages                                                                                     6m  7e  7m  7l  end1  end2  max
-  The Gallery gives higher bonuses, and has more slots for Trophies                           -   2  10  10  10  10  10
-  Adds a new bonus to your Tome's Epilogue in World 4, which goes up with your Tome Score     -   5  10  10  10  10  10
-  Adds a new mini 'Ninja Knowledge' upgrade, level it up with your Jade                       -   6  12  15  15  15  15
-  Every day you play, your Grind Time bubble gets LVs                                         -  10  15  15  15  15  15
-  Instantly gives Shells for the Luminous Menagerie                                           -   -   1   4   5   7   7
+  stages                      6m  7e  7m  7l  end1  end2  max
+  Gallery Bonus and Slots      -   2  10  10  10  10  10
+  Tome Epilogue Bonus          -   5  10  10  10  10  10
+  Ninja Knowledge (Pillar)     -   6  12  15  15  15  15
+  Grind Time Bubble LVs        -  10  15  15  15  15  15
+  Menagerie Shells             -   -   1   4   5   7   7
 
 zenith                                  # Zenith Market
   stages            6m  7e  7m   7l  end1  end2  max
@@ -2542,19 +2542,19 @@ clam-upgrades                           # Clamworks Upgrades, no max
   True Scurge         -   -    -    -    -    -    -
 
 coral-kid                               # Coral Kid, no max
-  stages                                                                        6m  7e   7m   7l  end1  end2  max
-  You now generate more Daily Coral for the Coral Reef back in W7 town           -  12   50  110  190  190  210
-  You can Transmute Divinity PTS into Singularity Spirals                        -   1    4   11   55   60   65
-  The base value of the Transmute                                                -   1    1    1   35   40   45
-  Your Divinity EXP gain for all characters is boosted by a staggering           -   1    4   10   18   18   30
-  The Max Level of the 'Blessing' upgrade for each Divinity is levels higher     -  14   55   95  110  110  120
-  Lets you click the volcano                                                     -  55  140  240  280  290  300
-  God Rank now also gives Class EXP to all players                               -  20  110  200  250  270  270
-  Divinity Skill Lv boosts Minor Link Bonuses a bit more                         -  16   85  190  230  260  260
-  Boosts Divinity PTS gain by per Coral Reef upgrade                             -   4  100  170  210  230  250
-  You now get Time Elapsed when claiming any AFK Gains                           -   -    -    -    1    2    3
-  Boosts your Lumi hourly gain over at the Luminous Menagerie by a massive       -   -    -    -    -    -    -
-  Each God Rank above 25 now also gives DMG to all players                       -   -    -    -    -    -    -
+  stages                           6m  7e   7m   7l  end1  end2  max
+  Daily Coral                       -  12   50  110  190  190  210
+  Singularity Transmute             -   1    4   11   55   60   65
+  Transmute Base Value              -   1    1    1   35   40   45
+  Divinity EXP                      -   1    4   10   18   18   30
+  Blessing Max LV                   -  14   55   95  110  110  120
+  Volcano Divinity Link             -  55  140  240  280  290  300
+  God Rank Class EXP                -  20  110  200  250  270  270
+  Minor Link Boost                  -  16   85  190  230  260  260
+  Divinity PTS per Reef Upgrade     -   4  100  170  210  230  250
+  Time Elapsed from AFK Gains       -   -    -    -    1    2    3
+  Lumi Gain                         -   -    -    -    -    -    -
+  God Rank DMG                      -   -    -    -    -    -    -
 
 dancing-coral                           # Dancing Coral
   stages                                        6m  7e  7m  7l  end1  end2  max
