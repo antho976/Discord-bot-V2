@@ -1528,8 +1528,8 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 @media (max-width: 720px) {
   /* Two halves that share the width, each its name over where it stands: long figures
      ("Pay2Win Tier 26 / 59") ran past the card. */
-  .ia-switch { display: flex; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .ia-switch label { flex: 1 0 auto; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; white-space: nowrap; }
+  .ia-switch { display: flex; flex-wrap: wrap; }
+  .ia-switch label { flex: 1 1 30%; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; white-space: nowrap; }
   .ia-switch label .ia-fig { font-size: 12px; }
   .ia-hero { min-height: 180px; }
   .ia-hero .ov-hello h1 { font-size: 26px; }
