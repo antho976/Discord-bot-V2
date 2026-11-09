@@ -562,51 +562,59 @@ fn box_gate(i: usize) -> Option<(u8, String)> {
 /// Each level costs 1 box point. Every character has the same points to spend (N.js
 /// `PostOfficeINFO("AvailablePoints")`): orders completed, streaks, misc (`CYDeliveryBox*`) and
 /// `OptLacc[347]`, less what that character has put in its boxes.
+///
+/// A row per box, at its lowest level on any character: the bonus is per character, and a box
+/// is done when every character has it, so the tiers (`crowd.txt`) ask for a box on all of them.
 fn post_office(save: &Save) -> Mechanic {
     let boxes = rows("PostOffUpgradeInfo", &[]);
     let earned: f64 = ["CYDeliveryBoxComplete", "CYDeliveryBoxStreak", "CYDeliveryBoxMisc"].iter().map(|k| save.get(k).map(num).unwrap_or(0.0)).sum::<f64>() + save.option(347);
     let earned = earned.max(0.0).round();
-    let mut items = Vec::new();
-    let mut free_by: Vec<(String, f64)> = Vec::new();
-    for c in 0..save.characters().min(12) {
-        let levels = save.numbers(&format!("POu_{c}"), &[]);
-        let who = character(save, c);
-        let spent: f64 = levels.iter().map(|l| l.max(0.0)).sum();
-        let free = (earned - spent).max(0.0);
-        free_by.push((who.clone(), free));
-        for (i, r) in boxes.iter().enumerate() {
+    // Per character: its name, its box levels and the points it has left.
+    let chars: Vec<(String, Vec<f64>, f64)> = (0..save.characters().min(12))
+        .map(|c| {
+            let levels = save.numbers(&format!("POu_{c}"), &[]);
+            let spent: f64 = levels.iter().map(|l| l.max(0.0)).sum();
+            (character(save, c), levels, (earned - spent).max(0.0))
+        })
+        .collect();
+    let items = boxes
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
             let max = cell(r, 15).floor();
-            let level = at(&levels, i);
-            let mut it = Item::new(format!("{who}: {}", label(text(r, 0))), pic(format!("UIboxUpg{i}")), level, max);
+            let lowest = chars.iter().map(|(who, l, free)| (who, at(l, i).max(0.0), *free)).min_by(|a, b| a.1.total_cmp(&b.1));
+            let mut it = Item::new(label(text(r, 0)), pic(format!("UIboxUpg{i}")), lowest.map_or(0.0, |l| l.1), max);
             let gate = box_gate(i);
             if let Some((w, _)) = gate {
                 it.world = Some(w);
             }
-            if let Some((_, opens)) = gate.filter(|_| level <= 0.0) {
+            let below: Vec<&(String, Vec<f64>, f64)> = chars.iter().filter(|(_, l, _)| at(l, i) < max).collect();
+            if let Some((_, opens)) = gate.filter(|_| chars.iter().all(|(_, l, _)| at(l, i) <= 0.0)) {
                 it.how = Some(opens);
-            } else if level < max {
-                it.how = Some(format!("{} levels to go at 1 box point each; {who} has {} free.", big(max - level.max(0.0)), big(free)));
-                if free >= 1.0 {
+            } else if let Some((who, level, free)) = lowest.filter(|l| l.1 < max) {
+                let others = match below.len() {
+                    0 | 1 => String::new(),
+                    n => format!(", {} more below Lv {}", n - 1, big(max)),
+                };
+                it.how = Some(format!("Lowest is {who} at Lv {}, {} points free{others}.", big(level), big(free)));
+                if below.iter().any(|c| c.2 >= 1.0) {
                     it.state = State::Ready;
                 }
             }
-            items.push(it);
-        }
-    }
-    if items.is_empty() {
-        items = boxes.iter().enumerate().map(|(i, r)| Item::new(label(text(r, 0)), pic(format!("UIboxUpg{i}")), 0.0, cell(r, 15).floor())).collect();
-    }
-    let with: Vec<&(String, f64)> = free_by.iter().filter(|(_, f)| *f >= 1.0).collect();
-    let best = free_by.iter().max_by(|a, b| a.1.total_cmp(&b.1));
-    let mut m = mech("post-office", 2, "Post Office", pic("UIboxUpg0".into()), Count::Done, "maxed", items);
+            it
+        })
+        .collect();
+    let with = chars.iter().filter(|c| c.2 >= 1.0).count();
+    let best = chars.iter().max_by(|a, b| a.2.total_cmp(&b.2));
+    let mut m = mech("post-office", 2, "Post Office", pic("UIboxUpg0".into()), Count::Levels, "levels", items);
     m.have = Some(Have {
         figure: format!("{} box points earned", big(earned)),
-        text: match (with.len(), best) {
+        text: match (with, best) {
             (0, _) | (_, None) => "Every character has spent all of them.".into(),
-            (n, Some((who, f))) => format!("{n} of your characters have points to spend; the most is {} on {who}.", big(*f)),
+            (n, Some((who, _, f))) => format!("{n} of your characters have points to spend; the most is {} on {who}.", big(*f)),
         },
     });
-    m.note = Some("Every character has its own boxes, each paid from the same box points. 20 boxes cap at 400; Scurvy C'arr'ate, Box of Gosh and Gaming Lootcrate at 800; the Myriad Crate at 100,000.".into());
+    m.note = Some("Every character has its own boxes, each paid from the same box points; a box counts here at its lowest level on any character. 20 boxes cap at 400; Scurvy C'arr'ate, Box of Gosh and Gaming Lootcrate at 800; the Myriad Crate at 100,000. Levels 1 to 200 give most of a box's bonus.".into());
     m
 }
 
