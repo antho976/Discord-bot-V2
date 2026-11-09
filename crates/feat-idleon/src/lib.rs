@@ -8,6 +8,8 @@
 mod checks;
 pub mod crowd;
 pub mod expected;
+#[doc(hidden)]
+pub mod invariants;
 mod game;
 mod limit;
 mod page;
@@ -35,6 +37,13 @@ use serde::{Deserialize, Serialize};
 
 pub use checks::{all as run_checks, world_reached};
 pub use pictures::has as has_picture;
+
+/// A review's results as the page draws them (cards, ladders and their tier data), without the
+/// page around them, for `examples/invariants.rs`.
+#[doc(hidden)]
+pub fn results_html(r: &review::Review) -> String {
+    page::done(0, r).into_string()
+}
 
 /// Every stackable item's ID (the game data's `extra.general.stackable`), for the examples.
 pub fn stackable_items() -> Vec<&'static str> {

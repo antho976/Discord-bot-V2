@@ -250,7 +250,7 @@ fn ask(guild: u64, error: Option<&str>, retry: bool, test: bool) -> Markup {
     }
 }
 
-fn done(guild: u64, r: &Review) -> Markup {
+pub(crate) fn done(guild: u64, r: &Review) -> Markup {
     let worlds: Vec<u8> = (1..=7).chain([0]).filter(|w| r.mechanics.iter().any(|m| m.world == *w)).collect();
     let start = worlds.iter().copied().filter(|w| (1..=r.world).contains(w)).max().unwrap_or(1);
     html! {
