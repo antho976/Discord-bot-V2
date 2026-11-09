@@ -601,13 +601,13 @@ arcade                                  # Arcade, counts
 
 post-office                             # Post Office, World 1 to 5 columns from crowd-research.txt
   stages                    2l  3e  3l  4e  4l  5e   5l   6e   6l   7e     7m      7l     end1     end2      max
-  Non Predatory Loot Box     5  10  25  40  60  80  100  150  200  400    400     400      400      400      400
-  Civil War Memory Box       -   5  10  20  30  40   50   75  100    -    400     400      400      400      400
-  Deaths Storage Unit        -   -   -  10  20  30   40   50   75    -    400     400      400      400      400
-  Utilitarian Capsule        -   -   -   -  10  20   30   40   50    -    400     400      400      400      400
-  Construction Container     -   -   -   -   -  10   20   30   50    -    400     400      400      400      400
-  Lazzzy Lootcrate           -   -   -   -   -   -   10   20   30    -    400     400      400      400      400
-  Box of Gosh                -   -   -   -   -   -    -   25   50    -    800     800      800      800      800
+  Non Predatory Loot Box     5  10  25  40  60  80  100  150  200  200    400     400      400      400      400
+  Civil War Memory Box       -   5  10  20  30  40   50   75  100  100    400     400      400      400      400
+  Deaths Storage Unit        -   -   -  10  20  30   40   50   75   75    400     400      400      400      400
+  Utilitarian Capsule        -   -   -   -  10  20   30   40   50   50    400     400      400      400      400
+  Construction Container     -   -   -   -   -  10   20   30   50   50    400     400      400      400      400
+  Lazzzy Lootcrate           -   -   -   -   -   -   10   20   30   30    400     400      400      400      400
+  Box of Gosh                -   -   -   -   -   -    -   25   50   50    800     800      800      800      800
   Crate of the Creator       -   -   -   -   -   -    -    -    -    -    400     400      400      400      400
   Locally Sourced Organs     -   -   -   -   -   -    -    -    -    -    400     400      400      400      400
   Magician Starterpack       -   -   -   -   -   -    -    -    -    -    400     400      400      400      400
@@ -637,7 +637,7 @@ islands                                 # Islands, World 1 to 5 columns from cro
 
 fractal-island                          # Fractal Island, World 1 to 5 columns from crowd-research.txt
   stages                                5e  5l   6e   6l   7e     7m     7l    end1    end2     max
-  Master of Nothing Trophy Chance       24  24   24   24   20     20     20      20      20      20
+  Master of Nothing Trophy Chance       24  24   24   24   24     24     24      24      24      24
   Dungeon Credits and Flurbos            -  50  100  200  200    200    200     200     200     200
   Kitchen Upgrade Costs                  -   -    -  200  320    750    750     750     750     750
   Sailing Artifact Chance                -   -    -    -  320  1,900  2,500   2,500   2,500   2,500
