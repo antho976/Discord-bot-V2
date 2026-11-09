@@ -287,7 +287,8 @@ pub fn any_level(name: &str) -> Option<f64> {
 /// for its levels (artifact forms), the level's name: "38 Eldritch".
 pub fn count_text(n: usize, level: f64, names: Option<&[String]>) -> String {
     let n_text = cell_text(Some(n as f64));
-    if let Some(name) = names.and_then(|ns| ns.get((level as usize).checked_sub(1)?)).filter(|_| level.fract() == 0.0 && level >= 2.0) {
+    // From the second level ("8 Ancient"), or the first when it's a number ("3 at 1 star").
+    if let Some(name) = names.and_then(|ns| ns.get((level as usize).checked_sub(1)?)).filter(|n| level.fract() == 0.0 && (level >= 2.0 || n.starts_with(|c: char| c.is_ascii_digit()))) {
         // "8 Ancient", but "3 at 2 stars" where the name is a number itself.
         return if name.starts_with(|c: char| c.is_ascii_digit()) { format!("{n_text} at {name}") } else { format!("{n_text} {name}") };
     }
@@ -295,7 +296,7 @@ pub fn count_text(n: usize, level: f64, names: Option<&[String]>) -> String {
 }
 
 /// What a count of things had says instead of "unlocked", per mechanic.
-pub const UNLOCK_WORD: [(&str, &str); 4] = [("shiny", "shiny"), ("lab-chips", "owned"), ("companions", "owned"), ("cards", "found")];
+pub const UNLOCK_WORD: [(&str, &str); 3] = [("shiny", "shiny"), ("lab-chips", "owned"), ("companions", "owned")];
 
 /// A mechanic's ladder from its table: a tier per stage, a stage that asks for many new things
 /// split into parts of about `PART` (see `split`).

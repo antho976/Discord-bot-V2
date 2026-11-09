@@ -820,10 +820,11 @@ fn ask_text(m: &Mechanic, i: &Item, target: f64) -> (String, Option<String>) {
     if m.crowd.is_some() {
         // Something not had at all (a stamp not found) is "Unlock": its level 0 says nothing.
         return match () {
+            // Named levels (an artifact's Ancient, a card's 1 star) read as names, even the
+            // first: a card found but with no star yet isn't something to unlock.
+            _ if m.tier_names.is_some() && target >= 1.0 => (level_text(m, target), (level > 0.0).then(|| format!("from {}", level_text(m, level)))),
             _ if level <= 0.0 && target <= 1.0 => ("Unlock".into(), None),
             _ if i.raw.is_some_and(|r| r <= 0.0) => (level_text(m, target), Some("Unlock first".into())),
-            // Named levels (an artifact's Ancient, Eldritch) read as names.
-            _ if m.tier_names.is_some() => (level_text(m, target), (level > 0.0).then(|| format!("from {}", level_text(m, level)))),
             _ => (format!("Lv {}", num(target)), (level > 0.0).then(|| format!("from {}", num(level)))),
         };
     }
@@ -1341,7 +1342,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-card > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .ia-card > summary .ia-mark { grid-area: m; }
 .ia-card-name { grid-area: n; display: flex; flex-direction: column; min-width: 0; }
-.ia-card-name b, .ia-card-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-card-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ia-card-name b { font-size: 14px; font-weight: 500; }
 .ia-card-name span { font: 12.5px var(--mono); color: var(--ink-3); }
 .ia-pct { grid-area: p; font: 600 15px var(--mono); }
