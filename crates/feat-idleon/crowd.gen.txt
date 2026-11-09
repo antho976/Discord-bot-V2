@@ -662,35 +662,35 @@ killroy                                 # Killroy, no max; World 1 to 5 columns 
   Pearls fights                         -   -   -   -   -   -   -   -   -   -   -   -   -   -    1      2      6
   Skull Shop: Mystery Boost             -   -   -   -   -   -   -   -   -   -   -   -   -   -   12    210    950
 
-construction                            # Construction Buildings
-  stages                 3m  4m  5m  6m   7e   7m   7l  end1  end2  max
-  3D Printer              1   2   5  11   11   11   11   11   11   11
-  Talent Book Library     1   8  20  40  100  200  200  200  200  200
-  Death Note              -   5  13  25   50   50   50   50   50   50
-  Salt Lick               -   2   5  11   11   11   11   11   11   11
-  Chest Space             -   5  13  25   25   25   25   25   25   25
-  Cost Cruncher           -   1   2   5   60   60   60   60   60   60
-  Automation Arm          -   1   2   5    5    5    5    5    5    5
-  Boulder Roller          -   5  13  25   40  110  180  200  200  200
-  Frozone Malone          -   1   4   9   50  130  190  210  220  220
-  Stormcaller             -   1   3   6   50  130  200  210  220  230
-  Party Starter           -   1   3   7   50  120  200  210  220  230
-  Woodular Shrine         -   5  13  25  100  270  310  310  310  310
-  Isaccian Shrine         -   1   4   9  100  260  310  310  310  310
-  Clover Shrine           -   1   1   1   55  210  310  310  310  310
-  Summereading Shrine     -   1   1   1   30  200  310  310  310  310
-  Crescent Shrine         -   1   1   1   12  200  210  310  310  310
-  Trapper Drone           -   -   1   2   18   50   50   50   50   50
-  Atom Collider           -   -   1   1   11  160  200  200  200  200
-  Pulse Mage              -   -   1   3   12  110  160  170  170  180
-  Fireball Lobber         -   -   1   2   25  110  160  170  180  180
-  Kraken Cosplayer        -   -   1   2   50  130  200  210  220  230
-  Crystal Shrine          -   -   1   2   80  290  310  310  310  310
-  Pantheon Shrine         -   -   1   2   60  300  310  310  310  310
-  Poisonic Elder          -   -   -   1   40  150  200  210  220  230
-  Voidinator              -   -   -   1   13   70  110  120  120  130
-  Undead Shrine           -   -   -   1   10  200  210  240  250  250
-  Primordial Shrine       -   -   -   1    8  200  210  240  250  250
+construction                            # Construction Buildings, World 1 to 5 columns from crowd-research.txt
+  stages                 3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l   7e   7m   7l  end1  end2  max
+  3D Printer              2   3   4   5   6   7   8   9  10  11  11  11   11   11   11   11   11   11
+  Salt Lick               -   1   1   1   1   2   2   3   5   8  11  11   11   11   11   11   11   11
+  Chest Space             -   1   1   2   2   3   3   5   8  15  20  25   25   25   25   25   25   25
+  Talent Book Library     -   -   1   1   1   1   2   5  10  25  45  60  100  200  200  200  200  200
+  Death Note              -   -   1   1   1   1   2   5  10  20  35  45   50   50   50   50   50   50
+  Woodular Shrine         -   -   1   1   2   2   3   5  10  20  35  45  100  270  310  310  310  310
+  Boulder Roller          -   -   -   1   2   3   4   6  10  18  25  33   40  110  180  200  200  200
+  Pulse Mage              -   -   -   1   1   1   1   2   4   6   9  12   12  110  160  170  170  180
+  Trapper Drone           -   -   -   -   1   1   1   2   4   7  10  12   18   50   50   50   50   50
+  Frozone Malone          -   -   -   -   1   1   1   3   6  12  20  30   50  130  190  210  220  220
+  Cost Cruncher           -   -   -   -   -   1   1   2   5  15  25  30   60   60   60   60   60   60
+  Automation Arm          -   -   -   -   -   1   1   1   2   3   5   5    5    5    5    5    5    5
+  Party Starter           -   -   -   -   -   1   1   2   5  10  18  25   50  120  200  210  220  230
+  Isaccian Shrine         -   -   -   -   -   -   1   2   4   8  12  18  100  260  310  310  310  310
+  Stormcaller             -   -   -   -   -   -   -   1   3   8  14  20   50  130  200  210  220  230
+  Crystal Shrine          -   -   -   -   -   -   -   -   1   3   8  14   80  290  310  310  310  310
+  Fireball Lobber         -   -   -   -   -   -   -   -   1   4   7  10   25  110  160  170  180  180
+  Kraken Cosplayer        -   -   -   -   -   -   -   -   -   5  10  16   50  130  200  210  220  230
+  Poisonic Elder          -   -   -   -   -   -   -   -   -   5  12  20   40  150  200  210  220  230
+  Atom Collider           -   -   -   -   -   -   -   -   -   1   1   3   11  160  200  200  200  200
+  Pantheon Shrine         -   -   -   -   -   -   -   -   -   -   3   5   60  300  310  310  310  310
+  Voidinator              -   -   -   -   -   -   -   -   -   -   -   -   13   70  110  120  120  130
+  Clover Shrine           -   -   -   -   -   -   -   -   -   -   -   -   55  210  310  310  310  310
+  Summereading Shrine     -   -   -   -   -   -   -   -   -   -   -   -   30  200  310  310  310  310
+  Crescent Shrine         -   -   -   -   -   -   -   -   -   -   -   -   12  200  210  310  310  310
+  Undead Shrine           -   -   -   -   -   -   -   -   -   -   -   -   10  200  210  240  250  250
+  Primordial Shrine       -   -   -   -   -   -   -   -   -   -   -   -    8  200  210  240  250  250
 
 salt-lick                               # Salt Lick, World 1 to 5 columns from AutoReview's tiers, changed
   stages                                                              3m  4m  5e  5m  5l  6m   7e   7m   7l  end1  end2  max
@@ -728,25 +728,25 @@ prayers                                 # Prayers, World 1 to 5 columns from Aut
   Balance of Proficiency     -   -   -   -   -   -   -   -   1  50  50  50  50  50
   Jawbreaker                 -   -   -   -   -   -   -   -   1  50  50  50  50  50
 
-atoms                                   # Atom Collider
-  stages        3m  4m  5m  6m  7e  7m  7l  end1  end2  max
-  Hydrogen       1   1   2   5  30  50  50  70  70  70
-  Helium         -   1   1   2   7  13  16  19  20  20
-  Boron          -   1   1   1  30  50  50  70  70  70
-  Carbon         -   3   9   -  25  50  50  70  70  70
-  Oxygen         -   3   9   -  25  50  50  70  70  70
-  Fluoride       -   3   9   -  25  50  50  70  70  70
-  Neon           -   3   9   -  25  50  50  70  70  70
-  Sodium         -   1   2   -   7  20  30  40  45  45
-  Lithium        -   -   1   2  30  50  50  70  70  70
-  Beryllium      -   -   1   2  30  50  50  70  70  70
-  Nitrogen       -   -   1   1  25  50  50  70  70  70
-  Magnesium      -   -   -   -   7  30  45  55  65  70
-  Aluminium      -   -   -   -   5  35  50  70  70  70
-  Silicon        -   -   -   -   3  50  50  70  70  70
-  Phosphorus     -   -   -   -   -  35  50  70  70  70
-  Sulfur         -   -   -   -   -   -  50  60  70  70
-  Chlorine       -   -   -   -   -   -   -  45  45  55
+atoms                                   # Atom Collider, World 1 to 5 columns from crowd-research.txt
+  stages        3m  4m  5m  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Boron          1   1   1   1   1   3  30  50  50  70  70  70
+  Beryllium      -   1   1   1   2   3  30  50  50  70  70  70
+  Nitrogen       -   1   1   1   1   -  25  50  50  70  70  70
+  Oxygen         -   3   9  14   -   -  25  50  50  70  70  70
+  Fluoride       -   3   9  14   -   -  25  50  50  70  70  70
+  Sodium         -   1   2   4   -   -   7  20  30  40  45  45
+  Hydrogen       -   -   -   1   5  10  30  50  50  70  70  70
+  Helium         -   -   -   1   2   3   7  13  16  19  20  20
+  Lithium        -   -   -   1   2   5  30  50  50  70  70  70
+  Carbon         -   -   -   1   -   2  25  50  50  70  70  70
+  Neon           -   -   -   -   -   1  25  50  50  70  70  70
+  Magnesium      -   -   -   -   -   -   7  30  45  55  65  70
+  Aluminium      -   -   -   -   -   -   5  35  50  70  70  70
+  Silicon        -   -   -   -   -   -   3  50  50  70  70  70
+  Phosphorus     -   -   -   -   -   -   -  35  50  70  70  70
+  Sulfur         -   -   -   -   -   -   -   -  50  60  70  70
+  Chlorine       -   -   -   -   -   -   -   -   -  45  45  55
 
 death-note                              # Death Note
   stages                            3m  4m  5m  6m  7e  7m  7l  end1  end2  max
@@ -945,21 +945,21 @@ equinox-dreams                          # Equinox Dreams
   Find at least 1850 items, according to The Slab                                                                  -   -   -   -   -   -   -   -   1   1
   Get at least 100 Killroy kills on ALL monsters in World 1 through 6, as shown in Killroy Prime in Rift           -   -   -   -   -   -   -   -   -   -
 
-equinox-upgrades                        # Equinox Upgrades
-  stages               3m  4m  5m  6m  7e  7m  7l  end1  end2  max
-  Shades of K           1   1   1   -   3   3   3   3   3   3
-  Equinox Dreams        -   1   2   5   5   5   5   5   5   5
-  Matching Scims        -   1   4   -  12  12  12  53  53  53
-  Faux Jewels           -   1   1   -   -   -   1  31  31  31
-  Equinox Symbols       -   2   6   -   -  19  19  19  19  19
-  Voter Rights          -   3  10   -   -   -   -  40  40  40
-  Nonstop Studies       -   5  12   -   -   -  45  67  67  67
-  Equinox Resources     -   -   2   4   4   4   4   4   4   4
-  Liquidvestment        -   -   2   4   7  11  11  11  11  11
-  Slow Roast Wiz        -   -   1   -   2   7  11  21  21  21
-  Laboratory Fuse       -   -   1   -   -   -   -   5  10  10
-  Food Lust             -   -   1   -   -   -   -   5  10  16
-  Metal Detector        -   -   -   -   1  12  16  16  16  16
+equinox-upgrades                        # Equinox Upgrades, World 1 to 5 columns from crowd-research.txt
+  stages               3m  4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Faux Jewels           1   1   1   1   1   1   1   1   -   -   -   -   1  31  31  31
+  Equinox Dreams        -   1   1   1   1   2   3   4   5   5   5   5   5   5   5   5
+  Matching Scims        -   1   1   2   3   4   5   7   -   -  12  12  12  53  53  53
+  Equinox Symbols       -   1   2   3   4   6   7   9   -   -   -  19  19  19  19  19
+  Voter Rights          -   2   3   5   7  10  12  15   -   -   -   -   -  40  40  40
+  Nonstop Studies       -   3   5   7   9  12  16  20   -   -   -   -  45  67  67  67
+  Slow Roast Wiz        -   -   -   -   1   1   1   1   -   -   2   7  11  21  21  21
+  Equinox Resources     -   -   -   -   -   1   2   3   4   4   4   4   4   4   4   4
+  Liquidvestment        -   -   -   -   -   1   1   2   4   6   7  11  11  11  11  11
+  Laboratory Fuse       -   -   -   -   -   1   1   1   -   -   -   -   -   5  10  10
+  Metal Detector        -   -   -   -   -   1   1   1   -   -   1  12  16  16  16  16
+  Food Lust             -   -   -   -   -   1   1   1   -   -   -   -   -   5  10  16
+  Shades of K           -   -   -   -   -   -   -   1   1   1   3   3   3   3   3   3
 
 library                                 # Talent Book Library
   stages                          3m  4m  5m  6m   7e   7m   7l  end1  end2  max
@@ -1055,82 +1055,17 @@ armor-sets                              # Armor Sets
   Secret Set          -   -   -   -   -   1   1   1   1   1
   Prehistoric Set     -   -   -   -   -   1   1   1   1   1
 
-meals                                   # Meals
-  stages             4m  5m  6m   7e   7m   7l  end1  end2  max
-  Turkey of Thank     3  19  50  110  120  140  150  150  160
-  Egg                 3  19  50  100  120  140  150  150  160
-  Salad               3  19  50   90  120  140  150  150  160
-  Pie                 3  19  50  100  120  140  150  150  150
-  Frenk Fries         3  19  50   90  120  140  150  150  150
-  Spaghetti           3  19  50   90  120  140  150  150  150
-  Corn                3  19  50   90  120  140  150  150  150
-  Garlic Bread        3  19  50   90  120  140  150  150  150
-  Garlicles Bread     3  19  50   90  120  140  150  150  150
-  Pizza               3  19  50   90  120  140  150  150  150
-  Apple               3  19  50   90  120  140  150  150  150
-  Pancakes            3  19  50   90  120  140  150  150  150
-  Corndog             3  19  50  100  120  140  150  150  150
-  Cabbage             3  19  50  100  120  140  150  150  150
-  Potato P Pastry     3  19  50   90  110  140  150  150  150
-  Dango               3  19  50   90  110  140  150  150  150
-  Sourish Fish        3  19  50   90  110  140  150  150  150
-  Octoplop            3  19  50   90  110  140  150  150  150
-  Croissant           3  19  50   90  110  140  150  150  150
-  Canopy              3  19  50   90  110  130  150  150  150
-  Cannoli             3  19  50   95  110  140  140  150  150
-  Cheese              3  19  50   95  110  140  140  150  150
-  Sawdust             3  19  50   95  110  130  140  150  150
-  Eggplant            3  19  50   95  110  130  140  150  150
-  Cheesy Bread        2  17  45   95  110  140  140  150  150
-  Wild Boar           3  19  50   95  110  140  140  150  150
-  Donut               2  17  45   90  110  140  140  150  150
-  Riceball            2  17  45   90  110  140  140  150  150
-  Cauliflower         2  17  45   90  110  130  140  150  150
-  Durian Fruit        2  17  45   90  110  130  140  150  150
-  Orange              2  17  45   90  110  130  140  140  150
-  Bunt Cake           2  17  45   90  110  130  140  150  150
-  Chocala Truffle     2  17  45   90  110  130  140  140  150
-  Leek                2  17  45   90  110  130  140  140  150
-  Fortune Cookie      2  17  45   90  110  130  140  140  150
-  Pretzel             2  17  45   95  110  130  140  140  150
-  Sea Urchin          2  17  45   90  110  130  140  140  150
-  Mashed Potato       2  17  45   90  110  130  140  140  150
-  Mutton              2  15  40   90  110  130  140  140  150
-  Wedding Cake        2  17  45   95  110  130  140  140  150
-  Eel                 2  17  45   90  110  130  140  140  150
-  Whipped Cocoa       2  17  45   90  110  130  140  140  150
-  Onion               2  17  45   90  110  130  140  150  150
-  Soda                2  17  45  100  110  130  140  150  150
-  Sushi Roll          2  17  45   90  110  130  140  150  150
-  Buncha Banana       2  17  45   90  110  130  140  150  150
-  Pumpkin             2  15  40   90  110  130  140  150  150
-  Cotton Candy        2  15  40   90  110  130  140  150  150
-  Massive Fig         2  15  40   90  110  130  140  150  150
-  Chef Geustloaf      2  17  45   90  110  130  140  140  150
-  Kiwi Fruit          2  15  40   90  110  130  140  140  150
-  Popped Corn         2  15  40   90  110  130  140  140  150
-  Double Cherry       2  15  40  100  110  130  140  140  150
-  Ratatouey           2  15  40   90  110  130  140  150  150
-  Giant Tomato        2  15  40   90  110  130  140  150  150
-  Wrath Grapes        2  15  40   90  110  130  140  150  150
-  Sausy Sausage       3  20   -   90  110  130  140  140  150
-  Seasoned Marrow     3  20   -   90  110  130  140  150  150
-  Sticky Bun          3  20   -   90  110  130  140  150  150
-  Frazzleberry        3  20   -   90  110  130  140  150  150
-  MrLoin Steak        3  20   -   90  110  130  140  150  150
-  Large Pohayoh       3  20   -   90  110  130  140  140  150
-  Bill Jack Pep       3  20   -   90  110  130  140  140  150
-  Burned Mello        3  20   -   95  110  130  140  150  150
-  Yumi Peachring      4  25   -  100  110  130  140  140  150
-  Plumpcakes          3  20   -   90  110  130  140  150  150
-  Nyanborgir          3  20   -   90  110  130  140  150  150
-  Tempura Shrimp      2  15   -   60  110  130  140  150  150
-  Woahtermelon        2  12   -   50  110  130  140  140  150
-  Cookies             1  11   -   45  110  130  140  140  150
-  Singing Seed        2  12   -   50  110  130  140  140  150
-  Tasty Treat         3  20   -    -  110  130  140  150  150
-  Giga Chip           3  20   -    -  110  130  140  140  150
-  Divorce Cake        3  20   -    -  110  130  140  140  150
+meals                                   # Meals, counts; World 1 to 5 columns from crowd-research.txt
+  stages      4e  4m  4l  5e  5m  5l  6e  6m   7e   7m   7l  end1  end2  max
+  Cabbage      1   1   1   1   5  11  11  50  110  120  140  150  150  150
+  Corndog      -   1   1   1   5  11  11  50  110  120  140  150  150  150
+  @any 1       2   3   4   5   6   8  15  55   70   70   70   70   70   70
+  @any 11      -   -   -   -   1   3   8  55   70   70   70   70   70   70
+  @any 30      -   -   -   -   -   -   3  55   70   70   70   70   70   70
+  @any 60      -   -   -   -   -   -   -   -   70   70   70   70   70   70
+  @any 90      -   -   -   -   -   -   -   -   65   70   70   70   70   70
+  @any 120     -   -   -   -   -   -   -   -    -   25   70   70   70   70
+  @any 150     -   -   -   -   -   -   -   -    -    -    -   25   45   70
 
 kitchens                                # Kitchens
   stages        4m  5m  6m  7e  7m  7l  end1  end2  max
@@ -1172,30 +1107,12 @@ jewels                                  # Lab Jewels
   Sapphire Pyramite            -   -   -   -   1   1   1   1   1
   Black Diamond Ulthurite      -   -   -   -   1   1   1   1   1
 
-lab-chips                               # Lab Chips
-  stages                    4m  5m  6m  7e  7m  7l  end1  end2  max
-  Chocolatey Chip            1   1   -   1   1   1   1   1   1
-  Grounded Nanochip          -   1   -   1   1   1   1   1   1
-  Grounded Motherboard       -   1   -   1   1   1   1   1   1
-  Conductive Motherboard     -   1   -   1   1   1   1   1   1
-  Conductive Software        -   1   -   1   1   1   1   1   1
-  Silkrode Nanochip          -   1   -   -   1   1   1   1   1
-  Grounded Software          -   -   1   1   1   1   1   1   1
-  Grounded Processor         -   -   1   1   1   1   1   1   1
-  Conductive Processor       -   -   -   1   1   1   1   1   1
-  Galvanic Nanochip          -   -   -   1   1   1   1   1   1
-  Galvanic Motherboard       -   -   -   1   1   1   1   1   1
-  Wood Chip                  -   -   -   1   1   1   1   1   1
-  Conductive Nanochip        -   -   -   1   1   1   1   1   1
-  Potato Chip                -   -   -   1   1   1   1   1   1
-  Galvanic Software          -   -   -   1   1   1   1   1   1
-  Galvanic Processor         -   -   -   -   1   1   1   1   1
-  Poker Chip                 -   -   -   -   1   1   1   1   1
-  Omega Nanochip             -   -   -   -   1   1   1   1   1
-  Silkrode Software          -   -   -   -   1   1   1   1   1
-  Silkrode Processor         -   -   -   -   1   1   1   1   1
-  Silkrode Motherboard       -   -   -   -   -   1   1   1   1
-  Omega Motherboard          -   -   -   -   -   1   1   1   1
+lab-chips                               # Lab Chips, counts; World 1 to 5 columns from crowd-research.txt
+  stages               4m  4l  5e  5m  5l  6e  6m  7e  7m  7l  end1  end2  max
+  Silkrode Nanochip     -   -   -   1   1   1   1   1   1   1   1   1   1
+  Omega Nanochip        -   -   -   -   1   1   1   1   1   1   1   1   1
+  Omega Motherboard     -   -   -   -   -   1   1   1   1   1   1   1   1
+  @any 1                1   2   3   4   5   6   7  17  20  20  20  20  20
 
 breeding-pets                           # Breeding Pets, World 1 to 5 columns from crowd-research.txt
   stages          4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
@@ -1204,91 +1121,31 @@ breeding-pets                           # Breeding Pets, World 1 to 5 columns fr
   World 4 pets     -   -   -   1   1   1   1   1   2  16  16  16  16  16  16
   World 3 pets     -   -   -   -   -   1   2   6  10  18  18  18  18  18  18
 
-shiny                                   # Shiny Pets
-  stages               4m  5m  6m  7e  7m  7l  end1  end2  max
-  Red Mushroom          1   1   -   3   8  18  20  20  25
-  Baby Boa              1   1   -   -   5  17  20  20  25
-  Sheepie               1   1   -   -   9  20  20  20  25
-  Bored Bean            -   1   -   3   5  17  20  20  25
-  Slime                 -   1   -   -   5  17  20  20  25
-  Mr Pig                -   1   -   -   6  10  20  20  25
-  Carrotman             -   1   -   -   6  17  20  20  25
-  Glublin               -   1   -   -   7  12  20  20  25
-  Wode Board            -   2   -   -  10  20  20  25  30
-  Gigafrog              -   1   -   -   6  18  20  20  25
-  Wild Boar             -   2   -   -   -  14  20  20  25
-  Walking Stick         -   2   -   -   -  14  20  20  25
-  Nutto                 -   1   -   -   -  10  20  20  25
-  Poop                  -   2   -   -   -  12  20  20  25
-  Rat                   -   3   -   -   -  18  20  20  25
-  Mimic                 -   2   -   -   -  12  20  20  25
-  Crabcake              -   2   -   -   -  17  20  20  20
-  Mafioso               -   2   -   -   -  12  20  20  25
-  Mallay                -   2   -   -   -  12  20  20  25
-  Sand Castle           -   2   -   -   -  14  20  20  20
-  Pincermin             -   2   -   -   -  12  20  20  20
-  Mashed Potato         -   2   -   -   -  17  20  20  20
-  Tyson                 -   2   -   -   -  16  20  20  25
-  Whale                 -   2   -   -   -  16  20  20  25
-  Moonmoon              -   2   -   -   -  15  20  20  25
-  Sand Giant            -   2   -   -   -  16  20  20  25
-  Snelbie               -   1   -   -   -  11  20  20  25
-  Dig Doug              -   2   -   -   -  13  20  20  25
-  Beefie                -   2   -   -   -  12  20  20  20
-  Crescent Spud         -   1   -   -   6  19  20  25  30
-  Chippy                -   2   -   -   -  15  20  20  20
-  Frost Flake           -   2   -   -   -  12  20  20  20
-  Sir Stache            -   1   -   -   3  10  20  20  20
-  Xylobone              -   2   -   -   -  16  20  20  20
-  Bunny                 -   2   -   -   -  13  20  20  20
-  Bloque                -   1   -   -   1  17  20  20  20
-  Mamooth               -   2   -   -   -  13  20  20  25
-  Snowman               -   2   -   -   -  15  20  20  20
-  Penguin               -   1   -   -   3  11  20  20  20
-  Thermister            -   2   -   -   -  13  20  20  20
-  Quenchie              -   2   -   -  11  19  20  20  30
-  Cryosnake             -   2   -   -   -  12  20  20  20
-  Mechanical Mouse      -   2   -   -   -  13  20  20  20
-  Bop Box               -   1   -   -   -  11  20  20  20
-  Neyeptune             -   1   -   -   -  11  20  20  25
-  Dedotated Ram         -   2   -   -   -  14  20  20  20
-  Bloodbone             -   1   -   -   -  11  20  20  20
-  Panda                 -   1   -   -   -  11  20  20  20
-  Purp Mushroom         -   2   -   -   -  15  20  20  20
-  TV                    -   2   -   -   -  13  20  20  20
-  Donut                 -   2   -   -   -  16  20  20  20
-  Demon Genie           -   2   -   -   -  15  20  20  20
-  Flying Worm           -   2   -   -   -  15  20  20  20
-  Dog                   -   2   -   -   -  15  20  20  20
-  Soda Can              -   2   -   -   -  13  20  20  20
-  Gelatinous Cuboid     -   2   -   -   -  13  20  20  20
-  Choccie               -   2   -   -   -  14  20  20  20
-  Biggole Wurm          -   2   -   -   -  15  20  20  20
-  Cool Bird             -   2   -   -   -  15  20  20  20
-  Clammie               -   2   -   -   -  13  20  20  20
-  Octodar               -   2   -   -   -  15  20  20  20
-  Flombeige             -   2   -   -   -  15  20  20  20
-  Stilted Seeker        -   2   -   -   -  14  20  20  20
-  Hedgehog              -   2   -   -   -  15  20  20  20
-  Green Mushroom        -   -   2   7   7  20  20  25  30
-  Squirrel              -   -   2   3   7  11  20  20  25
-  Frog                  -   -   1   1   1  12  20  20  25
-  Sandy Pot             -   -   1   1   1  15  20  20  25
+shiny                                   # Shiny Pets, counts; World 1 to 5 columns from crowd-research.txt
+  stages        4m  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Wode Board     -   -   1   2   2   6   6  13  20  20  25  30
+  Tyson          -   -   -   1   1   5   5  10  20  20  20  25
+  @any 1         -   -   2   4   4  15  30  65  65  65  65  65
+  @any 5         -   -   -   -   -   5  30  65  65  65  65  65
+  @any 10        -   -   -   -   -   -  14  50  65  65  65  65
+  @any 15        -   -   -   -   -   -   1  25  65  65  65  65
+  @any 20        -   -   -   -   -   -   -   3  45  65  65  65
+  @any 25        -   -   -   -   -   -   -   -   -   -   3  25
 
-breeding-upgrades                       # Breeding Upgrades
-  stages                        4m  5m  6m  7e  7m  7l  end1  end2  max
-  Paint Bucket                   1   1   -   1   3   4   10   10   15
-  Gene Splicing                  -   3   9   9   9  13   20   20   20
-  Egg Capacity                   -   1   3   4   5   5    5    5    5
-  Fence Extension                -   1   3   5   8  10   10   10   10
-  Blooming Axe                   -   1   3   3   3   7   17   20   25
-  Pastpresent Brood              -   1   -   2   3   4    5    5    5
-  Shattershell Iteration         -   1   -   -   3   5   10   10   10
-  Grand Martial of Shinytown     -   4   -   -  20  75  130  150  290
-  Breedability Mobs              -   -   2   5   8  10   10   10   10
-  Rarity of the Egg              -   -   2   3   4   7   10   10   10
-  Overwhelmed Golden Egg         -   -   -   2   2   3    5    5    8
-  Failsafe Restitution Cloud     -   -   -   -   3   5    8   10   25
+breeding-upgrades                       # Breeding Upgrades, World 1 to 5 columns from crowd-research.txt
+  stages                        4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Gene Splicing                  1   2   3   4   5   5   6   6   7   7   8  13   20   20   20
+  Egg Capacity                   1   1   2   2   3   3   3   4   4   4   5   5    5    5    5
+  Breedability Mobs              -   1   2   3   3   4   4   5   5   5   8  10   10   10   10
+  Fence Extension                -   -   1   2   3   3   4   4   5   5   8  10   10   10   10
+  Rarity of the Egg              -   -   -   1   1   2   2   2   3   3   4   7   10   10   10
+  Blooming Axe                   -   -   -   -   1   1   2   2   3   3   3   7   17   20   25
+  Pastpresent Brood              -   -   -   -   -   1   1   1   2   2   3   4    5    5    5
+  Paint Bucket                   -   -   -   -   -   -   -   1   1   1   3   4   10   10   15
+  Overwhelmed Golden Egg         -   -   -   -   -   -   -   1   2   2   2   3    5    5    8
+  Shattershell Iteration         -   -   -   -   -   -   -   -   -   -   3   5   10   10   10
+  Failsafe Restitution Cloud     -   -   -   -   -   -   -   -   -   -   3   5    8   10   25
+  Grand Martial of Shinytown     -   -   -   -   -   -   -   -   -   -  20  75  130  150  290
 
 territories                             # Breeding Territories
   stages                        4m  5m  6m  7e  7m  7l  end1  end2  max

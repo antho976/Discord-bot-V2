@@ -40,9 +40,8 @@ const BASE_ONLY: [&str; 1] = ["bubbles"];
 /// Artifacts: which one a sailing chest drops, and in which form, is luck (2026-11-09); a level is
 /// a form, Found (1) to Verisimilitude (7). Pristine charms drop at random in Sneaking. Which
 /// cards drop is luck too; a card's level is its stars.
-const COUNTS: [(&str, &[f64]); 6] = [
-/// a form, Found (1) to Verisimilitude (7). Pristine charms drop at random in Sneaking.
-const COUNTS: [(&str, &[f64]); 7] = [
+/// Chips, shiny pets and meals: see below.
+const COUNTS: [(&str, &[f64]); 9] = [
     ("vials", &[1.0, 4.0, 7.0, 10.0, 13.0]),
     ("arcade", &[10.0, 25.0, 50.0, 100.0]),
     ("artifacts", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]),
