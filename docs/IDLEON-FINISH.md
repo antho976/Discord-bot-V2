@@ -80,3 +80,23 @@ Each lane covers the files and cards listed below. The work in each lane:
 | Account-wide | zesty-llama | `checks/general.rs`, plus new account-wide checks | cards, achievements, gem shop, event shop, greenstacks, secret path, class levels, storage, bags, carry capacity, and missing account-wide systems: Tome, obols, family, guild, star talents, companions and the like |
 
 Status lives in Relay (`session.intent`) and in the commits. When you finish your lane, tell sly-puffin, then pick the next undone item from your own list ("added later" ideas). Don't start on another lane's files.
+
+## Round 2 (2026-11-09 evening)
+
+The owner asked for more polish: janky animations, a weak paste page, bugs, and data checks such as "Statue Flair unlocks in World 7 but its tiers start at Mid World 6". sly-puffin's report split the work into five lanes. Same rules as round 1:
+- Start from `origin/relay/sly-puffin`.
+- Small commits.
+- Hand off on a branch of your own, with a fresh name if a force push would be needed. sly-puffin cherry-picks it.
+- Load `house-style` before any UI work, and run `house-style-review` before you hand off.
+- On the design canvas, draw 2 options (one artboard each, A and B), build the one you recommend, and tell sly-puffin which you built and why, so the owner can switch.
+- Keep token use low: no subagents unless one is truly needed (Haiku), and screenshots only where they answer a question.
+
+`page.rs` is shared, so each lane owns only these parts of it:
+
+| Lane | Session | Owns |
+|---|---|---|
+| Motion | bold-lemur | the card open and close script (FLIP), motion CSS, the switch layout on a phone |
+| Paste page | plucky-otter | the paste box section (`ask`), its CSS and copy |
+| Data | amber-osprey | `examples/crowd.rs`, `crowd-research.txt`, `checks/*` unlock worlds |
+| Results page | ivory-koala | the page head, share, Not started yet, Should have by now, card head wording, number formatting (`checks::big`) |
+| Bugs and weight | amber-ibis | `ladder` / `peek` / `side_of` in page.rs, `limit.rs`, page weight, invariant tests, final QA |
