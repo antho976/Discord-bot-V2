@@ -194,3 +194,83 @@ comes from the game itself (fixed unlock orders) or from the 2 World 5 and 7 Wor
 Each is now a side of its card.
 
 ## Account-wide (zesty-llama)
+
+Searches: 9 standard WebSearch calls on 2026-11-09. Reddit and Steam turned up little for these
+cards; the guides below are the best sources found. The game's own data (`Tome`, `GuildBonuses`,
+`CompanionDB` and the obol tables, from N.js) fills the rest.
+
+### Gem shop
+
+Buy first ([DigitalTQ gem shop tier list](https://www.digitaltq.com/wiki/idleon/gem-shop-tier-list), April 2025):
+- Extra Card Slot, all 4, as soon as you can.
+- Infinity Hammer (two anvil crafts at once).
+- Ivory Bubble Cauldrons and Bleach Liquid Cauldrons, all 4 of each (Bleach in order).
+- Crystal 3d Printer once you reach World 3.
+- Card Presets.
+
+Then buy where you're stuck: Brimstone Forge Slot, Royal Egg Cap (World 4), Richelin Kitchen
+(only the kitchens you use), Souped Up Tube, Divinity Sparkie, Golden Sprinkler, Lava Sprouts,
+Plot of Land. Premium stones, card packs and arcade balls come last.
+
+### Event shop
+
+Order from the [gameslikefinder event shop tier list](https://gameslikefinder.com/article/idleon-event-shop-guide/) (2026):
+1. Stamp Stack, Bubble Broth, Extra Lumi.
+2. Golden Square, Sleepy Joe, King of the Rack, Secret Pouch, Smol Pouch, Magnifying Glass, Graduate Thesis.
+3. More Storage, Storage Chest, Dough Roller, Government Subsidy, Coin Stacking.
+
+Golden Tome is better once the Tome score is high. Automated Mail and Extra Page come last.
+
+### Tome (World 4, account-wide)
+
+The game data has 124 lines (`Tome`). Each line:
+- has a target and a points max, and is scored on one of five curves (N.js `TomePCT`).
+- unlocks at a total of class levels: 350, then 40 more per line in the in-game order
+  (`NinjaInfo[32]`), with steeper steps after the 35th, 60th, 80th and 100th lines.
+
+Lines on the "more is better" curve keep giving points past their target, up to 1.45 times their max.
+
+The score unlocks bonuses ([DigitalTQ: The Tome](https://www.digitaltq.com/wiki/idleon/the-tome)):
+- skill efficiency past 4,000 points
+- drop rate past 8,000 points
+
+Players use it as the one number for a whole account, which makes it the account-wide card most worth having.
+
+### Obols
+
+- Fill the family page first. It opens at 5,000 total class levels.
+- Then fill each character's own slots. The last one opens at class level 250.
+- Drop rate obols everywhere is the simple plan.
+
+Source: [gameslikefinder obol guide](https://gameslikefinder.com/article/idleon-obol-guide/).
+
+### Star talents
+
+Order from the [gameslikefinder special talents guide](https://gameslikefinder.com/article/idleon-special-talents-guide/):
+1. Tick Tock and Crystals 4 Dayys.
+2. Stonks!, but only to Lv 30.
+3. Supersource, Action Frenzy, Ancient Multitool, Statue Metallurgy, Studious Quester (as far as your quests justify), Frothy Malk.
+4. Printer Sampling: 1 point only.
+
+### Cards
+
+- 5 stars open at Rift 46, 6 stars with Spelunking ([gameslikefinder card builds](https://gameslikefinder.com/article/idleon-card-builds/)).
+- The Bosses / Nightmares set is worth having from early to the end.
+- Which cards drop is luck, so card tiers count stars on any cards rather than naming them.
+
+### Guild
+
+No player guide on guild bonus order turned up. Bonus levels are in the save (`Guild[0]`, against
+`GuildBonuses`), but only the guild's owner spends guild points, so a member can't act on it.
+Low priority.
+
+### Companions
+
+IdleonToolbox's export has them at the top level (`companion`), outside the game save. The bot's
+save reader drops that part today, so a Companions card needs a change there first.
+
+### What players do first, account-wide
+
+A [r/idleon thread](https://cal1.lr.ggtyler.dev/r/idleon/comments/1fkvk50/looking_for_early_w6_account_help/lnzxg5u/?context=3)
+(Sep 2024, early World 6) says to clean up first: slab, bubbles, constellations, stamps, obols.
+Then push the Rift and farm vials.
