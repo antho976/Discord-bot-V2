@@ -738,6 +738,10 @@ fn ladder(m: &Mechanic, tiers: &[Tier], current: Option<usize>, reached: u8, tag
     let here = groups.iter().position(|g| g.1.contains(&pick)).unwrap_or(0);
     let (from, to) = stage_window(groups.len(), here);
     let cut = from > 0 || to < groups.len();
+    // Tiers drawn in full, rows with pictures and how: the one before yours to `NEAR` after it.
+    // The rest list their asks by name (a mid-game save has some 1,600 tiers; drawing every one
+    // in full made the page 9.8 MB).
+    let near = |k: usize| k + 1 >= pick && k <= pick + NEAR;
     html! {
         div.ia-b {
             div.ia-stages {
@@ -768,7 +772,7 @@ fn ladder(m: &Mechanic, tiers: &[Tier], current: Option<usize>, reached: u8, tag
             div.ia-peeks {
                 @for k in 0..tiers.len() {
                     input.ia-pick type="radio" name={ "t-" (m.key) "-" (tag) } id=(id(k)) data-k=(k) checked[k == pick] aria-label={ "Tier " (k + 1) ", " (tiers[k].label) };
-                    div.ia-peek { (peek(m, tiers, k, current, reached, &id)) }
+                    div.ia-peek { (peek(m, tiers, k, current, reached, &id, near(k))) }
                 }
             }
         }
@@ -853,7 +857,21 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
 
 /// One tier's page, shown when it's picked: its name with steps to the tiers either side, a
 /// line on where you stand, then everything it asks, what's left first.
-fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached: u8, id: &dyn Fn(usize) -> String) -> Markup {
+/// Tiers after yours drawn in full (see `ladder`), and the asks a tier further off names.
+const NEAR: usize = 2;
+const FAR_NAMES: usize = 12;
+
+/// Names in a line: "A, B and C".
+fn names<'a>(items: impl Iterator<Item = &'a Item>) -> String {
+    let v: Vec<&str> = items.map(|i| i.name.as_str()).collect();
+    match v.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        Some((last, _)) => last.to_string(),
+        None => String::new(),
+    }
+}
+
+fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached: u8, id: &dyn Fn(usize) -> String, full: bool) -> Markup {
     let t = &tiers[k];
     // A done count tier has nothing to list: which items counted isn't kept.
     let asks = if t.complete() && t.targets.is_none() { Vec::new() } else { m.tier_asks(tiers, k) };
@@ -864,10 +882,9 @@ fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached:
         div.ia-peek-head {
             h3 { "Tier " (k + 1) " · " (t.label) }
             span.ia-steps {
-                @if k > 0 { label.ia-step.back for=(id(k - 1)) title="Tier before" { (ui::icon(bot_core::Icon::Chevron)) } }
-                @else { span.ia-step.back.off { (ui::icon(bot_core::Icon::Chevron)) } }
-                @if k + 1 < tiers.len() { label.ia-step.next for=(id(k + 1)) title="Next tier" { (ui::icon(bot_core::Icon::Chevron)) } }
-                @else { span.ia-step.next.off { (ui::icon(bot_core::Icon::Chevron)) } }
+                // Chevrons drawn by the CSS: an inline icon on each of some 1,600 tiers was 0.8 MB.
+                @if k > 0 { label.ia-step.back for=(id(k - 1)) title="Tier before" {} } @else { span.ia-step.back.off {} }
+                @if k + 1 < tiers.len() { label.ia-step.next for=(id(k + 1)) title="Next tier" {} } @else { span.ia-step.next.off {} }
             }
         }
         p.ia-note {
@@ -889,11 +906,24 @@ fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached:
             @if let Some(w) = expected.filter(|_| current != Some(k)) { "Expected by World " (w) ", and you're in World " (reached) ". " }
             @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty() && m.crowd.is_none()) { (n) }
         }
-        @if left > 0 {
+        @if left > 0 && !full {
+            // A tier further off: what it asks, by name.
+            p.ia-asks {
+                @for (n, (i, target, _)) in asks.iter().take(left.min(FAR_NAMES)).enumerate() {
+                    @if n > 0 { ", " }
+                    (i.name) " " span { (ask_text(m, i, *target).0) }
+                }
+                @if left > FAR_NAMES { " and " (left - FAR_NAMES) " more" }
+            }
+        }
+        @if left > 0 && full {
             div.ia-task-list {
                 @for (i, target, _) in asks.iter().take(left.min(TASKS)) { (task(m, i, *target)) }
             }
-            @if left > TASKS {
+            @if left > TASKS && current != Some(k) {
+                p.ia-asks { "And " (left - TASKS) " more: " (names(asks[TASKS..left].iter().map(|a| a.0))) "." }
+            }
+            @if left > TASKS && current == Some(k) {
                 details.ia-rest {
                     summary { "Show the other " (left - TASKS) }
                     div.ia-task-list { @for (i, target, _) in asks.iter().take(left).skip(TASKS) { (task(m, i, *target)) } }
@@ -901,9 +931,12 @@ fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached:
             }
         }
         // What's done in it: one quiet line of names, not a row each.
-        @if left < asks.len() {
+        @if left < asks.len() && !full {
+            p.ia-done-line { span.ia-tick {} span { "Done: " (asks.len() - left) " of " (asks.len()) "." } }
+        }
+        @if left < asks.len() && full {
             p.ia-done-line {
-                span.ia-tick { (ui::icon(bot_core::Icon::Check)) }
+                span.ia-tick {}
                 span {
                     "Done: "
                     @for (n, (i, _, _)) in asks[left..].iter().enumerate() {
@@ -1351,18 +1384,20 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-peek > .ia-note { margin-top: 4px; }
 .ia-steps { display: flex; gap: 6px; }
 .ia-step { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--well); color: var(--ink-2); cursor: pointer; }
-.ia-step svg { width: 14px; height: 14px; }
-.ia-step.back svg { transform: rotate(90deg); }
-.ia-step.next svg { transform: rotate(-90deg); }
+.ia-step::before { content: ""; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; }
+.ia-step.back::before { transform: translateX(1px) rotate(135deg); }
+.ia-step.next::before { transform: translateX(-1px) rotate(-45deg); }
 .ia-step.off { opacity: 0.35; cursor: default; }
 .ia-task > .ia-fig { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; min-width: 80px; }
 .ia-task > .ia-fig b { font: 500 13px var(--mono); color: var(--ink); white-space: nowrap; }
 .ia-task > .ia-fig span { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
 .ia-task > .ia-fig span.ok { color: var(--live); }
 .ia-task > .ia-fig span.lock { color: var(--waiting); }
+.ia-asks { margin-top: 8px; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+.ia-asks span { font: 12px var(--mono); color: var(--ink-3); }
 .ia-done-line { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; font-size: 13px; line-height: 20px; color: var(--ink-3); }
 .ia-tick { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: var(--live); background: color-mix(in oklab, var(--live) 14%, transparent); }
-.ia-tick svg { width: 12px; height: 12px; }
+.ia-tick::before { content: ""; width: 7px; height: 4px; margin-top: -2px; border: solid currentColor; border-width: 0 0 1.5px 1.5px; transform: rotate(-45deg); }
 .ia-rest > summary { margin-top: 8px; font-size: 13px; color: var(--ink-3); cursor: pointer; }
 .ia-pace { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); }
 .ia-tasks { min-width: 0; }
