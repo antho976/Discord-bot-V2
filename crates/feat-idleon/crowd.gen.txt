@@ -50,9 +50,9 @@ statues                                 # Statues
 
 bribes                                  # Bribes, World 1 to 5 columns from AutoReview's tiers, changed
   stages    1l  2e  2l  3e  3l  4e  4l  5e  7e  7m  7l  end1  end2  max
-  Set 1      1   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Set 2      -   -   1   -   1   -   1   -   1   1   1   1   1   1
-  Set 3      -   -   -   -   1   -   1   -   1   1   1   1   1   1
+  Set 1      1   -   1   -   1   -   -   -   1   1   1   1   1   1
+  Set 2      -   -   1   -   1   -   -   -   1   1   1   1   1   1
+  Set 3      -   -   -   -   1   -   -   -   1   1   1   1   1   1
   Set 4      -   -   -   -   -   -   -   -   1   1   1   1   1   1
   Set 5      -   -   -   -   -   -   -   -   1   1   1   1   1   1
   Set 6      -   -   -   -   -   -   -   -   1   1   1   1   1   1
@@ -417,184 +417,138 @@ upgrade-vault                           # Upgrade Vault
   Topheavy Charms                 -   -   -   -   -   -    -    -    -    -    -    -    -    -    1    5   12   20   30   45   65     85    100    130
   Vault Mastery III               -   -   -   -   -   -    -    -    -    -    -    -    -    -    -    1    2    6   11   18   25     35     45     60
 
-bubbles                                 # Alchemy Bubbles, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                3m  3l  4m  4l  5m  5l     7e      7m      7l     end1       end2        max
-  Roid Ragin            15   -  30   -  80   -  1,000  14,000  76,000  750,000  1,600,000  2,400,000
-  Warriors Rule          7   -  16   -  40   -    180     270   1,000   10,000     11,000     50,000
-  Hearty Diggy          15   -  30   -  80   -    140     240     930   10,000     10,000    100,000
-  Wyoming Blood          7   -  16   -  25   -    150     250     420   10,000     10,000     30,000
-  Sploosh Sploosh        7   -  16   -  25   -     75     210     380    1,700      6,700     10,000
-  Stronk Tools          10   -  20   -  55   -    130     220     680   10,000     10,000     34,000
-  Swift Steppin         15   -  30   -  80   -  1,000  10,000  73,000  750,000  1,600,000  2,400,000
-  Archer Or Bust         7   -  16   -  40   -    150     210     420    7,300     10,000     25,000
-  Sanic Tools           10   -  20   -  55   -     80     180     420    7,000     10,000     10,000
-  Bug]                   7   -  16   -  25   -     65     210     390    2,100     10,000     10,000
-  Stable Jenius         15   -  30   -  80   -  1,100  10,000  76,000  740,000  1,600,000  2,400,000
-  Mage Is Best           7   -  16   -  40   -    150     220   1,000    5,200     10,000     16,000
-  Hocus Choppus         15   -  30   -  80   -    120     180     420    5,000     10,000     12,000
-  Molto Loggo            7   -  16   -  25   -     75     210     380    1,500      3,500     10,000
-  Le Brain Tools        10   -  20   -  55   -    100     200     420    6,900     10,000     50,000
-  Fmj                    6   -  12   -  18   -    100     180     340    4,000     10,000    150,000
-  Shaquracy              6   -  12   -  18   -    100     220     350    2,900     10,000     28,000
-  Prowesessary           8   -  18   -  50   -    110     190     350    5,900     10,000     11,000
-  Hammer Hammer          7   -  17   -  50   -    110     310  54,000  740,000  1,600,000  2,300,000
-  Name I Guess           -   -  12   -  25   -    120     230     420   10,000     21,000    100,000
-  All For Kill           -   -   -   -  30   -    110     210     400    9,900     10,000     10,000
-  Shimmeron              -   -   -   -   -   -      1     120     540    4,400      7,800     18,000
-  Power Trithree         -   -   -   -   -   -      1     120     310   10,000     17,000     33,000
-  Egg Ink                -   -   -   -   -   -     35     100     270    2,000      4,700     10,000
-  Card Champ             -   -   -   -   -   -     35     100     350    4,000      5,500     10,000
-  Buff Boi Talent        -   -   -   -   -   -     70     220     390    1,400      4,000     10,000
-  Dream Of Ironfish      -   -   -   -   -   -     40     120     280    2,100      3,000     10,000
-  Farquad Force          -   -   -   -   -   -      1       1     230   10,000     21,000    100,000
-  Endgame Eff I          -   -   -   -   -   -      1     120     230    3,000      5,900     10,000
-  Crop Chapter           -   -   -   -   -   -      1     280   1,100   14,000     50,000    100,000
-  Bow Jack               -   -   -   -   -   -     95     180     430    3,600     10,000     30,000
-  Premigreen             -   -   -   -   -   -     35     130     300    3,000      5,300     10,000
-  Slabo Critterbug       -   -   -   -   -   -     30     110     310    5,900     10,000     12,000
-  Endgame Eff Ii         -   -   -   -   -   -      1       1     430   10,000     40,000    100,000
-  Tome Agility           -   -   -   -   -   -      1     110     300    4,600      8,300     10,000
-  Stealth Chapter        -   -   -   -   -   -      1       1     310   10,000     19,000    100,000
-  Endgame Eff Iii        -   -   -   -   -   -      1     540   1,100   10,000     36,000    100,000
-  Tome Wisdom            -   -   -   -   -   -      1       1     310   10,000     32,000    100,000
-  Hinge Buster           -   -   -   -   -   -      1       1     370   10,000     10,000    100,000
-  Brittley Spears        -   -   -   -   -   -    100     190     420    2,800     10,000     15,000
-  Gamer At Heart         -   -   -   -   -   -     35     130     450   10,000     16,000     48,000
-  Double Pagey           -   -   -   -   -   -      1      20     100    6,900     11,000     13,000
-  Cheap Shot             -   -   -   -   -   -     65     200     340    2,800     10,000     10,000
-  Fast Boi Talent        -   -   -   -   -   -     65     180     350    4,100     10,000     10,000
-  Green Bargain          -   -   -   -   -   -     65     210     340    1,200      2,700     10,000
-  Fly In Mind            -   -   -   -   -   -     35     110     310    2,600     10,000     10,000
-  Bow Power              -   -   -   -   -   -     35     230     300    1,100      1,600      4,000
-  Sailor At Heart        -   -   -   -   -   -     45     120     360   10,000     11,000     43,000
-  Slabo Agility          -   -   -   -   -   -     30     130     310    5,900     10,000     10,000
-  Purple Bargain         -   -   -   -   -   -     75     180     340    1,500      8,500     15,000
-  Tree Sleeper           -   -   -   -   -   -     35     120     310    1,600     10,000     11,000
-  Matrix Evolved         -   -   -   -   -   -     35     120     320    2,500     10,000     10,000
-  Essence Chapter        -   -   -   -   -   -      1     500   1,000   12,000     47,000    100,000
-  Stamp Tramp            -   -   -   -   -   -    110     180     350    3,000     11,000    150,000
-  Undeveloped Costs      -   -   -   -   -   -    100     180     340    2,000      6,900     10,000
-  Da Daily Drip          -   -   -   -   -   -     70     180     420    2,500      9,900     10,000
-  Cogs For Hands         -   -   -   -   -   -     90     180     340    6,200     10,000     10,000
-  Diamond Chef           -   -   -   -   -   -     40     100     890   10,000     21,000     26,000
-  Petting The Rift       -   -   -   -   -   -     30     100     220    2,800      4,500      8,100
-  Big P                  -   -   -   -   -   -     55     110   1,500   14,000     60,000    220,000
-  Lo Cost Mo Jade        -   -   -   -   -   -      1     100     230    4,700     10,000     11,000
-  Reely Smart            -   -   -   -   -   -     90     180     350    7,900     10,000     10,000
-  Big Meaty Claws        -   -   -   -   -   -     95     180     350   10,000     25,000     55,000
-  Bappity Boopity        -   -   -   -   -   -     75     180     350   10,000     10,000     10,000
-  Call Me Bob            -   -   -   -   -   -    110     300  61,000  740,000  1,600,000  2,300,000
-  Carpenter              -   -   -   -   -   -     90     180   1,300   10,000     14,000     58,000
-  Orange Bargain         -   -   -   -   -   -     75     180     340    1,200      4,100     10,000
-  Penny Of Strength      -   -   -   -   -   -     70     120     570    4,200     10,000     20,000
-  Multorange             -   -   -   -   -   -     50     120     820    8,100     10,000     36,000
-  Bite But Not Chew      -   -   -   -   -   -     35     120     230    4,000     10,000     10,000
-  Spear Powah            -   -   -   -   -   -     85     230     330    1,200      1,600      3,900
-  Slabi Orefish          -   -   -   -   -   -     45     120     680    3,600      6,700     10,000
-  Slabi Strength         -   -   -   -   -   -     45     120     800    5,900     10,000     11,000
-  Power Trione           -   -   -   -   -   -     50     170     800    9,400     23,000     33,000
-  Tome Strength          -   -   -   -   -   -    100     280   1,000   15,000     60,000    100,000
-  Essence Boost          -   -   -   -   -   -      6     130     450    6,200     11,000     16,000
-  Dmg Of The Sun         -   -   -   -   -   -     19      45     100    5,800     10,000     26,000
-  Lil Big Damage         -   -   -   -   -   -     45     220     340    3,200     10,000     21,000
-  Anvilnomics            -   -   -   -   -   -     70     220     340    7,800     10,000     45,000
-  Quick Slap             -   -   -   -   -   -     90     210     340   10,000     15,000     58,000
-  Call Me Ash            -   -   -   -   -   -    100     310  56,000  740,000  1,600,000  2,300,000
-  Cuz I Catch Em All     -   -   -   -   -   -     75     180     340    4,200     10,000     22,000
-  Dollar Of Agility      -   -   -   -   -   -     40     100     310    2,400      3,500     10,000
-  Kill Per Kill          -   -   -   -   -   -     45     100     430    2,900      6,300     11,000
-  Afk Expexp             -   -   -   -   -   -     35     110     230    2,000     10,000     10,000
-  Power Tritwo           -   -   -   -   -   -     30     240     310    8,800     23,000     33,000
-  Quickdraw Quiver       -   -   -   -   -   -    200     690     940   10,000     32,000    100,000
-  Spapunkie              -   -   -   -   -   -      1      25     320   10,000     13,000     18,000
-  Noodubble              -   -   -   -   -   -     80     190     420    1,700      5,900     10,000
-  Cookin Roadkill        -   -   -   -   -   -    130     190     690    7,000     10,000     33,000
-  Brewstachio            -   -   -   -   -   -     95     180     340    9,900     10,000     10,000
-  Matty Stafford         -   -   -   -   -   -     85     180     340    4,000      5,000     10,000
-  Call Me Pope           -   -   -   -   -   -     95     230     420    2,100      5,600     15,000
-  Gospel Leader          -   -   -   -   -   -     95     200     430    3,100     10,000     10,000
-  Smart Boi Talent       -   -   -   -   -   -     95     200     350    4,100     10,000     10,000
-  Nickel Of Wisdom       -   -   -   -   -   -     65     130     310    4,600     10,000     20,000
-  Severapurple           -   -   -   -   -   -     85     130     590   10,000     15,000     37,000
-  Hyperswift             -   -   -   -   -   -     60     120     310    3,100      4,900     10,000
-  Wand Pawur             -   -   -   -   -   -     55     220     330    1,100      1,600      3,800
-  Slabe Logsoul          -   -   -   -   -   -     55     130     310    1,800      5,900     10,000
-  Pious At Heart         -   -   -   -   -   -     80     140     800   10,000     31,000     60,000
-  Slabe Wisdom           -   -   -   -   -   -     55     130     280    5,900     10,000     10,000
-  Smarter Spells         -   -   -   -   -   -    160     550   1,400   10,000     30,000    100,000
-  Lotto Skills           -   -   -   -   -   -    170   4,000  70,000  740,000  1,600,000  2,400,000
-  Droppin Loads          -   -   -   -   -   -    130     230     790    7,100     10,000     22,000
-  Startue Exp            -   -   -   -   -   -    180     210     710    7,600     10,000     12,000
-  Level Up Gift          -   -   -   -   -   -     95     210     470    3,100     10,000     10,000
-  Grind Time             -   -   -   -   -   -  1,600  11,000  28,000   93,000    120,000    230,000
-  Laaarrrryyyy           -   -   -   -   -   -    230   1,500  64,000  740,000  1,600,000  2,300,000
-  Sample It              -   -   -   -   -   -     95     180     420    3,800     10,000     16,000
-  Big Game Hunter        -   -   -   -   -   -     75     190     570    2,900      4,600     10,000
-  Ignore Overdues        -   -   -   -   -   -     95     180     520   10,000     10,000     11,000
-  Yellow Bargain         -   -   -   -   -   -     75     180     340    1,400      2,000      8,000
-  Mr Massacre            -   -   -   -   -   -     50     100     450    5,000      9,400     10,000
-  Boaty Bubble           -   -   -   -   -   -     90     140     300    1,100      1,500      4,000
-  Bit By Bit             -   -   -   -   -   -     55     100     410    7,000     10,000     11,000
-  Gifts Abound           -   -   -   -   -   -     55     100     370    4,400      6,700     10,000
-  Atom Split             -   -   -   -   -   -     55     100     230    4,300     10,000     10,000
-  Cropius Mapper         -   -   -   -   -   -     40     100     280   10,000     10,000     12,000
-  Ninja Looter           -   -   -   -   -   -    120     280   1,400   10,000     39,000    100,000
-  Bone Bubble            -   -   -   -   -   -      -      60     190    7,200     10,000     40,000
-  Dmg Of The Moon        -   -   -   -   -   -      -      12      50    2,800     10,000     11,000
-  Dust Bubble            -   -   -   -   -   -      -       1     120    6,100     11,000     40,000
-  Deep Depth             -   -   -   -   -   -      -      90     840    5,000     21,000     69,000
-  Dmg Of The Soul        -   -   -   -   -   -      -      30      70    3,900      6,000     11,000
-  Tachyon Bubble         -   -   -   -   -   -      -      25     100   10,000     12,000     40,000
-  Faster Nrg             -   -   -   -   -   -      -      30     820    6,200     10,000     13,000
-  Kattle Da Goat         -   -   -   -   -   -      -      30     110    9,500     29,000     45,000
-  Codfrey Rulz Ok        -   -   -   -   -   -      -      70     110   26,000     50,000     75,000
-  Royal Riches           -   -   -   -   -   -      -       -     900    7,100     10,000     16,000
-
-cauldron-upgrades                       # Cauldron Upgrades
-  stages                      7e   7m   7l  end1  end2  max
-  Power Cauldron: Speed      170  170  170  170  170  170
-  Power Cauldron: Luck       170  170  170  170  170  170
-  Power Cauldron: Cost       170  170  170  170  170  170
-  Power Cauldron: Extra      170  170  170  170  170  170
-  Quicc Cauldron: Speed      170  170  170  170  170  170
-  Quicc Cauldron: Luck       170  170  170  170  170  170
-  Quicc Cauldron: Extra      170  170  170  170  170  170
-  Kazam Cauldron: Speed      170  170  170  170  170  170
-  Kazam Cauldron: Luck       170  170  170  170  170  170
-  Kazam Cauldron: Cost       170  170  170  170  170  170
-  High-IQ Cauldron: Speed    170  170  170  170  170  170
-  High-IQ Cauldron: Luck     170  170  170  170  170  170
-  High-IQ Cauldron: Cost     170  170  170  170  170  170
-  High-IQ Cauldron: Extra    170  170  170  170  170  170
-  Kazam Cauldron: Extra      170  170  170  170  170  170
-  Quicc Cauldron: Cost       170  170  170  170  170  170
-
-pay2win                                 # Alchemy Pay2Win
-  stages                           7e   7m   7l  end1  end2  max
-  Power Cauldron: Speed           150  150  150  150  150  150
-  Power Cauldron: New Bubble      120  120  120  120  120  120
-  Power Cauldron: Boost Req       100  100  100  100  100  100
-  Quicc Cauldron: Speed           150  150  150  150  150  150
-  Quicc Cauldron: New Bubble      120  120  120  120  120  120
-  Quicc Cauldron: Boost Req       100  100  100  100  100  100
-  High-IQ Cauldron: Speed         150  150  150  150  150  150
-  High-IQ Cauldron: New Bubble    120  120  120  120  120  120
-  High-IQ Cauldron: Boost Req     100  100  100  100  100  100
-  Kazam Cauldron: Speed           150  150  150  150  150  150
-  Kazam Cauldron: New Bubble      120  120  120  120  120  120
-  Kazam Cauldron: Boost Req       100  100  100  100  100  100
-  Water Droplets: Regen           100  100  100  100  100  100
-  Water Droplets: Capacity         80   80   80   80   80   80
-  Liquid Nitrogen: Regen          100  100  100  100  100  100
-  Liquid Nitrogen: Capacity        80   80   80   80   80   80
-  Trench Seawater: Regen          100  100  100  100  100  100
-  Trench Seawater: Capacity        80   80   80   80   80   80
-  Vials: Attempts                  15   15   15   15   15   15
-  Vials: RNG                       45   45   45   45   45   45
-  Toxic Mercury: Regen            100  100  100  100  100  100
-  Toxic Mercury: Capacity          80   80   80   80   80   80
-  Player: Alchemy Speed           130  190  220  230  250  260
-  Player: Extra EXP               130  190  220  230  250  260
+bubbles                                 # Alchemy Bubbles, every column from AutoReview's tiers, changed
+  stages                2e  2m  2l  3e  4e   5e   5l   6e   6m   6l     7e     7m     7l   end1   end2     max
+  Roid Ragin            15  15  15  30  80  120  180  290  500  700    920  1,000  1,100  1,200  1,200  12,000
+  Warriors Rule          7   7   7  16  40   60   90  140  250  350    560  1,100  1,100  1,100  1,100   6,100
+  Hearty Diggy          15  15  15  30  80  120  180  290  500  700  1,100  1,100  1,100  1,100  1,100  12,000
+  Wyoming Blood          7   7   7  16  25   35   55   85  150  150    150    150    150    150    150     150
+  Sploosh Sploosh        7   7   7  16  25   35   55   85  150  150    150    150    150    150    150     150
+  Stronk Tools          10  10  10  20  55   85  130  200  350  490    780    780    780    780  1,600   8,600
+  Swift Steppin          -  15  15  30  80  120  180  290  500  700    920  1,000  1,100  1,200  1,200  12,000
+  Archer Or Bust         -   7   7  16  40   60   90  140  250  250    560    560    560    560    560   6,100
+  Sanic Tools            -  10  10  20  55   85   85   85   85   85     85     85     85     85  1,600   8,600
+  Bug]                   -   7   7  16  25   35   55   85  150  150    150    150    150    150    150     150
+  Stable Jenius          -  15  15  30  80  120  180  290  500  700    920  1,000  1,100  1,200  1,200  12,000
+  Mage Is Best           -   7   7  16  40   60   90  140  250  350    560  1,100  1,100  1,100  1,100   6,100
+  Hocus Choppus          -  15  15  30  80  120  120  120  500  700  1,100  1,100  1,100  1,100  1,100  12,000
+  Molto Loggo            -   7   7  16  25   35   55   85  150  150    150    150    150    150    150     150
+  Le Brain Tools         -  10  10  20  55   85  130  200  350  490    780    780    780    780  1,600   8,600
+  Fmj                    -   -   6  12  18   25   35   35   35   35     35     35     35     35     35      35
+  Shaquracy              -   -   6  12  18   25   35   35   35   35     35     35     35     35     35      35
+  Prowesessary           -   -   8  18  50   75   75   75   75   75     75     75     75     75     75      75
+  Hammer Hammer          -   -   7  17  50   80  120  120  180  220    370    370    370    370    370  12,000
+  Name I Guess           -   -   -  12  25   35   50  120  120  120    120    120    120    120    120     120
+  All For Kill           -   -   -   -  30   80  120  180  200  200    200    200    200    200    200     200
+  Multorange             -   -   -   -   -    -   55   85  150  210    330    710    710    710    710   3,700
+  Premigreen             -   -   -   -   -    -   55   85   85   85    330    330    330    330    330   3,700
+  Severapurple           -   -   -   -   -    -   55   85  150  210    330    710    710    710    710   3,700
+  Dream Of Ironfish      -   -   -   -   -    -    -   85   85  210    330    330    330    330    710   3,700
+  Fly In Mind            -   -   -   -   -    -    -  110  110  110    110    110    110    110    950   4,900
+  Tree Sleeper           -   -   -   -   -    -    -    -  200  280    450    450    450    450    950   4,900
+  Laaarrrryyyy           -   -   -   -   -    -    -    -  180  180    620  1,100  2,300  2,300  2,300  12,000
+  Cookin Roadkill        -   -   -   -   -    -    -    -  130  130    780    780  1,600  1,600  1,600   8,600
+  Startue Exp            -   -   -   -   -    -    -    -    -    -    300    300    300  1,400  1,400   7,400
+  Droppin Loads          -   -   -   -   -    -    -    -    -    -    350    350    350  1,600  1,600   8,600
+  Buff Boi Talent        -   -   -   -   -    -    -    -    -    -    120    120    250    370    370   1,000
+  Fast Boi Talent        -   -   -   -   -    -    -    -    -    -    120    120    250    370    370   1,000
+  Smart Boi Talent       -   -   -   -   -    -    -    -    -    -    120    120    250    370    370   1,000
+  Big P                  -   -   -   -   -    -    -    -    -    -      -    670  1,100  1,800  1,800   7,400
+  Call Me Bob            -   -   -   -   -    -    -    -    -    -      -  1,200  3,700  6,200  6,200  12,000
+  Carpenter              -   -   -   -   -    -    -    -    -    -      -    560  1,100  1,100  1,100   6,100
+  Big Game Hunter        -   -   -   -   -    -    -    -    -    -      -    330    710    710    710   3,700
+  Mr Massacre            -   -   -   -   -    -    -    -    -    -      -    560  1,100  1,100  1,100   6,100
+  Grind Time             -   -   -   -   -    -    -    -    -    -      -    620    620  6,200  6,200  12,000
+  Power Trione           -   -   -   -   -    -    -    -    -    -      -    560    560    560    560     560
+  Power Tritwo           -   -   -   -   -    -    -    -    -    -      -    560    560    560    560     560
+  Power Trithree         -   -   -   -   -    -    -    -    -    -      -    560    560    560    560     560
+  Cropius Mapper         -   -   -   -   -    -    -    -    -    -      -      -    780    780    780     780
+  Lo Cost Mo Jade        -   -   -   -   -    -    -    -    -    -      -      -    950    950    950     950
+  Essence Boost          -   -   -   -   -    -    -    -    -    -      -      -    500    500    500     500
+  Diamond Chef           -   -   -   -   -    -    -    -    -    -      -      -  1,100  1,100  1,100   1,100
+  Nickel Of Wisdom       -   -   -   -   -    -    -    -    -    -      -      -      -    150    710   3,700
+  Penny Of Strength      -   -   -   -   -    -    -    -    -    -      -      -      -    150    710   3,700
+  Dollar Of Agility      -   -   -   -   -    -    -    -    -    -      -      -      -    150    710   3,700
+  Slabi Orefish          -   -   -   -   -    -    -    -    -    -      -      -      -      -  1,400   7,400
+  Slabi Strength         -   -   -   -   -    -    -    -    -    -      -      -      -      -  1,400   7,400
+  Tome Strength          -   -   -   -   -    -    -    -    -    -      -      -      -      -  1,400   7,400
+  Slabo Critterbug       -   -   -   -   -    -    -    -    -    -      -      -      -      -  1,400   7,400
+  Slabo Agility          -   -   -   -   -    -    -    -    -    -      -      -      -      -  1,400   7,400
+  Tome Agility           -   -   -   -   -    -    -    -    -    -      -      -      -      -  1,400   7,400
+  Slabe Logsoul          -   -   -   -   -    -    -    -    -    -      -      -      -      -  1,400   7,400
+  Slabe Wisdom           -   -   -   -   -    -    -    -    -    -      -      -      -      -  1,400   7,400
+  Endgame Eff Iii        -   -   -   -   -    -    -    -    -    -      -      -      -      -  1,400   7,400
+  Card Champ             -   -   -   -   -    -    -    -    -    -      -      -      -      -    950   4,900
+  Endgame Eff Ii         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -   7,400
+  Tome Wisdom            -   -   -   -   -    -    -    -    -    -      -      -      -      -      -   7,400
+  Essence Chapter        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -   6,100
+  Quickdraw Quiver       -   -   -   -   -    -    -    -    -    -      -      -      -      -      -   7,400
+  Smarter Spells         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -   7,400
+  Ninja Looter           -   -   -   -   -    -    -    -    -    -      -      -      -      -      -   7,400
+  Crop Chapter           -   -   -   -   -    -    -    -    -    -      -      -      -      -      -   6,100
+  Reely Smart            -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Big Meaty Claws        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Bappity Boopity        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Brittley Spears        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Orange Bargain         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Shimmeron              -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Bite But Not Chew      -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Spear Powah            -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Gamer At Heart         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Farquad Force          -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Endgame Eff I          -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Double Pagey           -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Dmg Of The Sun         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Bone Bubble            -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Royal Riches           -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Lil Big Damage         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Anvilnomics            -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Quick Slap             -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Cheap Shot             -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Bow Jack               -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Call Me Ash            -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Cuz I Catch Em All     -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Green Bargain          -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Kill Per Kill          -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Afk Expexp             -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Bow Power              -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Sailor At Heart        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Stealth Chapter        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Spapunkie              -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Dmg Of The Moon        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Dust Bubble            -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Noodubble              -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Brewstachio            -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Matty Stafford         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Call Me Pope           -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Gospel Leader          -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Purple Bargain         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Hyperswift             -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Matrix Evolved         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Wand Pawur             -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Pious At Heart         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Deep Depth             -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Dmg Of The Soul        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Tachyon Bubble         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Lotto Skills           -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Level Up Gift          -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Stamp Tramp            -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Undeveloped Costs      -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Da Daily Drip          -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Cogs For Hands         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Sample It              -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Ignore Overdues        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Yellow Bargain         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Egg Ink                -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Petting The Rift       -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Boaty Bubble           -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Bit By Bit             -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Gifts Abound           -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Atom Split             -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Hinge Buster           -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Faster Nrg             -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Kattle Da Goat         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
+  Codfrey Rulz Ok        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
 
 vials                                   # Vials, World 1 to 5 columns from AutoReview's tiers, changed
   stages                2l  3e  3m  3l  4e  4m  4l  5e  5m  5l  7e  7m  7l  end1  end2  max

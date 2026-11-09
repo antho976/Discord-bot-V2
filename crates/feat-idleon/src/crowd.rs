@@ -52,7 +52,12 @@ pub const BEST: [&str; 5] = ["statues", "stamps", "owl", "forge", "upgrade-vault
 /// Mechanics whose items differ from account to account (one per character), so they have no
 /// rows in `crowd.txt`: their ladder is made from each item's own max on the `best_curve`, a
 /// stage at a time from the mechanic's world (`by_max`).
-pub const BY_MAX: [&str; 1] = ["anvil-points"];
+pub const BY_MAX: [&str; 3] = ["anvil-points", "cauldron-upgrades", "pay2win"];
+
+/// Mechanics whose every tier fits on its card (owner, 2026-11-08: "enough tiers to not have
+/// more bubbles in a tier than it can show"): a stage that raises more than `PART` items is
+/// split into as many parts as that takes, never fewer, and their `whole` tables are split too.
+pub const FITS: [&str; 3] = ["bubbles", "cauldron-upgrades", "pay2win"];
 
 /// Share of the best asked for at `stage` for something from `world` (`BEST` tables and
 /// `BY_MAX` ladders): nothing before the world opens, then rising with the square of the
@@ -74,12 +79,13 @@ pub fn curve_from(open: usize, stage: usize) -> f64 {
 
 /// A `BY_MAX` mechanic's table, made for these items: every stage a column, each item's max on
 /// the curve, never split into parts.
-pub fn by_max(items: &[Item], world: u8) -> Block {
+pub fn by_max(key: &str, items: &[Item], world: u8) -> Block {
     let mut b = Block::new((0..STAGES.len()).collect());
     b.whole = true;
+    b.fits = FITS.contains(&key);
     for i in items.iter().filter(|i| i.max > 0.0) {
-        let w = i.world.unwrap_or(world);
-        b.push(i.name.clone(), (0..STAGES.len()).map(|s| { let f = best_curve(w, s); (f > 0.0).then(|| nice(i.max * f).max(1.0)) }).collect());
+        let w = i.ladder_from.or(i.world).unwrap_or(world);
+        b.push(i.name.clone(), (0..STAGES.len()).map(|s| { let f = best_curve(w, s); (f > 0.0).then(|| if f >= 1.0 { i.max } else { nice(i.max * f).max(1.0) }) }).collect());
     }
     b
 }
@@ -91,6 +97,8 @@ pub struct Block {
     pub off: bool,
     /// A `BEST` mechanic's table: a tier per stage, not split into parts.
     pub whole: bool,
+    /// A `FITS` mechanic's table: every step split into parts of `PART` at most.
+    pub fits: bool,
     /// Its columns, as indexes into `STAGES`, in game order.
     pub stages: Vec<usize>,
     /// Item name to its cells, one per column: `None` for `-` (not asked for at that stage).
@@ -154,7 +162,7 @@ pub fn parse(text: &str) -> (Table, Vec<String>) {
             if table.contains_key(first) {
                 problems.push(format!("line {n}: {first} is listed twice"));
             }
-            let mut b = Block { whole: BEST.contains(&first), ..Block::default() };
+            let mut b = Block { whole: BEST.contains(&first), fits: FITS.contains(&first), ..Block::default() };
             match words.get(1) {
                 None => {}
                 Some(&"off") => b.off = true,
@@ -327,7 +335,11 @@ impl Ladder {
             if targets.iter().all(|&t| t <= 0.0) || rungs.last().is_some_and(|r| r.targets == targets) {
                 continue;
             }
-            let parts = if block.whole { vec![targets.clone()] } else { split(&prev, &targets, &order, PART, MAX_PARTS) };
+            let parts = match (block.fits, block.whole) {
+                (true, _) => split(&prev, &targets, &order, PART, usize::MAX),
+                (false, true) => vec![targets.clone()],
+                (false, false) => split(&prev, &targets, &order, PART, MAX_PARTS),
+            };
             let n = parts.len();
             for (p, t) in parts.into_iter().enumerate() {
                 let label = if n == 1 { stage_label(stage) } else { format!("{} · {} of {n}", stage_label(stage), p + 1) };
@@ -413,5 +425,30 @@ bad
         let mut off = t["m"].clone();
         off.off = true;
         assert_eq!(Ladder::new(&off, &items), None);
+    }
+
+    #[test]
+    fn a_ladder_that_fits_never_asks_more_than_a_part() {
+        // 100 items raised at one stage: past MAX_PARTS parts, still 8 at most each.
+        let mut text = String::from("bubbles\n  stages 2e 2m\n");
+        for k in 0..100 {
+            text.push_str(&format!("  I{k}  5  9\n"));
+        }
+        let (t, _) = parse(&text);
+        assert!(t["bubbles"].fits);
+        let items: Vec<Item> = (0..100).map(|k| Item::new(format!("I{k}"), None, 0.0, 10.0)).collect();
+        let l = Ladder::new(&t["bubbles"], &items).unwrap();
+        assert_eq!(l.rungs.len(), 26);
+        let mut prev = vec![0.0; 100];
+        for r in &l.rungs {
+            assert!(r.targets.iter().zip(&prev).filter(|(a, b)| a > b).count() <= PART, "{}", r.label);
+            prev = r.targets.clone();
+        }
+        // A made ladder that fits is split too, starts at its world and ends at the max.
+        let items: Vec<Item> = (0..16).map(|k| Item::new(format!("C{k}"), None, 0.0, 170.0)).collect();
+        let b = by_max("cauldron-upgrades", &items, 2);
+        let l = Ladder::new(&b, &items).unwrap();
+        assert_eq!(l.rungs[0].label, "Early World 2 · 1 of 2");
+        assert!(l.rungs.last().unwrap().targets.iter().all(|&t| t == 170.0));
     }
 }

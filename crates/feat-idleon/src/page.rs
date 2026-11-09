@@ -320,7 +320,9 @@ fn done(guild: u64, r: &Review) -> Markup {
             @for w in &worlds {
                 div.ia-world data-w=(w) style={ "--w: var(--w" (w) ")" } {
                     div.ia-grid {
-                        @for m in r.mechanics.iter().filter(|m| m.world == *w) { (card(m, r.world)) }
+                        @for m in r.mechanics.iter().filter(|m| m.world == *w && card_key(m.key) == m.key) {
+                            (card(m, FOLD.iter().find(|f| f.0 == m.key).and_then(|f| r.mechanics.iter().find(|p| p.key == f.2)), r.world))
+                        }
                     }
                 }
             }
@@ -412,7 +414,7 @@ fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
     });
     let names = items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", ");
     html! {
-        a.ia-owe-line href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) title={ (items.len()) " left: " (names) } {
+        a.ia-owe-line href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(m.key)] data-w=(m.world) title={ (items.len()) " left: " (names) } {
             (mark(m))
             span.ia-owe-name {
                 b { (m.name) }
@@ -427,7 +429,7 @@ fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
 /// A Not started chip: opens its card.
 fn fresh(m: &Mechanic) -> Markup {
     html! {
-        a.ia-fresh-item href={ "#m-" (m.key) } data-go={ "m-" (m.key) } data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
+        a.ia-fresh-item href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(m.key)] data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
             (mark(m))
             span { (m.name) }
             span.ia-tag { (world_tag(m.world)) }
@@ -476,12 +478,37 @@ fn pace_line(p: &Pace, reached: u8) -> Option<String> {
     }
 }
 
-fn card(m: &Mechanic, reached: u8) -> Markup {
+/// Two mechanics drawn as one card behind a switch, like Stamps' Levels / Unlock (owner,
+/// 2026-11-08: Cauldron Upgrades and Pay2Win, "fold that in"): the card's mechanic and its
+/// side's name, then the folded one and its side's name.
+const FOLD: &[(&str, &str, &str, &str)] = &[("cauldron-upgrades", "Brewing", "pay2win", "Pay2Win")];
+
+/// The key of the card a mechanic is drawn in: its own, or the one it's folded into.
+fn card_key(key: &str) -> &str {
+    FOLD.iter().find(|f| f.2 == key).map_or(key, |f| f.0)
+}
+
+/// For a folded mechanic, the side of its card's switch it's on (links open that side).
+fn side_of(key: &str) -> Option<&'static str> {
+    FOLD.iter().any(|f| f.2 == key).then_some("tiers")
+}
+
+fn card(m: &Mechanic, partner: Option<&Mechanic>, reached: u8) -> Markup {
     let tiers = m.tiers();
     let current = tiers.iter().position(|t| !t.complete());
     let hold = ON_HOLD.contains(&m.key);
-    // Statues: the game's tiers and a ladder on levels, one at a time behind a switch.
-    let split = m.levels_view().zip(m.tiers_view());
+    let fold = FOLD.iter().find(|f| f.0 == m.key).zip(partner);
+    // Two sides behind a switch: statues and stamps show the game's tiers and a ladder on
+    // levels; a folded card shows its two mechanics. (label, the side, the side's mechanic)
+    let split: Option<[(&str, Mechanic); 2]> = match fold {
+        Some((f, p)) => Some([(f.1, m.clone()), (f.3, p.clone())]),
+        None => m.levels_view().zip(m.tiers_view()).map(|(lv, tv)| [("Levels", lv), (m.other_side, tv)]),
+    };
+    let share = match partner.filter(|_| fold.is_some()) {
+        Some(p) if m.total() + p.total() > 0.0 => ((m.have() + p.have()) / (m.total() + p.total())).clamp(0.0, 1.0),
+        _ => m.share(),
+    };
+    let done = fold.is_some_and(|(_, p)| m.done() && p.done()) || (fold.is_none() && m.done());
     html! {
         details.ia-card #{ "m-" (m.key) } {
             summary {
@@ -490,8 +517,9 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                     b { (m.name) }
                     // The tier you're on, numbered as the ladder numbers it ("Tier 3 · you're here").
                     span {
-                        @if let Some((_, tv)) = &split { (ladder_fig(tv)) } @else { (fig(m)) }
+                        @if fold.is_some() { (fig(m)) } @else if let Some([_, (_, tv)]) = &split { (ladder_fig(tv)) } @else { (fig(m)) }
                         @match current {
+                            Some(k) if fold.is_some() => { " · Tier " (k + 1) "/" (tiers.len()) },
                             Some(k) if split.is_some() => { " · Level tier " (k + 1) "/" (tiers.len()) },
                             Some(k) => { " · Tier " (k + 1) "/" (tiers.len()) },
                             None if !tiers.is_empty() => { " · All tiers" },
@@ -509,30 +537,30 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                 @if m.count == Count::Open {
                     span.ia-pct.open { "No max" }
                 } @else {
-                    span.ia-pct.done[m.done()] { (pct(m.share())) }
-                    span.ia-meter.wide { span style={ "--s:" (share3(m.share())) } {} }
+                    span.ia-pct.done[done] { (pct(share)) }
+                    span.ia-meter.wide { span style={ "--s:" (share3(share)) } {} }
                 }
             }
             div.ia-body {
                 @if hold {
                     p.ia-hold { b { "Order coming later." } " The numbers here are right, but these tiers aren't in the order you'd really do them yet. That comes in a later update." }
                 }
-                @if let Some((lv, tv)) = &split {
+                @if let Some([(a, lv), (b, tv)]) = &split {
                     div.ia-split {
                         div.ia-switch role="radiogroup" aria-label="Show" {
                             label {
                                 input type="radio" name={ "v-" (m.key) } value="levels" checked;
-                                b { "Levels" }
+                                b { (a) }
                                 span.ia-fig { (ladder_fig(lv)) }
                             }
                             label {
                                 input type="radio" name={ "v-" (m.key) } value="tiers";
-                                b { (m.other_side) }
+                                b { (b) }
                                 span.ia-fig { (ladder_fig(tv)) }
                             }
                         }
-                        div.ia-view.levels { (view(lv, reached, "levels")) }
-                        div.ia-view.tiers { (view(tv, reached, "tiers")) }
+                        div.ia-view.levels { (view(lv, reached, "levels")) @if fold.is_some() { (all_items(lv)) } }
+                        div.ia-view.tiers { (view(tv, reached, "tiers")) @if fold.is_some() { (all_items(tv)) } }
                     }
                 } @else {
                     div.ia-view { (view(m, reached, "")) }
@@ -548,14 +576,21 @@ fn card(m: &Mechanic, reached: u8) -> Markup {
                         "."
                     }
                 }
-                @if !m.items.is_empty() {
-                    // Drawn by the page script from the page's item data when first opened: these
-                    // lists were three quarters of the page and most are never opened.
-                    details.ia-all {
-                        summary { "Show all " (m.items.len()) }
-                        div.ia-items data-key=(m.key) {}
-                    }
-                }
+                @if fold.is_none() { (all_items(m)) }
+            }
+        }
+    }
+}
+
+/// A mechanic's full item list behind "Show all", drawn by the page script from the page's
+/// item data when first opened: these lists were three quarters of the page and most are
+/// never opened.
+fn all_items(m: &Mechanic) -> Markup {
+    html! {
+        @if !m.items.is_empty() {
+            details.ia-all {
+                summary { "Show all " (m.items.len()) }
+                div.ia-items data-key=(m.key) {}
             }
         }
     }
@@ -724,12 +759,14 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
 /// any other by its name, a done one as done.
 fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>) -> Markup {
     let t = &tiers[k];
-    let tasks = if t.complete() { Vec::new() } else { m.tasks(t) };
+    let tasks = if t.complete() { Vec::new() } else { m.tier_tasks(tiers, k) };
     let ready = tasks.iter().filter(|(i, _)| i.state == Step::Ready).count();
     html! {
         @if current == Some(k) { h3 { "To reach Tier " (k + 1) } } @else { h3 { "Tier " (k + 1) " · " (t.label) } }
         @if t.complete() {
             p.ia-note { "Done: all " (t.need) "." @if current.is_none() { " Every tier is done." } }
+        } @else if tasks.is_empty() {
+            p.ia-note { "Everything this tier adds is done; a tier before it isn't yet." }
         } @else {
             p.ia-note {
                 @if t.targets.is_none() { (t.need - t.met) " more, any of these. " }
@@ -1012,6 +1049,7 @@ document.addEventListener("click",function(e){
   if(!m)return;
   e.preventDefault();
   if(w){w.checked=true;showTab(false)}
+  if(a.dataset.side){var v=m.querySelector('.ia-switch input[value="'+a.dataset.side+'"]');if(v)v.checked=true}
   flip(m,true);
   m.scrollIntoView({behavior:still.matches?"auto":"smooth",block:"start"});
 });
@@ -1285,6 +1323,11 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 }
 
 @media (max-width: 720px) {
+  /* Two halves that share the width, each its name over where it stands: long figures
+     ("Pay2Win Tier 26 / 59") ran past the card. */
+  .ia-switch { display: flex; }
+  .ia-switch label { flex: 1 1 0; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .ia-switch label .ia-fig { font-size: 12px; }
   .ia-hero { min-height: 180px; }
   .ia-hero .ov-hello h1 { font-size: 26px; }
   .ia-page { padding: 0 16px 56px; gap: 14px; }
