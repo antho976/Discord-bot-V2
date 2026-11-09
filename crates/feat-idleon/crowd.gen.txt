@@ -662,35 +662,35 @@ killroy                                 # Killroy, no max; World 1 to 5 columns 
   Dungeon Credits fights                -   -   -   -   -   -   -   -   -   1   1   1   1   1    1      2     12
   Pearls fights                         -   -   -   -   -   -   -   -   -   -   1   1   1   1    1      2      6
 
-construction                            # Construction Buildings
-  stages                 3m  4m  5m  6m   7e   7m   7l  end1  end2  max
-  3D Printer              1   2   5  11   11   11   11   11   11   11
-  Talent Book Library     1   8  20  40  100  200  200  200  200  200
-  Death Note              -   5  13  25   50   50   50   50   50   50
-  Salt Lick               -   2   5  11   11   11   11   11   11   11
-  Chest Space             -   5  13  25   25   25   25   25   25   25
-  Cost Cruncher           -   1   2   5   60   60   60   60   60   60
-  Automation Arm          -   1   2   5    5    5    5    5    5    5
-  Boulder Roller          -   5  13  25   40  110  180  200  200  200
-  Frozone Malone          -   1   4   9   50  130  190  210  220  220
-  Stormcaller             -   1   3   6   50  130  200  210  220  230
-  Party Starter           -   1   3   7   50  120  200  210  220  230
-  Woodular Shrine         -   5  13  25  100  270  310  310  310  310
-  Isaccian Shrine         -   1   4   9  100  260  310  310  310  310
-  Clover Shrine           -   1   1   1   55  210  310  310  310  310
-  Summereading Shrine     -   1   1   1   30  200  310  310  310  310
-  Crescent Shrine         -   1   1   1   12  200  210  310  310  310
-  Trapper Drone           -   -   1   2   18   50   50   50   50   50
-  Atom Collider           -   -   1   1   11  160  200  200  200  200
-  Pulse Mage              -   -   1   3   12  110  160  170  170  180
-  Fireball Lobber         -   -   1   2   25  110  160  170  180  180
-  Kraken Cosplayer        -   -   1   2   50  130  200  210  220  230
-  Crystal Shrine          -   -   1   2   80  290  310  310  310  310
-  Pantheon Shrine         -   -   1   2   60  300  310  310  310  310
-  Poisonic Elder          -   -   -   1   40  150  200  210  220  230
-  Voidinator              -   -   -   1   13   70  110  120  120  130
-  Undead Shrine           -   -   -   1   10  200  210  240  250  250
-  Primordial Shrine       -   -   -   1    8  200  210  240  250  250
+construction                            # Construction Buildings, World 1 to 5 columns from crowd-research.txt
+  stages                 3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l   7e   7m   7l  end1  end2  max
+  3D Printer              2   3   4   5   6   7   8   9  10  11  11  11   11   11   11   11   11   11
+  Salt Lick               -   1   1   1   1   2   2   3   5   8  11  11   11   11   11   11   11   11
+  Chest Space             -   1   1   2   2   3   3   5   8  15  20  25   25   25   25   25   25   25
+  Talent Book Library     -   -   1   1   1   1   2   5  10  25  45  60  100  200  200  200  200  200
+  Death Note              -   -   1   1   1   1   2   5  10  20  35  45   50   50   50   50   50   50
+  Woodular Shrine         -   -   1   1   2   2   3   5  10  20  35  45  100  270  310  310  310  310
+  Boulder Roller          -   -   -   1   2   3   4   6  10  18  25  33   40  110  180  200  200  200
+  Pulse Mage              -   -   -   1   1   1   1   2   4   6   9  12   12  110  160  170  170  180
+  Trapper Drone           -   -   -   -   1   1   1   2   4   7  10  12   18   50   50   50   50   50
+  Frozone Malone          -   -   -   -   1   1   1   3   6  12  20  30   50  130  190  210  220  220
+  Cost Cruncher           -   -   -   -   -   1   1   2   5  15  25  30   60   60   60   60   60   60
+  Automation Arm          -   -   -   -   -   1   1   1   2   3   5   5    5    5    5    5    5    5
+  Party Starter           -   -   -   -   -   1   1   2   5  10  18  25   50  120  200  210  220  230
+  Isaccian Shrine         -   -   -   -   -   -   1   2   4   8  12  18  100  260  310  310  310  310
+  Stormcaller             -   -   -   -   -   -   -   1   3   8  14  20   50  130  200  210  220  230
+  Crystal Shrine          -   -   -   -   -   -   -   -   1   3   8  14   80  290  310  310  310  310
+  Fireball Lobber         -   -   -   -   -   -   -   -   1   4   7  10   25  110  160  170  180  180
+  Kraken Cosplayer        -   -   -   -   -   -   -   -   -   5  10  16   50  130  200  210  220  230
+  Poisonic Elder          -   -   -   -   -   -   -   -   -   5  12  20   40  150  200  210  220  230
+  Atom Collider           -   -   -   -   -   -   -   -   -   1   1   3   11  160  200  200  200  200
+  Pantheon Shrine         -   -   -   -   -   -   -   -   -   -   3   5   60  300  310  310  310  310
+  Voidinator              -   -   -   -   -   -   -   -   -   -   -   -   13   70  110  120  120  130
+  Clover Shrine           -   -   -   -   -   -   -   -   -   -   -   -   55  210  310  310  310  310
+  Summereading Shrine     -   -   -   -   -   -   -   -   -   -   -   -   30  200  310  310  310  310
+  Crescent Shrine         -   -   -   -   -   -   -   -   -   -   -   -   12  200  210  310  310  310
+  Undead Shrine           -   -   -   -   -   -   -   -   -   -   -   -   10  200  210  240  250  250
+  Primordial Shrine       -   -   -   -   -   -   -   -   -   -   -   -    8  200  210  240  250  250
 
 salt-lick                               # Salt Lick, World 1 to 5 columns from AutoReview's tiers, changed
   stages                                                              3m  4m  5e  5m  5l  6m   7e   7m   7l  end1  end2  max
@@ -728,25 +728,25 @@ prayers                                 # Prayers, World 1 to 5 columns from Aut
   Balance of Proficiency     -   -   -   -   -   -   -   1   1  50  50  50  50  50
   Jawbreaker                 -   -   -   -   -   -   -   -   1  50  50  50  50  50
 
-atoms                                   # Atom Collider
-  stages        3m  4m  5m  6m  7e  7m  7l  end1  end2  max
-  Hydrogen       1   1   2   5  30  50  50  70  70  70
-  Helium         -   1   1   2   7  13  16  19  20  20
-  Boron          -   1   1   1  30  50  50  70  70  70
-  Carbon         -   3   9  17  25  50  50  70  70  70
-  Oxygen         -   3   9  17  25  50  50  70  70  70
-  Fluoride       -   3   9  17  25  50  50  70  70  70
-  Neon           -   3   9  17  25  50  50  70  70  70
-  Sodium         -   1   2   5   7  20  30  40  45  45
-  Magnesium      -   1   2   5   7  30  45  55  65  70
-  Phosphorus     -   4  11  20  30  35  50  70  70  70
-  Sulfur         -   5  14  25  35  40  50  60  70  70
-  Chlorine       -   4  11  20  25  30  35  45  45  55
-  Lithium        -   -   1   2  30  50  50  70  70  70
-  Beryllium      -   -   1   2  30  50  50  70  70  70
-  Nitrogen       -   -   1   1  25  50  50  70  70  70
-  Aluminium      -   -   1   3   5  35  50  70  70  70
-  Silicon        -   -   1   2   3  50  50  70  70  70
+atoms                                   # Atom Collider, World 1 to 5 columns from crowd-research.txt
+  stages        3m  4m  5m  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Boron          1   1   1   1   1   3  30  50  50  70  70  70
+  Beryllium      -   1   1   1   2   3  30  50  50  70  70  70
+  Nitrogen       -   1   1   1   1   -  25  50  50  70  70  70
+  Oxygen         -   3   9  14  17  20  25  50  50  70  70  70
+  Fluoride       -   3   9  14  17  20  25  50  50  70  70  70
+  Sodium         -   1   2   4   5   5   7  20  30  40  45  45
+  Magnesium      -   1   2   4   5   5   7  30  45  55  65  70
+  Phosphorus     -   4  11  17  20  25  30  35  50  70  70  70
+  Sulfur         -   5  14  20  25  30  35  40  50  60  70  70
+  Chlorine       -   4  11  17  20  25  25  30  35  45  45  55
+  Aluminium      -   -   1   2   3   4   5  35  50  70  70  70
+  Silicon        -   -   1   1   2   2   3  50  50  70  70  70
+  Hydrogen       -   -   -   1   5  10  30  50  50  70  70  70
+  Helium         -   -   -   1   2   3   7  13  16  19  20  20
+  Lithium        -   -   -   1   2   5  30  50  50  70  70  70
+  Carbon         -   -   -   1   1   2  25  50  50  70  70  70
+  Neon           -   -   -   -   -   1  25  50  50  70  70  70
 
 death-note                              # Death Note
   stages                            3m  4m  5m  6m  7e  7m  7l  end1  end2  max
