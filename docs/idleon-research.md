@@ -84,4 +84,45 @@ still come from the saves.
 
 ## W7 (violet-ocelot)
 
+110 of the 119 saves have reached World 7, so every W7 card takes its tiers from the saves (7e, 7m and 7l, then the endgame). The guides below were used to check that order, not to replace it. Reddit threads didn't come up in search, so the sources are guide sites and Steam discussions.
+
+**Research grid.** Get the Research EXP multipliers and the nodes that open the minigames first, then magnifiers, then roll chance. A Games Finder guide's foundation order is: K7 (Research EXP), J6 (Mr Minehead Linguistics), K8, K9 (a big EXP multiplier), J8 (Tiny Cogs), K10/L10/L11 (points and new observations), M9 (Kaleidoscope), then J5/J4/J3 (Glimbo, Sushi), and L8 (Optical Monocle). Other guides name All Night Studying, See 'Em All and Takin' Notes as the early EXP picks, and Sharp Eye, Smart Eye and Observationalistic for rolls once EXP is steady. The 7e saves already ask for these first: See 'Em All, All Night Studying 2, Takin' Notes 3, the three Linguistics nodes and Sharp Eye.
+- [Games Finder: Research guide](https://gameslikefinder.com/article/idleon-research-guide/)
+- [Treyex: Research skill guide](https://www.treyexgaming.com/idleon-research-skill-guide/)
+- [Grind'n'Strat: Research skill guide](https://grindnstrat.com/idleon-research-skill-guide/)
+
+**Observations and insight.** Raise your best observations to insight 2 or 3 with Optical Monocles before you put a Magnifying Glass on them, then spread the rest of the insight evenly. Kaleidoscopes go next to the glasses. Magnifiers come from Minehead opponents 3 and 13, Posty Notes and the event shop.
+- [Games Finder: Research guide](https://gameslikefinder.com/article/idleon-research-guide/)
+
+**Spelunking shop.** POW first, then stamina, then amber and discovery upgrades. Within each group, level upgrades until they cost about the same. The POW upgrades sit in the shop's first column, the amber ones in the third. Lore: read chapter one (The Fear Within) every day for efficiency, and chapters two (Decay) and six (Kelp) for POW and amber as you go. Bosses need a lot of POW and stamina (Greg about 200M POW and 500 stamina; the Exiled Throne boss about 3e32 POW and 3,000 stamina).
+- [Games Finder: Spelunking guide](https://gameslikefinder.com/article/idleon-spelunking-guide/)
+- [shnaps: progression guide (GitHub)](https://gist.github.com/shnaps/161a370ed795e6141e0553eb30ddc8fa)
+
+**Minehead.** Both guides push Miney Farmey I (the currency upgrade) first, along with Golden Tiles and Boom Blocker. One adds Base Damage, Grid Expansion and Legal Cheating Button. Wait for a good round (4–5 Golden Tiles, 2 cheating buttons left, Boom Blocker unused) before pushing. Beating an opponent gives a bonus for the whole game, which is why Opponents is now its own side of the card.
+- [Games Finder: Minehead guide](https://gameslikefinder.com/article/idleon-minehead-guide/)
+- [DigitalTQ: Mr. Minehead guide](https://www.digitaltq.com/wiki/idleon/mr-minehead-guide)
+
+**Sushi Station and Jelly Operator.** Sushi: Superior Sushi Skillz early, since it lets you cook the next tier straight away. Each new sushi type gives a permanent bonus, so cooking new types is the point (now the Types side). Jelly: Daily Operating Procedure (a research node) for more operations a day, then Daily Transfusion to its max. Each obstruction cleared gives a permanent bonus (now the Obstructions side).
+- [DigitalTQ: Sushi Station](https://www.digitaltq.com/wiki/idleon/sushi-station)
+- [DigitalTQ: Jelly Operator](https://www.digitaltq.com/wiki/idleon/jelly-operator-guide)
+- [Vortex Gaming: Sushi Station update](https://vortexgaming.io/en/postdetail/728609)
+
+**Legend Talents.** Yellow 1 (Super Talent Points) is the safest first pick everywhere. Games Finder adds Yellow 5 and 6 and Brown 1 as high priority. Older guides call the green row the strongest because it has the multipliers, and warn against additive talents when points are few. The shrine talent is the one they disagree on.
+- [Games Finder: Legend Talents](https://gameslikefinder.com/article/idleon-legend-talents-guide/)
+- [Vortex Gaming: Legend Talent picks](https://vortexgaming.io/en/postdetail/587519)
+
+**Clamworks, Glimbo, Coral.** No guide ranks these. What they do agree on: Clamworks upgrades open as you hold more pearls (Pearl Value at 20, up to Anti Inflation at 2B), and Frugality makes the rest cheaper. Glimbo trades raise Upgrade Vault caps, and every 100 items traded adds 1% drop rate with the i4 research node. The saves' order stands.
+- [DigitalTQ: The Clamworks](https://www.digitaltq.com/wiki/idleon/the-clamworks)
+- [DigitalTQ: Glimbo's Swap Meet](https://www.digitaltq.com/wiki/idleon/glimbos-swap-meet-trades)
+
+**Menagerie and Gallery.** No priority guide either. One tip: put the Lumi multiplier first, because extra missions can be bought with currency anyway. The Idle Skiller trophy is strong in the Gallery.
+- [Games Finder: Event shop tier list](https://gameslikefinder.com/article/idleon-event-shop-guide/)
+
+**Mechanics added.** The game's own tables have three more lists that give a permanent bonus per step, and none of them was checked:
+- Minehead Opponents, 32 of them (`Research[7][4]`)
+- Sushi Types, 64 (`Sushi[5]`)
+- Jelly Operator Obstructions, 72 (`Research[7][9]`)
+
+Each is now a side of its card.
+
 ## Account-wide (zesty-llama)
