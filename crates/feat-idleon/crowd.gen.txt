@@ -3441,129 +3441,129 @@ achievements                            # Achievements
   Capitalist Win             -   -   -   -   -   -   -   -   -   -   1   1
   The True Pirate            -   -   -   -   -   -   -   -   -   -   -   1
 
-gem-shop                                # Gem Shop
-  stages                     1m  2m  3m  4m  5m  6m  7e  7m  7l  end1  end2  max
-  Card Presets                1   1   1   1   1   1   1   1   2   5   5   5
-  Opal                        -   1   2   5   8  11  14  16  18  20  60  60
-  Extra Card Slot             -   1   1   1   2   4   4   4   4   4   4   4
-  Infinity Hammer             -   1   1   1   1   1   1   1   1   1   1   1
-  Crystal 3d Printer          -   1   1   1   1   1   1   1   1   1   1   1
-  Resource Boost              -   -   1   2   4   5   7   8   9  10  10  10
-  Weekly Dungeon Boosters     -   -   1   2   4   6   8   9  10  11  11  11
-  Obol Storage Space          -   -   1   3   4   7   8   9  10  12  12  12
-  Richelin Kitchen            -   -   1   1   1   1   1   1   4  10  10  10
-  Davey Jones Training        -   -   1   1   1   1   1   1   8   8   8   8
-  Lava Sprouts                -   -   1   1   1   1   1   1   6   6   6   6
-  Plot Of Land                -   -   1   1   1   2   2   3  12  12  12  12
-  Instagrow Generator         -   -   1   1   1   1   1   1   4   8   8   8
-  More Coral                  -   -   1   2   4   6   8   9  10  10  10  10
-  Professional Papers         -   -   1   2   4   5   7   8   9  10  10  10
-  Parallel Villagers          -   -   -   1   1   2   3   3   4   5   5   5
-  Item Backpack Space         -   -   -   1   1   2   3   6   6   6   6   6
-  Storage Chest Space         -   -   -   1   2   3   6  12  12  12  12  12
-  Carry Capacity              -   -   -   1   1   2   3   4  10  10  10  10
-  More Storage Space          -   -   -   1   2   3   4   4   5  10  10  10
-  Brimstone Forge Slot        -   -   -   1   1   1   1   4   9  16  16  16
-  Ivory Bubble Cauldrons      -   -   -   1   1   2   3   3   4   4   4   4
-  More Sample Spaces          -   -   -   1   2   4   4   4   6   6   6   6
-  Burning Bad Books           -   -   -   1   1   2   2   3   3   4   4   4
-  Prayer Slots                -   -   -   1   1   2   2   3   3   4   4   4
-  Zen Cogs                    -   -   -   1   1   1   1   1   4   8   8   8
-  Tower Building Slots        -   -   -   1   1   2   3   3   4   4   4   4
-  Royal Egg Cap               -   -   -   1   1   1   1   1   3   5   5   5
-  Souped Up Tube              -   -   -   1   2   2   3   4   4   5   5   5
-  Mob Storage                 -   -   -   1   2   2   3   4   4   5   8  12
-  Fenceyard Space             -   -   -   1   2   3   4   5   6   6   6   6
-  Divinity Sparkie            -   -   -   1   1   1   1   1   8   8   8   8
-  Novelty Jade Coins          -   -   -   1   2   4   5   5   6   7   7   7
-  King Of All Winners         -   -   -   1   2   3   4   5   5   5   5   5
-  Gallery Showcases           -   -   -   1   2   3   4   5   6   6   6   6
-  Legend Talent Pts           -   -   -   1   2   3   4   4   5   5   5   5
-  Super Auto Mode             -   -   -   1   1   1   1   1   4   4   4   4
-  Conjuror Pts                -   -   -   -   1   1   2   2   3  12  12  12
-  Food Slot                   -   -   -   -   1   1   2   2   2   2   2   2
-  Daily Teleports             -   -   -   -   1   1   1   1   1   7  10  10
-  Cog Inventory Space         -   -   -   -   1   1   2   2   2   3  20  20
-  Fluorescent Flaggies        -   -   -   -   1   1   1   1   1   6   6   6
-  Shroom Familiar             -   -   -   -   1   1   2   2   3   6   6   6
-  Bling Bags                  -   -   -   -   1   1   1   1   8   8   8   8
-  Daily Minigame Plays        -   -   -   -   -   1   1   1   1   4   4   4
-  Sigil Supercharge           -   -   -   -   -   1   1   1   1  10  10  10
-  Chest Sluggo                -   -   -   -   -   1   1   1   2  12  12  12
-  Bleach Liquid Cauldrons     -   -   -   -   -   1   1   2   4   4   4   4
-  Golden Sprinkler            -   -   -   -   -   1   1   1   1   4   4   4
-  Snehebatu Link              -   -   -   -   -   -   -   -   -   1   1   1
+gem-shop                                # Gem Shop, World 1 to 5 columns from crowd-research.txt
+  stages                     1m  1l  2e  2m  2l  3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Extra Card Slot             -   1   2   -   3   4   -   4   4   -   4   4   -   4   4   -   4   4   4   4   4   4   4
+  Infinity Hammer             -   -   1   -   1   1   -   1   1   -   1   1   -   1   1   -   1   1   1   1   1   1   1
+  Item Backpack Space         -   -   1   -   1   2   -   2   2   -   3   3   -   3   4   -   4   4   6   6   6   6   6
+  Storage Chest Space         -   -   1   -   2   2   -   3   3   -   4   5   -   5   6   -   7   7  12  12  12  12  12
+  Bleach Liquid Cauldrons     -   -   -   -   1   1   -   1   2   -   2   2   -   2   2   -   2   2   2   4   4   4   4
+  Crystal 3d Printer          -   -   -   -   -   1   -   1   1   -   1   1   -   1   1   -   1   1   1   1   1   1   1
+  Brimstone Forge Slot        -   -   -   -   -   1   -   1   2   -   2   2   -   3   3   -   3   3   4   9  16  16  16
+  More Sample Spaces          -   -   -   -   -   1   -   1   1   -   2   2   -   2   3   -   3   3   3   6   6   6   6
+  Card Presets                -   -   -   -   -   -   -   1   1   -   1   1   -   1   1   -   1   1   1   2   5   5   5
+  Carry Capacity              -   -   -   -   -   -   -   1   1   -   1   1   -   2   2   -   2   2   4  10  10  10  10
+  Food Slot                   -   -   -   -   -   -   -   -   1   -   1   1   -   2   2   -   2   2   2   2   2   2   2
+  Richelin Kitchen            -   -   -   -   -   -   -   -   -   -   1   1   -   1   1   -   1   1   1   4  10  10  10
+  Instagrow Generator         -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   -   1   1   1   4   8   8   8
+  Davey Jones Training        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   8   8   8   8
+  Lava Sprouts                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   6   6   6   6
+  Plot Of Land                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   3  12  12  12  12
+  King Of All Winners         -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   5   5   5   5   5
+  Zen Cogs                    -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   4   8   8   8
+  Royal Egg Cap               -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   3   5   5   5
+  Divinity Sparkie            -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   8   8   8   8
+  Golden Sprinkler            -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   4   4   4
+  Super Auto Mode             -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   4   4   4   4
+  Bling Bags                  -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   8   8   8   8
+  Tower Building Slots        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   4   4   4   4
+  Daily Teleports             -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   7  10  10
+  Fluorescent Flaggies        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   6   6   6
+  Legend Talent Pts           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   5   5   5   5
+  Parallel Villagers          -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   4   5   5   5
+  Conjuror Pts                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   3  12  12  12
+  Daily Minigame Plays        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   4   4   4
+  Sigil Supercharge           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1  10  10  10
+  Chest Sluggo                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   2  12  12  12
+  More Coral                  -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  10  10  10  10
+  More Storage Space          -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   5  10  10  10
+  Ivory Bubble Cauldrons      -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   4   4   4   4
+  Fenceyard Space             -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   6   6   6   6
+  Shroom Familiar             -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   3   6   6   6
+  Gallery Showcases           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   6   6   6   6
+  Novelty Jade Coins          -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   7   7   7
+  Professional Papers         -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  10  10  10
+  Souped Up Tube              -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   5   5   5
+  Resource Boost              -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  10  10  10
+  Obol Storage Space          -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  12  12  12
+  Burning Bad Books           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   4   4   4
+  Prayer Slots                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   4   4   4
+  Weekly Dungeon Boosters     -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  11  11  11
+  Mob Storage                 -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   5   8  12
+  Opal                        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  20  60  60
+  Cog Inventory Space         -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   3  20  20
+  Snehebatu Link              -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
 
-event-shop                              # Event Shop
-  stages                   1m  2m  3m  4m  5m  6m  7e  7m  7l  end1  end2  max
-  Gilded Vote Button        1   1   1   1   1   1   1   1   1   1   1   1
-  Ribbon Connoisseur        -   1   1   1   1   1   1   1   1   1   1   1
-  Smiley Statue             -   1   1   1   1   1   1   1   1   1   1   1
-  King of the Rack          -   1   1   1   1   1   1   1   1   1   1   1
-  Dough Roller              -   1   1   1   1   1   1   1   1   1   1   1
-  Stamp Stack               -   -   1   1   1   1   1   1   1   1   1   1
-  Extra Page                -   -   1   1   1   1   1   1   1   1   1   1
-  Secret Pouch              -   -   1   1   1   1   1   1   1   1   1   1
-  Extra Exaltedness         -   -   1   1   1   1   1   1   1   1   1   1
-  Golden Registrant         -   -   1   1   1   1   1   1   1   1   1   1
-  Minehead Money            -   -   1   1   1   1   1   1   1   1   1   1
-  Golden Tome               -   -   -   1   1   1   1   1   1   1   1   1
-  Bubble Broth              -   -   -   1   1   1   1   1   1   1   1   1
-  Village Encouragement     -   -   -   1   1   1   1   1   1   1   1   1
-  Summoning Star            -   -   -   1   1   1   1   1   1   1   1   1
-  Another Page              -   -   -   1   1   1   1   1   1   1   1   1
-  Friendly Slot             -   -   -   1   1   1   1   1   1   1   1   1
-  Fossil Meritocracy        -   -   -   1   1   1   1   1   1   1   1   1
-  Rift Guy Sticker          -   -   -   1   1   1   1   1   1   1   1   1
-  Sushi Stackz              -   -   -   1   1   1   1   1   1   1   1   1
-  Equinox Enhancement       -   -   -   -   1   1   1   1   1   1   1   1
-  Supreme Wiring            -   -   -   -   1   1   1   1   1   1   1   1
-  Sleepy Joe Armstrong      -   -   -   -   1   1   1   1   1   1   1   1
-  Coin Stacking             -   -   -   -   1   1   1   1   1   1   1   1
-  Storage Chest             -   -   -   -   1   1   1   1   1   1   1   1
-  Government Subsidy        -   -   -   -   1   1   1   1   1   1   1   1
-  Automated Mail            -   -   -   -   1   1   1   1   1   1   1   1
-  Bonus Points              -   -   -   -   1   1   1   1   1   1   1   1
-  Magnifying Glass          -   -   -   -   1   1   1   1   1   1   1   1
-  Keen Observations         -   -   -   -   1   1   1   1   1   1   1   1
-  Storage Vault             -   -   -   -   -   1   1   1   1   1   1   1
-  Golden Square             -   -   -   -   -   1   1   1   1   1   1   1
-  Royal Vote Button         -   -   -   -   -   1   1   1   1   1   1   1
-  Plain Showcase            -   -   -   -   -   1   1   1   1   1   1   1
-  Legend Scroll             -   -   -   -   -   1   1   1   1   1   1   1
-  Kaleidoscope              -   -   -   -   -   1   1   1   1   1   1   1
-  Glass Dice                -   -   -   -   -   1   1   1   1   1   1   1
-  Noble Sluggo              -   -   -   -   -   1   1   1   1   1   1   1
-  Boat Discount             -   -   -   -   -   1   1   1   1   1   1   1
-  Coolral                   -   -   -   -   -   -   1   1   1   1   1   1
-  Singed Tome               -   -   -   -   -   -   1   1   1   1   1   1
-  Higgs Boson               -   -   -   -   -   -   1   1   1   1   1   1
-  Glimbo Coupon             -   -   -   -   -   -   1   1   1   1   1   1
-  Magnate Exotica           -   -   -   -   -   -   1   1   1   1   1   1
-  Big Clot                  -   -   -   -   -   -   1   1   1   1   1   1
-  Ivory Locket              -   -   -   -   -   -   1   1   1   1   1   1
-  Smol Pouch                -   -   -   -   -   -   1   1   1   1   1   1
-  Extra Lumi                -   -   -   -   -   -   1   1   1   1   1   1
-  Graduate Thesis           -   -   -   -   -   -   1   1   1   1   1   1
-  Omega Bubble              -   -   -   -   -   -   -   1   1   1   1   1
-  Shape Obsession           -   -   -   -   -   -   -   1   1   1   1   1
-  Research Registrant       -   -   -   -   -   -   -   1   1   1   1   1
-  Monumental Reverence      -   -   -   -   -   -   -   1   1   1   1   1
-  Gilded Awnings            -   -   -   -   -   -   -   1   1   1   1   1
-  Worldclass Showcase       -   -   -   -   -   -   -   -   1   1   1   1
-  Tiny Cog Twins            -   -   -   -   -   -   -   -   1   1   1   1
-  Glimbo VIP Pass           -   -   -   -   -   -   -   -   1   1   1   1
-  Doggie Sticker            -   -   -   -   -   -   -   -   1   1   1   1
-  A North Star              -   -   -   -   -   -   -   -   1   1   1   1
-  Organic Label             -   -   -   -   -   -   -   -   1   1   1   1
-  6 Star Cardifiers         -   -   -   -   -   -   -   -   -   -   1   1
-  Elegant Ribbons           -   -   -   -   -   -   -   -   -   -   1   1
-  Bejeweled Ladle           -   -   -   -   -   -   -   -   -   -   1   1
-  Menagerie Shell           -   -   -   -   -   -   -   -   -   -   1   1
-  Fishmaxxing               -   -   -   -   -   -   -   -   -   -   -   1
-  Meatmaxxing               -   -   -   -   -   -   -   -   -   -   -   -
-  Full Kitchen Simmer       -   -   -   -   -   -   -   -   -   -   -   -
-  Slot of Friendship        -   -   -   -   -   -   -   -   -   -   -   -
+event-shop                              # Event Shop, World 1 to 5 columns from crowd-research.txt
+  stages                   1m  2m  3e  3m  4e  4m  5e  5m  6e  6m  7e  7m  7l  end1  end2  max
+  Gilded Vote Button        1   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+  Ribbon Connoisseur        -   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+  Smiley Statue             -   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+  King of the Rack          -   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+  Dough Roller              -   1   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+  Stamp Stack               -   -   1   -   1   -   1   -   1   1   1   1   1   1   1   1
+  Extra Page                -   -   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+  Secret Pouch              -   -   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+  Extra Exaltedness         -   -   1   1   1   1   1   1   1   1   1   1   1   1   1   1
+  Village Encouragement     -   -   -   1   1   1   1   1   1   1   1   1   1   1   1   1
+  Golden Registrant         -   -   -   1   1   1   1   1   1   1   1   1   1   1   1   1
+  Minehead Money            -   -   -   1   1   1   1   1   1   1   1   1   1   1   1   1
+  Storage Chest             -   -   -   -   1   -   1   -   1   1   1   1   1   1   1   1
+  Bubble Broth              -   -   -   -   1   1   1   1   1   1   1   1   1   1   1   1
+  Summoning Star            -   -   -   -   1   1   1   1   1   1   1   1   1   1   1   1
+  Another Page              -   -   -   -   1   1   1   1   1   1   1   1   1   1   1   1
+  Friendly Slot             -   -   -   -   1   1   1   1   1   1   1   1   1   1   1   1
+  Rift Guy Sticker          -   -   -   -   1   1   1   1   1   1   1   1   1   1   1   1
+  Fossil Meritocracy        -   -   -   -   -   1   1   1   1   1   1   1   1   1   1   1
+  Sushi Stackz              -   -   -   -   -   1   1   1   1   1   1   1   1   1   1   1
+  Coin Stacking             -   -   -   -   -   -   1   -   1   1   1   1   1   1   1   1
+  Equinox Enhancement       -   -   -   -   -   -   1   1   1   1   1   1   1   1   1   1
+  Supreme Wiring            -   -   -   -   -   -   1   1   1   1   1   1   1   1   1   1
+  Government Subsidy        -   -   -   -   -   -   1   1   1   1   1   1   1   1   1   1
+  Automated Mail            -   -   -   -   -   -   1   1   1   1   1   1   1   1   1   1
+  Bonus Points              -   -   -   -   -   -   1   1   1   1   1   1   1   1   1   1
+  Magnifying Glass          -   -   -   -   -   -   1   1   1   1   1   1   1   1   1   1
+  Keen Observations         -   -   -   -   -   -   1   1   1   1   1   1   1   1   1   1
+  Sleepy Joe Armstrong      -   -   -   -   -   -   -   1   1   1   1   1   1   1   1   1
+  Golden Square             -   -   -   -   -   -   -   1   1   1   1   1   1   1   1   1
+  Glass Dice                -   -   -   -   -   -   -   1   1   1   1   1   1   1   1   1
+  Golden Tome               -   -   -   -   -   -   -   -   1   1   1   1   1   1   1   1
+  Storage Vault             -   -   -   -   -   -   -   -   1   1   1   1   1   1   1   1
+  Royal Vote Button         -   -   -   -   -   -   -   -   1   1   1   1   1   1   1   1
+  Plain Showcase            -   -   -   -   -   -   -   -   1   1   1   1   1   1   1   1
+  Legend Scroll             -   -   -   -   -   -   -   -   1   1   1   1   1   1   1   1
+  Kaleidoscope              -   -   -   -   -   -   -   -   1   1   1   1   1   1   1   1
+  Noble Sluggo              -   -   -   -   -   -   -   -   1   1   1   1   1   1   1   1
+  Boat Discount             -   -   -   -   -   -   -   -   1   1   1   1   1   1   1   1
+  Higgs Boson               -   -   -   -   -   -   -   -   -   1   1   1   1   1   1   1
+  Big Clot                  -   -   -   -   -   -   -   -   -   1   1   1   1   1   1   1
+  Ivory Locket              -   -   -   -   -   -   -   -   -   1   1   1   1   1   1   1
+  Smol Pouch                -   -   -   -   -   -   -   -   -   1   1   1   1   1   1   1
+  Coolral                   -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Singed Tome               -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Omega Bubble              -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Glimbo Coupon             -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Magnate Exotica           -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Research Registrant       -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Monumental Reverence      -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Extra Lumi                -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Graduate Thesis           -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Gilded Awnings            -   -   -   -   -   -   -   -   -   -   1   1   1   1   1   1
+  Shape Obsession           -   -   -   -   -   -   -   -   -   -   -   1   1   1   1   1
+  Glimbo VIP Pass           -   -   -   -   -   -   -   -   -   -   -   1   1   1   1   1
+  Doggie Sticker            -   -   -   -   -   -   -   -   -   -   -   1   1   1   1   1
+  A North Star              -   -   -   -   -   -   -   -   -   -   -   1   1   1   1   1
+  Organic Label             -   -   -   -   -   -   -   -   -   -   -   1   1   1   1   1
+  Worldclass Showcase       -   -   -   -   -   -   -   -   -   -   -   -   1   1   1   1
+  Tiny Cog Twins            -   -   -   -   -   -   -   -   -   -   -   -   1   1   1   1
+  6 Star Cardifiers         -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Elegant Ribbons           -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Bejeweled Ladle           -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Menagerie Shell           -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Fishmaxxing               -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1
+  Meatmaxxing               -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Full Kitchen Simmer       -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Slot of Friendship        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
 
 greenstacks                             # Greenstacks
   stages                                 1m  2m  3m  4m  5m  6m  7e  7m  7l  end1  end2  max

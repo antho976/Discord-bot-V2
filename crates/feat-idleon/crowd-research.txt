@@ -252,3 +252,26 @@ summoning-stones                        # Summoning Stones and Endless
   Blue stone                 1
   Red stone                  1
   Endless battles won       60
+
+gem-shop                                # Gem Shop (DigitalTQ tier list: card slots, hammer, cauldrons, printer first)
+  stages                     1l  2e  2l  3e  3l  4e  4l  5e  5l  6e  6l
+  Extra Card Slot             1   2   3   4   4   4   4   4   4   4   4
+  Infinity Hammer             -   1   1   1   1   1   1   1   1   1   1
+  Bleach Liquid Cauldrons     -   -   1   1   1   2   2   2   2   2   2
+  Crystal 3d Printer          -   -   -   1   1   1   1   1   1   1   1
+  Card Presets                -   -   -   -   1   1   1   1   1   1   1
+  Item Backpack Space         -   1   1   2   2   2   3   3   3   4   4
+  Storage Chest Space         -   1   2   2   3   3   4   5   5   6   7
+  Brimstone Forge Slot        -   -   -   1   1   2   2   2   3   3   3
+  More Sample Spaces          -   -   -   1   1   1   2   2   2   3   3
+  Carry Capacity              -   -   -   -   1   1   1   1   2   2   2
+  Food Slot                   -   -   -   -   -   1   1   1   2   2   2
+  Richelin Kitchen            -   -   -   -   -   -   1   1   1   1   1
+  Instagrow Generator         -   -   -   -   -   -   -   -   1   1   1
+
+event-shop                              # Event Shop (gameslikefinder tier list; only what early World 7 saves own)
+  stages                     3e  4e  5e  6e
+  Stamp Stack                 1   1   1   1
+  Storage Chest               -   1   1   1
+  Coin Stacking               -   -   1   1
+  Golden Tome                 -   -   -   1
