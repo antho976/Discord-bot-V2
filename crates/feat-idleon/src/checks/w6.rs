@@ -9,6 +9,7 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
         crops(save),
         markets(save),
         exotic_market(save),
+        land_rank_upgrades(save),
         land_rank(save),
         jade_emporium(save),
         ninja_upgrades(save),
@@ -179,6 +180,52 @@ fn exotic_market(save: &Save) -> Mechanic {
     m
 }
 
+/// Land rank points: N.js `LankRankPTSleft`, the 36 plot ranks added up (`FarmRank[0]`), less
+/// every database level bought (`FarmRank[2]`, 20 upgrades). A level costs one point. Returns
+/// the levels, the plot ranks and the points left.
+fn land_rank_points(save: &Save) -> (Vec<f64>, f64, f64) {
+    let levels = save.numbers("FarmRank", &[2]);
+    let total: f64 = save.numbers("FarmRank", &[0]).iter().take(36).sum();
+    let spent: f64 = levels.iter().take(20).sum();
+    let left = (total - spent).max(0.0);
+    (levels, total, left)
+}
+
+/// The Land Rank Database's first four columns: 16 upgrades with no cap, each opening at the
+/// total plot rank in `NinjaInfo[37]`; names in `NinjaInfo[34]` (every 5th is a capped seed, on
+/// the Land Rank Database card). Listed in the order they open.
+fn land_rank_upgrades(save: &Save) -> Mechanic {
+    let (levels, total, left) = land_rank_points(save);
+    let unlock = rows("NinjaInfo", &[37]);
+    let items: Vec<Item> = rows("NinjaInfo", &[34])
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % 5 != 4)
+        .map(|(i, v)| {
+            let mut it = Item::new(label(v.as_str().unwrap_or("")), pic(format!("RankUpg{i}")), at(&levels, i), 0.0);
+            let need = unlock.get(i).map_or(0.0, |u| num(u));
+            if total < need {
+                it.how = Some(format!("Opens at {need} land ranks over all 36 plots. You have {total}."));
+                it.state = State::Locked;
+            } else {
+                it.how = Some("Next level costs 1 land rank point.".into());
+                if left >= 1.0 {
+                    it.state = State::Ready;
+                }
+            }
+            it
+        })
+        .collect();
+    let picture = items.first().and_then(|i| i.picture.clone());
+    let mut m = mech("land-rank-upgrades", 6, "Land Rank Upgrades", picture, Count::Open, "levels", items);
+    m.have = Some(Have {
+        figure: format!("{} land rank points", big(left)),
+        text: if left >= 1.0 { format!("Enough for {} levels.", big(left)) } else { "No points left. Each plot rank gained gives 1.".into() },
+    });
+    m.note = Some("No max. Points come from plot ranks, shared with the seeds.".into());
+    m
+}
+
 /// Land Rank Database: `FarmRank[2][i]`, names in `NinjaInfo[34]`. Only the 5th column has a cap
 /// (N.js `LandRank5thColumnMaxLV`): 1 + Grimoire upgrade 9 + ceil(Exotic DATADIGGING) + Legend
 /// Talent 3, each at its most. DATADIGGING doubles when it is organic. DATADIGGING and the Legend
@@ -186,18 +233,14 @@ fn exotic_market(save: &Save) -> Mechanic {
 ///
 /// Pictures: upgrade i is `RankUpg{i}`; the card shows the first one listed.
 fn land_rank(save: &Save) -> Mechanic {
-    let levels = save.numbers("FarmRank", &[2]);
+    let (levels, total, left) = land_rank_points(save);
     let w7 = super::world_reached(save) >= 7;
     let grimoire = rows("GrimoireUpg", &[]).get(9).map_or(0.0, |r| cell(r, 4) * cell(r, 5));
     let digging = rows("MarketExoticInfo", &[]).get(15).map_or(0.0, |r| (2.0 * cell(r, 3)).ceil());
     let node = rows("ResGridSquares", &[]).get(130).map_or(0.0, |r| cell(r, 1));
     let legend = rows("LegendTalents", &[]).get(3).map_or(0.0, |r| (cell(r, 1) + node) * cell(r, 2));
     let max = (1.0 + grimoire + if w7 { digging + legend } else { 0.0 }).round();
-    // N.js `LankRankPTSleft`: the 36 plot ranks added up, less every database level bought. A
-    // level costs one point; an upgrade opens at the total rank in `NinjaInfo[37]`.
-    let total: f64 = save.numbers("FarmRank", &[0]).iter().take(36).sum();
-    let spent: f64 = levels.iter().take(20).sum();
-    let left = (total - spent).max(0.0);
+    // An upgrade opens at the total rank in `NinjaInfo[37]`.
     let unlock = rows("NinjaInfo", &[37]);
     // The cap today, the same sum with your own levels (DATADIGGING: 5 × lv / (lv + 1000),
     // doubled when organic, `Spelunk[50]`).
@@ -262,7 +305,7 @@ fn land_rank(save: &Save) -> Mechanic {
 /// Pictures: a row is `NjJupg` + `JadeUpg` col 3; the card shows the first row.
 ///
 /// The shop only offers places below your purchases + 3 (`EmporiumOptions`: the bought string's
-/// length + 3); later places show up as you buy.
+/// length + 3); later places show up as you buy. Items are listed in that order.
 fn jade_emporium(save: &Save) -> Mechanic {
     let bought = save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or("");
     let jade = save.at("Ninja", &[102, 1]).map_or(0.0, num).max(0.0) + 0.0;
@@ -271,10 +314,14 @@ fn jade_emporium(save: &Save) -> Mechanic {
     let offered = bought.chars().count() + 3;
     let w7 = super::world_reached(save) >= 7;
     let mut costs: Vec<(f64, String)> = Vec::new();
-    let items: Vec<Item> = rows("JadeUpg", &[])
-        .iter()
-        .take(48)
-        .enumerate()
+    // In the order the shop offers them (`NinjaInfo[24]`), so the card reads as you buy; rows
+    // the order leaves out come after.
+    let table = rows("JadeUpg", &[]);
+    let mut seq: Vec<usize> = order.iter().copied().filter(|&i| i < 48 && i < table.len()).collect();
+    seq.extend((0..table.len().min(48)).filter(|i| !order.contains(i)));
+    let items: Vec<Item> = seq
+        .into_iter()
+        .map(|i| (i, table[i]))
         .filter(|(_, r)| text(r, 0) != "UNDER_CONSTRUCTION")
         .map(|(i, r)| {
             let have = letters.get(i).is_some_and(|c| bought.contains(*c));
@@ -377,7 +424,7 @@ fn ninja_upgrades(save: &Save) -> Mechanic {
         figure: format!("{} jade coins", big(jade)),
         text: if ready == 0 { "Not enough for the next level of any upgrade yet.".into() } else { format!("Enough for the next level of {ready} of these, each on its own.") },
     });
-    m.note = Some("No max: these level up without end. Costs include Centurion Lineage, Way of Bargain, Gold Coupon, Emerald and the talent that cuts Ninja Knowledge costs per 10 upgrades. Talent levels added by other bonuses, and the bubble on Currency Conduit, lower them further, so each cost is an upper bound.".into());
+    m.note = Some("No max. Costs shown are the most they can be: a few discounts aren't counted.".into());
     m
 }
 
@@ -674,7 +721,7 @@ fn beanstalk(save: &Save) -> Mechanic {
     items.push(it);
     let mut m = mech("beanstalk", 6, "Gold Food Beanstalk", pic("FoodG1".into()), Count::Levels, "stacks", items);
     m.raises = vec![Raise { name: "Supersized Gold Beanstacking, Jade Emporium".into(), amount: "+1 stack on every food (the 100,000 stack)".into(), owned: supersized }];
-    m.note = Some("Stacks a food: 10,000, then 100,000 (Supersized Gold Beanstacking in the Jade Emporium), then 1,000,000 (the beanstalk upgrade from Urie's quest in World 7, counted on its own).".into());
+    m.note = Some("A food's first level is a stack of 10,000; the raise below adds a second at 100,000.".into());
     m
 }
 
@@ -739,8 +786,11 @@ fn summoning(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let lv = at(&levels, i);
             // N.js draws upgrade i as `SumUpgIc{i}`.
-            let mut it = Item::new(label(text(r, 3)), pic(format!("SumUpgIc{i}")), lv, cell(r, 8));
             let colour = cell(r, 2) as usize;
+            // Two upgrades share a name (Another Slot): the essence colour tells them apart.
+            let name = label(text(r, 3));
+            let name = if table.iter().filter(|x| text(x, 3) == text(r, 3)).count() > 1 { format!("{name} ({})", COLOURS.get(colour).copied().unwrap_or("?")) } else { name };
+            let mut it = Item::new(name, pic(format!("SumUpgIc{i}")), lv, cell(r, 8));
             // Colour 7 (Teal) is World 7's summoning.
             if colour == 7 {
                 it.world = Some(7);
@@ -768,7 +818,7 @@ fn summoning(save: &Save) -> Mechanic {
         .collect();
     let picture = items.first().and_then(|i| i.picture.clone());
     let mut m = mech("summoning", 6, "Summoning Upgrades", picture, Count::Levels, "levels", items);
-    m.note = Some("Only the upgrades with a cap, and not Familiar, whose level resets every few days. The rest level up without end. Costs are before reductions from talents, other Summoning upgrades, Sushi, Jelly, an Arcane upgrade and the Menagerie, so the real cost is lower. Teal upgrades are World 7.".into());
+    m.note = Some("Upgrades with a cap only; Familiar resets every few days. Costs are before discounts.".into());
     m
 }
 

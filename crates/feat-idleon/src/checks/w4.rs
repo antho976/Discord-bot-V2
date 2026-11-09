@@ -217,27 +217,28 @@ fn pet_name(row: &Value) -> String {
     GAME.monster_name(id).map_or_else(|| label(id), str::to_string)
 }
 
-/// Pets bred: `Breeding[1][w]` counts the species found in world w, in `PetStats` order.
+/// Pets bred: `Breeding[1][w]` counts the species found in world w, in `PetStats` order. Each
+/// world's eggs give its pets one after another, so a world is one item: how many of its pets
+/// you've found, and which comes next.
 fn pets(save: &Save) -> Mechanic {
     let found = save.numbers("Breeding", &[1]);
-    let items = breedable()
-        .into_iter()
-        .map(|(w, j, r)| {
-            let mut it = Item::new(pet_name(r), None, f64::from(at(&found, w) > j as f64), 1.0);
-            if !it.done() {
-                it.how = Some(if at(&found, w) == j as f64 {
-                    format!("The next new mob from World {} eggs.", w + 1)
-                } else {
-                    format!("Comes after the World {} mobs before it.", w + 1)
-                });
-                if at(&found, w) < j as f64 {
-                    it.state = State::Locked;
-                }
+    let all = breedable();
+    let worlds = all.iter().map(|p| p.0).max().map_or(0, |w| w + 1);
+    let items = (0..worlds)
+        .filter_map(|w| {
+            let here: Vec<&Value> = all.iter().filter(|p| p.0 == w).map(|p| p.2).collect();
+            if here.is_empty() {
+                return None;
             }
-            it
+            let have = at(&found, w).clamp(0.0, here.len() as f64).floor();
+            let mut it = Item::new(format!("World {} pets", w + 1), None, have, here.len() as f64);
+            if let Some(next) = here.get(have as usize) {
+                it.how = Some(format!("Next: {}, from World {} eggs.", pet_name(next), w + 1));
+            }
+            Some(it)
         })
         .collect();
-    mech("breeding-pets", 4, "Breeding Pets", pic("PetUpg0".into()), Count::Done, "found", items)
+    mech("breeding-pets", 4, "Breeding Pets", pic("PetUpg0".into()), Count::Levels, "found", items)
 }
 
 /// Shiny days a pet needs past level `lv` (N.js `SpecialPassives` "Lv"/"REQ"):

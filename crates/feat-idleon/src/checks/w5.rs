@@ -12,6 +12,7 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
         snail(save),
         islands(save),
         boats(save),
+        boat_upgrades(save),
     ]
 }
 
@@ -95,7 +96,7 @@ fn artifacts(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("artifacts", 5, "Artifacts", pic("Arti0".into()), Count::Levels, "tiers", items);
+    let mut m = mech("artifacts", 5, "Artifacts", pic("Arti0".into()), Count::Levels, "forms", items);
     m.tier_names = Some(ARTIFACT_TIERS[1..].iter().map(|s| s.to_string()).collect());
     m
 }
@@ -206,12 +207,7 @@ fn blessings(save: &Save) -> Mechanic {
         Raise { name: "Jelly Operator reward: 50 successful operations".into(), amount: format!("+{} max levels on every blessing", r.jelly[0].0), owned: r.jelly[0].1 },
         Raise { name: "Jelly Operator reward: 64 successful operations".into(), amount: format!("+{} max levels on every blessing", r.jelly[1].0), owned: r.jelly[1].1 },
     ];
-    m.note = Some(format!(
-        "Every blessing caps at 100, raised by {} from a Minehead reward, {} from the Big Blessings vault upgrade, {} from two Jelly Operator rewards, and 2 per level of Coral Kid's second upgrade. The Coral Kid raise has no limit, so the max here counts the levels you have. Your cap now is {cap}. Snehebatu, Nobisect, Goharut and Kattlekruk take gaming bits; Arctis gold bars; Harriep and Purrmep coins; the rest particles.",
-        r.minehead.0,
-        r.vault.0,
-        r.jelly[0].0 + r.jelly[1].0
-    ));
+    m.note = Some(format!("Every blessing caps at 100 plus the raises below. Your cap now is {cap}."));
     m
 }
 
@@ -422,5 +418,28 @@ fn boats(save: &Save) -> Mechanic {
             "Not enough for the next boat yet.".into()
         },
     });
+    m
+}
+
+/// Boat upgrades: each boat you own (`Boats[i]`, the first `Sailing[2][1]` + 1 of them) has a
+/// loot level (col 3) and a speed level (col 5), with no cap. The game adds them up over every
+/// boat (N.js, the boat totals), and so does the card: one row for loot, one for speed.
+fn boat_upgrades(save: &Save) -> Mechanic {
+    let owned = (value(save, "Sailing", &[2, 1]) as usize + 1).min(save.get("Boats").and_then(Value::as_array).map_or(0, Vec::len));
+    let levels = |col: usize| -> Vec<f64> { (0..owned).map(|b| value(save, "Boats", &[b, col])).collect() };
+    let row = |name: &str, what: &str, col: usize| {
+        let lv = levels(col);
+        let total: f64 = lv.iter().sum();
+        let mut it = Item::new(name, None, total, 0.0);
+        if let Some((b, low)) = lv.iter().enumerate().min_by(|a, b| a.1.total_cmp(b.1)) {
+            it.how = Some(format!("Your lowest is boat {} at {what} Lv {}. Upgrade it at the harbor with its materials.", b + 1, big(*low)));
+        } else {
+            it.how = Some("Buy your first boat at the harbor.".into());
+        }
+        it
+    };
+    let items = vec![row("Loot levels, all boats", "loot", 3), row("Speed levels, all boats", "speed", 5)];
+    let mut m = mech("boat-upgrades", 5, "Boat Upgrades", None, Count::Open, "levels", items);
+    m.note = Some("Loot and speed levels added up over every boat you own. Faster boats bring more chests; more loot makes each chest worth more.".into());
     m
 }

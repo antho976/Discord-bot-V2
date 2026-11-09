@@ -121,6 +121,9 @@ pub struct Tier {
     /// The level each item needs, in item order; `None` for a count ("any 32 of 80"), where
     /// which items you have doesn't matter.
     pub targets: Option<Vec<f64>>,
+    /// A count's level: an item counts at this level or more (`@any` rows in `crowd.txt`).
+    /// `None` counts what's at its max.
+    pub at: Option<f64>,
     /// How many of `need` are there.
     pub met: usize,
     pub need: usize,
@@ -154,8 +157,9 @@ impl Item {
 /// A count ladder adds about this many at a time, in at most this many tiers.
 const COUNT_STEP: usize = 5;
 const MAX_COUNT_TIERS: usize = 12;
-/// The most parts one milestone of a level ladder becomes.
-const MAX_LEVEL_PARTS: usize = 4;
+/// The most parts one milestone of a level ladder becomes: as many as it takes for no tier to
+/// ask more than `crowd::PART` (tier layout B, owner 2026-11-09).
+const MAX_LEVEL_PARTS: usize = usize::MAX;
 
 /// How a mechanic's progress adds up.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -276,7 +280,7 @@ impl Mechanic {
                     continue;
                 }
                 let label = if need == n { format!("All {n}") } else { format!("Any {need} of {n}") };
-                out.push(Tier { label, targets: None, met: done.min(need), need });
+                out.push(Tier { label, targets: None, at: None, met: done.min(need), need });
             }
             return out;
         }
@@ -317,7 +321,7 @@ impl Mechanic {
             .into_iter()
             .map(|(label, targets)| {
                 let met = self.items.iter().zip(&targets).filter(|(i, t)| i.level >= **t).count();
-                Tier { label, need: targets.len(), targets: Some(targets), met }
+                Tier { label, need: targets.len(), targets: Some(targets), at: None, met }
             })
             .collect()
     }
@@ -330,15 +334,30 @@ impl Mechanic {
             let asked = || self.items.iter().zip(&targets).filter(|(_, t)| **t > 0.0);
             let need = asked().count();
             let met = asked().filter(|(i, t)| i.crowd_level() >= **t).count();
-            Tier { label, targets: Some(targets), met, need }
+            Tier { label, targets: Some(targets), at: None, met, need }
+        };
+        // A count rung: any `need` items at the level.
+        let count = |label: String, need: usize, level: f64| {
+            let met = self.items.iter().filter(|i| i.crowd_level() >= level).count().min(need);
+            Tier { label, targets: None, at: Some(level), met, need }
         };
         // Endgame tiers belong to no world: nobody is behind for not having them.
-        let mut out: Vec<(Tier, Option<u8>)> = l.rungs.iter().map(|r| (tier(r.label.clone(), r.targets.clone()), (!crate::crowd::endgame(r.stage)).then_some(r.world))).collect();
+        let mut out: Vec<(Tier, Option<u8>)> = l
+            .rungs
+            .iter()
+            .map(|r| {
+                let t = match r.count {
+                    Some((n, level)) => count(r.label.clone(), n, level),
+                    None => tier(r.label.clone(), r.targets.clone()),
+                };
+                (t, (!crate::crowd::endgame(r.stage)).then_some(r.world))
+            })
+            .collect();
         // Items with a real level of their own have no max in those units (stamps, bubbles).
         // Not on the Levels side of a switch: the maxes there are the other side's (the owl).
         if self.count != Count::Open && self.levels_note.is_none() && self.items.iter().any(|i| i.max > 0.0) && self.items.iter().all(|i| i.raw.is_none()) {
             let max: Vec<f64> = self.items.iter().map(|i| i.max).collect();
-            if l.rungs.last().is_none_or(|r| r.targets != max) {
+            if l.rungs.iter().rev().find(|r| r.count.is_none()).is_none_or(|r| r.targets != max) {
                 out.push((tier("Everything maxed".to_string(), max), None));
             }
         }
@@ -380,13 +399,12 @@ impl Mechanic {
         if self.crowd.is_some() { i.crowd_level() } else { i.level }
     }
 
-    /// What tier `k` of `tiers` itself asks for that you don't have yet. For a mechanic whose
-    /// tiers fit on the card (`crowd::FITS`), only what it adds to the tier before it, so a
-    /// tier picked ahead never lists more than it asks; otherwise everything it waits on
-    /// (`tasks`).
+    /// What tier `k` of `tiers` itself asks for that you don't have yet. On a crowd ladder,
+    /// only what it adds to the tier before it, so a tier picked ahead never lists more than it
+    /// asks; otherwise everything it waits on (`tasks`).
     pub fn tier_tasks<'a>(&'a self, tiers: &[Tier], k: usize) -> Vec<(&'a Item, f64)> {
         let v = self.tasks(&tiers[k]);
-        if self.crowd.is_none() || !crate::crowd::FITS.contains(&self.key) {
+        if self.crowd.is_none() {
             return v;
         }
         let before = k.checked_sub(1).and_then(|p| tiers[p].targets.as_ref());
@@ -394,8 +412,25 @@ impl Mechanic {
         v.into_iter().filter(|(i, t)| before.and_then(|b| pos(i).map(|p| b[p])).is_none_or(|was| *t > was)).collect()
     }
 
+    /// Everything tier `k` adds to the tier before it, done or not (tier layout B lists a tier
+    /// whole): what's left first, in `tasks` order, then what's done, each with its target and
+    /// whether it's done. A count tier lists what could still count.
+    pub fn tier_asks<'a>(&'a self, tiers: &[Tier], k: usize) -> Vec<(&'a Item, f64, bool)> {
+        let Some(targets) = &tiers[k].targets else {
+            return self.tasks(&tiers[k]).into_iter().map(|(i, t)| (i, t, false)).collect();
+        };
+        let before = k.checked_sub(1).and_then(|p| tiers[p].targets.as_ref());
+        let added = |p: usize| targets[p] > before.map_or(0.0, |b| b[p]);
+        let pos = |i: &Item| self.items.iter().position(|x| std::ptr::eq(x, i));
+        let mut v: Vec<(&Item, f64, bool)> = self.tasks(&tiers[k]).into_iter().filter(|(i, _)| pos(i).is_some_and(added)).map(|(i, t)| (i, t, false)).collect();
+        v.extend(self.items.iter().zip(targets).enumerate().filter(|&(p, (i, t))| added(p) && self.tier_level(i) >= *t).map(|(_, (i, t))| (i, *t, true)));
+        v
+    }
+
     /// The items a tier still waits on, the ones you can take now first, then the furthest off.
-    /// For a count tier, every item you don't have yet, in the game's order after the ready ones.
+    /// For a count tier, every item you don't have yet, in the game's order after the ready ones;
+    /// for a count at a level (`at`), every item under it that can reach it, the ones closest to
+    /// it first after the ready ones, so the cheapest way through comes first.
     pub fn tasks<'a>(&'a self, tier: &Tier) -> Vec<(&'a Item, f64)> {
         let rank = |s: State| match s {
             State::Ready => 0,
@@ -403,6 +438,11 @@ impl Mechanic {
             State::Locked => 2,
         };
         let Some(targets) = &tier.targets else {
+            if let Some(at) = tier.at {
+                let mut v: Vec<(&Item, f64)> = self.items.iter().filter(|i| self.tier_level(i) < at && (i.max <= 0.0 || i.max >= at)).map(|i| (i, at)).collect();
+                v.sort_by(|a, b| rank(a.0.state).cmp(&rank(b.0.state)).then(self.tier_level(b.0).total_cmp(&self.tier_level(a.0))));
+                return v;
+            }
             let mut v: Vec<(&Item, f64)> = self.items.iter().filter(|i| !i.done()).map(|i| (i, i.max.max(1.0))).collect();
             v.sort_by_key(|(i, _)| rank(i.state));
             return v;
@@ -490,10 +530,12 @@ impl Review {
         }
         crate::crowd::with(|table| {
             for m in &mut mechanics {
-                // Only when the table has a tier for your world or an earlier one: until there are
-                // saves from earlier worlds, an account short of World 7 keeps the game-max ladder.
+                // Every table now has tiers from the world its mechanic opens in (research, or the
+                // generator's climb to the first saves), so a table whose first tier is in a later
+                // world than yours says just that (keen-badger, 2026-11-09: shiny pets from Late
+                // World 5 read better to a World 4 account than the game-max "Started · 1 of 9").
                 let made = crate::crowd::BY_MAX.contains(&m.key).then(|| crate::crowd::by_max(m.key, &m.items, m.world));
-                m.crowd = table.get(m.key).or(made.as_ref()).and_then(|b| Ladder::new(b, &m.items)).filter(|l| l.rungs.iter().any(|r| r.world <= world));
+                m.crowd = table.get(m.key).or(made.as_ref()).and_then(|b| Ladder::new(b, &m.items)).map(|l| l.named(m.tier_names.as_deref()).had_as(m.key));
             }
         });
         if packs == Packs::Free {

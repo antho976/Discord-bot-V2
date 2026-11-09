@@ -6,8 +6,11 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
     vec![
         research_grid(save),
         sushi(save),
+        sushi_types(save),
         jelly(save),
+        jelly_obstructions(save),
         minehead(save),
+        minehead_opponents(save),
         coral_reef(save),
         zenith_market(save),
         legend_talents(save),
@@ -228,8 +231,12 @@ fn spelunk_depth(save: &Save) -> Mechanic {
     let manic = save.numbers("Spelunk", &[47]);
     let mut items = Vec::new();
     for (i, name) in caves() {
-        items.push(Item::new(name.clone(), pic(format!("CaveDoor{i}")), at(&normal, i), 0.0));
-        items.push(Item::new(format!("{name} (Manic)"), pic(format!("CaveDoor{i}")), at(&manic, i), 0.0));
+        let mut it = Item::new(name.clone(), pic(format!("CaveDoor{i}")), at(&normal, i), 0.0);
+        it.how = Some(format!("Your deepest delve in {name}. Depths from every cave add up to Total Depths, a Menagerie mission."));
+        items.push(it);
+        let mut it = Item::new(format!("{name} (Manic)"), pic(format!("CaveDoor{i}")), at(&manic, i), 0.0);
+        it.how = Some(format!("Your deepest Manic Mode delve in {name}. Manic Mode comes from the Spelunking Shop, and these depths count for Total Depths too."));
+        items.push(it);
     }
     mech("spelunk-depth", 7, "Spelunking Depths", pic("CaveDoor0".into()), Count::Open, "depth", items)
 }
@@ -389,6 +396,24 @@ fn clam_upgrades(save: &Save) -> Mechanic {
 /// The total Divinity LV each Coral Kid upgrade opens at, as N.js sets `_GenINFO[118]`.
 const CK_DIVINITY: [u32; 12] = [0, 600, 900, 1200, 1500, 1750, 500, 3000, 5000, 8000, 10000, 12000];
 
+/// Short names for the Coral Kid's upgrades, which the game shows only as sentences
+/// (`Spelunky[25]`): "The Max Level of the 'Blessing' upgrade for each Divinity is +N levels
+/// higher" is "Blessing Max LV".
+const CK_NAMES: [&str; 12] = [
+    "Volcano Divinity Link",
+    "Blessing Max LV",
+    "God Rank Class EXP",
+    "Minor Link Boost",
+    "Divinity PTS per Reef Upgrade",
+    "Daily Coral",
+    "Singularity Transmute",
+    "Transmute Base Value",
+    "Divinity EXP",
+    "Time Elapsed from AFK Gains",
+    "Lumi Gain",
+    "God Rank DMG",
+];
+
 fn coral_kid(save: &Save) -> Mechanic {
     let div = held(save, "Divinity", &[24]);
     let spirals = chest(save, "CKsing");
@@ -407,7 +432,8 @@ fn coral_kid(save: &Save) -> Mechanic {
         .into_iter()
         .enumerate()
         .map(|(i, r)| {
-            let mut it = Item::new(first_sentence(r.split(",_").next().unwrap_or(r)), None, save.option(if i < 6 { 427 + i } else { 616 + i - 6 }), 0.0);
+            let name = CK_NAMES.get(i).map_or_else(|| first_sentence(r.split(",_").next().unwrap_or(r)), |n| (*n).to_string());
+            let mut it = Item::new(name, None, save.option(if i < 6 { 427 + i } else { 616 + i - 6 }), 0.0);
             if !met {
                 it.how = Some("Unlock the Coral Kid first: each try costs 20M Divinity PTS and works 1 time in 10.".into());
                 it.state = State::Locked;
@@ -875,7 +901,14 @@ fn observation_rows() -> impl Iterator<Item = (usize, String)> {
 /// Observation insight levels: `Research[4][i]`. N.js `ObservationInsightExpREQ` grows without a cap.
 fn observation_levels(save: &Save) -> Mechanic {
     let levels = save.numbers("Research", &[4]);
-    let items = observation_rows().map(|(i, name)| Item::new(name, pic(format!("ResObj{i}")), at(&levels, i), 0.0)).collect();
+    let found = save.numbers("Research", &[2]);
+    let items = observation_rows()
+        .map(|(i, name)| {
+            let mut it = Item::new(name, pic(format!("ResObj{i}")), at(&levels, i), 0.0);
+            it.how = Some(if at(&found, i) >= 1.0 { "Put an Optical Monocle on it to give it insight.".into() } else { "Find this observation first, then put an Optical Monocle on it.".into() });
+            it
+        })
+        .collect();
     mech("observation-levels", 7, "Observation Insight", pic("ResObj0".into()), Count::Open, "levels", items)
 }
 
@@ -940,7 +973,9 @@ fn glimbo(save: &Save) -> Mechanic {
 /// The Button: `OptLacc[594]` counts presses (N.js `Button_Bonuses`), with no end. The button is a
 /// town sprite (animation "ButtonG"), not one of the game's pictures, so it has none.
 fn the_button(save: &Save) -> Mechanic {
-    let items = vec![Item::new("Presses", None, save.option(594), 0.0)];
+    let mut press = Item::new("Presses", None, save.option(594), 0.0);
+    press.how = Some("Every press counts toward its next bonus.".into());
+    let items = vec![press];
     let mut m = mech("the-button", 7, "The Button", None, Count::Open, "presses", items);
     m.note = Some("Every five presses feed the next of its nine bonuses, round and round.".into());
     m
@@ -956,19 +991,21 @@ fn the_button(save: &Save) -> Mechanic {
 /// `ClassIcons{42 + t}`; Research is `Lv0[20]`, so `ClassIcons61`).
 fn research_grid(save: &Save) -> Mechanic {
     let levels = save.numbers("Research", &[0]);
-    let mut items: Vec<Item> = rows("ResGridSquares", &[])
+    let items: Vec<Item> = rows("ResGridSquares", &[])
         .iter()
         .enumerate()
         .filter(|(_, r)| text(r, 0) != "Name" && cell(r, 1) > 0.0)
-        .map(|(i, r)| Item::new(label(text(r, 0)), None, at(&levels, i), cell(r, 1)))
+        .map(|(i, r)| {
+            let mut it = Item::new(label(text(r, 0)), None, at(&levels, i), cell(r, 1));
+            it.how = node_effect(text(r, 5), cell(r, 2)).map(|e| format!("{e}."));
+            it
+        })
         .collect();
-    for it in items.iter_mut().filter(|it| it.level < it.max) {
-        it.how = Some("Each level costs 1 Grid Point.".into());
-    }
     let lv = research_level(save);
     let earned = (lv + (lv / 10.0).floor() * (1.0 + (lv / 60.0).floor().min(1.0) + at(&levels, 50))).floor();
     let spent: f64 = levels.iter().filter(|v| v.is_finite()).sum();
     let mut m = mech("research", 7, "Research Grid", pic("ClassIcons61".into()), Count::Levels, "levels", items);
+    m.note = Some("Each level costs 1 Grid Point. Figures are for one level, before your shapes.".into());
     let free = earned - spent;
     if free >= 1.0 && free.is_finite() {
         m.have = Some(Have {
@@ -977,6 +1014,32 @@ fn research_grid(save: &Save) -> Mechanic {
         });
     }
     m
+}
+
+/// What a research grid node does, in one sentence, from its text (`ResGridSquares` col 5) with
+/// one level's number put in: `{` is col 2, `}` the multiplier 1 + col 2 / 100, `|` the level
+/// (N.js `Grid_Bonus` with 1), so 1. `$` and `^` are running totals the page can't know; the
+/// clause holding one is cut. The game's jokes come before a "..." ("Psst... you forgot to give
+/// Observation LV a purpose... Observations give 1.04x more EXP per LV"), so the text after the
+/// last one is the effect, when nothing before the first "..." has a number.
+/// `None` when nothing readable is left.
+fn node_effect(desc: &str, v: f64) -> Option<String> {
+    let short = |n: f64| {
+        let s = format!("{n:.2}");
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    };
+    let filled = desc.replace("i.e._", "ie_").replace('{', &short(v)).replace('}', &short(1.0 + v / 100.0)).replace('|', "1");
+    let part = filled.split('@').next().unwrap_or("");
+    let joke = part.split("..._").next().is_some_and(|before| part.contains("..._") && !before.chars().any(|c| c.is_ascii_digit()));
+    let part = if joke { part.rsplit("..._").next().unwrap_or(part) } else { part };
+    part.split('!')
+        .flat_map(|p| p.split("._"))
+        .map(|p| match p.find('$').or_else(|| p.find('^')) {
+            Some(k) => p[..k].rfind(',').map_or("", |c| &p[..c]),
+            None => p,
+        })
+        .map(|p| clean(p.trim_start_matches("Also,_")))
+        .find(|p| p.len() > 3)
 }
 
 /// The upgrades of a shop kept the same way: levels at `key[path][i]`, max in col 1 (0 for a row
@@ -1159,9 +1222,90 @@ fn minehead(save: &Save) -> Mechanic {
     m
 }
 
+/// A bonus text from the game with its number put in: `{` is the number, `}` the multiplier
+/// 1 + number/100 ("}x_Drop_Rate" at 10 is "1.1x Drop Rate"). Each `@` line is a sentence of its
+/// own, cut at its "!"; notes in brackets and "Current ..." readouts are left out.
+fn bonus_text(text: &str, v: f64) -> String {
+    let short = |n: f64| {
+        let s = format!("{:.2}", n);
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    };
+    let filled = text.replace('{', &short(v)).replace('}', &short(1.0 + v / 100.0));
+    filled
+        .split('@')
+        .map(|part| clean(part.split('!').next().unwrap_or(part)))
+        .filter(|p| !p.is_empty() && !p.starts_with('(') && !p.starts_with("Current"))
+        .collect::<Vec<_>>()
+        .join(". ")
+}
+
+/// A list the game works through in order, one at a time: `done` of them so far. Each item is
+/// `names[i]`, with what it gives (`texts[i]` filled with `values[i]`) after `verb`.
+fn in_order(done: f64, names: &[String], texts: &[&str], values: &[&str], verb: &str) -> Vec<Item> {
+    names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let mut it = found(name.clone(), None, done > i as f64);
+            let v = values.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
+            if let Some(t) = texts.get(i).map(|t| bonus_text(t, v)).filter(|t| !t.is_empty()) {
+                it.how = Some(format!("{verb}: {t}."));
+            }
+            it
+        })
+        .collect()
+}
+
+/// Minehead opponents: `Research[7][4]` is how many are beaten, in order (N.js
+/// `Minehead("BonusQTY")` gives bonus t once it's above t). Opponent t is the head
+/// `Research[11][Research[10][t]]` (`Minehead("MineheadID")`); its bonus is `Research[19][t]`
+/// with the number `Research[20][t]`, and it counts for the whole game.
+fn minehead_opponents(save: &Save) -> Mechanic {
+    let ids = list("Research", 10);
+    let heads = list("Research", 11);
+    let texts = list("Research", 19);
+    let names: Vec<String> = (0..texts.len())
+        .map(|t| ids.get(t).and_then(|i| i.parse::<usize>().ok()).and_then(|i| heads.get(i)).map(|h| label(h)).unwrap_or_else(|| format!("Opponent {}", t + 1)))
+        .collect();
+    let items = in_order(held(save, "Research", &[7, 4]), &names, &texts, &list("Research", 20), "Beating it");
+    let mut m = mech("minehead-opponents", 7, "Minehead Opponents", pic("MineUpg0".into()), Count::Done, "beaten", items);
+    m.note = Some("Opponents come one after another. What each one gives counts for the whole game, not just Minehead.".into());
+    m
+}
+
+/// Sushi types: N.js `SushiStuff("UniqueSushi")` counts the types from the first whose
+/// `Sushi[5][n]` is 0 or more, stopping at the first one never cooked; each type below that count
+/// gives its bonus `Research[36][t]` with the number `Research[37][t]` (`SushiStuff("RoG_BonusQTY")`).
+/// Names are `Research[30]`.
+fn sushi_types(save: &Save) -> Mechanic {
+    let cooked = save.numbers("Sushi", &[5]);
+    let names: Vec<String> = list("Research", 30).iter().map(|n| label(n)).collect();
+    let unique = (0..names.len()).take_while(|&n| cooked.get(n).is_some_and(|v| v.is_finite() && *v >= 0.0)).count();
+    let items = in_order(unique as f64, &names, &list("Research", 36), &list("Research", 37), "Cooking it the first time");
+    let mut m = mech("sushi-types", 7, "Sushi Types", pic("SushiUpg0".into()), Count::Done, "cooked", items);
+    m.note = Some("Each new type of sushi you cook gives a bonus for good. They come in order: a higher tier opens after the one before.".into());
+    m
+}
+
+/// Jelly Operator obstructions: `Research[7][9]` is how many are cleared, in order (N.js
+/// `JellyOperation("RoG_BonusQTY")`). Obstruction t is `Research[45][t]`, its bonus
+/// `Research[46][t]` with the number `Research[47][t]`.
+fn jelly_obstructions(save: &Save) -> Mechanic {
+    let names: Vec<String> = list("Research", 45).iter().map(|n| label(n)).collect();
+    let items = in_order(held(save, "Research", &[7, 9]), &names, &list("Research", 46), &list("Research", 47), "Clearing it");
+    let mut m = mech("jelly-obstructions", 7, "Jelly Operator Obstructions", pic("JellyUpg0".into()), Count::Done, "cleared", items);
+    m.note = Some("A successful operation clears the next obstruction, and its bonus counts for the whole game.".into());
+    m
+}
+
 /// Coral Reef: `Spelunk[13][i]`, unlocked when `Spelunk[12][i]` is 1; col 1 is the max. Row 3's
 /// cap is raised from 12 to 15 by Menagerie unlock 9 (N.js rewrites `CoralReef[3][1]`); the last
 /// row is a filler. N.js `ReefCost`: col 2 × col 3^level, paid with Reef Coral (`Spelunk[4][5]`).
+/// Short names for the reef's upgrades: the game shows only a sentence for each ("Adds a new mini
+/// 'Ninja Knowledge' upgrade, level it up with your Jade"), too long for a tier's ask. Row 3 is
+/// the coral Menagerie unlock 9 calls "Pillar".
+const REEF_NAMES: [&str; 5] = ["Grind Time Bubble LVs", "Menagerie Shells", "Tome Epilogue Bonus", "Ninja Knowledge (Pillar)", "Gallery Bonus and Slots"];
+
 fn coral_reef(save: &Save) -> Mechanic {
     let levels = save.numbers("Spelunk", &[13]);
     let open = save.numbers("Spelunk", &[12]);
@@ -1177,7 +1321,8 @@ fn coral_reef(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let max = if i == 3 { 15.0 } else { cell(r, 1) };
             let level = at(&levels, i);
-            let mut it = Item::new(clean(text(r, 0)), pic(format!("Reef{}1", letters[i])), level, max);
+            let name = REEF_NAMES.get(i).map_or_else(|| clean(text(r, 0)), |n| (*n).to_string());
+            let mut it = Item::new(name, pic(format!("Reef{}1", letters[i])), level, max);
             if level <= 0.0 && at(&open, i) < 1.0 {
                 it.how = Some("Not unlocked in the Coral Reef yet.".into());
                 it.state = State::Locked;

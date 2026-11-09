@@ -17,6 +17,9 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
         refinery(save),
         sampling(save),
         worship(save),
+        worship_skulls(save),
+        trap_boxes(save),
+        shrines(save),
         armor_sets(save),
     ]
 }
@@ -895,7 +898,7 @@ fn sampling(save: &Save) -> Mechanic {
         items.push(Item::new("No samples yet", None, 0.0, 0.0));
     }
     let mut m = mech("sampling", 3, "3D Printer Samples", pic("ConTower0".into()), Count::Open, "sample size", items);
-    m.note = Some("Your best sample of each item. Sample sizes have no cap.".into());
+    m.note = Some("Your best sample of each item. Sample sizes have no cap, so there are no tiers: the Royal Sampler prayer and the Salt Lick's Printer Sample Size make every new sample bigger.".into());
     m
 }
 
@@ -929,6 +932,69 @@ fn worship(save: &Save) -> Mechanic {
         .collect();
     let mut m = mech("worship", 3, "Worship Totems", pic("WorshipSkull1".into()), Count::Open, "best wave", items);
     m.note = Some("Your best wave at each totem. Waves have no cap.".into());
+    m
+}
+
+/// Items the account has ever looted, `Cards1` (the game's found-items list).
+fn found(save: &Save) -> Vec<&str> {
+    save.get("Cards1").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default()
+}
+
+/// A skilling tool line (trap boxes, worship skulls): `{prefix}1` to `{prefix}{n}`, each
+/// crafted from the one before. Had once looted; the next one says what it's made from.
+fn tool_line(save: &Save, prefix: &str, from: &str) -> Vec<Item> {
+    let found = found(save);
+    let ids: Vec<String> = (1..).map(|k| format!("{prefix}{k}")).take_while(|id| GAME.item_name(id).is_some()).collect();
+    ids.iter()
+        .enumerate()
+        .map(|(k, id)| {
+            let had = found.contains(&id.as_str());
+            let mut it = Item::new(item_name(id), crate::pictures::has(id).then(|| id.clone()), f64::from(u8::from(had)), 1.0);
+            if !had {
+                it.how = Some(match k {
+                    0 => "Sold in the World 3 shop.".into(),
+                    _ => format!("Crafted from {} and {from}.", item_name(&ids[k - 1])),
+                });
+            }
+            it
+        })
+        .collect()
+}
+
+/// Trap boxes: every trap set you've looted (`Cards1`). A better set catches more critters
+/// and opens longer traps.
+fn trap_boxes(save: &Save) -> Mechanic {
+    mech("trap-boxes", 3, "Trap Boxes", pic("TrapBoxSet1".into()), Count::Done, "found", tool_line(save, "TrapBoxSet", "critters"))
+}
+
+/// Worship skulls: every skull you've looted (`Cards1`). A better skull holds more charge.
+fn worship_skulls(save: &Save) -> Mechanic {
+    mech("worship-skulls", 3, "Worship Skulls", pic("WorshipSkull1".into()), Count::Done, "found", tool_line(save, "WorshipSkull", "souls"))
+}
+
+/// Shrines: `Shrine[i]` is (map, ?, x, level, progress, ?) for `ShrineInfo` row i. A shrine
+/// levels while players AFK on its map, without end; 0 is not built yet.
+fn shrines(save: &Save) -> Mechanic {
+    let maps = rows("MapDispName", &[]);
+    let items = rows("ShrineInfo", &[])
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let name = label(text(r, 0));
+            let level = save.at("Shrine", &[i, 3]).map(num).unwrap_or(0.0).max(0.0);
+            let map = save.at("Shrine", &[i, 0]).map(num).unwrap_or(0.0) as usize;
+            let mut it = Item::new(name.clone(), None, level, 0.0);
+            it.how = Some(if level <= 0.0 {
+                format!("Build the {name} in Construction, then place it on a map.")
+            } else {
+                let place = maps.get(map).and_then(|m| m.as_str()).map(label).unwrap_or_default();
+                if place.is_empty() { "Levels while your players AFK on its map.".into() } else { format!("On {place}: levels while your players AFK there.") }
+            });
+            it
+        })
+        .collect();
+    let mut m = mech("shrines", 3, "Shrines", pic("ConTower18".into()), Count::Open, "levels", items);
+    m.note = Some("Shrines level without end while players AFK on their map. A Crystal Shrine on the same map speeds up the others.".into());
     m
 }
 

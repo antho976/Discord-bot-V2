@@ -24,6 +24,10 @@ pub struct Save {
     server: Map<String, Value>,
     /// Character names in save order.
     pub names: Vec<String>,
+    /// The companions owned, as `CompanionDB` rows, from IdleonToolbox's copy (`companion.l`,
+    /// "row,..." per companion; the game keeps them on its server, not in the save). `None`
+    /// when the paste has no companion list.
+    pub companions: Option<Vec<usize>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -53,6 +57,7 @@ impl Save {
             return Err(SaveError::NotJson);
         };
         let mut names = string_list(root.get("charNames")).or_else(|| string_list(root.get("playerNames"))).unwrap_or_default();
+        let companions = companions(root.remove("companion"));
         let server = match root.remove("serverVars") {
             Some(Value::Object(m)) => m,
             _ => Map::new(),
@@ -80,7 +85,7 @@ impl Save {
                 *v = parsed;
             }
         }
-        Ok(Save { data, server, names })
+        Ok(Save { data, server, names, companions })
     }
 
     pub fn get(&self, key: &str) -> Option<&Value> {
@@ -169,6 +174,18 @@ pub fn numbers(v: &Value) -> Vec<f64> {
     }
 }
 
+/// Most companions read from a paste; the game has under 200.
+const MAX_COMPANIONS: usize = 1_000;
+
+/// The `CompanionDB` rows in IdleonToolbox's `companion.l` ("24,0,0,793,1": row 24), each once.
+fn companions(v: Option<Value>) -> Option<Vec<usize>> {
+    let Value::Array(list) = v?.as_object_mut()?.remove("l")? else { return None };
+    let mut rows: Vec<usize> = list.iter().take(MAX_COMPANIONS).filter_map(|e| e.as_str()?.split(',').next()?.trim().parse().ok()).filter(|&r| r < MAX_COMPANIONS).collect();
+    rows.sort_unstable();
+    rows.dedup();
+    Some(rows)
+}
+
 fn string_list(v: Option<&Value>) -> Option<Vec<String>> {
     let a = v?.as_array()?;
     let out: Vec<String> = a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect();
@@ -207,6 +224,13 @@ mod tests {
         assert_eq!(s.server_list("Nope"), None);
         assert_eq!(s.server_list("Long").map(|v| v.len()), Some(MAX_SERVER_LIST));
         assert_eq!(Save::parse(r#"{"OptLacc": [0]}"#).unwrap().server_list("ArcadeBonuses"), None);
+    }
+
+    #[test]
+    fn companions_come_from_the_toolbox_copy() {
+        let s = Save::parse(r#"{"data": {"OptLacc": [0]}, "companion": {"l": ["24,0,0,793,1", "3,0,0,1,0", "24,1,0,5,0", "x", 7]}}"#).unwrap();
+        assert_eq!(s.companions, Some(vec![3, 24]));
+        assert_eq!(Save::parse(r#"{"OptLacc": [0]}"#).unwrap().companions, None);
     }
 
     #[test]

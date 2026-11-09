@@ -321,7 +321,7 @@ fn done(guild: u64, r: &Review) -> Markup {
                 div.ia-world data-w=(w) style={ "--w: var(--w" (w) ")" } {
                     div.ia-grid {
                         @for m in r.mechanics.iter().filter(|m| m.world == *w && card_key(m.key) == m.key) {
-                            (card(m, FOLD.iter().find(|f| f.0 == m.key).and_then(|f| r.mechanics.iter().find(|p| p.key == f.2)), r.world))
+                            (card(m, &folded(r, m.key), r.world))
                         }
                     }
                 }
@@ -333,18 +333,6 @@ fn done(guild: u64, r: &Review) -> Markup {
 /// Not started chips shown before "Show N more".
 const FRESH: usize = 8;
 
-/// Tiers a card's ladder shows at once; each can be picked to show its tasks (`peek`).
-const LADDER: usize = 6;
-
-/// Which tiers a ladder shows: `LADDER` of them, starting one before the current tier (the last
-/// done one, for context), all of them when they fit. `(from, to)`, `to` exclusive.
-fn window(len: usize, current: Option<usize>) -> (usize, usize) {
-    if len <= LADDER {
-        return (0, len);
-    }
-    let from = current.map_or(len - LADDER, |c| c.saturating_sub(1)).min(len - LADDER);
-    (from, from + LADDER)
-}
 
 /// Boxes Should have by now shows, oldest first: two rows of four on a wide screen, never a
 /// third (narrower screens show two rows of what fits, see the CSS).
@@ -478,46 +466,99 @@ fn pace_line(p: &Pace, reached: u8) -> Option<String> {
     }
 }
 
-/// Two mechanics drawn as one card behind a switch, like Stamps' Levels / Unlock (owner,
-/// 2026-11-08: Cauldron Upgrades and Pay2Win, "fold that in"): the card's mechanic and its
-/// side's name, then the folded one and its side's name.
-const FOLD: &[(&str, &str, &str, &str)] = &[("cauldron-upgrades", "Brewing", "pay2win", "Pay2Win")];
+/// Mechanics drawn as one card behind a switch, like Stamps' Levels / Unlock (owner,
+/// 2026-11-08: Cauldron Upgrades and Pay2Win, "fold that in"): per card, each side's mechanic
+/// and the side's name, the card's own mechanic first, then the card's title ("" keeps the
+/// first mechanic's name). The card sits in its first mechanic's world tab. A side whose
+/// mechanic the save doesn't have is left out.
+const FOLD: &[(&[(&str, &str)], &str)] = &[
+    (&[("bubbles", "Bubbles"), ("vials", "Vials"), ("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win"), ("sigils", "Sigils")], "Alchemy"),
+    (&[("islands", "Islands"), ("fractal-island", "Fractal Island")], "Islands"),
+    (&[("statues", "Statues"), ("statue-flair", "Flair")], ""),
+    // World 5 and 6 (2026-11-09): one card per skill, as the game draws it.
+    (&[("artifacts", "Artifacts"), ("sailing-islands", "Islands"), ("boats", "Boats"), ("boat-upgrades", "Upgrades")], "Sailing"),
+    (&[("blessings", "Blessings"), ("gods", "Gods")], "Divinity"),
+    (&[("superbits", "Superbits"), ("snail", "Snail")], "Gaming"),
+    (&[("cavern-villagers", "Villagers"), ("cavern-schematics", "Schematics"), ("cavern-majiks", "Majiks"), ("cavern-measurements", "Measurements"), ("cavern-studies", "Studies")], "The Hole"),
+    (&[("cavern-shallow", "Shallow"), ("cavern-glowshroom", "Glowshroom"), ("cavern-overgrowth", "Overgrowth")], "Caverns"),
+    (&[("crops", "Crops"), ("farm-market", "Market"), ("land-rank-upgrades", "Land Rank"), ("land-rank", "Seeds"), ("exotic-market", "Exotic")], "Farming"),
+    (&[("ninja-upgrades", "Upgrades"), ("jade-emporium", "Emporium"), ("pristine-charms", "Charms"), ("gemstones", "Gemstones")], "Sneaking"),
+    (&[("summoning", "Upgrades"), ("summoning-battles", "Battles"), ("summoning-stones", "Stones")], "Summoning"),
+    (&[("spelunk-shop", "Shop"), ("spelunk-caves", "Bosses"), ("spelunk-chapters", "Lore"), ("spelunk-depth", "Depths")], "Spelunking"),
+    (&[("clam-upgrades", "Upgrades"), ("clam-work", "Promotions")], "Clamworks"),
+    (&[("coral-reef", "Reef"), ("dancing-coral", "Dancing Coral")], ""),
+    (&[("gallery-trophies", "Trophies"), ("gallery-podiums", "Podiums"), ("gallery-nametags", "Nametags")], "Gallery"),
+    (&[("menagerie-unlocks", "Unlocks"), ("menagerie-boosts", "Boosts"), ("menagerie-missions", "Missions"), ("menagerie-jellyfish", "Jellyfish")], "Menagerie"),
+    (&[("observations", "Found"), ("observation-levels", "Insight")], "Observations"),
+    (&[("minehead", "Upgrades"), ("minehead-opponents", "Opponents")], ""),
+    (&[("sushi", "Upgrades"), ("sushi-types", "Types")], ""),
+    (&[("jelly", "Upgrades"), ("jelly-obstructions", "Obstructions")], ""),
+    // World 3 and 4 (2026-11-09).
+    (&[("equinox-upgrades", "Upgrades"), ("equinox-dreams", "Dreams")], "Equinox"),
+    (&[("meals", "Meals"), ("kitchens", "Kitchens")], "Cooking"),
+    (&[("jewels", "Jewels"), ("lab-chips", "Chips")], "Lab"),
+    (&[("breeding-pets", "Pets"), ("territories", "Territories"), ("breeding-upgrades", "Upgrades"), ("shiny", "Shiny")], "Breeding"),
+    (&[("rift", "Rifts"), ("rift-bonuses", "Bonuses")], "Rift"),
+    (&[("worship", "Totems"), ("worship-skulls", "Skulls")], "Worship"),
+];
+
+/// Most sides a switch has (the page's CSS has a rule per side).
+const SIDES: usize = 6;
 
 /// The key of the card a mechanic is drawn in: its own, or the one it's folded into.
 fn card_key(key: &str) -> &str {
-    FOLD.iter().find(|f| f.2 == key).map_or(key, |f| f.0)
+    FOLD.iter().find(|f| f.0[1..].iter().any(|s| s.0 == key)).map_or(key, |f| f.0[0].0)
 }
 
 /// For a folded mechanic, the side of its card's switch it's on (links open that side).
-fn side_of(key: &str) -> Option<&'static str> {
-    FOLD.iter().any(|f| f.2 == key).then_some("tiers")
+fn side_of(key: &str) -> Option<usize> {
+    FOLD.iter().find_map(|f| f.0.iter().position(|s| s.0 == key).filter(|&k| k > 0))
 }
 
-fn card(m: &Mechanic, partner: Option<&Mechanic>, reached: u8) -> Markup {
+/// The other mechanics folded into `key`'s card, with their sides' names.
+fn folded<'a>(r: &'a Review, key: &str) -> Vec<(&'static str, &'a Mechanic)> {
+    FOLD.iter()
+        .find(|f| f.0[0].0 == key)
+        .map(|f| f.0[1..].iter().filter_map(|s| r.mechanics.iter().find(|p| p.key == s.0).map(|p| (s.1, p))).collect())
+        .unwrap_or_default()
+}
+
+fn card(m: &Mechanic, partners: &[(&'static str, &Mechanic)], reached: u8) -> Markup {
     let tiers = m.tiers();
     let current = tiers.iter().position(|t| !t.complete());
     let hold = ON_HOLD.contains(&m.key);
-    let fold = FOLD.iter().find(|f| f.0 == m.key).zip(partner);
-    // Two sides behind a switch: statues and stamps show the game's tiers and a ladder on
-    // levels; a folded card shows its two mechanics. (label, the side, the side's mechanic)
-    let split: Option<[(&str, Mechanic); 2]> = match fold {
-        Some((f, p)) => Some([(f.1, m.clone()), (f.3, p.clone())]),
-        None => m.levels_view().zip(m.tiers_view()).map(|(lv, tv)| [("Levels", lv), (m.other_side, tv)]),
+    let fold = (!partners.is_empty()).then(|| FOLD.iter().find(|f| f.0[0].0 == m.key)).flatten();
+    let title = fold.map(|f| f.1).filter(|t| !t.is_empty()).unwrap_or(m.name);
+    // Sides behind a switch: statues and stamps show the game's tiers and a ladder on levels;
+    // a folded card shows its mechanics. (label, the side's mechanic)
+    let split: Option<Vec<(&str, Mechanic)>> = match fold {
+        // A side with two ladders of its own (Statues: Levels / Tiers) brings both.
+        Some(f) => Some(
+            std::iter::once((f.0[0].1, m))
+                .chain(partners.iter().map(|(l, p)| (*l, *p)))
+                .flat_map(|(l, x)| match x.levels_view().zip(x.tiers_view()) {
+                    Some((lv, tv)) => vec![("Levels", lv), (x.other_side, tv)],
+                    None => vec![(l, x.clone())],
+                })
+                .take(SIDES)
+                .collect(),
+        ),
+        None => m.levels_view().zip(m.tiers_view()).map(|(lv, tv)| vec![("Levels", lv), (m.other_side, tv)]),
     };
-    let share = match partner.filter(|_| fold.is_some()) {
-        Some(p) if m.total() + p.total() > 0.0 => ((m.have() + p.have()) / (m.total() + p.total())).clamp(0.0, 1.0),
-        _ => m.share(),
-    };
-    let done = fold.is_some_and(|(_, p)| m.done() && p.done()) || (fold.is_none() && m.done());
+    let all = || std::iter::once(m).chain(partners.iter().map(|p| p.1));
+    // A side with no max (boat upgrades) has levels but nothing to count them against.
+    let (have, total) = all().filter(|x| x.count != Count::Open && x.total() > 0.0).fold((0.0, 0.0), |(h, t), x| (h + x.have(), t + x.total()));
+    let share = if fold.is_some() && total > 0.0 { (have / total).clamp(0.0, 1.0) } else { m.share() };
+    let done = if fold.is_some() { all().filter(|x| x.count != Count::Open).all(|x| x.done()) } else { m.done() };
     html! {
         details.ia-card #{ "m-" (m.key) } {
             summary {
                 (mark(m))
                 span.ia-card-name {
-                    b { (m.name) }
+                    b { (title) }
                     // The tier you're on, numbered as the ladder numbers it ("Tier 3 · you're here").
                     span {
-                        @if fold.is_some() { (fig(m)) } @else if let Some([_, (_, tv)]) = &split { (ladder_fig(tv)) } @else { (fig(m)) }
+                        @if fold.is_some() { (fig(m)) } @else if let Some((_, tv)) = split.as_ref().and_then(|s| s.last()) { (ladder_fig(tv)) } @else { (fig(m)) }
                         @match current {
                             Some(k) if fold.is_some() => { " · Tier " (k + 1) "/" (tiers.len()) },
                             Some(k) if split.is_some() => { " · Level tier " (k + 1) "/" (tiers.len()) },
@@ -545,22 +586,20 @@ fn card(m: &Mechanic, partner: Option<&Mechanic>, reached: u8) -> Markup {
                 @if hold {
                     p.ia-hold { b { "Order coming later." } " The numbers here are right, but these tiers aren't in the order you'd really do them yet. That comes in a later update." }
                 }
-                @if let Some([(a, lv), (b, tv)]) = &split {
+                @if let Some(sides) = &split {
                     div.ia-split {
                         div.ia-switch role="radiogroup" aria-label="Show" {
-                            label {
-                                input type="radio" name={ "v-" (m.key) } value="levels" checked;
-                                b { (a) }
-                                span.ia-fig { (ladder_fig(lv)) }
-                            }
-                            label {
-                                input type="radio" name={ "v-" (m.key) } value="tiers";
-                                b { (b) }
-                                span.ia-fig { (ladder_fig(tv)) }
+                            @for (k, (label, side)) in sides.iter().enumerate() {
+                                label {
+                                    input type="radio" name={ "v-" (m.key) } value=(k) checked[k == 0];
+                                    b { (label) }
+                                    span.ia-fig { (ladder_fig(side)) }
+                                }
                             }
                         }
-                        div.ia-view.levels { (view(lv, reached, "levels")) @if fold.is_some() { (all_items(lv)) } }
-                        div.ia-view.tiers { (view(tv, reached, "tiers")) @if fold.is_some() { (all_items(tv)) } }
+                        @for (k, (_, side)) in sides.iter().enumerate() {
+                            div.ia-view data-v=(k) { (view(side, reached, &k.to_string())) @if fold.is_some() { (all_items(side)) } }
+                        }
                     }
                 } @else {
                     div.ia-view { (view(m, reached, "")) }
@@ -617,74 +656,123 @@ fn view(m: &Mechanic, reached: u8, tag: &str) -> Markup {
                 }
             }
         }
-        @if !tiers.is_empty() {
-            @let (from, to) = window(tiers.len(), current);
-            @if from > 0 || to < tiers.len() {
-                p.ia-ladder-note {
-                    "Tiers " (from + 1) "–" (to) " of " (tiers.len())
-                    @if from > 0 { " · " (from) " before these done" }
-                }
-            }
-            ol.ia-ladder style={ "--n:" (to - from) } {
-                @for (k, t) in tiers.iter().enumerate().skip(from).take(to - from) {
-                    // A rung is a radio: picking one shows its tasks below (`peek`), the tier
-                    // you're on to start with (the last one shown when every tier is done).
-                    li.ia-rung.done[t.complete()].here[current == Some(k)] {
-                        input type="radio" name={ "t-" (m.key) "-" (tag) } aria-label={ "Tier " (k + 1) ", " (t.label) } checked[current.unwrap_or(to - 1) == k];
-                        span.ia-rung-k {
-                            "Tier " (k + 1)
-                            @if current == Some(k) { " · you're here" } @else if t.complete() { " · done" }
-                            @if let Some(w) = m.pace.as_ref().and_then(|p| p.worlds.get(k).copied().flatten()) {
-                                span.ia-rung-w style={ "--w: var(--w" (w) ")" } title={ "Expected by World " (w) } { "W" (w) }
-                            }
-                        }
-                        b { (t.label) }
-                        span.ia-fig { (t.met) " of " (t.need) }
-                        span.ia-meter { span style={ "--s:" (share3(t.met as f64 / t.need.max(1) as f64)) } {} }
-                        @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty() && m.crowd.is_none()) { span.ia-rung-note { (n) } }
-                    }
-                }
-            }
-        }
-        div.ia-work.with-side[side] {
+        @if tiers.is_empty() {
             div.ia-tasks {
-                @if tiers.is_empty() {
-                    h3 { (m.open_order.unwrap_or("Lowest first")) }
-                    @if m.open_order.is_none() { p.ia-note { "Nothing here has a max, so these are the ones furthest behind." } }
-                    div.ia-task-list { @for i in open.iter().take(TASKS) { (item(i)) } }
-                } @else {
-                    @let (from, to) = window(tiers.len(), current);
-                    div.ia-peeks {
-                        @for k in from..to { div.ia-peek { (peek(m, &tiers, k, current)) } }
+                h3 { (m.open_order.unwrap_or("Lowest first")) }
+                @if m.open_order.is_none() { p.ia-note { "Nothing here has a max, so these are the ones furthest behind." } }
+                div.ia-task-list { @for i in open.iter().take(TASKS) { (item(i)) } }
+            }
+        } @else {
+            (ladder(m, &tiers, current, reached, tag))
+        }
+        @if side {
+            aside.ia-side {
+                @if let Some(h) = &m.have {
+                    div.ia-side-box {
+                        span.ia-side-k { "With what you have" }
+                        b.ia-side-big { (h.figure) }
+                        p { (h.text) }
                     }
                 }
-            }
-            @if side {
-                aside.ia-side {
-                    @if let Some(h) = &m.have {
-                        div.ia-side-box {
-                            span.ia-side-k { "With what you have" }
-                            b.ia-side-big { (h.figure) }
-                            p { (h.text) }
-                        }
-                    }
-                    @if !m.raises.is_empty() {
-                        div.ia-side-box {
-                            span.ia-side-k { "Raise the cap" }
-                            // The ones still to get first: those are the ones to act on.
-                            @for r in m.raises.iter().filter(|r| !r.owned).chain(m.raises.iter().filter(|r| r.owned)) {
-                                div.ia-raise.owned[r.owned] {
-                                    span.ia-raise-mark title=(if r.owned { "You have it" } else { "Not yet" }) {
-                                        @if r.owned { (ui::icon(bot_core::Icon::Check)) }
-                                    }
-                                    span.ia-raise-text {
-                                        b { (r.name) }
-                                        span { (r.amount) }
-                                    }
+                @if !m.raises.is_empty() {
+                    div.ia-side-box {
+                        span.ia-side-k { "Raise the cap" }
+                        // The ones still to get first: those are the ones to act on.
+                        @for r in m.raises.iter().filter(|r| !r.owned).chain(m.raises.iter().filter(|r| r.owned)) {
+                            div.ia-raise.owned[r.owned] {
+                                span.ia-raise-mark title=(if r.owned { "You have it" } else { "Not yet" }) {
+                                    @if r.owned { (ui::icon(bot_core::Icon::Check)) }
+                                }
+                                span.ia-raise-text {
+                                    b { (r.name) }
+                                    span { (r.amount) }
                                 }
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Stage rows a ladder shows before "N more stages".
+const STAGE_ROWS: usize = 12;
+
+/// Which stage rows show: all when they fit, else `STAGE_ROWS` from a few before the one
+/// picked. `(from, to)`, `to` exclusive.
+fn stage_window(len: usize, here: usize) -> (usize, usize) {
+    if len <= STAGE_ROWS {
+        return (0, len);
+    }
+    let from = here.saturating_sub(3).min(len - STAGE_ROWS);
+    (from, from + STAGE_ROWS)
+}
+
+/// The world colour of a stage row: its world ("Late World 4"), World 7 past it, otherwise
+/// the mechanic's own.
+fn stage_world(name: &str, world: u8) -> u8 {
+    match name.split_once("World ").and_then(|(_, w)| w.trim().parse::<u8>().ok()) {
+        Some(w) => w,
+        None if name.starts_with("Endgame") || name.starts_with("Min-max") => 7,
+        None => world,
+    }
+}
+
+/// Tier layout B (Relay design 23, owner 2026-11-09): the stages down the side, a row each
+/// with a dash per tier, and the picked tier beside them, a page of its asks with steps to the
+/// tier before and after. Every tier's page is in the card; a radio per tier picks one, no
+/// script needed (the script only moves the highlight in the stage list).
+fn ladder(m: &Mechanic, tiers: &[Tier], current: Option<usize>, reached: u8, tag: &str) -> Markup {
+    let id = |k: usize| format!("t-{}-{}-{}", m.key, tag, k);
+    let pick = current.unwrap_or(tiers.len() - 1);
+    // Stages: runs of tiers named alike before " · " ("Late World 1 · 2 of 4").
+    let mut groups: Vec<(&str, Vec<usize>)> = Vec::new();
+    for (k, t) in tiers.iter().enumerate() {
+        let name = t.label.split(" · ").next().unwrap_or(&t.label);
+        match groups.last_mut() {
+            Some(g) if g.0 == name => g.1.push(k),
+            _ => groups.push((name, vec![k])),
+        }
+    }
+    let here = groups.iter().position(|g| g.1.contains(&pick)).unwrap_or(0);
+    let (from, to) = stage_window(groups.len(), here);
+    let cut = from > 0 || to < groups.len();
+    // Tiers drawn in full, rows with pictures and how: the one before yours to `NEAR` after it.
+    // The rest list their asks by name (a mid-game save has some 1,600 tiers; drawing every one
+    // in full made the page 9.8 MB).
+    let near = |k: usize| k + 1 >= pick && k <= pick + NEAR;
+    html! {
+        div.ia-b {
+            div.ia-stages {
+                @if cut { input.ia-allst type="checkbox" id={ "s-" (m.key) "-" (tag) } hidden; }
+                @for (g, (name, ks)) in groups.iter().enumerate() {
+                    @let first = ks.iter().copied().find(|&k| !tiers[k].complete()).unwrap_or(ks[0]);
+                    div.ia-st.done[ks.iter().all(|&k| tiers[k].complete())].picked[g == here].far[g < from || g >= to] style={ "--w: var(--w" (stage_world(name, m.world)) ")" } {
+                        label.ia-st-name for=(id(first)) { span.ia-st-dot {} span { (name) } }
+                        span.ia-dashes {
+                            @for &k in ks {
+                                label.ia-dash.done[tiers[k].complete()].here[current == Some(k)].picked[k == pick] for=(id(k)) data-k=(k) title={ "Tier " (k + 1) } {}
+                            }
+                        }
+                    }
+                }
+                @if cut {
+                    label.ia-st-more for={ "s-" (m.key) "-" (tag) } {
+                        span.more {
+                            @if to + 1 == groups.len() { "1 more stage, " (groups[groups.len() - 1].0) }
+                            @else if to < groups.len() { (groups.len() - to) " more stages, to " (groups[groups.len() - 1].0) }
+                            @else if from == 1 { "Show the stage before" }
+                            @else { "Show the " (from) " stages before" }
+                        }
+                        span.less { "Show fewer stages" }
+                    }
+                }
+            }
+            div.ia-peeks {
+                @for k in 0..tiers.len() {
+                    input.ia-pick type="radio" name={ "t-" (m.key) "-" (tag) } id=(id(k)) data-k=(k) checked[k == pick] aria-label={ "Tier " (k + 1) ", " (tiers[k].label) };
+                    div.ia-peek { (peek(m, tiers, k, current, reached, &id, near(k))) }
                 }
             }
         }
@@ -707,8 +795,6 @@ fn ladder_fig(m: &Mechanic) -> String {
 
 /// Mechanics whose tiers aren't in a real order yet (owner, 2026-11-06): their cards say so.
 const ON_HOLD: &[&str] = &[
-    "arcade", "sigils", "post-office", "equinox-upgrades", "sampling", "meals", "lab-chips", "breeding-upgrades", "shiny",
-    "breeding-pets", "artifacts", "slab",
 ];
 
 /// Tasks shown under the current tier before "and N more".
@@ -723,8 +809,34 @@ fn level_text(m: &Mechanic, level: f64) -> String {
     }
 }
 
-fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
+/// What an ask's figure says: the level it asks ("Lv 40", "Unlock", "Gold") and, under it, where
+/// it starts from ("from Lv 30"), when that says something.
+fn ask_text(m: &Mechanic, i: &Item, target: f64) -> (String, Option<String>) {
     let once = i.max > 0.0 && i.max <= 1.0 && m.tier_names.is_none();
+    let level = m.tier_level(i);
+    if once {
+        return (if i.raw.is_some() { "Unlock".into() } else { i.level_name.clone().unwrap_or_else(|| "Unlock".into()) }, None);
+    }
+    if m.crowd.is_some() {
+        // Something not had at all (a stamp not found) is "Unlock": its level 0 says nothing.
+        return match () {
+            // Named levels (an artifact's Ancient, a card's 1 star) read as names, even the
+            // first: a card found but with no star yet isn't something to unlock.
+            _ if m.tier_names.is_some() && target >= 1.0 => (level_text(m, target), (level > 0.0).then(|| format!("from {}", level_text(m, level)))),
+            _ if level <= 0.0 && target <= 1.0 => ("Unlock".into(), None),
+            _ if i.raw.is_some_and(|r| r <= 0.0) => (level_text(m, target), Some("Unlock first".into())),
+            // Points (the Tome's lines) aren't levels.
+            _ if m.unit == "points" => (format!("{} pts", num(target)), (level > 0.0).then(|| format!("from {}", num(level)))),
+            _ => (format!("Lv {}", num(target)), (level > 0.0).then(|| format!("from {}", num(level)))),
+        };
+    }
+    (level_text(m, target), (i.level > 0.0).then(|| format!("from {}", level_text(m, i.level))))
+}
+
+/// One ask of a tier: the picture, the name and how to do it, then the level it asks with what
+/// stands in the way under it (Do now, Locked, or where it starts).
+fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
+    let (to, from) = ask_text(m, i, target);
     html! {
         div.ia-task {
             @if let Some(p) = i.picture.as_deref().filter(|p| pictures::has(p)) {
@@ -735,49 +847,107 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
                 @if let Some(h) = &i.how { span { (h) } }
             }
             span.ia-fig {
-                // A one-time thing has no level to show; the chip or the line says the rest.
-                // Something not had at all (a stamp not found) is "Unlock": its level 0 says nothing.
-                @if m.crowd.is_some() && !(once && i.raw.is_none()) {
-                    @if i.raw.is_some_and(|r| r <= 0.0) && target <= 1.0 { "Unlock" }
-                    @else if i.raw.is_some_and(|r| r <= 0.0) { "Unlock → Lv " (num(target)) }
-                    @else { "Lv " (num(m.tier_level(i))) " → Lv " (num(target)) }
+                b { (to) }
+                @match i.state {
+                    Step::Ready => span.ok { "Do now" },
+                    Step::Locked => span.lock { "Locked" },
+                    Step::Unknown => @if let Some(f) = from { span { (f) } },
                 }
-                @else if once && i.raw.is_some() { "Unlock" }
-                @else if once { (i.level_name.as_deref().unwrap_or("")) }
-                @else { (level_text(m, i.level)) " → " (level_text(m, target)) }
-            }
-            @match i.state {
-                Step::Ready => span.ia-chip.ok { "Do now" },
-                Step::Locked => span.ia-chip.lock { "Locked" },
-                Step::Unknown => span {},
             }
         }
     }
 }
 
-/// One tier's tasks, shown when its rung is picked: the tier you're on as "To reach Tier 3",
-/// any other by its name, a done one as done.
-fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>) -> Markup {
+/// One tier's page, shown when it's picked: its name with steps to the tiers either side, a
+/// line on where you stand, then everything it asks, what's left first.
+/// Tiers after yours drawn in full (see `ladder`), and the asks a tier further off names.
+const NEAR: usize = 2;
+const FAR_NAMES: usize = 12;
+
+/// Names in a line: "A, B and C".
+fn names<'a>(items: impl Iterator<Item = &'a Item>) -> String {
+    let v: Vec<&str> = items.map(|i| i.name.as_str()).collect();
+    match v.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        Some((last, _)) => last.to_string(),
+        None => String::new(),
+    }
+}
+
+fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached: u8, id: &dyn Fn(usize) -> String, full: bool) -> Markup {
     let t = &tiers[k];
-    let tasks = if t.complete() { Vec::new() } else { m.tier_tasks(tiers, k) };
-    let ready = tasks.iter().filter(|(i, _)| i.state == Step::Ready).count();
+    // A done count tier has nothing to list: which items counted isn't kept.
+    let asks = if t.complete() && t.targets.is_none() { Vec::new() } else { m.tier_asks(tiers, k) };
+    let left = asks.iter().filter(|a| !a.2).count();
+    let ready = asks.iter().filter(|a| !a.2 && a.0.state == Step::Ready).count();
+    let expected = m.pace.as_ref().and_then(|p| p.worlds.get(k).copied().flatten());
     html! {
-        @if current == Some(k) { h3 { "To reach Tier " (k + 1) } } @else { h3 { "Tier " (k + 1) " · " (t.label) } }
-        @if t.complete() {
-            p.ia-note { "Done: all " (t.need) "." @if current.is_none() { " Every tier is done." } }
-        } @else if tasks.is_empty() {
-            p.ia-note { "Everything this tier adds is done; a tier before it isn't yet." }
-        } @else {
-            p.ia-note {
-                @if t.targets.is_none() { (t.need - t.met) " more, any of these. " }
-                (tasks.len()) " left."
-                @if ready == tasks.len() && ready > 0 { " You can do all of them now." }
-                @else if ready > 0 { " " (ready) " you can do right now." }
+        div.ia-peek-head {
+            h3 { "Tier " (k + 1) " · " (t.label) }
+            span.ia-steps {
+                // Chevrons drawn by the CSS: an inline icon on each of some 1,600 tiers was 0.8 MB.
+                @if k > 0 { label.ia-step.back for=(id(k - 1)) title="Tier before" {} } @else { span.ia-step.back.off {} }
+                @if k + 1 < tiers.len() { label.ia-step.next for=(id(k + 1)) title="Next tier" {} } @else { span.ia-step.next.off {} }
             }
+        }
+        p.ia-note {
+            @if current == Some(k) { "You're here. " }
+            @if t.complete() {
+                "Done." @if current.is_none() && k + 1 == tiers.len() { " Every tier is done." } " "
+            } @else if t.targets.is_none() {
+                (t.need - t.met) " more"
+                @if let Some(l) = t.at.filter(|l| *l > 1.0) { " at Lv " (num(l)) }
+                ", any of these. "
+            } @else if left == 0 {
+                "Everything this tier adds is done; a tier before it isn't yet. "
+            } @else {
+                (left) " of " (asks.len()) " left"
+                @if ready == left { ", all of them you can do now" } @else if ready > 0 { ", " (ready) " you can do now" }
+                ". "
+            }
+            // The tier you're on has this in the line above the ladder already.
+            @if let Some(w) = expected.filter(|_| current != Some(k)) { "Expected by World " (w) ", and you're in World " (reached) ". " }
+            @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty() && m.crowd.is_none()) { (n) }
+        }
+        @if left > 0 && !full {
+            // A tier further off: what it asks, by name.
+            p.ia-asks {
+                @for (n, (i, target, _)) in asks.iter().take(left.min(FAR_NAMES)).enumerate() {
+                    @if n > 0 { ", " }
+                    (i.name) " " span { (ask_text(m, i, *target).0) }
+                }
+                @if left > FAR_NAMES { " and " (left - FAR_NAMES) " more" }
+            }
+        }
+        @if left > 0 && full {
             div.ia-task-list {
-                @for (i, target) in tasks.iter().take(TASKS) { (task(m, i, *target)) }
+                @for (i, target, _) in asks.iter().take(left.min(TASKS)) { (task(m, i, *target)) }
             }
-            @if tasks.len() > TASKS { p.ia-note { "And " (tasks.len() - TASKS) " more, in the full list below." } }
+            @if left > TASKS && current != Some(k) {
+                p.ia-asks { "And " (left - TASKS) " more: " (names(asks[TASKS..left].iter().map(|a| a.0))) "." }
+            }
+            @if left > TASKS && current == Some(k) {
+                details.ia-rest {
+                    summary { "Show the other " (left - TASKS) }
+                    div.ia-task-list { @for (i, target, _) in asks.iter().take(left).skip(TASKS) { (task(m, i, *target)) } }
+                }
+            }
+        }
+        // What's done in it: one quiet line of names, not a row each.
+        @if left < asks.len() && !full {
+            p.ia-done-line { span.ia-tick {} span { "Done: " (asks.len() - left) " of " (asks.len()) "." } }
+        }
+        @if left < asks.len() && full {
+            p.ia-done-line {
+                span.ia-tick {}
+                span {
+                    "Done: "
+                    @for (n, (i, _, _)) in asks[left..].iter().enumerate() {
+                        @if n > 0 { ", " }
+                        (i.name)
+                    }
+                }
+            }
         }
     }
 }
@@ -1048,11 +1218,26 @@ document.addEventListener("click",function(e){
   var w=document.getElementById("w-"+a.dataset.w),m=document.getElementById(a.dataset.go);
   if(!m)return;
   e.preventDefault();
+  var t=m.closest(".ia-world");if(t)w=document.getElementById("w-"+t.dataset.w);
   if(w){w.checked=true;showTab(false)}
   if(a.dataset.side){var v=m.querySelector('.ia-switch input[value="'+a.dataset.side+'"]');if(v)v.checked=true}
   flip(m,true);
   m.scrollIntoView({behavior:still.matches?"auto":"smooth",block:"start"});
 });
+// Tier layout B: picking a tier moves the highlight in the stage list (the page itself is CSS).
+document.addEventListener("change",function(e){
+  var p=e.target;if(!p.classList||!p.classList.contains("ia-pick"))return;
+  var b=p.closest(".ia-b");if(!b)return;
+  b.querySelectorAll(".ia-dash.picked,.ia-st.picked").forEach(function(x){x.classList.remove("picked")});
+  var d=b.querySelector('.ia-dash[data-k="'+p.dataset.k+'"]');if(!d)return;
+  var s=d.closest(".ia-st");d.classList.add("picked");s.classList.add("picked");s.classList.remove("far");
+  stageRow(b.querySelector(".ia-stages"));
+});
+// On a phone the stage list is one row that scrolls sideways: keep the picked stage in view
+// when a card opens or switches side.
+function stageRow(r){var s=r&&r.querySelector(".ia-st.picked");if(s&&r.scrollWidth>r.clientWidth)r.scrollLeft+=s.getBoundingClientRect().left-r.getBoundingClientRect().left-14}
+document.addEventListener("toggle",function(e){if(e.target.open&&e.target.classList.contains("ia-card"))e.target.querySelectorAll(".ia-stages").forEach(stageRow)},true);
+document.addEventListener("change",function(e){var v=e.target.closest&&e.target.closest(".ia-split");if(v&&e.target.closest(".ia-switch"))v.querySelectorAll(".ia-stages").forEach(stageRow)});
 showTab(false);
 })()"##;
 
@@ -1139,8 +1324,12 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-switch label:has(input:checked) b { font-weight: 600; }
 .ia-switch label:has(input:checked) .ia-fig { color: var(--ink); }
 .ia-view { display: flex; flex-direction: column; gap: 18px; }
-.ia-view.tiers, .ia-split:has(input[value="tiers"]:checked) .ia-view.levels { display: none; }
-.ia-split:has(input[value="tiers"]:checked) .ia-view.tiers { display: flex; animation: ia-in 0.18s var(--ease); }
+.ia-split > .ia-view:not([data-v="0"]), .ia-split:has(> .ia-switch input:not([value="0"]):checked) > .ia-view[data-v="0"] { display: none; }
+.ia-split:has(> .ia-switch input[value="1"]:checked) > .ia-view[data-v="1"],
+.ia-split:has(> .ia-switch input[value="2"]:checked) > .ia-view[data-v="2"],
+.ia-split:has(> .ia-switch input[value="3"]:checked) > .ia-view[data-v="3"],
+.ia-split:has(> .ia-switch input[value="4"]:checked) > .ia-view[data-v="4"],
+.ia-split:has(> .ia-switch input[value="5"]:checked) > .ia-view[data-v="5"] { display: flex; animation: ia-in 0.18s var(--ease); }
 .ia-world { display: none; }
 .ia-worlds:has(#w-0:checked) .ia-world[data-w="0"], .ia-worlds:has(#w-1:checked) .ia-world[data-w="1"],
 .ia-worlds:has(#w-2:checked) .ia-world[data-w="2"], .ia-worlds:has(#w-3:checked) .ia-world[data-w="3"],
@@ -1155,7 +1344,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-card > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .ia-card > summary .ia-mark { grid-area: m; }
 .ia-card-name { grid-area: n; display: flex; flex-direction: column; min-width: 0; }
-.ia-card-name b, .ia-card-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-card-name b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ia-card-name b { font-size: 14px; font-weight: 500; }
 .ia-card-name span { font: 12.5px var(--mono); color: var(--ink-3); }
 .ia-pct { grid-area: p; font: 600 15px var(--mono); }
@@ -1169,32 +1358,61 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-meter.wide { grid-area: b; }
 .ia-body { padding: 4px 16px 18px; display: flex; flex-direction: column; gap: 18px; }
 .ia-body .ia-note { padding: 0; }
-.ia-ladder-note { font-size: 12px; color: var(--ink-3); margin-bottom: 6px; }
-.ia-ladder { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 8px; }
-.ia-rung { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 11px 13px; border-radius: 10px; background: var(--well); }
-.ia-rung b { font-size: 13.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ia-rung .ia-fig { text-align: left; }
-.ia-rung .ia-meter { height: 4px; margin-top: 2px; }
-.ia-rung-k { font-size: 12px; color: var(--ink-2); }
-.ia-rung-w { float: right; font: 600 11px var(--mono); color: var(--w); }
+.ia-b { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 28px; align-items: start; }
+.ia-stages { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ia-st { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 30px; padding: 0 10px; border-radius: 8px; }
+.ia-st.far { display: none; }
+.ia-stages:has(.ia-allst:checked) .ia-st.far { display: grid; }
+.ia-st.picked { background: color-mix(in oklab, var(--ink) 7%, transparent); }
+.ia-st-name { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.ia-st-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-st.picked .ia-st-name { color: var(--ink); }
+.ia-st-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--w); }
+.ia-dashes { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 3px; max-width: 104px; }
+.ia-dash { position: relative; width: 10px; height: 4px; border-radius: 2px; background: color-mix(in oklab, var(--ink) 16%, transparent); cursor: pointer; }
+.ia-dash::before { content: ""; position: absolute; inset: -7px -1.5px; }
+.ia-dash.done { background: var(--live); }
+.ia-dash.here { background: var(--ink); }
+.ia-dash.picked:not(.here) { box-shadow: 0 0 0 1.5px var(--ink-2); }
+.ia-st-more { padding: 8px 10px 0; font-size: 12px; color: var(--ink-3); cursor: pointer; }
+.ia-st-more .less, .ia-stages:has(.ia-allst:checked) .ia-st-more .more { display: none; }
+.ia-stages:has(.ia-allst:checked) .ia-st-more .less { display: inline; }
+.ia-peeks { min-width: 0; }
+.ia-pick { position: absolute; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.ia-peek { display: none; }
+.ia-pick:checked + .ia-peek { display: block; animation: ia-in 0.18s var(--ease); }
+.ia-peek-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ia-peek-head h3 { font-size: 15px; font-weight: 600; }
+.ia-pick:focus-visible + .ia-peek .ia-peek-head h3 { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+.ia-peek > .ia-note { margin-top: 4px; }
+.ia-steps { display: flex; gap: 6px; }
+.ia-step { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--well); color: var(--ink-2); cursor: pointer; }
+.ia-step::before { content: ""; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; }
+.ia-step.back::before { transform: translateX(1px) rotate(135deg); }
+.ia-step.next::before { transform: translateX(-1px) rotate(-45deg); }
+.ia-step.off { opacity: 0.35; cursor: default; }
+.ia-task > .ia-fig { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; min-width: 80px; }
+.ia-task > .ia-fig b { font: 500 13px var(--mono); color: var(--ink); white-space: nowrap; }
+.ia-task > .ia-fig span { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.ia-task > .ia-fig span.ok { color: var(--live); }
+.ia-task > .ia-fig span.lock { color: var(--waiting); }
+.ia-asks { margin-top: 8px; font-size: 13px; line-height: 1.6; color: var(--ink-2); }
+.ia-asks span { font: 12px var(--mono); color: var(--ink-3); }
+.ia-done-line { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; font-size: 13px; line-height: 20px; color: var(--ink-3); }
+.ia-tick { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: var(--live); background: color-mix(in oklab, var(--live) 14%, transparent); }
+.ia-tick::before { content: ""; width: 7px; height: 4px; margin-top: -2px; border: solid currentColor; border-width: 0 0 1.5px 1.5px; transform: rotate(-45deg); }
+.ia-rest > summary { margin-top: 8px; font-size: 13px; color: var(--ink-3); cursor: pointer; }
 .ia-pace { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); }
-.ia-rung.here { background: color-mix(in oklab, var(--w) 12%, var(--raised)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--w) 60%, transparent); }
-.ia-rung.here .ia-rung-k { color: var(--w); }
-.ia-rung.done .ia-rung-k { color: var(--live); }
-.ia-work { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
-@container col (min-width: 1000px) { .ia-work.with-side { grid-template-columns: minmax(0, 1fr) 400px; } }
 .ia-tasks { min-width: 0; }
 .ia-tasks h3 { font-size: 15px; font-weight: 600; }
 .ia-task-list { margin-top: 8px; }
-.ia-task { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; min-height: 50px; padding: 6px 0; border-bottom: 1px solid var(--edge-1); }
+.ia-task { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 50px; padding: 6px 0; border-bottom: 1px solid var(--edge-1); }
 .ia-task:last-child { border-bottom: 0; }
 .ia-task img { width: 28px; height: 28px; object-fit: contain; image-rendering: pixelated; }
 .ia-task-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .ia-task-text b { font-size: 14px; font-weight: 500; }
 .ia-task-text span { font-size: 13px; color: var(--ink-3); }
 .ia-chip { font: 600 12px var(--sans); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
-.ia-chip.ok { color: var(--live); background: color-mix(in oklab, var(--live) 14%, transparent); }
-.ia-chip.lock { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
 .ia-chip.miss { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
 .ia-chip.next { color: var(--w); background: color-mix(in oklab, var(--w) 14%, transparent); }
 .ia-chip.goal { color: var(--ink-2); background: color-mix(in oklab, var(--ink-2) 12%, transparent); }
@@ -1221,25 +1439,13 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-owe-line:hover b, .ia-owe-line:focus-visible b { text-decoration: underline; text-underline-offset: 3px; }
 .ia-owe-t { font: 500 12.5px var(--mono); color: var(--ink-2); white-space: nowrap; }
 .ia-owe-need { grid-column: 2 / -1; font-size: 12px; line-height: 1.35; color: var(--waiting); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.ia-rung-note { font-size: 12px; color: var(--ink-3); line-height: 1.35; }
-.ia-rung { position: relative; cursor: pointer; }
-.ia-rung input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
-.ia-rung:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
-.ia-rung:has(input:checked):not(.here) { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 32%, transparent); }
-.ia-peek { display: none; }
-.ia-view:has(.ia-ladder > li:nth-child(1) > input:checked) .ia-peeks > .ia-peek:nth-child(1),
-.ia-view:has(.ia-ladder > li:nth-child(2) > input:checked) .ia-peeks > .ia-peek:nth-child(2),
-.ia-view:has(.ia-ladder > li:nth-child(3) > input:checked) .ia-peeks > .ia-peek:nth-child(3),
-.ia-view:has(.ia-ladder > li:nth-child(4) > input:checked) .ia-peeks > .ia-peek:nth-child(4),
-.ia-view:has(.ia-ladder > li:nth-child(5) > input:checked) .ia-peeks > .ia-peek:nth-child(5),
-.ia-view:has(.ia-ladder > li:nth-child(6) > input:checked) .ia-peeks > .ia-peek:nth-child(6) { display: block; animation: ia-in 0.18s var(--ease); }
 .ia-hold { padding: 10px 14px; border-radius: 10px; background: color-mix(in oklab, var(--waiting) 10%, transparent); color: var(--ink-2); font-size: 13px; line-height: 1.45; }
 .ia-hold b { color: var(--waiting); font-weight: 600; }
 .ia-spread { display: flex; flex-wrap: wrap; gap: 8px 32px; }
 .ia-spread div { display: flex; flex-direction: column; gap: 1px; }
 .ia-spread b { font: 600 18px var(--mono); }
 .ia-spread span { font-size: 12px; color: var(--ink-3); }
-.ia-side { display: flex; flex-direction: column; gap: 12px; }
+.ia-side { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; align-items: start; }
 .ia-side-box { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border-radius: 12px; background: var(--solid); }
 .ia-side-k { font-size: 12px; color: var(--ink-2); }
 .ia-side-big { font: 500 18px/1.3 var(--mono); overflow-wrap: anywhere; }
@@ -1325,8 +1531,8 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 @media (max-width: 720px) {
   /* Two halves that share the width, each its name over where it stands: long figures
      ("Pay2Win Tier 26 / 59") ran past the card. */
-  .ia-switch { display: flex; }
-  .ia-switch label { flex: 1 1 0; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .ia-switch { display: flex; flex-wrap: wrap; }
+  .ia-switch label { flex: 1 1 30%; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; white-space: nowrap; }
   .ia-switch label .ia-fig { font-size: 12px; }
   .ia-hero { min-height: 180px; }
   .ia-hero .ov-hello h1 { font-size: 26px; }
@@ -1343,30 +1549,27 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-card > summary { padding: 12px 14px; }
   .ia-card-name span { white-space: normal; }
   .ia-body { padding: 4px 14px 16px; gap: 16px; }
-  /* The ladder as a short list: a row per tier, the bar under it. */
-  .ia-ladder { grid-template-columns: minmax(0, 1fr); gap: 4px; }
-  .ia-rung { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "k f" "l l" "m m" "n n"; gap: 2px 10px; padding: 9px 12px; }
-  .ia-rung-k { grid-area: k; } .ia-rung > b { grid-area: l; white-space: normal; } .ia-rung > .ia-fig { grid-area: f; text-align: right; }
-  .ia-rung > .ia-meter { grid-area: m; margin-top: 4px; } .ia-rung-note { grid-area: n; margin-top: 2px; }
-  .ia-rung.done { padding: 7px 12px; } .ia-rung.done > .ia-meter, .ia-rung.done > b { display: none; }
-  /* A task: the step it takes goes under its line rather than off the edge. */
-  .ia-task { grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "i t c" "i f c"; row-gap: 3px; }
-  .ia-task > :first-child { grid-area: i; } .ia-task > .ia-task-text { grid-area: t; } .ia-task > .ia-fig { grid-area: f; text-align: left; font-size: 12px; color: var(--ink-3); }
-  .ia-task > :last-child { grid-area: c; }
+  /* Tier layout B: the stages one row that scrolls sideways, the picked tier under it. */
+  .ia-b { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .ia-stages { flex-direction: row; overflow-x: auto; gap: 4px; margin: 0 -14px; padding: 0 14px 2px; scrollbar-width: none; }
+  .ia-st, .ia-st.far { display: flex; flex: none; flex-direction: column; align-items: flex-start; gap: 5px; padding: 7px 10px; }
+  .ia-st-more { display: none; }
+  .ia-dashes { flex-wrap: nowrap; justify-content: flex-start; max-width: none; }
+  .ia-task > .ia-fig { min-width: 0; }
   .ia-item { grid-template-columns: 24px minmax(0, 1fr) minmax(44px, 22%) minmax(9ch, auto); gap: 8px; }
 }
 "#;
 
 #[cfg(test)]
 mod tests {
-    use super::window;
+    use super::{stage_window, stage_world};
 
     #[test]
-    fn a_ladder_shows_six_tiers_around_where_you_are() {
-        assert_eq!(window(4, Some(2)), (0, 4));
-        assert_eq!(window(20, Some(0)), (0, 6));
-        assert_eq!(window(20, Some(9)), (8, 14));
-        assert_eq!(window(20, Some(19)), (14, 20));
-        assert_eq!(window(20, None), (14, 20));
+    fn a_ladder_shows_twelve_stages_from_a_few_before_yours() {
+        assert_eq!(stage_window(8, 5), (0, 8));
+        assert_eq!(stage_window(24, 0), (0, 12));
+        assert_eq!(stage_window(24, 8), (5, 17));
+        assert_eq!(stage_window(24, 23), (12, 24));
+        assert_eq!((stage_world("Late World 4", 2), stage_world("Endgame 1", 2), stage_world("Any 5 of 24", 2)), (4, 7, 2));
     }
 }

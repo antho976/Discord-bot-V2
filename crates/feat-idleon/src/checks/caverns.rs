@@ -182,7 +182,7 @@ fn villagers(save: &Save, h: &Holes) -> Mechanic {
         it.state = if req.is_finite() && have >= req { State::Ready } else { State::Unknown };
     }
     let mut m = mech("cavern-villagers", 5, "Villagers", pic("HoleUIvillager0".into()), Count::Levels, "unlocked", items);
-    m.note = Some(format!("Villager levels have no cap, so this is what they unlock: Kaipu has every schematic at level {}, Minau every measurement at 17, Polonai every cavern at 18. Cosmo's majik points are his level plus the Conjuror Pts bought in the gem shop, against the {total} levels all majiks add up to.", kaipu_level_for(SCHEMATICS - 1)));
+    m.note = Some(format!("Levels have no cap, so each row counts what they unlock: Kaipu has every schematic at level {}, Polonai every cavern at 18.", kaipu_level_for(SCHEMATICS - 1)));
     m
 }
 
@@ -245,7 +245,7 @@ fn schematics(h: &Holes) -> Mechanic {
         })
         .collect();
     let mut m = mech("cavern-schematics", 5, "Schematics", pic("HoleUIbuildUpg0".into()), Count::Done, "built", items);
-    m.note = Some("Costs include the 15% off per level of the Lamp's A Moderate Discount wish. Resources are numbered in the order their cavern lists them: Well sediment 1 is the first sediment at The Well.".into());
+    m.note = Some("Costs include the Lamp's discount wish. Well sediment 1 is the first one The Well lists.".into());
     m
 }
 
@@ -305,7 +305,7 @@ fn majiks(save: &Save, h: &Holes) -> Mechanic {
     let have = Have {
         figure: format!("{left} majik point{}", if left == 1.0 { "" } else { "s" }),
         text: if left < 1.0 {
-            "None unspent. Each Cosmo level gives one more.".into()
+            "All spent. Each Cosmo level gives one more.".into()
         } else if buy >= 1.0 {
             format!("Enough for {buy} more majik level{}.", if buy == 1.0 { "" } else { "s" })
         } else if items.iter().all(Item::done) {

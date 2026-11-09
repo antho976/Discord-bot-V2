@@ -9,6 +9,11 @@
 
 mod caverns;
 mod general;
+mod tome;
+mod companions;
+mod guild;
+mod obols;
+mod star_talents;
 mod w1;
 mod w2;
 mod w3;
@@ -56,6 +61,11 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
     v.extend(w6::all(save));
     v.extend(w7::all(save));
     v.extend(general::all(save));
+    v.extend(tome::all(save));
+    v.extend(companions::all(save));
+    v.extend(guild::all(save));
+    v.extend(obols::all(save));
+    v.extend(star_talents::all(save));
     v
 }
 

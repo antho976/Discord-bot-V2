@@ -20,3 +20,13 @@ picture TaskAch[A-F]\d+
 cell PlayerCapacities 2 1
 # Greenstacks: every stackable item's own picture (the item ID).
 listed general stackable
+# The Tome: each line its target, its curve and its points.
+table Tome
+# Companions: each one's monster ID, bonus text and value.
+table CompanionDB
+# Guild bonuses: name, bonus text, max level (col 7).
+table GuildBonuses
+# Obols: each page's slots, col 2 shape, col 3 what opens it.
+table ObolXYcoords
+# Star talents: a talent's game name by its id.
+table TalentIconNames
