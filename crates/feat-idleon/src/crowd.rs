@@ -283,9 +283,14 @@ pub fn any_level(name: &str) -> Option<f64> {
     (l.is_finite() && l > 0.0).then_some(l)
 }
 
-/// A count rung's name after its stage: "52 unlocked", "38 at Lv 7".
-pub fn count_text(n: usize, level: f64) -> String {
-    if level <= 1.0 { format!("{} unlocked", cell_text(Some(n as f64))) } else { format!("{} at Lv {}", cell_text(Some(n as f64)), cell_text(Some(level))) }
+/// A count rung's name after its stage: "52 unlocked", "38 at Lv 7". With the mechanic's names
+/// for its levels (artifact forms), the level's name: "38 Eldritch".
+pub fn count_text(n: usize, level: f64, names: Option<&[String]>) -> String {
+    let n_text = cell_text(Some(n as f64));
+    if let Some(name) = names.and_then(|ns| ns.get((level as usize).checked_sub(1)?)).filter(|_| level.fract() == 0.0 && level >= 2.0) {
+        return format!("{n_text} {name}");
+    }
+    if level <= 1.0 { format!("{n_text} unlocked") } else { format!("{n_text} at Lv {}", cell_text(Some(level))) }
 }
 
 /// A mechanic's ladder from its table: a tier per stage, a stage that asks for many new things
@@ -326,6 +331,19 @@ pub fn split(prev: &[f64], next: &[f64], order: &[usize], part: usize, max_parts
 }
 
 impl Ladder {
+    /// Count rungs named with the mechanic's names for its levels (`Mechanic::tier_names`), when
+    /// it has them: "20 Ancient" rather than "20 at Lv 2".
+    pub fn named(mut self, names: Option<&[String]>) -> Ladder {
+        if names.is_some() {
+            for r in &mut self.rungs {
+                if let Some((n, level)) = r.count {
+                    r.label = format!("{} · {}", stage_label(r.stage), count_text(n, level, names));
+                }
+            }
+        }
+        self
+    }
+
     /// `None` when the table is off or asks nothing of these items. Items are matched by name;
     /// an item the table doesn't name isn't asked for. A target above an item's own max (a cap
     /// this account hasn't raised yet) asks for the max; items with a `raw` level have no max
@@ -373,7 +391,7 @@ impl Ladder {
                 let n = (cells.get(col).copied().flatten().unwrap_or(0.0).max(0.0) as usize).min(*most);
                 if n > *last {
                     *last = n;
-                    rungs.push(Rung { label: format!("{} · {}", stage_label(stage), count_text(n, *level)), world: stage_world(stage), stage, targets: vec![0.0; items.len()], count: Some((n, *level)) });
+                    rungs.push(Rung { label: format!("{} · {}", stage_label(stage), count_text(n, *level, None)), world: stage_world(stage), stage, targets: vec![0.0; items.len()], count: Some((n, *level)) });
                 }
             }
         }
@@ -480,6 +498,15 @@ bad
         let l = Ladder::new(&b, &items).unwrap();
         assert_eq!(l.rungs[0].label, "Early World 2 · 1 of 2");
         assert!(l.rungs.last().unwrap().targets.iter().all(|&t| t == 170.0));
+    }
+
+    #[test]
+    fn count_rungs_use_level_names() {
+        let names: Vec<String> = ["Found", "Ancient", "Eldritch"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(count_text(20, 2.0, Some(&names)), "20 Ancient");
+        assert_eq!(count_text(20, 1.0, Some(&names)), "20 unlocked");
+        assert_eq!(count_text(20, 7.0, Some(&names)), "20 at Lv 7");
+        assert_eq!(count_text(20, 2.0, None), "20 at Lv 2");
     }
 
     #[test]

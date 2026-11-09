@@ -533,7 +533,7 @@ impl Review {
                 // Only when the table has a tier for your world or an earlier one: until there are
                 // saves from earlier worlds, an account short of World 7 keeps the game-max ladder.
                 let made = crate::crowd::BY_MAX.contains(&m.key).then(|| crate::crowd::by_max(m.key, &m.items, m.world));
-                m.crowd = table.get(m.key).or(made.as_ref()).and_then(|b| Ladder::new(b, &m.items)).filter(|l| l.rungs.iter().any(|r| r.world <= world));
+                m.crowd = table.get(m.key).or(made.as_ref()).and_then(|b| Ladder::new(b, &m.items)).map(|l| l.named(m.tier_names.as_deref())).filter(|l| l.rungs.iter().any(|r| r.world <= world));
             }
         });
         if packs == Packs::Free {
