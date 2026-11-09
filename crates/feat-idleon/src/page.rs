@@ -825,6 +825,8 @@ fn ask_text(m: &Mechanic, i: &Item, target: f64) -> (String, Option<String>) {
             _ if m.tier_names.is_some() && target >= 1.0 => (level_text(m, target), (level > 0.0).then(|| format!("from {}", level_text(m, level)))),
             _ if level <= 0.0 && target <= 1.0 => ("Unlock".into(), None),
             _ if i.raw.is_some_and(|r| r <= 0.0) => (level_text(m, target), Some("Unlock first".into())),
+            // Points (the Tome's lines) aren't levels.
+            _ if m.unit == "points" => (format!("{} pts", num(target)), (level > 0.0).then(|| format!("from {}", num(level)))),
             _ => (format!("Lv {}", num(target)), (level > 0.0).then(|| format!("from {}", num(level)))),
         };
     }
