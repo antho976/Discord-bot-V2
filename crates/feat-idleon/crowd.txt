@@ -1387,335 +1387,308 @@ cape-vine                               # Cape Vine
   Molten Cloak                        -   -   -   -   1   1
   Giant Starflower                    -   -   -   -   -   1
 
-artifacts                               # Artifacts
-  stages              7e  7m  7l  end1  end2  max
-  Ruble Cuble          5   6   7   7   7   7
-  Fauxory Tusk         5   6   7   7   7   7
-  Moai Head            5   6   7   7   7   7
-  Maneki Kat           5   6   7   7   7   7
-  Gold Relic           5   6   7   7   7   7
-  Genie Lamp           5   6   7   7   7   7
-  Triagulon            5   6   7   7   7   7
-  Silver Ankh          5   6   7   7   7   7
-  Fun Hippoete         5   6   7   7   7   7
-  Billcye Tri          5   6   7   7   7   7
-  Emerald Relic        5   6   7   7   7   7
-  Arrowhead            5   6   7   7   7   7
-  10 AD Tablet         5   6   7   7   7   7
-  Ashen Urn            5   6   7   7   7   7
-  Amberite             5   6   7   7   7   7
-  Fury Relic           4   6   6   6   7   7
-  Chilled Yarn         5   6   7   7   7   7
-  Jade Rock            4   6   6   6   7   7
-  Dreamcatcher         4   6   6   6   7   7
-  Gummy Orb            4   6   6   6   6   7
-  Weatherbook          4   6   6   6   6   6
-  Frost Relic          5   6   7   7   7   7
-  Cloud Urn            4   6   6   6   6   7
-  The True Lantern     4   5   6   6   6   7
-  The Shim Lantern     4   5   6   6   6   7
-  Crystal Steak        4   5   6   6   6   7
-  Opera Mask           4   5   6   6   6   6
-  Socrates             4   5   6   6   6   6
-  The Onyx Lantern     4   5   6   6   6   6
-  The Winz Lantern     4   5   6   6   6   6
-  Deathskull           4   5   6   6   6   6
-  Trilobite Rock       4   5   6   6   6   6
-  Pointagon            4   5   6   6   6   6
-  Obsidian             4   5   6   6   6   6
-  Causticolumn         5   6   6   6   7   7
-  Giants Eye           4   5   6   6   6   6
-  Nomenclature         -   5   6   6   6   6
-  Me First Dollar      -   5   6   6   6   6
-  Ender Pearl          -   5   6   6   6   6
-  Fang of the Gods     -   5   6   6   6   6
-  Bloodclot            -   5   6   6   6   6
+artifacts                               # Artifacts, counts; World 1 to 5 columns from crowd-research.txt
+  stages          5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Fauxory Tusk     1   1   2   3   3   4   6   6   7   7   7   7
+  Genie Lamp       1   1   2   2   2   3   6   6   7   7   7   7
+  @any 1           3   8  16  20  20  25  35  40  40  40  40  40
+  @any 2           -   2   8  16  18  20  35  40  40  40  40  40
+  @any 3           -   1   3   8  11  17  35  40  40  40  40  40
+  @any 4           -   -   -   -   -   8  35  40  40  40  40  40
+  @any 5           -   -   -   -   -   -  20  40  40  40  40  40
+  @any 6           -   -   -   -   -   -  15  25  40  40  40  40
+  @any 7           -   -   -   -   -   -   -   -  17  18  20  20
 
-gods                                    # Divinity Gods, World 1 to 5 columns from AutoReview's tiers, changed
-  stages        5e  5m  5l  7e  7m  7l  end1  end2  max
-  Snehebatu      1   1   1   1   1   1   1   1   1
-  Arctis         1   1   1   1   1   1   1   1   1
-  Nobisect       1   1   1   1   1   1   1   1   1
-  Harriep        -   1   1   1   1   1   1   1   1
-  Goharut        -   1   1   1   1   1   1   1   1
-  Omniphau       -   -   1   1   1   1   1   1   1
-  Purrmep        -   -   1   1   1   1   1   1   1
-  Flutterbis     -   -   -   1   1   1   1   1   1
-  Kattlekruk     -   -   -   1   1   1   1   1   1
-  Bagur          -   -   -   1   1   1   1   1   1
+gods                                    # Divinity Gods, World 1 to 5 columns from crowd-research.txt
+  stages        5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Snehebatu      1   1   1   1   1   1   1   1   1   1   1   1
+  Arctis         1   1   1   1   1   1   1   1   1   1   1   1
+  Nobisect       1   1   1   1   1   1   1   1   1   1   1   1
+  Harriep        -   1   1   1   1   1   1   1   1   1   1   1
+  Goharut        -   1   1   1   1   1   1   1   1   1   1   1
+  Omniphau       -   -   1   1   1   1   1   1   1   1   1   1
+  Purrmep        -   -   1   1   1   1   1   1   1   1   1   1
+  Flutterbis     -   -   -   1   1   1   1   1   1   1   1   1
+  Kattlekruk     -   -   -   -   1   1   1   1   1   1   1   1
+  Bagur          -   -   -   -   -   1   1   1   1   1   1   1
 
-blessings                               # Divinity Blessings
-  stages                  7e   7m   7l  end1  end2  max
-  Goharut Blessing       100  170  210  240  250  260
-  Arctis Blessing        130  170  240  270  270  270
-  Harriep Blessing       160  240  270  270  270  270
-  Kattlekruk Blessing     85  140  180  210  210  220
-  Snehebatu Blessing     200  270  270  270  270  270
-  Nobisect Blessing      130  210  260  270  270  270
-  Omniphau Blessing       80  170  260  270  270  270
-  Purrmep Blessing       140  210  270  270  270  270
-  Flutterbis Blessing     65  120  190  230  250  270
-  Bagur Blessing          45  110  130  190  210  230
+blessings                               # Divinity Blessings, World 1 to 5 columns from crowd-research.txt
+  stages                 5e  5m  5l  6e  6m   6l   7e   7m   7l  end1  end2  max
+  Snehebatu Blessing      5  15  35  60  85  110  200  270  270  270  270  270
+  Arctis Blessing         5  15  30  55  70   80  130  170  240  270  270  270
+  Harriep Blessing        -   5  25  60  85  110  160  240  270  270  270  270
+  Nobisect Blessing       -   5  15  30  50   70  130  210  260  270  270  270
+  Goharut Blessing        -   5  15  30  40   55  100  170  210  240  250  260
+  Purrmep Blessing        -   -  20  50  65  100  140  210  270  270  270  270
+  Omniphau Blessing       -   -   5  10  15   25   80  170  260  270  270  270
+  Flutterbis Blessing     -   -   -   5   8   10   65  120  190  230  250  270
+  Kattlekruk Blessing     -   -   -   -  10   40   85  140  180  210  210  220
+  Bagur Blessing          -   -   -   -   -   10   45  110  130  190  210  230
 
-slab                                    # The Slab
-  stages             7e     7m     7l   end1   end2    max
-  Items looted    1,300  1,600  1,700  1,800  1,800  1,800
+slab                                    # The Slab, World 1 to 5 columns from crowd-research.txt
+  stages           5e   5m   5l   6e     6m     6l     7e     7m     7l   end1   end2    max
+  Items looted    650  720  800  900  1,050  1,200  1,300  1,600  1,700  1,800  1,800  1,800
 
-superbits                               # Gaming Superbits
-  stages                     7e  7m  7l  end1  end2  max
-  Bits Per Achievement        1   1   1   1   1   1
-  Plant evo                   1   1   1   1   1   1
-  obol stat booster           1   1   1   1   1   1
-  MSA Sailing                 1   1   1   1   1   1
-  Moar Bubbles                1   1   1   1   1   1
-  Worship Totem HP            1   1   1   1   1   1
-  MSA Totalizer               1   1   1   1   1   1
-  Shrine Speed                1   1   1   1   1   1
-  No more Praying             1   1   1   1   1   1
-  Double Exp                  1   1   1   1   1   1
-  Library Checkouts           1   1   1   1   1   1
-  MSA Mealing                 1   1   1   1   1   1
-  Spice Is Nice               1   1   1   1   1   1
-  Plant evo III               1   1   1   1   1   1
-  Noobie Gains                1   1   1   1   1   1
-  Worship Totem HPr           1   1   1   1   1   1
-  MSA Big Bits                1   1   1   1   1   1
-  Atom Redux                  1   1   1   1   1   1
-  MSA Class EXP               1   1   1   1   1   1
-  Plant evo II                1   1   1   1   1   1
-  MSA Skill EXP               1   1   1   1   1   1
-  Spice Is Nicer              1   1   1   1   1   1
-  Even Moar Bubbles           1   1   1   1   1   1
-  Isotope Discovery           1   1   1   1   1   1
-  Classy Discoveries          1   1   1   1   1   1
-  Snail Omega                 1   1   1   1   1   1
-  Slabby Spelunking           1   1   1   1   1   1
-  Monument Infimulti          1   1   1   1   1   1
-  Artifacto Discoveries       1   1   1   1   1   1
-  MSA Spelunking              1   1   1   1   1   1
-  Jar Jar Collectible         1   1   1   1   1   1
-  Any tool Any time           1   1   1   1   1   1
-  Jewel Cogs                  1   1   1   1   1   1
-  Squirrel Triad              1   1   1   1   1   1
-  Bigger Palette              1   1   1   1   1   1
-  Peripheral Vision           1   1   1   1   1   1
-  Lucky Snail                 1   1   1   1   1   1
-  Slabby Research             1   1   1   1   1   1
-  Colourful Luck              1   1   1   1   1   1
-  MSA Research                1   1   1   1   1   1
-  Snail Genesis               -   1   1   1   1   1
-  Equinox Unending            -   1   1   1   1   1
-  Prayers Begone              -   1   1   1   1   1
-  Snail Zenith                -   1   1   1   1   1
-  Gamer Luck                  -   1   1   1   1   1
-  Plant evo IV                -   1   1   1   1   1
-  Peachier Peach              -   1   1   1   1   1
-  Further Offcolour           -   1   1   1   1   1
-  Slabby Something            -   1   1   1   1   1
-  MSA Something               -   1   1   1   1   1
-  Timmy Talented              -   1   1   1   1   1
-  A Kings Ransom              -   1   1   1   1   1
-  Mo Stickers Mo Bonusers     -   1   1   1   1   1
-  Royal Flora                 -   1   1   1   1   1
-  Less Charge                 -   1   1   1   1   1
-  Bluer Ocean                 -   1   1   1   1   1
-  Redder Orange               -   1   1   1   1   1
-  Pro Log Flipper             -   1   1   1   1   1
-  Babbiest Blue               -   1   1   1   1   1
-  Plant evo V                 -   1   1   1   1   1
-  Prayers Aint Meta           -   1   1   1   1   1
-  Small Gratuity              -   1   1   1   1   1
-  Everybody Talks             -   1   1   1   1   1
-  Bettah Stickahs             -   1   1   1   1   1
-  Colourier Colours           -   -   1   1   1   1
-  Experienced Gamer           -   -   1   1   1   1
-  Destructive Gamer           -   -   1   1   1   1
-  Artistic Gamer              -   -   1   1   1   1
-  Cooking Master              -   -   1   1   1   1
-  Lumi Gainz                  -   -   -   1   1   1
+superbits                               # Gaming Superbits, World 1 to 5 columns from crowd-research.txt
+  stages                     5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Bits Per Achievement        1   1   1   1   1   1   1   1   1   1   1
+  Plant evo                   -   1   1   1   1   1   1   1   1   1   1
+  obol stat booster           -   1   1   1   1   1   1   1   1   1   1
+  MSA Sailing                 -   -   1   1   1   1   1   1   1   1   1
+  Moar Bubbles                -   -   1   1   1   1   1   1   1   1   1
+  Plant evo II                -   -   1   1   1   1   1   1   1   1   1
+  Worship Totem HP            -   -   1   1   1   1   1   1   1   1   1
+  MSA Totalizer               -   -   1   1   1   1   1   1   1   1   1
+  Shrine Speed                -   -   1   1   1   1   1   1   1   1   1
+  No more Praying             -   -   1   1   1   1   1   1   1   1   1
+  Double Exp                  -   -   -   1   1   1   1   1   1   1   1
+  MSA Class EXP               -   -   -   1   1   1   1   1   1   1   1
+  Library Checkouts           -   -   -   1   1   1   1   1   1   1   1
+  MSA Mealing                 -   -   -   -   1   1   1   1   1   1   1
+  Spice Is Nice               -   -   -   -   1   1   1   1   1   1   1
+  Worship Totem HPr           -   -   -   -   1   1   1   1   1   1   1
+  MSA Skill EXP               -   -   -   -   1   1   1   1   1   1   1
+  Plant evo III               -   -   -   -   -   1   1   1   1   1   1
+  Noobie Gains                -   -   -   -   -   1   1   1   1   1   1
+  MSA Big Bits                -   -   -   -   -   1   1   1   1   1   1
+  Atom Redux                  -   -   -   -   -   1   1   1   1   1   1
+  Spice Is Nicer              -   -   -   -   -   1   1   1   1   1   1
+  Even Moar Bubbles           -   -   -   -   -   1   1   1   1   1   1
+  Isotope Discovery           -   -   -   -   -   1   1   1   1   1   1
+  Classy Discoveries          -   -   -   -   -   1   1   1   1   1   1
+  Snail Omega                 -   -   -   -   -   1   1   1   1   1   1
+  Slabby Spelunking           -   -   -   -   -   1   1   1   1   1   1
+  Monument Infimulti          -   -   -   -   -   1   1   1   1   1   1
+  Artifacto Discoveries       -   -   -   -   -   1   1   1   1   1   1
+  MSA Spelunking              -   -   -   -   -   1   1   1   1   1   1
+  Jar Jar Collectible         -   -   -   -   -   1   1   1   1   1   1
+  Any tool Any time           -   -   -   -   -   1   1   1   1   1   1
+  Jewel Cogs                  -   -   -   -   -   1   1   1   1   1   1
+  Squirrel Triad              -   -   -   -   -   1   1   1   1   1   1
+  Bigger Palette              -   -   -   -   -   1   1   1   1   1   1
+  Peripheral Vision           -   -   -   -   -   1   1   1   1   1   1
+  Lucky Snail                 -   -   -   -   -   1   1   1   1   1   1
+  Slabby Research             -   -   -   -   -   1   1   1   1   1   1
+  Colourful Luck              -   -   -   -   -   1   1   1   1   1   1
+  MSA Research                -   -   -   -   -   1   1   1   1   1   1
+  Snail Genesis               -   -   -   -   -   -   1   1   1   1   1
+  Equinox Unending            -   -   -   -   -   -   1   1   1   1   1
+  Prayers Begone              -   -   -   -   -   -   1   1   1   1   1
+  Snail Zenith                -   -   -   -   -   -   1   1   1   1   1
+  Gamer Luck                  -   -   -   -   -   -   1   1   1   1   1
+  Plant evo IV                -   -   -   -   -   -   1   1   1   1   1
+  Peachier Peach              -   -   -   -   -   -   1   1   1   1   1
+  Further Offcolour           -   -   -   -   -   -   1   1   1   1   1
+  Slabby Something            -   -   -   -   -   -   1   1   1   1   1
+  MSA Something               -   -   -   -   -   -   1   1   1   1   1
+  Timmy Talented              -   -   -   -   -   -   1   1   1   1   1
+  A Kings Ransom              -   -   -   -   -   -   1   1   1   1   1
+  Mo Stickers Mo Bonusers     -   -   -   -   -   -   1   1   1   1   1
+  Royal Flora                 -   -   -   -   -   -   1   1   1   1   1
+  Less Charge                 -   -   -   -   -   -   1   1   1   1   1
+  Bluer Ocean                 -   -   -   -   -   -   1   1   1   1   1
+  Redder Orange               -   -   -   -   -   -   1   1   1   1   1
+  Pro Log Flipper             -   -   -   -   -   -   1   1   1   1   1
+  Babbiest Blue               -   -   -   -   -   -   1   1   1   1   1
+  Plant evo V                 -   -   -   -   -   -   1   1   1   1   1
+  Prayers Aint Meta           -   -   -   -   -   -   1   1   1   1   1
+  Small Gratuity              -   -   -   -   -   -   1   1   1   1   1
+  Everybody Talks             -   -   -   -   -   -   1   1   1   1   1
+  Bettah Stickahs             -   -   -   -   -   -   1   1   1   1   1
+  Colourier Colours           -   -   -   -   -   -   -   1   1   1   1
+  Experienced Gamer           -   -   -   -   -   -   -   1   1   1   1
+  Destructive Gamer           -   -   -   -   -   -   -   1   1   1   1
+  Artistic Gamer              -   -   -   -   -   -   -   1   1   1   1
+  Cooking Master              -   -   -   -   -   -   -   1   1   1   1
+  Lumi Gainz                  -   -   -   -   -   -   -   -   1   1   1
 
-snail                                   # Immortal Snail
-  stages            7e  7m  7l  end1  end2  max
-  Immortal Snail    25  45  45  45  45  45
+snail                                   # Immortal Snail, World 1 to 5 columns from crowd-research.txt
+  stages            6m  6l  7e  7m  7l  end1  end2  max
+  Immortal Snail     1   3  25  45  45  45  45  45
 
-sailing-islands                         # Sailing Islands
-  stages             7e  7m  7l  end1  end2  max
-  Beachy Coast        1   1   1   1   1   1
-  Isolated Woods      1   1   1   1   1   1
-  Rocky Peaks         1   1   1   1   1   1
-  Stormy North        1   1   1   1   1   1
-  Snowy South         1   1   1   1   1   1
-  Toxic Bay Inc       1   1   1   1   1   1
-  Candied Island      1   1   1   1   1   1
-  Fungi Meadows       1   1   1   1   1   1
-  Cloudy Quay         1   1   1   1   1   1
-  Dungeon Cove        1   1   1   1   1   1
-  Crystal Enclave     1   1   1   1   1   1
-  Petulent Garage     1   1   1   1   1   1
-  World's End         1   1   1   1   1   1
-  Isle of Note        1   1   1   1   1   1
-  The Edge            1   1   1   1   1   1
-  The Maw             1   1   1   1   1   1
+sailing-islands                         # Sailing Islands, World 1 to 5 columns from crowd-research.txt
+  stages             5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Beachy Coast        1   1   1   1   1   1   1   1   1   1   1   1
+  Isolated Woods      -   1   1   1   1   1   1   1   1   1   1   1
+  Rocky Peaks         -   1   1   1   1   1   1   1   1   1   1   1
+  Stormy North        -   -   1   1   1   1   1   1   1   1   1   1
+  Snowy South         -   -   1   1   1   1   1   1   1   1   1   1
+  Toxic Bay Inc       -   -   1   1   1   1   1   1   1   1   1   1
+  Candied Island      -   -   -   1   1   1   1   1   1   1   1   1
+  Fungi Meadows       -   -   -   1   1   1   1   1   1   1   1   1
+  Cloudy Quay         -   -   -   1   1   1   1   1   1   1   1   1
+  Dungeon Cove        -   -   -   -   1   1   1   1   1   1   1   1
+  Crystal Enclave     -   -   -   -   -   1   1   1   1   1   1   1
+  Petulent Garage     -   -   -   -   -   1   1   1   1   1   1   1
+  Isle of Note        -   -   -   -   -   1   1   1   1   1   1   1
+  World's End         -   -   -   -   -   -   1   1   1   1   1   1
+  The Edge            -   -   -   -   -   -   1   1   1   1   1   1
+  The Maw             -   -   -   -   -   -   1   1   1   1   1   1
 
-boats                                   # Sailing Boats
-  stages          7e  7m  7l  end1  end2  max
-  Boats bought    19  19  19  19  19  19
+boats                                   # Sailing Boats, World 1 to 5 columns from crowd-research.txt
+  stages          5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Boats bought     1   3   6  11  14  17  19  19  19  19  19  19
 
-cavern-villagers                        # Villagers
-  stages                           7e   7m   7l  end1  end2  max
-  Minau: measurements unlocked     17   17   17   17   17   17
-  Kaipu: schematics unlocked      100  100  100  100  100  100
-  Cosmo: majik points              40   70   70   70   70   70
-  Polonai: caverns found           18   18   18   18   18   18
-  Bolaia: caverns studied          17   18   18   18   18   18
+boat-upgrades                           # Boat Upgrades, no max; World 1 to 5 columns from crowd-research.txt
+  stages                     5e  5m   5l   6e   6m     6l     7e     7m     7l   end1   end2    max
+  Loot levels, all boats      6  40  200  680  860  1,100  2,800  3,800  6,900  8,400  8,700  9,800
+  Speed levels, all boats     4  30  180  640  780  1,000  2,700  3,500  7,000  8,200  9,100  9,700
 
-cavern-schematics                       # Schematics
-  stages                           7e  7m  7l  end1  end2  max
-  Opal Dividends                    1   1   1   1   1   1
-  Better Buckets                    1   1   1   1   1   1
-  Loadin' some 'Lode                1   1   1   1   1   1
-  Hiring the Hounds from Beyond     1   1   1   1   1   1
-  Cavern 'Porting                   1   1   1   1   1   1
-  Bar Expand-o-rama                 1   1   1   1   1   1
-  2nd Bucket                        1   1   1   1   1   1
-  DNA Rock Tumbler                  1   1   1   1   1   1
-  Motherlode ~ Bucket Synergy       1   1   1   1   1   1
-  Green Amplifier                   1   1   1   1   1   1
-  Expander Extravaganza             1   1   1   1   1   1
-  Even Better Buckets               1   1   1   1   1   1
-  The Story Changes Over Time       1   1   1   1   1   1
-  3rd Bucket                        1   1   1   1   1   1
-  True Golden Edge                  1   1   1   1   1   1
-  Double Dinger Ringer              1   1   1   1   1   1
-  Pink Amplifier                    1   1   1   1   1   1
-  Heavy Redstone Seasoning          1   1   1   1   1   1
-  Loaded Harp                       1   1   1   1   1   1
-  Eee String                        1   1   1   1   1   1
-  Tune of Artifaction               1   1   1   1   1   1
-  Improvement Stackin'              1   1   1   1   1   1
-  Motherlode Trickledown            1   1   1   1   1   1
-  UBER Bar Expand-o-rama-hala       1   1   1   1   1   1
-  4th Bucket                        1   1   1   1   1   1
-  Yellow Amplifier                  1   1   1   1   1   1
-  RNG Oxidizing Layer               1   1   1   1   1   1
-  Packed Harp                       1   1   1   1   1   1
-  Domino Effect                     1   1   1   1   1   1
-  Fractalfly ~ Harp Synergy         1   1   1   1   1   1
-  Five Nights at Bucket             1   1   1   1   1   1
-  Eff String                        1   1   1   1   1   1
-  Amplifier Stackin'                1   1   1   1   1   1
-  Stringy Effect                    1   1   1   1   1   1
-  Cyan Amplifier                    1   1   1   1   1   1
-  First Try, I swear                1   1   1   1   1   1
-  Final Ballad of the Snail         1   1   1   1   1   1
-  Fractalfly Trickledown            1   1   1   1   1   1
-  Hefty Harp                        1   1   1   1   1   1
-  Triple Tap Tinkle                 1   1   1   1   1   1
-  Geez String                       1   1   1   1   1   1
-  Reroll Keeper                     1   1   1   1   1   1
-  6th Bucket                        1   1   1   1   1   1
-  Purple Amplifier                  1   1   1   1   1   1
-  Gloomie Lootie                    1   1   1   1   1   1
-  Variety Effect                    1   1   1   1   1   1
-  Gloomie Expie                     1   1   1   1   1   1
-  Gloomie Opie                      1   1   1   1   1   1
-  Noise Reduction Therapy           1   1   1   1   1   1
-  7rth Barckot?                     1   1   1   1   1   1
-  White Amplifier                   1   1   1   1   1   1
-  Gloomie Mulch                     1   1   1   1   1   1
-  Compound Interest                 1   1   1   1   1   1
-  Multitudinal Harp                 1   1   1   1   1   1
-  Aye String                        1   1   1   1   1   1
-  Last Bucket                       1   1   1   1   1   1
-  Big Jar Mach II                   1   1   1   1   1   1
-  Supergiant Jars                   1   1   1   1   1   1
-  Evertree ~ Rupie Synergy          1   1   1   1   1   1
-  Break All Button                  1   1   1   1   1   1
-  Evertree Trickledown              1   1   1   1   1   1
-  Big Jar Mach III                  1   1   1   1   1   1
-  Peer Reviewed Books               1   1   1   1   1   1
-  Jar Production Line               1   1   1   1   1   1
-  Rock Smart                        1   1   1   1   1   1
-  Horsey Gambit                     1   1   1   1   1   1
-  Bishop Gambit                     1   1   1   1   1   1
-  Collect 'Em All                   1   1   1   1   1   1
-  Max Monument Rewards              1   1   1   1   1   1
-  Cutting Edge Research             1   1   1   1   1   1
-  Sumptuous Harp                    1   1   1   1   1   1
-  Big Jar Mach IV                   1   1   1   1   1   1
-  Queen Gambit                      1   1   1   1   1   1
-  Big Jar Mach V                    1   1   1   1   1   1
-  The Sicilian                      1   1   1   1   1   1
-  Light Speed                       1   1   1   1   1   1
-  Castle Gambit                     1   1   1   1   1   1
-  Dark Amplifier                    1   1   1   1   1   1
-  Dark Luck                         1   1   1   1   1   1
-  All This Ringing in my Ears       1   1   1   1   1   1
-  Big Jar Mach VI                   1   1   1   1   1   1
-  Sanctum of LOOT                   1   1   1   1   1   1
-  Big Jar Mach VII                  1   1   1   1   1   1
-  Advanced Collection               1   1   1   1   1   1
-  Roaring Flame                     1   1   1   1   1   1
-  Sanctum of EXP                    1   1   1   1   1   1
-  Noob Gambit                       1   1   1   1   1   1
-  Big Jar Mach VIII                 1   1   1   1   1   1
-  Billion Dollar Grant              1   1   1   1   1   1
-  Sanctum of DMG                    1   1   1   1   1   1
-  Triple Decker Extender            1   1   1   1   1   1
-  9th Bucket                        1   1   1   1   1   1
-  Trench ~ Coin Synergy             1   1   1   1   1   1
-  Trench Trickledown                1   1   1   1   1   1
-  Size DOES Matter                  1   1   1   1   1   1
-  Bucket Finale                     1   1   1   1   1   1
-  Monument Mogmaxing                -   1   1   1   1   1
-  More Goo                          -   1   1   1   1   1
-  2nd Billion Dollar Grant          -   1   1   1   1   1
-  Glunko Conglomeration             -   1   1   1   1   1
-  Rift Guy                          -   1   1   1   1   1
-  Justin Opal                       -   -   1   1   1   1
-  Even More Goo                     -   -   1   1   1   1
-  Anotha One                        -   -   1   1   1   1
-  Increasingly More Goo             -   -   1   1   1   1
+cavern-villagers                        # Villagers, World 1 to 5 columns from crowd-research.txt
+  stages                          5m  5l  6e  6m  6l   7e   7m   7l  end1  end2  max
+  Polonai: caverns found           1   3   6   9  11   18   18   18   18   18   18
+  Kaipu: schematics unlocked       4  15  30  40  50  100  100  100  100  100  100
+  Cosmo: majik points              -   4  10  16  22   40   70   70   70   70   70
+  Minau: measurements unlocked     -   -   4   6   8   17   17   17   17   17   17
+  Bolaia: caverns studied          -   -   -   -   -   17   18   18   18   18   18
 
-cavern-majiks                           # Majiks
-  stages               7e  7m  7l  end1  end2  max
-  Cosmo, Enhance        1   3   3   3   3   3
-  Wishy Washy           1   3   3   3   3   3
-  Pocket Divinity       1   2   2   2   2   2
-  Beeg Beeg Forge       1   5   5   5   5   5
-  Resource Bursting     1   3   3   3   3   3
-  Monumental Vibes      2   4   4   4   4   4
-  Voter Integrity       1   5   5   5   5   5
-  Weapon Relevancy      1   4   4   4   4   4
-  String is Strung      2   5   5   5   5   5
-  Rupies Everywhere     1   5   5   5   5   5
-  Contented Creator     2   4   4   4   4   4
-  Opal Enthusiasm       3   5   5   5   5   5
-  Lengthmeister         2   4   4   4   4   4
-  Study All Nighter     1   5   5   5   5   5
-  Equinox Maxim         -   5   5   5   5   5
-  Profoun-tain          -   5   5   5   5   5
-  Equal Spread          -   4   4   4   4   4
+cavern-schematics                       # Schematics, World 1 to 5 columns from crowd-research.txt
+  stages                           5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Opal Dividends                    1   1   1   1   1   1   1   1   1   1   1
+  Better Buckets                    1   1   1   1   1   1   1   1   1   1   1
+  Loadin' some 'Lode                -   1   1   1   1   1   1   1   1   1   1
+  Hiring the Hounds from Beyond     -   1   1   1   1   1   1   1   1   1   1
+  Cavern 'Porting                   -   1   1   1   1   1   1   1   1   1   1
+  Bar Expand-o-rama                 -   1   1   1   1   1   1   1   1   1   1
+  2nd Bucket                        -   1   1   1   1   1   1   1   1   1   1
+  DNA Rock Tumbler                  -   1   1   1   1   1   1   1   1   1   1
+  Motherlode ~ Bucket Synergy       -   -   1   1   1   1   1   1   1   1   1
+  Green Amplifier                   -   -   1   1   1   1   1   1   1   1   1
+  Expander Extravaganza             -   -   1   1   1   1   1   1   1   1   1
+  Even Better Buckets               -   -   1   1   1   1   1   1   1   1   1
+  The Story Changes Over Time       -   -   1   1   1   1   1   1   1   1   1
+  3rd Bucket                        -   -   1   1   1   1   1   1   1   1   1
+  True Golden Edge                  -   -   1   1   1   1   1   1   1   1   1
+  Double Dinger Ringer              -   -   1   1   1   1   1   1   1   1   1
+  Pink Amplifier                    -   -   1   1   1   1   1   1   1   1   1
+  Heavy Redstone Seasoning          -   -   1   1   1   1   1   1   1   1   1
+  Motherlode Trickledown            -   -   1   1   1   1   1   1   1   1   1
+  Loaded Harp                       -   -   1   1   1   1   1   1   1   1   1
+  Eee String                        -   -   -   1   1   1   1   1   1   1   1
+  UBER Bar Expand-o-rama-hala       -   -   -   1   1   1   1   1   1   1   1
+  4th Bucket                        -   -   -   1   1   1   1   1   1   1   1
+  Yellow Amplifier                  -   -   -   1   1   1   1   1   1   1   1
+  Tune of Artifaction               -   -   -   1   1   1   1   1   1   1   1
+  Improvement Stackin'              -   -   -   1   1   1   1   1   1   1   1
+  RNG Oxidizing Layer               -   -   -   1   1   1   1   1   1   1   1
+  Stringy Effect                    -   -   -   1   1   1   1   1   1   1   1
+  Packed Harp                       -   -   -   -   1   1   1   1   1   1   1
+  Domino Effect                     -   -   -   -   1   1   1   1   1   1   1
+  Fractalfly ~ Harp Synergy         -   -   -   -   1   1   1   1   1   1   1
+  Five Nights at Bucket             -   -   -   -   1   1   1   1   1   1   1
+  Eff String                        -   -   -   -   1   1   1   1   1   1   1
+  Cyan Amplifier                    -   -   -   -   1   1   1   1   1   1   1
+  Amplifier Stackin'                -   -   -   -   -   1   1   1   1   1   1
+  First Try, I swear                -   -   -   -   -   1   1   1   1   1   1
+  Final Ballad of the Snail         -   -   -   -   -   1   1   1   1   1   1
+  Fractalfly Trickledown            -   -   -   -   -   1   1   1   1   1   1
+  Hefty Harp                        -   -   -   -   -   1   1   1   1   1   1
+  Triple Tap Tinkle                 -   -   -   -   -   1   1   1   1   1   1
+  Geez String                       -   -   -   -   -   1   1   1   1   1   1
+  Reroll Keeper                     -   -   -   -   -   1   1   1   1   1   1
+  6th Bucket                        -   -   -   -   -   1   1   1   1   1   1
+  Purple Amplifier                  -   -   -   -   -   1   1   1   1   1   1
+  Gloomie Lootie                    -   -   -   -   -   1   1   1   1   1   1
+  Variety Effect                    -   -   -   -   -   1   1   1   1   1   1
+  Gloomie Expie                     -   -   -   -   -   1   1   1   1   1   1
+  Gloomie Opie                      -   -   -   -   -   1   1   1   1   1   1
+  Noise Reduction Therapy           -   -   -   -   -   1   1   1   1   1   1
+  7rth Barckot?                     -   -   -   -   -   1   1   1   1   1   1
+  White Amplifier                   -   -   -   -   -   1   1   1   1   1   1
+  Gloomie Mulch                     -   -   -   -   -   1   1   1   1   1   1
+  Compound Interest                 -   -   -   -   -   1   1   1   1   1   1
+  Multitudinal Harp                 -   -   -   -   -   1   1   1   1   1   1
+  Aye String                        -   -   -   -   -   1   1   1   1   1   1
+  Last Bucket                       -   -   -   -   -   1   1   1   1   1   1
+  Big Jar Mach II                   -   -   -   -   -   1   1   1   1   1   1
+  Supergiant Jars                   -   -   -   -   -   1   1   1   1   1   1
+  Evertree ~ Rupie Synergy          -   -   -   -   -   1   1   1   1   1   1
+  Break All Button                  -   -   -   -   -   1   1   1   1   1   1
+  Evertree Trickledown              -   -   -   -   -   1   1   1   1   1   1
+  Big Jar Mach III                  -   -   -   -   -   1   1   1   1   1   1
+  Peer Reviewed Books               -   -   -   -   -   1   1   1   1   1   1
+  Jar Production Line               -   -   -   -   -   1   1   1   1   1   1
+  Rock Smart                        -   -   -   -   -   1   1   1   1   1   1
+  Horsey Gambit                     -   -   -   -   -   1   1   1   1   1   1
+  Bishop Gambit                     -   -   -   -   -   1   1   1   1   1   1
+  Collect 'Em All                   -   -   -   -   -   1   1   1   1   1   1
+  Max Monument Rewards              -   -   -   -   -   1   1   1   1   1   1
+  Cutting Edge Research             -   -   -   -   -   1   1   1   1   1   1
+  Sumptuous Harp                    -   -   -   -   -   1   1   1   1   1   1
+  Big Jar Mach IV                   -   -   -   -   -   1   1   1   1   1   1
+  Queen Gambit                      -   -   -   -   -   1   1   1   1   1   1
+  Big Jar Mach V                    -   -   -   -   -   1   1   1   1   1   1
+  The Sicilian                      -   -   -   -   -   1   1   1   1   1   1
+  Light Speed                       -   -   -   -   -   1   1   1   1   1   1
+  Castle Gambit                     -   -   -   -   -   1   1   1   1   1   1
+  Dark Amplifier                    -   -   -   -   -   1   1   1   1   1   1
+  Dark Luck                         -   -   -   -   -   1   1   1   1   1   1
+  All This Ringing in my Ears       -   -   -   -   -   1   1   1   1   1   1
+  Big Jar Mach VI                   -   -   -   -   -   1   1   1   1   1   1
+  Sanctum of LOOT                   -   -   -   -   -   1   1   1   1   1   1
+  Big Jar Mach VII                  -   -   -   -   -   1   1   1   1   1   1
+  Advanced Collection               -   -   -   -   -   1   1   1   1   1   1
+  Roaring Flame                     -   -   -   -   -   1   1   1   1   1   1
+  Sanctum of EXP                    -   -   -   -   -   1   1   1   1   1   1
+  Noob Gambit                       -   -   -   -   -   1   1   1   1   1   1
+  Big Jar Mach VIII                 -   -   -   -   -   1   1   1   1   1   1
+  Billion Dollar Grant              -   -   -   -   -   1   1   1   1   1   1
+  Sanctum of DMG                    -   -   -   -   -   1   1   1   1   1   1
+  Triple Decker Extender            -   -   -   -   -   1   1   1   1   1   1
+  9th Bucket                        -   -   -   -   -   1   1   1   1   1   1
+  Trench ~ Coin Synergy             -   -   -   -   -   1   1   1   1   1   1
+  Trench Trickledown                -   -   -   -   -   1   1   1   1   1   1
+  Size DOES Matter                  -   -   -   -   -   1   1   1   1   1   1
+  Bucket Finale                     -   -   -   -   -   1   1   1   1   1   1
+  Monument Mogmaxing                -   -   -   -   -   -   1   1   1   1   1
+  More Goo                          -   -   -   -   -   -   1   1   1   1   1
+  2nd Billion Dollar Grant          -   -   -   -   -   -   1   1   1   1   1
+  Glunko Conglomeration             -   -   -   -   -   -   1   1   1   1   1
+  Rift Guy                          -   -   -   -   -   -   1   1   1   1   1
+  Justin Opal                       -   -   -   -   -   -   -   1   1   1   1
+  Even More Goo                     -   -   -   -   -   -   -   1   1   1   1
+  Anotha One                        -   -   -   -   -   -   -   1   1   1   1
+  Increasingly More Goo             -   -   -   -   -   -   -   1   1   1   1
 
-cavern-measurements                     # Measurements, no max
-  stages                                      7e   7m   7l  end1  end2  max
-  Bucket Fill Rate, by Highest Dmg           100  250  380  460  500  510
-  Villager Exp Gain, by Tome Score           110  260  400  480  520  530
-  Bravery Sword Max Dmg, by All Skill Lv     170  270  430  510  540  560
-  Bell Ring & Ping Rate, by Deathnote Pts    100  250  400  450  510  530
-  Harp Note Gain, by Slab Items              160  270  410  480  510  540
-  Daily Lamp Wishes, by Crops Found          140  260  410  470  520  540
-  Harp String Exp, by Account Lv             150  270  390  460  490  520
-  Villager Exp Gain, by Slab Items           100  230  360  420  470  490
-  Harp Note Gain, by Tome Score              140  250  380  460  470  500
-  Multikill Per Tier, by Gloomie Kills        95  230  350  410  450  480
-  Rupie Value, by Studies Done                20  140  310  390  410  420
-  Monument Afk Rate, by All Skill Lv          15  140  310  380  400  420
-  Jar Produce Spd, by Account Lv              20  130  280  370  380  400
-  Gambit Points, by Deathnote Pts             17  120  280  370  370  390
-  Drop Rate, by Golem Kills                    -  130  190  340  360  380
-  Fountain Coins Value, by Slab Items          -  100  360  500  520  610
-  Rupie Value, by Highest Dmg                  -  130  260  340  360  380
+cavern-majiks                           # Majiks, World 1 to 5 columns from crowd-research.txt
+  stages               6e  6m  6l  7e  7m  7l  end1  end2  max
+  Cosmo, Enhance        1   1   1   1   3   3   3   3   3
+  Opal Enthusiasm       1   1   1   3   5   5   5   5   5
+  Contented Creator     1   1   1   2   4   4   4   4   4
+  Pocket Divinity       1   2   2   1   2   2   2   2   2
+  Monumental Vibes      -   -   1   2   4   4   4   4   4
+  String is Strung      -   -   1   2   5   5   5   5   5
+  Wishy Washy           -   -   1   1   3   3   3   3   3
+  Beeg Beeg Forge       -   -   1   1   5   5   5   5   5
+  Lengthmeister         -   -   1   2   4   4   4   4   4
+  Resource Bursting     -   -   1   1   3   3   3   3   3
+  Voter Integrity       -   -   1   1   5   5   5   5   5
+  Weapon Relevancy      -   -   -   1   4   4   4   4   4
+  Rupies Everywhere     -   -   -   1   5   5   5   5   5
+  Study All Nighter     -   -   -   1   5   5   5   5   5
+  Equinox Maxim         -   -   -   -   5   5   5   5   5
+  Profoun-tain          -   -   -   -   5   5   5   5   5
+  Equal Spread          -   -   -   -   4   4   4   4   4
+
+cavern-measurements                     # Measurements, no max; World 1 to 5 columns from crowd-research.txt
+  stages                                     6e  6m  6l   7e   7m   7l  end1  end2  max
+  Villager Exp Gain, by Tome Score           35  38  40  110  260  400  480  520  530
+  Bravery Sword Max Dmg, by All Skill Lv      3   5  17  170  270  430  510  540  560
+  Bell Ring & Ping Rate, by Deathnote Pts    19  25  30  100  250  400  450  510  530
+  Harp Note Gain, by Slab Items               8  12  16  160  270  410  480  510  540
+  Daily Lamp Wishes, by Crops Found           -   -  16  140  260  410  470  520  540
+  Bucket Fill Rate, by Highest Dmg            -   -   -  100  250  380  460  500  510
+  Harp String Exp, by Account Lv              -   -   -  150  270  390  460  490  520
+  Villager Exp Gain, by Slab Items            -   -   -  100  230  360  420  470  490
+  Harp Note Gain, by Tome Score               -   -   -  140  250  380  460  470  500
+  Multikill Per Tier, by Gloomie Kills        -   -   -   95  230  350  410  450  480
+  Rupie Value, by Studies Done                -   -   -   20  140  310  390  410  420
+  Monument Afk Rate, by All Skill Lv          -   -   -   15  140  310  380  400  420
+  Jar Produce Spd, by Account Lv              -   -   -   20  130  280  370  380  400
+  Gambit Points, by Deathnote Pts             -   -   -   17  120  280  370  370  390
+  Drop Rate, by Golem Kills                   -   -   -    -  130  190  340  360  380
+  Fountain Coins Value, by Slab Items         -   -   -    -  100  360  500  520  610
+  Rupie Value, by Highest Dmg                 -   -   -    -  130  260  340  360  380
 
 cavern-studies                          # Studies, no max
   stages              7e  7m  7l  end1  end2  max
@@ -1738,17 +1711,17 @@ cavern-studies                          # Studies, no max
   Trench               -  11  35  40  40  45
   The Cove             -   4  30  40  40  45
 
-cavern-shallow                          # Shallow Caverns
-  stages                            7e  7m  7l  end1  end2  max
-  The Bell: improvement methods      6   6   6   6   6   6
-  The Well: sediments found         10  10  10  10  10  10
-  Bravery Monument: hour rewards     6   8   8   8   8   8
+cavern-shallow                          # Shallow Caverns, World 1 to 5 columns from crowd-research.txt
+  stages                            6e  6m  6l  7e  7m  7l  end1  end2  max
+  The Well: sediments found          5   5   5  10  10  10  10  10  10
+  Bravery Monument: hour rewards     3   3   3   6   8   8   8   8   8
+  The Bell: improvement methods      4   4   4   6   6   6   6   6   6
 
-cavern-glowshroom                       # Glowshroom Tunnels
-  stages                            7e  7m  7l  end1  end2  max
-  The Harp: notes unlocked          10  10  10  10  10  10
-  The Lamp: More Wishes              9  11  11  11  11  11
-  Justice Monument: hour rewards     5   7   8   8   8   8
+cavern-glowshroom                       # Glowshroom Tunnels, World 1 to 5 columns from crowd-research.txt
+  stages                            6e  6m  6l  7e  7m  7l  end1  end2  max
+  The Harp: notes unlocked           4   5   5  10  10  10  10  10  10
+  The Lamp: More Wishes              3   3   3   9  11  11  11  11  11
+  Justice Monument: hour rewards     -   1   1   5   7   8   8   8   8
 
 cavern-overgrowth                       # Underground Overgrowth
   stages                           7e  7m  7l  end1  end2  max
@@ -1756,29 +1729,29 @@ cavern-overgrowth                       # Underground Overgrowth
   Wisdom Monument: hour rewards     4   7   8   8   8   8
   The Jars: collectibles found     30  40  40  40  40  40
 
-crops                                   # Farming Crops
-  stages                     7e   7m   7l  end1  end2  max
-  Crops discovered          120  230  230  230  230  230
-  Medal crops discovered      9   70   85   95  100  100
+crops                                   # Farming Crops, World 1 to 5 columns from crowd-research.txt
+  stages                    6e  6m  6l   7e   7m   7l  end1  end2  max
+  Crops discovered          40  60  90  120  230  230  230  230  230
+  Medal crops discovered     -   -   -    9   70   85   95  100  100
 
-farm-market                             # Day and Night Market
-  stages             7e   7m   7l  end1  end2  max
-  Overgrowth          1    1    1    1    1    1
-  Land Rank           1    1    1    1    1    1
-  Stronger Vines     45  170  220  270  280  300
-  Nutritious Soil    30  190  240  280  300  320
-  OG Fertilizer       5  210  320  400  430  490
-  Land Plots         12   20   20   20   20   20
-  Smarter Seeds      25  190  250  310  330  350
-  Biology Boost      15  210  250  320  330  360
-  Product Doubler    11  110  140  160  180  190
-  Evolution GMO       9  170  270  340  360  380
-  Speed GMO           4   90  130  160  180  200
-  Rank Boost          -   90  110  160  160  180
-  Super GMO           -   50   50   50   50   50
-  Exp GMO             -  100  100  100  100  100
-  More Beenz          -  130  160  210  220  240
-  Value GMO           -   90  150  190  200  220
+farm-market                             # Day and Night Market, World 1 to 5 columns from crowd-research.txt
+  stages             6e  6m  6l  7e   7m   7l  end1  end2  max
+  Land Plots          4   6   8  12   20   20   20   20   20
+  Stronger Vines     15  20  30  45  170  220  270  280  300
+  Nutritious Soil     5  10  16  30  190  240  280  300  320
+  Overgrowth          1   1   1   1    1    1    1    1    1
+  Product Doubler     -   3   6  11  110  140  160  180  190
+  Smarter Seeds       -   5  15  25  190  250  310  330  350
+  Biology Boost       -   -   5  15  210  250  320  330  360
+  Land Rank           -   -   1   1    1    1    1    1    1
+  OG Fertilizer       -   -   -   5  210  320  400  430  490
+  Evolution GMO       -   -   -   9  170  270  340  360  380
+  Speed GMO           -   -   -   4   90  130  160  180  200
+  Rank Boost          -   -   -   -   90  110  160  160  180
+  Super GMO           -   -   -   -   50   50   50   50   50
+  Exp GMO             -   -   -   -  100  100  100  100  100
+  More Beenz          -   -   -   -  130  160  210  220  240
+  Value GMO           -   -   -   -   90  150  190  200  220
 
 exotic-market                           # Exotic Market, no max
   stages             7e   7m   7l   end1    end2     max
@@ -1850,116 +1823,94 @@ land-rank                               # Land Rank Database
   Seed of Damage     11  11  11  11  11  11
   Seed of Stats       -  11  11  11  11  11
 
-jade-emporium                           # Jade Emporium
-  stages                                      7e  7m  7l  end1  end2  max
-  Quick Ref Access                             1   1   1   1   1   1
-  Gold Food Beanstalk                          1   1   1   1   1   1
-  Supersized Gold Beanstacking                 1   1   1   1   1   1
-  Charmed, I'm Sure                            1   1   1   1   1   1
-  Level Exemption                              1   1   1   1   1   1
-  Gaming to the MAX                            1   1   1   1   1   1
-  Revenge of the Pickle                        1   1   1   1   1   1
-  The Artifact Matrix                          1   1   1   1   1   1
-  The Slab Matrix                              1   1   1   1   1   1
-  The Spirit Matrix                            1   1   1   1   1   1
-  The Crop Matrix                              1   1   1   1   1   1
-  MSA Expander I                               1   1   1   1   1   1
-  MSA Expander II                              1   1   1   1   1   1
-  MSA Expander III                             1   1   1   1   1   1
-  Deal Sweetening                              1   1   1   1   1   1
-  No Meal Left Behind                          1   1   1   1   1   1
-  Jade Coin Magnetism                          1   1   1   1   1   1
-  Essence Confetti                             1   1   1   1   1   1
-  Shrine Collective Bargaining Agreement       1   1   1   1   1   1
-  Papa Blob's Quality Guarantee                1   1   1   1   1   1
-  Chef Geustloaf's Cutting Edge Philosophy     1   1   1   1   1   1
-  Crop Depot Scientist                         1   1   1   1   1   1
-  Science Environmentally Sourced Pencil       1   1   1   1   1   1
-  Science Pen                                  1   1   1   1   1   1
-  Science Marker                               1   1   1   1   1   1
-  Science Featherpen                           1   1   1   1   1   1
-  Reinforced Science Pencil                    1   1   1   1   1   1
-  Science Crayon                               1   1   1   1   1   1
-  Mob Cosplay Craze                            1   1   1   1   1   1
-  Science Paintbrush                           1   1   1   1   1   1
-  New Critter                                  1   1   1   1   1   1
-  Ionized Sigils                               1   1   1   1   1   1
-  The Endercaptain                             1   1   1   1   1   1
-  Brighter Lighthouse Bulb                     1   1   1   1   1   1
-  Sovereign Artifacts                          1   1   1   1   1   1
-  New Bribes                                   1   1   1   1   1   1
-  Laboratory Bling                             1   1   1   1   1   1
-  True Godly Blessings                         1   1   1   1   1   1
-  Science Highlighter                          1   1   1   1   1   1
-  Emperor Season Pass                          1   1   1   1   1   1
-  Science Fancy Pen                            1   1   1   1   1   1
-  Palette Slot                                 1   1   1   1   1   1
-  Another Gallery Podium                       1   1   1   1   1   1
-  Coral Conservationism                        1   1   1   1   1   1
-  Science Chalk                                1   1   1   1   1   1
-  Depth Charge Disposal                        1   1   1   1   1   1
-  Optimal Optometry                            1   1   1   1   1   1
-  Menagerie Maxxing                            -   1   1   1   1   1
+jade-emporium                           # Jade Emporium, World 1 to 5 columns from crowd-research.txt
+  stages                                      6e  6m  6l  7e  7m  7l  end1  end2  max
+  Quick Ref Access                             1   1   1   1   1   1   1   1   1
+  MSA Expander I                               1   1   1   1   1   1   1   1   1
+  Level Exemption                              1   1   1   1   1   1   1   1   1
+  The Artifact Matrix                          1   1   1   1   1   1   1   1   1
+  Crop Depot Scientist                         1   1   1   1   1   1   1   1   1
+  Reinforced Science Pencil                    1   1   1   1   1   1   1   1   1
+  Essence Confetti                             1   1   1   1   1   1   1   1   1
+  Gold Food Beanstalk                          1   1   1   1   1   1   1   1   1
+  Jade Coin Magnetism                          1   1   1   1   1   1   1   1   1
+  Science Pen                                  1   1   1   1   1   1   1   1   1
+  Shrine Collective Bargaining Agreement       1   1   1   1   1   1   1   1   1
+  Science Marker                               1   1   1   1   1   1   1   1   1
+  MSA Expander II                              -   1   1   1   1   1   1   1   1
+  No Meal Left Behind                          -   1   1   1   1   1   1   1   1
+  Science Featherpen                           -   1   1   1   1   1   1   1   1
+  Revenge of the Pickle                        -   1   1   1   1   1   1   1   1
+  The Slab Matrix                              -   1   1   1   1   1   1   1   1
+  Science Environmentally Sourced Pencil       -   1   1   1   1   1   1   1   1
+  MSA Expander III                             -   1   1   1   1   1   1   1   1
+  Papa Blob's Quality Guarantee                -   1   1   1   1   1   1   1   1
+  Science Crayon                               -   -   1   1   1   1   1   1   1
+  Supersized Gold Beanstacking                 -   -   1   1   1   1   1   1   1
+  Charmed, I'm Sure                            -   -   1   1   1   1   1   1   1
+  Deal Sweetening                              -   -   1   1   1   1   1   1   1
+  The Spirit Matrix                            -   -   1   1   1   1   1   1   1
+  The Crop Matrix                              -   -   1   1   1   1   1   1   1
+  Gaming to the MAX                            -   -   1   1   1   1   1   1   1
+  Chef Geustloaf's Cutting Edge Philosophy     -   -   1   1   1   1   1   1   1
+  Sovereign Artifacts                          -   -   1   1   1   1   1   1   1
+  New Critter                                  -   -   1   1   1   1   1   1   1
+  Brighter Lighthouse Bulb                     -   -   -   1   1   1   1   1   1
+  Laboratory Bling                             -   -   -   1   1   1   1   1   1
+  Science Paintbrush                           -   -   -   1   1   1   1   1   1
+  Ionized Sigils                               -   -   -   1   1   1   1   1   1
+  The Endercaptain                             -   -   -   1   1   1   1   1   1
+  Mob Cosplay Craze                            -   -   -   1   1   1   1   1   1
+  New Bribes                                   -   -   -   1   1   1   1   1   1
+  True Godly Blessings                         -   -   -   1   1   1   1   1   1
+  Science Highlighter                          -   -   -   1   1   1   1   1   1
+  Emperor Season Pass                          -   -   -   1   1   1   1   1   1
+  Science Fancy Pen                            -   -   -   1   1   1   1   1   1
+  Palette Slot                                 -   -   -   1   1   1   1   1   1
+  Another Gallery Podium                       -   -   -   1   1   1   1   1   1
+  Coral Conservationism                        -   -   -   1   1   1   1   1   1
+  Science Chalk                                -   -   -   1   1   1   1   1   1
+  Depth Charge Disposal                        -   -   -   1   1   1   1   1   1
+  Optimal Optometry                            -   -   -   1   1   1   1   1   1
+  Menagerie Maxxing                            -   -   -   -   1   1   1   1   1
 
-ninja-upgrades                          # Sneaking Upgrades, no max
-  stages                   7e     7m     7l   end1   end2    max
-  Mastery Loot            130    280    360    420    440    450
-  Way of Haste            280    590    770    890    930    950
-  Gemstone Pilfer         250    550    730    830    870    910
-  Charm Collector         230    460    630    710    730    760
-  Nunchaku Grip           230    460    630    720    750    770
-  Way of Stealth        1,200  3,500  5,800  7,400  7,700  8,400
-  Star Sweeping            20     45     60     70     75     75
-  Strange Symbols          50    110    160    180    190    200
-  Cheaper Stealth          60    140    210    240    250    260
-  Funeral Flowers           2     13     19     20     20     20
-  Respectful Minded       740  1,600  2,400  2,900  3,000  3,100
-  Mahjong Boosters        360    780  1,000  1,200  1,200  1,300
-  Kunai Knowledge         130    320    570    670    710    730
-  Currency Conduit        940  2,300  3,200  3,800  3,900  4,100
-  Glove Ingenuity         180    350    490    540    570    590
-  Looting Ambition        350    690    910  1,000  1,000  1,100
-  Thick Skin              200    380    550    620    640    670
-  Admiring the Art         70    210    320    370    400    410
-  Charming Symbols         25     85    120    140    150    160
-  Double Gemstones          2     45     65     75     80     85
-  Way of Bargain            -  1,600  2,500  2,900  3,000  3,200
-  Centurion Lineage         -    270    470    610    620    660
-  Shhhhhhhhhhh              -    830  1,200  1,500  1,600  1,700
-  Cheaper Mastery           -    570  1,100  1,400  1,500  1,600
-  Cheaper Haste             -    610  1,100  1,400  1,500  1,600
-  Cheaper Bargain           -     70    150    180    190    210
-  True Battering            -      -    480    610    660    690
-  Jadevalanche              -      -    590    730    770    840
-  Successful Symbols        -      -      -     65     70     75
-  Grievance Garlands        -      -      -     20     20     20
-  Omnijade Usable           -      -      -      3      3      3
+ninja-upgrades                          # Sneaking Upgrades, no max; World 1 to 5 columns from crowd-research.txt
+  stages                 6e   6m   6l     7e     7m     7l   end1   end2    max
+  Respectful Minded     220  260  300    740  1,600  2,400  2,900  3,000  3,100
+  Way of Haste           75   92  110    280    590    770    890    930    950
+  Mahjong Boosters      100  120  150    360    780  1,000  1,200  1,200  1,300
+  Kunai Knowledge        50   70   90    130    320    570    670    710    730
+  Currency Conduit      280  320  370    940  2,300  3,200  3,800  3,900  4,100
+  Glove Ingenuity        40   50   60    180    350    490    540    570    590
+  Charm Collector        60   72   85    230    460    630    710    730    760
+  Nunchaku Grip          75   88  100    230    460    630    720    750    770
+  Way of Stealth        390  440  500  1,200  3,500  5,800  7,400  7,700  8,400
+  Looting Ambition      110  120  140    350    690    910  1,000  1,000  1,100
+  Thick Skin             60   72   85    200    380    550    620    640    670
+  Mastery Loot            -    -    -    130    280    360    420    440    450
+  Gemstone Pilfer         -    -    -    250    550    730    830    870    910
+  Star Sweeping           -    -    -     20     45     60     70     75     75
+  Strange Symbols         -    -    -     50    110    160    180    190    200
+  Cheaper Stealth         -    -    -     60    140    210    240    250    260
+  Funeral Flowers         -    -    -      2     13     19     20     20     20
+  Admiring the Art        -    -    -     70    210    320    370    400    410
+  Charming Symbols        -    -    -     25     85    120    140    150    160
+  Double Gemstones        -    -    -      2     45     65     75     80     85
+  Way of Bargain          -    -    -      -  1,600  2,500  2,900  3,000  3,200
+  Centurion Lineage       -    -    -      -    270    470    610    620    660
+  Shhhhhhhhhhh            -    -    -      -    830  1,200  1,500  1,600  1,700
+  Cheaper Mastery         -    -    -      -    570  1,100  1,400  1,500  1,600
+  Cheaper Haste           -    -    -      -    610  1,100  1,400  1,500  1,600
+  Cheaper Bargain         -    -    -      -     70    150    180    190    210
+  True Battering          -    -    -      -      -    480    610    660    690
+  Jadevalanche            -    -    -      -      -    590    730    770    840
+  Successful Symbols      -    -    -      -      -      -     65     70     75
+  Grievance Garlands      -    -    -      -      -      -     20     20     20
+  Omnijade Usable         -    -    -      -      -      -      3      3      3
 
-pristine-charms                         # Pristine Charms
-  stages              7e  7m  7l  end1  end2  max
-  Sour Wowzer          -   1   1   1   1   1
-  Sparkle Log          -   -   1   1   1   1
-  Crystal Comb         -   -   1   1   1   1
-  Lollipop Law         -   -   1   1   1   1
-  Sugar Bomb           -   -   1   1   1   1
-  Rock Candy           -   -   1   1   1   1
-  Taffy Disc           -   -   1   1   1   1
-  Stick of Chew        -   -   1   1   1   1
-  Gumm Stick           -   -   1   1   1   1
-  Glimmerchain         -   -   1   1   1   1
-  Twinkle Taffy        -   -   1   1   1   1
-  Jellypick            -   -   1   1   1   1
-  Mystery Fizz         -   -   1   1   1   1
-  Fruit Rolle          -   -   1   1   1   1
-  Cotton Candy         -   -   1   1   1   1
-  Treat Sack           -   -   1   1   1   1
-  Lolly Flower         -   -   1   1   1   1
-  Gumball Necklace     -   -   1   1   1   1
-  Liqorice Rolle       -   -   1   1   1   1
-  Candy Cache          -   -   1   1   1   1
-  Glowing Veil         -   -   1   1   1   1
-  Gumm Eye             -   -   1   1   1   1
-  Bubblegum Law        -   -   1   1   1   1
+pristine-charms                         # Pristine Charms, counts; World 1 to 5 columns from crowd-research.txt
+  stages    6m  6l  7e  7m  7l  end1  end2  max
+  @any 1     -   3   5  20  20  20  20  20
 
 gemstones                               # Gemstones, no max
   stages           7e      7m       7l     end1       end2        max
@@ -1972,25 +1923,25 @@ gemstones                               # Gemstones, no max
   Emerald       1,300  22,000  100,000  510,000  1,400,000  2,600,000
   Firefrost     1,100  18,000   69,000  380,000  1,100,000  1,300,000
 
-beanstalk                               # Gold Food Beanstalk
-  stages                           7e  7m  7l  end1  end2  max
-  Golden Jam                        1   2   2   2   2   2
-  Golden Meat Pie                   1   2   2   2   2   2
-  Golden Hampter Gummy Candy        1   2   2   2   2   2
-  Golden Ribs                       1   2   2   2   2   2
-  Golden Kebabs                     1   2   2   2   2   2
-  Golden Dumpling                   1   2   2   2   2   2
-  Golden Ham                        1   2   2   2   2   2
-  Golden Nigiri                     1   2   2   2   2   2
-  Golden Cheese                     1   2   2   2   2   2
-  Golden Grilled Cheese Nomwich     2   2   2   2   2   2
-  Golden Nomwich                    2   2   2   2   2   2
-  Golden Saltwater Taffy            -   2   2   2   2   2
-  Butter Bar                        -   2   2   2   2   2
-  Golden Bread                      -   2   2   2   2   2
-  Golden Cake                       -   2   2   2   2   2
-  Golden Peanut                     -   2   2   2   2   2
-  1,000,000 stacks                  -  16  16  16  16  16
+beanstalk                               # Gold Food Beanstalk, World 1 to 5 columns from crowd-research.txt
+  stages                           6m  6l  7e  7m  7l  end1  end2  max
+  Golden Nomwich                    1   1   2   2   2   2   2   2
+  Golden Grilled Cheese Nomwich     -   1   2   2   2   2   2   2
+  Butter Bar                        -   1   -   2   2   2   2   2
+  Golden Jam                        -   1   1   2   2   2   2   2
+  Golden Meat Pie                   -   -   1   2   2   2   2   2
+  Golden Hampter Gummy Candy        -   -   1   2   2   2   2   2
+  Golden Ribs                       -   -   1   2   2   2   2   2
+  Golden Kebabs                     -   -   1   2   2   2   2   2
+  Golden Dumpling                   -   -   1   2   2   2   2   2
+  Golden Ham                        -   -   1   2   2   2   2   2
+  Golden Nigiri                     -   -   1   2   2   2   2   2
+  Golden Cheese                     -   -   1   2   2   2   2   2
+  Golden Saltwater Taffy            -   -   -   2   2   2   2   2
+  Golden Bread                      -   -   -   2   2   2   2   2
+  Golden Cake                       -   -   -   2   2   2   2   2
+  Golden Peanut                     -   -   -   2   2   2   2   2
+  1,000,000 stacks                  -   -   -  16  16  16  16  16
 
 emperor                                 # Emperor Showdown, no max
   stages                           7e  7m  7l  end1  end2  max
@@ -2005,56 +1956,56 @@ emperor                                 # Emperor Showdown, no max
   Equinox Bar Fill Rate             6   9  12  13  15  16
   Arcane Cultist Extra Tachyons     4   7   9   9  10  12
 
-summoning                               # Summoning Upgrades
-  stages                 7e   7m   7l  end1  end2  max
-  Familiar Merging        1    1    1    1    1    1
-  Dodge Roll             30   30   30   30   30   30
-  Multi-Number Cards      1    1    1    1    1    1
-  Mana Overflow           1    1    1    1    1    1
-  Another Slot            1    1    1    1    1    1
-  Vrumbi                 10   10   10   10   10   10
-  Luck of the Draw       10   10   10   10   10   10
-  Slime Cellsplit        30   30   30   30   30   30
-  Re-Draw                 3    3    3    3    3    3
-  Tonka                  20   20   20   20   20   20
-  Slime Mitosis          30   30   30   30   30   30
-  Jeweled Cards           3    3    3    3    3    3
-  Regalis                30   30   30   30   30   30
-  Final Card              3    3    3    3    3    3
-  Sparkie                30   30   30   30   30   30
-  Seeing Red             10   10   10   10   10   10
-  I Frames               30   30   30   30   30   30
-  Sharpened Spikes       20   20   20   20   20   20
-  Endless Summoning       1    1    1    1    1    1
-  Bloomy                 10   10   10   10   10   10
-  Familiar Skipping     100  100  100  100  100  100
-  Slime Duplication      40   40   40   40   40   40
-  Guardio                30   30   30   30   30   30
-  Muddah                  1    1    1    1    1    1
-  Whims of the Tide      14   20   30   30   30   30
-  Allstar                 8   11   16   16   17   17
+summoning                               # Summoning Upgrades, World 1 to 5 columns from crowd-research.txt
+  stages                6e  6m   6l   7e   7m   7l  end1  end2  max
+  Mana Overflow          1   1    1    1    1    1    1    1    1
+  Re-Draw                3   3    3    3    3    3    3    3    3
+  Final Card             2   2    3    3    3    3    3    3    3
+  Another Slot           1   1    1    1    1    1    1    1    1
+  Familiar Merging       1   1    1    1    1    1    1    1    1
+  Multi-Number Cards     1   1    1    1    1    1    1    1    1
+  Dodge Roll            30  30   30   30   30   30   30   30   30
+  Vrumbi                 8   9   10   10   10   10   10   10   10
+  Bloomy                 5   8   10   10   10   10   10   10   10
+  Luck of the Draw      10  10   10   10   10   10   10   10   10
+  Slime Cellsplit       30  30   30   30   30   30   30   30   30
+  Tonka                 20  20   20   20   20   20   20   20   20
+  Slime Mitosis         30  30   30   30   30   30   30   30   30
+  Jeweled Cards          2   2    3    3    3    3    3    3    3
+  Regalis               19  24   30   30   30   30   30   30   30
+  Familiar Skipping     40  70  100  100  100  100  100  100  100
+  Sparkie                9  20   30   30   30   30   30   30   30
+  Seeing Red             7   8   10   10   10   10   10   10   10
+  Slime Duplication      8  24   40   40   40   40   40   40   40
+  Sharpened Spikes      20  20   20   20   20   20   20   20   20
+  Endless Summoning      -   -    1    1    1    1    1    1    1
+  I Frames               -   -   30   30   30   30   30   30   30
+  Guardio                -   -   20   30   30   30   30   30   30
+  Muddah                 -   -    -    1    1    1    1    1    1
+  Whims of the Tide      -   -    -   14   20   30   30   30   30
+  Allstar                -   -    -    8   11   16   16   17   17
 
-summoning-battles                       # Summoning Battles
-  stages                      7e  7m  7l  end1  end2  max
-  White battles                9   9   9   9   9   9
-  Green battles (World 1)     15  15  15  15  15  15
-  Yellow battles (World 2)    11  11  11  11  11  11
-  Blue battles (World 3)      14  14  14  14  14  14
-  Purple battles (World 4)    13  13  13  13  13  13
-  Red battles (World 5)       13  13  13  13  13  13
-  Cyan battles (World 6)      14  14  14  14  14  14
-  Teal battles (World 7)       8  10  11  11  11  12
+summoning-battles                       # Summoning Battles, World 1 to 5 columns from crowd-research.txt
+  stages                      6e  6m  6l  7e  7m  7l  end1  end2  max
+  White battles                9   9   9   9   9   9   9   9   9
+  Green battles (World 1)     15  15  15  15  15  15  15  15  15
+  Yellow battles (World 2)    10  10  11  11  11  11  11  11  11
+  Blue battles (World 3)       8  11  14  14  14  14  14  14  14
+  Purple battles (World 4)     6  10  13  13  13  13  13  13  13
+  Red battles (World 5)        2   8  13  13  13  13  13  13  13
+  Cyan battles (World 6)       -   -  14  14  14  14  14  14  14
+  Teal battles (World 7)       -   -   -   8  10  11  11  11  12
 
-summoning-stones                        # Summoning Stones and Endless, no max
-  stages                  7e   7m   7l  end1  end2  max
-  Red stone                2    4    5    5    5    7
-  Yellow stone             2    4    5    5    5   10
-  Cyan stone               2    4    5    5    5   10
-  White stone              3    5    5    6    6    8
-  Green stone              3    5    5    6    6    8
-  Endless battles won    110  220  330  370  380  390
-  Blue stone               3    4    5    5    6    7
-  Purple stone             3    4    5    6    6    8
+summoning-stones                        # Summoning Stones and Endless, no max; World 1 to 5 columns from crowd-research.txt
+  stages                 6l   7e   7m   7l  end1  end2  max
+  Purple stone            1    3    4    5    6    6    8
+  White stone             2    3    5    5    6    6    8
+  Green stone             2    3    5    5    6    6    8
+  Blue stone              1    3    4    5    5    6    7
+  Red stone               1    2    4    5    5    5    7
+  Endless battles won    60  110  220  330  370  380  390
+  Yellow stone            -    2    4    5    5    5   10
+  Cyan stone              -    2    4    5    5    5   10
 
 research                                # Research Grid
   stages                             7e  7m  7l  end1  end2  max

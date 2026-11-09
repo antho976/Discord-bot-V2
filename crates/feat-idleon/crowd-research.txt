@@ -65,3 +65,190 @@ killroy                                 # Killroy: a point in each fight as it s
   Talent Points fights                  -    1    1    1    1    1    1    1    1
   Skulls fights                         -    -    -    1    1    1    2    2    2
   Skull Shop: Artifact Find Chance      -    -    -    -    -    1    1    1    1
+# --- World 5 and 6, caverns (quick-gecko, 2026-11-09). W6 columns start from the 7 saves
+# below World 7 (too few for the generator alone), evened out; W5 ones from the research.
+
+gods                                    # Divinity Gods: unlocked in a fixed order, Arctis (2nd) frees the Lab
+  stages       5e     5m     5l     6e     6m     6l
+  @first        3      5      7      8      9     10
+
+blessings                               # Divinity Blessings
+  stages                    5e     5m     5l     6e     6m     6l
+  Snehebatu Blessing         5     15     35     60     85    110
+  Arctis Blessing            5     15     30     55     70     80
+  Harriep Blessing           -      5     25     60     85    110
+  Purrmep Blessing           -      -     20     50     65    100
+  Nobisect Blessing          -      5     15     30     50     70
+  Goharut Blessing           -      5     15     30     40     55
+  Omniphau Blessing          -      -      5     10     15     25
+  Flutterbis Blessing        -      -      -      5      8     10
+  Kattlekruk Blessing        -      -      -      -     10     40
+  Bagur Blessing             -      -      -      -      -     10
+
+slab                                    # The Slab
+  stages             5e     5m     5l     6e     6m     6l
+  Items looted      650    720    800    900  1,050  1,200
+
+superbits                               # Gaming Superbits: a fixed path, Bits Per Achievement first
+  stages       5m     5l     6e     6m     6l
+  @first        1      3     10     13     17
+
+snail                                   # Immortal Snail: 611B bits to buy
+  stages               6m     6l
+  Immortal Snail        1      3
+
+sailing-islands                         # Sailing Islands: in order of distance
+  stages       5e     5m     5l     6e     6m     6l
+  @first        1      3      6      9     10     13
+
+boats                                   # Sailing Boats
+  stages             5e     5m     5l     6e     6m     6l
+  Boats bought        1      3      6     11     14     17
+
+boat-upgrades                           # Boat Upgrades
+  stages                        5e     5m     5l     6e     6m     6l
+  Loot levels, all boats         6     40    200    680    860  1,100
+  Speed levels, all boats        4     30    180    640    780  1,000
+
+artifacts                               # Artifacts, counts: Fauxory Tusk and Genie Lamp first
+  stages             5e     5m     5l     6e     6m     6l
+  Fauxory Tusk        1      1      2      3      3      4
+  Genie Lamp          -      1      2      2      3      3
+  @any 1              3      8     16     20     23     25
+  @any 2              -      2      8     16     18     20
+  @any 3              -      -      -      8     12     17
+  @any 4              -      -      -      -      -      8
+
+pristine-charms                         # Pristine Charms, counts: collect them early, while repeats are rare
+  stages       6m     6l
+  @any 1        1      3
+
+cavern-villagers                        # Villagers: Polonai first, his levels find the caverns that hold the rest
+  stages                             5m     5l     6e     6m     6l
+  Polonai: caverns found              1      3      6      9     11
+  Kaipu: schematics unlocked          4     15     30     40     50
+  Cosmo: majik points                 -      4     10     16     22
+  Minau: measurements unlocked        -      -      4      6      8
+
+cavern-schematics                       # Schematics: built in the order Kaipu unlocks them
+  stages       5m     5l     6e     6m     6l
+  @first        2      8     20     28     34
+
+cavern-majiks                           # Majiks
+  stages                  6e     6m     6l
+  Cosmo, Enhance           1      1      1
+  Opal Enthusiasm          1      1      1
+  Monumental Vibes         -      -      1
+  Contented Creator        1      1      1
+  Pocket Divinity          1      2      2
+  String is Strung         -      -      1
+  Wishy Washy              -      -      1
+  Beeg Beeg Forge          -      -      1
+  Lengthmeister            -      -      1
+  Resource Bursting        -      -      1
+  Voter Integrity          -      -      1
+
+cavern-measurements                     # Measurements
+  stages                                        6e     6m     6l
+  Villager Exp Gain, by Tome Score              35     38     40
+  Bravery Sword Max Dmg, by All Skill Lv         3      5     17
+  Bell Ring & Ping Rate, by Deathnote Pts       19     25     30
+  Harp Note Gain, by Slab Items                  8     12     16
+  Daily Lamp Wishes, by Crops Found              -      -     16
+
+cavern-shallow                          # Shallow Caverns
+  stages                               6e     6m     6l
+  The Well: sediments found             5      5      5
+  Bravery Monument: hour rewards        3      3      3
+  The Bell: improvement methods         4      4      4
+
+cavern-glowshroom                       # Glowshroom Tunnels
+  stages                               6e     6m     6l
+  The Harp: notes unlocked              4      5      5
+  The Lamp: More Wishes                 3      3      3
+  Justice Monument: hour rewards        -      1      1
+
+crops                                   # Farming Crops
+  stages                 6e     6m     6l
+  Crops discovered       40     60     90
+
+farm-market                             # Day and Night Market: Land Plots, Stronger Vines, Product Doubler first
+  stages                6e     6m     6l
+  Land Plots             4      6      8
+  Stronger Vines        15     20     30
+  Product Doubler        -      3      6
+  Nutritious Soil        5     10     16
+  Overgrowth             1      1      1
+  Smarter Seeds          -      5     15
+  Biology Boost          -      -      5
+  Land Rank              -      -      1
+
+jade-emporium                           # Jade Emporium: in the order the shop sells them
+  stages       6e     6m     6l
+  @first       12     20     30
+
+ninja-upgrades                          # Sneaking Upgrades: the cheapest first; Star Sweeping last
+  stages                  6e     6m     6l
+  Respectful Minded      220    260    300
+  Way of Haste            75     92    110
+  Mahjong Boosters       100    120    150
+  Kunai Knowledge         50     70     90
+  Currency Conduit       280    320    370
+  Glove Ingenuity         40     50     60
+  Charm Collector         60     72     85
+  Nunchaku Grip           75     88    100
+  Way of Stealth         390    440    500
+  Looting Ambition       110    120    140
+  Thick Skin              60     72     85
+
+beanstalk                               # Gold Food Beanstalk
+  stages                              6m     6l
+  Golden Nomwich                       1      1
+  Golden Grilled Cheese Nomwich        -      1
+  Butter Bar                           -      1
+  Golden Jam                           -      1
+
+summoning                               # Summoning Upgrades: essence and cheaper upgrades first
+  stages                   6e     6m     6l
+  Mana Overflow             1      1      1
+  Re-Draw                   3      3      3
+  Final Card                2      2      3
+  Another Slot              1      1      1
+  Familiar Merging          1      1      1
+  Multi-Number Cards        1      1      1
+  Dodge Roll               30     30     30
+  Vrumbi                    8      9     10
+  Bloomy                    5      8     10
+  Luck of the Draw         10     10     10
+  Slime Cellsplit          30     30     30
+  Tonka                    20     20     20
+  Slime Mitosis            30     30     30
+  Jeweled Cards             2      2      3
+  Regalis                  19     24     30
+  Familiar Skipping        40     70    100
+  Sparkie                   9     20     30
+  Seeing Red                7      8     10
+  Slime Duplication         8     24     40
+  Sharpened Spikes         20     20     20
+  Endless Summoning         -      -      1
+  I Frames                  -      -     30
+  Guardio                   -      -     20
+
+summoning-battles                       # Summoning Battles
+  stages                         6e     6m     6l
+  White battles                   9      9      9
+  Green battles (World 1)        15     15     15
+  Yellow battles (World 2)       10     10     11
+  Blue battles (World 3)          8     11     14
+  Purple battles (World 4)        6     10     13
+  Red battles (World 5)           2      8     13
+  Cyan battles (World 6)          -      -     14
+
+summoning-stones                        # Summoning Stones and Endless
+  stages                    6l
+  Purple stone               1
+  White stone                2
+  Green stone                2
+  Blue stone                 1
+  Red stone                  1
+  Endless battles won       60
