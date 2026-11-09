@@ -1835,8 +1835,8 @@ summoning                               # Summoning Upgrades, World 1 to 5 colum
   Endless Summoning         -   -    1    1    1    1    1    1    1
   I Frames                  -   -   30   30   30   30   30   30   30
   Guardio                   -   -   20   30   30   30   30   30   30
-  Another Slot (Yellow)     -   -    -    1    1    1    1    1    1  # new since the last run
-  Another Slot (Blue)       -   -    -    1    1    1    1    1    1  # new since the last run
+  Another Slot (Yellow)     -   -    -    1    1    1    1    1    1
+  Another Slot (Blue)       -   -    -    1    1    1    1    1    1
   Muddah                    -   -    -    1    1    1    1    1    1
   Whims of the Tide         -   -    -   14   20   30   30   30   30
   Allstar                   -   -    -    8   11   16   16   16   17
