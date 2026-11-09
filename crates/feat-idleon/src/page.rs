@@ -24,7 +24,8 @@ pub struct Access {
     pub staff: bool,
     /// The name of whoever signed in with Discord (on this page or the dashboard).
     pub member: Option<String>,
-    /// May open a test account (everything at 0): staff, and the local preview.
+    /// May open a test account (everything at 0): staff, testers while the test is closed, and
+    /// the local preview.
     pub test: bool,
 }
 
@@ -36,7 +37,7 @@ pub enum State<'a> {
 }
 
 /// The page in a sentence, for link previews.
-const ABOUT: &str = "Paste your Idleon save and see how far each mechanic is from the game's max, and what to work on next.";
+const ABOUT: &str = "Paste your Idleon save and see where each mechanic stands against other players' saves in your world, and what to do next.";
 
 pub const WORLD_NAMES: [&str; 8] = ["Account", "Blunder Hills", "Yum-Yum Desert", "Frostbite Tundra", "Hyperion Nebula", "Smolderin' Plateau", "Spirited Valley", "Shimmerfin Deep"];
 
@@ -199,53 +200,129 @@ fn report_box(guild: u64, r: &Review, member: Option<&str>) -> Markup {
     }
 }
 
+/// Where a save comes from, and how to copy it: (radio value, site name, address, steps, note).
+/// Steps are the sites' own menu and button names (IdleonToolbox's user menu, Idleon
+/// Efficiency's Raw Data page). Companions are kept on the game's server, not in the save:
+/// only IdleonToolbox's "Copy for support" brings them (`companion`).
+const SOURCES: [(&str, &str, &str, [&str; 3], &str); 2] = [
+    (
+        "it",
+        "IdleonToolbox",
+        "https://idleontoolbox.com",
+        ["Open idleontoolbox.com and sign in.", "Open the menu under your picture, top right.", "Choose Copy for support, then paste it in the box."],
+        "This copy brings your companions too. Copy raw data works, but leaves out your characters' names and companions.",
+    ),
+    (
+        "ie",
+        "Idleon Efficiency",
+        "https://www.idleonefficiency.com",
+        ["Open idleonefficiency.com and sign in.", "Open Raw Data in the menu at the top.", "Press Copy Raw JSON, then paste it in the box."],
+        "Companions don't come through from here, so their card stays empty. Copy from IdleonToolbox to have them.",
+    ),
+];
+
+/// What changed in the latest update, under the paste box. Keep it to one line.
+const NEWS: (&str, &[&str]) = (
+    "9 Nov",
+    &[
+        "Tiers now come from other players' saves, placed by the world they reached.",
+        "Every card shows its stages down the side and one tier at a time.",
+        "New cards: the Tome, Obols, Star Talents, Companions and Guild Bonuses.",
+        "Cards that are one thing in the game are one card here, with a switch.",
+    ],
+);
+
 fn ask(guild: u64, error: Option<&str>, retry: bool, test: bool) -> Markup {
     html! {
         section.ia-panel.ia-ask {
             div.ia-ask-text {
                 h2 { "Paste your save" }
-                p { "Copy your account's JSON from IdleonToolbox or Idleon Efficiency and paste it here, or open the file. You get how far each mechanic is from the game's max, and what to work on next." }
-            }
-            // Sent as plain text: URL-encoding a save triples its size and was a fifth of the
-            // server's work per check.
-            form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
-                // First in the form so it's the first line of the plain-text body (the server
-                // reads it before the save); shown under the box (CSS order). The page script
-                // remembers the choice in this browser.
-                div.ia-packs role="radiogroup" aria-label="Packs" {
-                    span { "Packs" }
-                    @for (p, tip) in [
-                        (Packs::Buy, "Every tier counts everything."),
-                        (Packs::NoMore, "Leaves out what only a pack you don't own gives: the Potluck Pack's vault levels, pack-only Gallery items."),
-                        (Packs::Free, "That, and the Gem Shop leaves Should have by now."),
-                    ] {
-                        label title=(tip) {
-                            input type="radio" name="packs" value=(p.code()) checked[p == Packs::Buy];
-                            span { (p.label()) }
+                p { "Every mechanic is placed on tiers taken from other players' saves, so you see where you stand for your world and what to do next." }
+                // Picked with CSS (:has), no script; the page script remembers the choice.
+                div.ia-src role="radiogroup" aria-label="Where your save comes from" {
+                    @for (i, (code, name, ..)) in SOURCES.iter().enumerate() {
+                        label {
+                            input type="radio" name="ia-src" value=(code) checked[i == 0];
+                            span { (name) }
                         }
                     }
                 }
-                textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
-                p.ia-err #ia-err role="alert" hidden[error.is_none()] data-retry[retry] { (error.unwrap_or_default()) }
-                p.ia-note #ia-last hidden { "Filled in with the save you last checked in this tab." }
-                div.ia-ask-actions {
-                    label.btn {
-                        (ui::icon(bot_core::Icon::Enter))
-                        "Open a file"
-                        input #ia-file type="file" accept=".json,.txt,application/json" data-max=(crate::save::MAX_BYTES) hidden;
+                @for (code, _, url, steps, note) in SOURCES {
+                    div.ia-how data-src=(code) {
+                        ol {
+                            @for (i, s) in steps.iter().enumerate() {
+                                li {
+                                    span {
+                                        @if i == 0 {
+                                            // The site's address is the link; the rest of the step is words.
+                                            @let host = url.trim_start_matches("https://").trim_start_matches("www.");
+                                            @let (pre, post) = s.split_once(host).unwrap_or((s, ""));
+                                            (pre) a href=(url) target="_blank" rel="noopener" { (host) } (post)
+                                        } @else {
+                                            (s)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        p { (note) }
                     }
-                    // Shown by the page script where the browser can read the clipboard: on a
-                    // phone, pressing and holding in the box to paste a megabyte is the hard part.
-                    button.btn #ia-paste type="button" hidden { "Paste from clipboard" }
-                    button.btn.primary type="submit" { "Check my account" }
                 }
             }
-            @if test {
-                p.ia-try {
-                    span { "Test account, everything at 0, seen as a player in" }
-                    @for w in 1..=7u8 { a href={ "/p/" (guild) "/idleon/test?world=" (w) } { "World " (w) } }
+            div.ia-ask-main {
+                // Sent as plain text: URL-encoding a save triples its size and was a fifth of the
+                // server's work per check.
+                form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
+                    // First in the form so it's the first line of the plain-text body (the server
+                    // reads it before the save); shown under the box (CSS order). The page script
+                    // remembers the choice in this browser.
+                    div.ia-packs {
+                        div.ia-packs-row role="radiogroup" aria-label="Packs" {
+                            span { "Packs" }
+                            @for p in [Packs::Buy, Packs::NoMore, Packs::Free] {
+                                label {
+                                    input type="radio" name="packs" value=(p.code()) checked[p == Packs::Buy];
+                                    span { (p.label()) }
+                                }
+                            }
+                        }
+                        // What the choice changes, for the one picked (CSS :has).
+                        p data-packs="buy" { "Tiers count everything, pack-only items too." }
+                        p data-packs="no-more" { "Tiers leave out what only a pack you don't own gives: the Potluck Pack's vault levels and pack-only Gallery items." }
+                        p data-packs="free" { "The same, and the Gem Shop isn't counted in Should have by now." }
+                    }
+                    textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="Paste your save here, or drop its file on this box." required {}
+                    p.ia-err #ia-err role="alert" hidden[error.is_none()] data-retry[retry] { (error.unwrap_or_default()) }
+                    p.ia-note #ia-last hidden { "Filled in with the save you last checked in this tab." }
+                    p.ia-note #ia-sent hidden { "This is what you sent, to see what went wrong." }
+                    div.ia-ask-actions {
+                        label.btn {
+                            (ui::icon(bot_core::Icon::Enter))
+                            "Open a file"
+                            input #ia-file type="file" accept=".json,.txt,application/json" data-max=(crate::save::MAX_BYTES) hidden;
+                        }
+                        // Shown by the page script where the browser can read the clipboard: on a
+                        // phone, pressing and holding in the box to paste a megabyte is the hard part.
+                        button.btn #ia-paste type="button" hidden { "Paste from clipboard" }
+                        button.btn.primary type="submit" { "Check my account" }
+                    }
+                }
+                @if test {
+                    p.ia-try {
+                        span { "Staff and testers: a test account with everything at 0, in" }
+                        @for w in 1..=7u8 { a href={ "/p/" (guild) "/idleon/test?world=" (w) } { "World " (w) } }
+                    }
                 }
             }
+        }
+        section.ia-get aria-label="What you get" {
+            div { b { "How far each world is" } span { "One bar per world, and your share of the game overall." } }
+            div { b { "Should have by now" } span { "What accounts in your world usually have that you don't." } }
+            div { b { "Every mechanic's next tier" } span { "Up to 8 things to do, each with how to do it." } }
+        }
+        details.ia-news {
+            summary { b { "What's new, " (NEWS.0) } (NEWS.1[0]) }
+            ul { @for n in NEWS.1 { li { (n) } } }
         }
     }
 }
@@ -1045,9 +1122,22 @@ pub(crate) fn num(n: f64) -> String {
 const JS: &str = r##"(function(){
 var f=document.getElementById("ia-file"),t=document.getElementById("ia-save"),pb=document.getElementById("ia-paste"),er=document.getElementById("ia-err");
 function say(s){if(er){er.textContent=s;er.hidden=false}}
-if(f&&t)f.addEventListener("change",function(){var x=f.files&&f.files[0];if(!x)return;
+// A file, opened or dropped on the box: read it and send it.
+function take(x){if(!x)return;
   if(x.size>+f.dataset.max){say("That file is bigger than any Idleon save. Pick the JSON you saved from IdleonToolbox or Idleon Efficiency.");f.value="";return}
-  x.text().then(function(s){t.value=s;t.form.requestSubmit()})});
+  x.text().then(function(s){t.value=s;t.form.requestSubmit()})}
+if(f&&t){
+  f.addEventListener("change",function(){take(f.files&&f.files[0])});
+  ["dragenter","dragover"].forEach(function(n){t.addEventListener(n,function(e){if(e.dataTransfer&&[].indexOf.call(e.dataTransfer.types,"Files")>=0){e.preventDefault();t.classList.add("drop")}})});
+  t.addEventListener("dragleave",function(){t.classList.remove("drop")});
+  t.addEventListener("drop",function(e){t.classList.remove("drop");var x=e.dataTransfer&&e.dataTransfer.files[0];if(x){e.preventDefault();take(x)}});
+  // A save is a JSON object: anything else is caught here, before a megabyte goes anywhere.
+  t.form.addEventListener("submit",function(e){if(t.value.trim()&&!/^\s*\{/.test(t.value)){e.preventDefault();say("That isn't a save: a save starts with {. Copy it again with Copy for support in IdleonToolbox, or Copy Raw JSON in Idleon Efficiency.")}});
+}
+// Where your save comes from: remembered in this browser.
+var SK="ia-src";
+try{var sv=localStorage.getItem(SK),sr=sv&&document.querySelector('input[name=ia-src][value="'+sv+'"]');if(sr)sr.checked=true}catch(x){}
+document.addEventListener("change",function(e){if(e.target.name==="ia-src")try{localStorage.setItem(SK,e.target.value)}catch(x){}});
 // Paste from clipboard: one tap on a phone, and the megabyte never has to be drawn in the box.
 if(pb&&t&&navigator.clipboard&&navigator.clipboard.readText){
   pb.hidden=false;
@@ -1075,14 +1165,15 @@ try{var pv=localStorage.getItem(PK),pr=pv&&document.querySelector('input[name=pa
 document.addEventListener("change",function(e){if(e.target.name!=="packs")return;try{localStorage.setItem(PK,e.target.value)}catch(x){}packsLinks(e.target.value)});
 function keep(s){try{if(s)sessionStorage.setItem(LAST,s);else sessionStorage.removeItem(LAST)}catch(x){try{sessionStorage.removeItem(LAST)}catch(y){}}}
 if(t){
-  t.form.addEventListener("submit",function(){keep(t.value)});
-  // After a paste that didn't read, there's nothing worth filling back in. After "busy, try
-  // again" the paste was fine: it goes back in the box to send again.
-  var failed=er&&!er.hidden;
-  if(failed&&!er.hasAttribute("data-retry"))keep("");
-  else{var last=null;try{last=sessionStorage.getItem(LAST)}catch(x){}
-    if(last&&!t.value){t.value=last;var ln=document.getElementById("ia-last");if(ln&&!failed)ln.hidden=false}
-    if(signin&&last&&!failed){t.form.action=location.pathname+"#ia-report";t.form.requestSubmit()}}
+  t.form.addEventListener("submit",function(e){if(!e.defaultPrevented)keep(t.value)});
+  // After a paste that didn't read, it goes back in the box so you can see what went wrong, and
+  // is forgotten (a reload shows an empty box). After "busy, try again" the paste was fine: it
+  // goes back in the box to send again, and stays remembered.
+  var failed=er&&!er.hidden,bad=failed&&!er.hasAttribute("data-retry");
+  var last=null;try{last=sessionStorage.getItem(LAST)}catch(x){}
+  if(last&&!t.value){t.value=last;var ln=document.getElementById(bad?"ia-sent":"ia-last");if(ln&&(bad||!failed))ln.hidden=false}
+  if(bad)keep("");
+  else if(signin&&last&&!failed){t.form.action=location.pathname+"#ia-report";t.form.requestSubmit()}
 }
 var DRAFT="ia-report-draft";
 document.addEventListener("click",function(e){
@@ -1254,24 +1345,53 @@ body.ia-pub { background: var(--page); -webkit-tap-highlight-color: transparent;
 
 /* The paste box. */
 .ia-ask { display: grid; gap: 18px; }
-@container col (min-width: 900px) { .ia-ask { grid-template-columns: 320px minmax(0, 1fr); gap: 28px; } }
-.ia-ask-text p { margin-top: 6px; color: var(--ink-2); font-size: 14px; line-height: 1.55; }
-.ia-ask form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+@container col (min-width: 900px) { .ia-ask { grid-template-columns: 360px minmax(0, 1fr); gap: 36px; } .ia-ask textarea { flex: 1; min-height: 200px; } }
+.ia-ask-text > p { margin-top: 6px; color: var(--ink-2); font-size: 14px; line-height: 1.55; }
+/* Where your save comes from: a switch, then that site's steps (CSS :has picks them). */
+.ia-src, .ia-packs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.ia-src { margin-top: 16px; }
+.ia-src label, .ia-packs-row label { position: relative; cursor: pointer; }
+.ia-src input, .ia-packs-row input { position: absolute; opacity: 0; pointer-events: none; }
+.ia-src label span, .ia-packs-row label span { display: block; padding: 6px 11px; border-radius: 8px; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.ia-src label:hover span, .ia-packs-row label:hover span { color: var(--ink); }
+.ia-src input:checked + span, .ia-packs-row input:checked + span { color: var(--ink); background: color-mix(in oklab, var(--accent) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 55%, transparent); }
+.ia-src input:focus-visible + span, .ia-packs-row input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ia-how { display: none; margin-top: 12px; }
+.ia-ask-text:has(input[value=it]:checked) .ia-how[data-src=it], .ia-ask-text:has(input[value=ie]:checked) .ia-how[data-src=ie] { display: block; }
+.ia-how ol { list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 8px; padding: 0; margin: 0; }
+.ia-how li { counter-increment: step; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; font-size: 14px; line-height: 1.5; color: var(--ink); }
+.ia-how li::before { content: counter(step); font: 13px/21px var(--mono); color: var(--ink-3); }
+.ia-how a { color: var(--accent); text-underline-offset: 3px; }
+.ia-how p { margin-top: 12px; font-size: 13px; line-height: 1.5; color: var(--ink-3); }
+.ia-ask-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.ia-ask form { display: flex; flex-direction: column; gap: 12px; min-width: 0; flex: 1; }
 .ia-ask textarea { width: 100%; min-height: 150px; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 12.5px/1.5 var(--mono); }
+.ia-ask textarea::placeholder { color: var(--ink-2); }
 .ia-ask textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* A file held over the box: it takes it. */
+.ia-ask textarea.drop { box-shadow: inset 0 0 0 2px var(--accent); background: color-mix(in oklab, var(--accent) 8%, var(--well)); }
 .ia-ask-actions { order: 2; display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
-.ia-packs { order: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
-.ia-packs > span { margin-right: 4px; color: var(--ink-3); }
-.ia-packs label { position: relative; cursor: pointer; }
-.ia-packs input { position: absolute; opacity: 0; pointer-events: none; }
-.ia-packs label span { display: block; padding: 6px 11px; border-radius: 8px; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--edge-1); }
-.ia-packs label:hover span { color: var(--ink); }
-.ia-packs input:checked + span { color: var(--ink); background: color-mix(in oklab, var(--accent) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 55%, transparent); }
-.ia-packs input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ia-packs { order: 1; display: flex; flex-direction: column; gap: 6px; }
+.ia-packs-row > span { margin-right: 4px; color: var(--ink-3); }
+.ia-packs p { display: none; font-size: 13px; line-height: 1.5; color: var(--ink-3); }
+.ia-packs:has(input[value=buy]:checked) p[data-packs=buy], .ia-packs:has(input[value=no-more]:checked) p[data-packs=no-more], .ia-packs:has(input[value=free]:checked) p[data-packs=free] { display: block; }
 .ia-try { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding-top: 14px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 13px; }
 .ia-try a { color: var(--ink-2); text-underline-offset: 3px; }
 .ia-try a:hover { color: var(--ink); }
-@media (pointer: coarse) { .ia-try a { padding: 8px 0; } .ia-switch label { min-height: 40px; } }
+/* What you get, and what's new: quiet lines under the box, no panels. */
+.ia-get { display: grid; gap: 14px; padding: 0 22px; }
+@container col (min-width: 720px) { .ia-get { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 36px; } }
+.ia-get div { display: flex; flex-direction: column; gap: 3px; }
+.ia-get b { font-size: 14px; font-weight: 500; color: var(--ink); }
+.ia-get span, .ia-news { font-size: 13px; line-height: 1.5; color: var(--ink-3); }
+.ia-news { padding: 0 22px; }
+.ia-news summary { cursor: pointer; list-style: none; }
+.ia-news summary::-webkit-details-marker { display: none; }
+.ia-news summary b { color: var(--ink-2); font-weight: 500; margin-right: 6px; }
+.ia-news summary::after { content: " Show all"; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
+.ia-news[open] summary::after { content: " Hide"; }
+.ia-news ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+@media (pointer: coarse) { .ia-try a { padding: 8px 0; } .ia-switch label { min-height: 40px; } .ia-src label span, .ia-packs-row label span { padding: 10px 12px; } .ia-news summary { padding: 8px 0; } }
 .ia-err { color: var(--held); font-size: 13.5px; }
 
 /* The answer: the big share and one column per world. */
@@ -1541,6 +1661,8 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-big { font-size: 48px; }
   .ia-cols { height: 112px; gap: 6px; }
   .ia-ask-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .ia-get, .ia-news { padding: 0 4px; }
+  .ia-ask textarea { min-height: 110px; }
   /* World tabs: one row that scrolls sideways instead of three rows of tabs. */
   .ia-tabs { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px 12px; padding: 0 16px 2px; scrollbar-width: none; scroll-padding: 0 16px; overscroll-behavior-x: contain; }
   .ia-tabs::-webkit-scrollbar { display: none; }
