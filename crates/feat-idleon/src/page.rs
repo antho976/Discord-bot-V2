@@ -471,7 +471,18 @@ fn pace_line(p: &Pace, reached: u8) -> Option<String> {
 /// and the side's name, the card's own mechanic first, then the card's title ("" keeps the
 /// first mechanic's name). The card sits in its first mechanic's world tab. A side whose
 /// mechanic the save doesn't have is left out.
-const FOLD: &[(&[(&str, &str)], &str)] = &[(&[("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win")], "")];
+const FOLD: &[(&[(&str, &str)], &str)] = &[
+    (&[("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win")], ""),
+    // World 5 and 6 (2026-11-09): one card per skill, as the game draws it.
+    (&[("artifacts", "Artifacts"), ("sailing-islands", "Islands"), ("boats", "Boats")], "Sailing"),
+    (&[("blessings", "Blessings"), ("gods", "Gods")], "Divinity"),
+    (&[("superbits", "Superbits"), ("snail", "Snail")], "Gaming"),
+    (&[("cavern-villagers", "Villagers"), ("cavern-schematics", "Schematics"), ("cavern-majiks", "Majiks"), ("cavern-measurements", "Measurements"), ("cavern-studies", "Studies")], "The Hole"),
+    (&[("cavern-shallow", "Shallow"), ("cavern-glowshroom", "Glowshroom"), ("cavern-overgrowth", "Overgrowth")], "Caverns"),
+    (&[("crops", "Crops"), ("farm-market", "Market"), ("land-rank", "Land Rank"), ("exotic-market", "Exotic")], "Farming"),
+    (&[("ninja-upgrades", "Upgrades"), ("jade-emporium", "Emporium"), ("pristine-charms", "Charms"), ("gemstones", "Gemstones")], "Sneaking"),
+    (&[("summoning", "Upgrades"), ("summoning-battles", "Battles"), ("summoning-stones", "Stones")], "Summoning"),
+];
 
 /// Most sides a switch has (the page's CSS has a rule per side).
 const SIDES: usize = 6;
