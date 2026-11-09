@@ -396,6 +396,24 @@ fn clam_upgrades(save: &Save) -> Mechanic {
 /// The total Divinity LV each Coral Kid upgrade opens at, as N.js sets `_GenINFO[118]`.
 const CK_DIVINITY: [u32; 12] = [0, 600, 900, 1200, 1500, 1750, 500, 3000, 5000, 8000, 10000, 12000];
 
+/// Short names for the Coral Kid's upgrades, which the game shows only as sentences
+/// (`Spelunky[25]`): "The Max Level of the 'Blessing' upgrade for each Divinity is +N levels
+/// higher" is "Blessing Max LV".
+const CK_NAMES: [&str; 12] = [
+    "Volcano Divinity Link",
+    "Blessing Max LV",
+    "God Rank Class EXP",
+    "Minor Link Boost",
+    "Divinity PTS per Reef Upgrade",
+    "Daily Coral",
+    "Singularity Transmute",
+    "Transmute Base Value",
+    "Divinity EXP",
+    "Time Elapsed from AFK Gains",
+    "Lumi Gain",
+    "God Rank DMG",
+];
+
 fn coral_kid(save: &Save) -> Mechanic {
     let div = held(save, "Divinity", &[24]);
     let spirals = chest(save, "CKsing");
@@ -414,7 +432,8 @@ fn coral_kid(save: &Save) -> Mechanic {
         .into_iter()
         .enumerate()
         .map(|(i, r)| {
-            let mut it = Item::new(first_sentence(r.split(",_").next().unwrap_or(r)), None, save.option(if i < 6 { 427 + i } else { 616 + i - 6 }), 0.0);
+            let name = CK_NAMES.get(i).map_or_else(|| first_sentence(r.split(",_").next().unwrap_or(r)), |n| (*n).to_string());
+            let mut it = Item::new(name, None, save.option(if i < 6 { 427 + i } else { 616 + i - 6 }), 0.0);
             if !met {
                 it.how = Some("Unlock the Coral Kid first: each try costs 20M Divinity PTS and works 1 time in 10.".into());
                 it.state = State::Locked;
@@ -1254,6 +1273,11 @@ fn jelly_obstructions(save: &Save) -> Mechanic {
 /// Coral Reef: `Spelunk[13][i]`, unlocked when `Spelunk[12][i]` is 1; col 1 is the max. Row 3's
 /// cap is raised from 12 to 15 by Menagerie unlock 9 (N.js rewrites `CoralReef[3][1]`); the last
 /// row is a filler. N.js `ReefCost`: col 2 × col 3^level, paid with Reef Coral (`Spelunk[4][5]`).
+/// Short names for the reef's upgrades: the game shows only a sentence for each ("Adds a new mini
+/// 'Ninja Knowledge' upgrade, level it up with your Jade"), too long for a tier's ask. Row 3 is
+/// the coral Menagerie unlock 9 calls "Pillar".
+const REEF_NAMES: [&str; 5] = ["Grind Time Bubble LVs", "Menagerie Shells", "Tome Epilogue Bonus", "Ninja Knowledge (Pillar)", "Gallery Bonus and Slots"];
+
 fn coral_reef(save: &Save) -> Mechanic {
     let levels = save.numbers("Spelunk", &[13]);
     let open = save.numbers("Spelunk", &[12]);
@@ -1269,7 +1293,8 @@ fn coral_reef(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let max = if i == 3 { 15.0 } else { cell(r, 1) };
             let level = at(&levels, i);
-            let mut it = Item::new(clean(text(r, 0)), pic(format!("Reef{}1", letters[i])), level, max);
+            let name = REEF_NAMES.get(i).map_or_else(|| clean(text(r, 0)), |n| (*n).to_string());
+            let mut it = Item::new(name, pic(format!("Reef{}1", letters[i])), level, max);
             if level <= 0.0 && at(&open, i) < 1.0 {
                 it.how = Some("Not unlocked in the Coral Reef yet.".into());
                 it.state = State::Locked;

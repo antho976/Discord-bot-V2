@@ -2369,12 +2369,12 @@ minehead-opponents                      # Minehead Opponents
   Boghead           -   -   -   -   -   -  # no save has it yet
 
 coral-reef                              # Coral Reef
-  stages                                                                                     7e  7m  7l  end1  end2  max
-  Adds a new bonus to your Tome's Epilogue in World 4, which goes up with your Tome Score     5  10  10  10  10  10
-  Adds a new mini 'Ninja Knowledge' upgrade, level it up with your Jade                       6  12  15  15  15  15
-  Every day you play, your Grind Time bubble gets LVs                                        10  15  15  15  15  15
-  The Gallery gives higher bonuses, and has more slots for Trophies                           -  10  10  10  10  10
-  Instantly gives Shells for the Luminous Menagerie                                           -   -   4   5   7   7
+  stages                      7e  7m  7l  end1  end2  max
+  Tome Epilogue Bonus          5  10  10  10  10  10
+  Ninja Knowledge (Pillar)     6  12  15  15  15  15
+  Grind Time Bubble LVs       10  15  15  15  15  15
+  Gallery Bonus and Slots      -  10  10  10  10  10
+  Menagerie Shells             -   -   4   5   7   7
 
 zenith                                  # Zenith Market
   stages            7e  7m   7l  end1  end2  max
@@ -2591,19 +2591,19 @@ clam-upgrades                           # Clamworks Upgrades, no max
   True Scurge         -    -    -    -    -    -  # no save has it yet
 
 coral-kid                               # Coral Kid, no max
-  stages                                                                        7e   7m   7l  end1  end2  max
-  The Max Level of the 'Blessing' upgrade for each Divinity is levels higher    14   55   95  110  110  120
-  Lets you click the volcano                                                    55  140  240  280  290  300
-  God Rank now also gives Class EXP to all players                              20  110  200  250  270  270
-  Divinity Skill Lv boosts Minor Link Bonuses a bit more                        16   85  190  230  260  260
-  Boosts Divinity PTS gain by per Coral Reef upgrade                             4  100  170  210  230  250
-  You now generate more Daily Coral for the Coral Reef back in W7 town           -   50  110  190  190  210
-  The base value of the Transmute                                                -    -    1   35   40   45
-  You can Transmute Divinity PTS into Singularity Spirals                        -    -   11   55   60   65
-  Your Divinity EXP gain for all characters is boosted by a staggering           -    -    -   18   18   30
-  You now get Time Elapsed when claiming any AFK Gains                           -    -    -    -    2    3
-  Boosts your Lumi hourly gain over at the Luminous Menagerie by a massive       -    -    -    -    -    -  # no save has it yet
-  Each God Rank above 25 now also gives DMG to all players                       -    -    -    -    -    -  # no save has it yet
+  stages                           7e   7m   7l  end1  end2  max
+  Blessing Max LV                  14   55   95  110  110  120
+  Volcano Divinity Link            55  140  240  280  290  300
+  God Rank Class EXP               20  110  200  250  270  270
+  Minor Link Boost                 16   85  190  230  260  260
+  Divinity PTS per Reef Upgrade     4  100  170  210  230  250
+  Daily Coral                       -   50  110  190  190  210
+  Transmute Base Value              -    -    1   35   40   45
+  Singularity Transmute             -    -   11   55   60   65
+  Divinity EXP                      -    -    -   18   18   30
+  Time Elapsed from AFK Gains       -    -    -    -    2    3
+  Lumi Gain                         -    -    -    -    -    -  # no save has it yet
+  God Rank DMG                      -    -    -    -    -    -  # no save has it yet
 
 dancing-coral                           # Dancing Coral
   stages                                        7e  7m  7l  end1  end2  max
