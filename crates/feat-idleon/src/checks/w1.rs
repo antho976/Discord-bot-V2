@@ -535,8 +535,10 @@ fn statue_flair(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    // World 7: flair is unlocked from the W7 armory, so it is weighed against W7 progress.
-    let mut m = mech("statue-flair", 7, "Statue Flair", pic("Statue1".into()), Count::Levels, "levels", items);
+    // World 6: flair is a Royal Armory upgrade, and the armory comes with the Royal Guardian,
+    // the masterclass a Lv 600 Divine Knight takes from Masterius in World 6. Six of the seven
+    // World 6 saves we have use it.
+    let mut m = mech("statue-flair", 6, "Statue Flair", pic("Statue1".into()), Count::Levels, "levels", items);
     m.note = Some("Opens with the Statue Flair upgrade in the Armory. Each statue's flair goes to level 3, and to level 4 with a Menagerie unlock.".into());
     let unlock = super::w7::menagerie_unlock_name(17);
     let mut name = unlock.clone();
