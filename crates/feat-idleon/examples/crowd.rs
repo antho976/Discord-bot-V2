@@ -45,9 +45,11 @@ const COUNTS: [(&str, &[f64]); 4] = [
     ("artifacts", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]),
     ("pristine-charms", &[1.0]),
 ];
-/// In a `COUNTS` mechanic, the items still asked for by name, to get as soon as you can (owner,
+/// Items to get as soon as you can, by name (owner,
 /// 2026-11-08: Gold Ball Gain, Refinery Speed; Drop Rate is the next most maxed in the saves).
-/// Any other named row typed into `crowd.txt` by hand stays too.
+/// In a `COUNTS` table they are the only rows asked by name (any other row typed into
+/// `crowd.txt` by hand stays too); in any other table they are asked from where the mechanic
+/// opens and lead their tiers.
 /// Artifacts (2026-11-09): Fauxory Tusk raises the chance to find artifacts and Genie Lamp what
 /// each chest is worth, so both speed up the rest; both come from the first two islands.
 const FIRST: [(&str, &[&str]); 2] = [
@@ -439,6 +441,19 @@ fn main() {
                     }
                 }
             }
+            // In any other table, a `FIRST` row is asked (Lv 1 at least) from where the mechanic
+            // opens, and goes first in its tiers (see the row order below).
+            if counted.is_none() {
+                for r in (0..rows.len()).filter(|&r| first.iter().any(|f| f.eq_ignore_ascii_case(&rows[r]))) {
+                    let mut run = 0.0f64;
+                    for (k, cell) in table[r].iter_mut().enumerate() {
+                        if cols[k] >= open {
+                            run = run.max(cell.unwrap_or(0.0)).max(1.0);
+                            *cell = Some(run);
+                        }
+                    }
+                }
+            }
             (cols, table, prio, anyone, from_base, keep, levels, count_table)
         };
         let mut gen_block = Block::new(cols.clone());
@@ -446,9 +461,11 @@ fn main() {
         block.off = had.is_some_and(|b| b.off);
         // Rows most important first: by the first stage that asks for them, then by how much
         // they matter there, then the game's order. Each stage's parts follow this order.
+        // (`FIRST` rows lead their stage.)
         let mut by_prio: Vec<usize> = (0..rows.len()).collect();
         let first = |r: usize| table[r].iter().position(Option::is_some).unwrap_or(usize::MAX);
-        by_prio.sort_by(|&a, &b| first(a).cmp(&first(b)).then_with(|| {
+        let named_first = |r: usize| !FIRST.iter().any(|f| f.0 == m.key && f.1.iter().any(|n| n.eq_ignore_ascii_case(&rows[r])));
+        by_prio.sort_by(|&a, &b| first(a).cmp(&first(b)).then(named_first(a).cmp(&named_first(b))).then_with(|| {
             let k = first(a);
             if k == usize::MAX { std::cmp::Ordering::Equal } else { prio[b][k].total_cmp(&prio[a][k]) }
         }).then(a.cmp(&b)));
