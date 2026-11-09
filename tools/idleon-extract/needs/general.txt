@@ -26,3 +26,5 @@ table Tome
 table CompanionDB
 # Guild bonuses: name, bonus text, max level (col 7).
 table GuildBonuses
+# Obols: each page's slots, col 2 shape, col 3 what opens it.
+table ObolXYcoords
