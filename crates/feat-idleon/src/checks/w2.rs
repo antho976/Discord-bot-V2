@@ -417,11 +417,10 @@ fn sigils(save: &Save) -> Mechanic {
                     // in the Sigils tab's drawing code), so progress past the mark waits for that.
                     None if progress >= need => {
                         let goes = if t == 0 { "it unlocks".to_string() } else { format!("it goes {next}") };
-                        let what = if t == 0 { "to unlock".to_string() } else { format!("{next} needs") };
-                        it.how = Some(format!("Has the {} lab progress {what} ({} so far): open the Sigils page in Alchemy and {goes}.", big(need), big(progress)));
+                        it.how = Some(format!("Charged to {} of {}: open the Sigils page in Alchemy and {goes}.", big(progress), big(need)));
                         it.state = State::Ready;
                     }
-                    None => it.how = Some(format!("{next} at {} lab progress, {} so far.", big(need), big(progress))),
+                    None => it.how = Some(format!("{next} at {} charge, {} so far.", big(need), big(progress))),
                 }
             }
             it
@@ -441,7 +440,7 @@ fn sigils(save: &Save) -> Mechanic {
         "Needs Spelunking lore boss 7 beaten".into(),
         "Needs the Eclectic Sigils research node and lore boss 7".into(),
     ];
-    m.note = Some("Sigils are charged by characters assigned in the World 4 Lab and go Blue, Yellow, Red, Purple, then Green. Red needs Ionized Sigils in the Jade Emporium, Purple Spelunking lore boss 7, Green also the Eclectic Sigils research.".into());
+    m.note = Some("Characters working in Alchemy charge the sigils once Sigils of Olden Alchemy is connected in the World 4 Lab. Each goes Blue, Yellow, Red, Purple, then Green. Red needs Ionized Sigils in the Jade Emporium, Purple Spelunking lore boss 7, Green also the Eclectic Sigils research.".into());
     m
 }
 
@@ -594,9 +593,10 @@ fn post_office(save: &Save) -> Mechanic {
             } else if let Some((who, level, free)) = lowest.filter(|l| l.1 < max) {
                 let others = match below.len() {
                     0 | 1 => String::new(),
-                    n => format!(", {} more below Lv {}", n - 1, big(max)),
+                    2 => format!(" 1 other is below Lv {}.", big(max)),
+                    n => format!(" {} others are below Lv {}.", n - 1, big(max)),
                 };
-                it.how = Some(format!("Lowest is {who} at Lv {}, {} points free{others}.", big(level), big(free)));
+                it.how = Some(format!("{who} is lowest at Lv {}, with {} points free.{others}", big(level), big(free)));
                 if below.iter().any(|c| c.2 >= 1.0) {
                     it.state = State::Ready;
                 }
