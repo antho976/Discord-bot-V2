@@ -89,37 +89,35 @@ star-signs                              # Star Signs, World 1 to 5 columns from 
   Mount Eaterest        -   -   1   -   1   -   1   1   1   1   1   1
   Bob Build Guy         -   -   1   -   1   -   1   1   1   1   1   1
   Hydron Cosmos         -   -   -   -   1   -   1   1   1   1   1   1
-  The Big Brain         -   -   -   -   1   -   -   1   1   1   1   1
+  The Big Brain         -   -   -   -   1   -   1   1   1   1   1   1
   The OG Skiller        -   -   -   -   1   -   1   1   1   1   1   1
   Grim Reaper           -   -   -   -   1   -   1   1   1   1   1   1
-  The Fallen Titan      -   -   -   -   1   -   -   1   1   1   1   1
+  The Fallen Titan      -   -   -   -   1   -   1   1   1   1   1   1
   The Forsaken          -   -   -   -   1   -   1   1   1   1   1   1
-  Mr No Sleep           -   -   -   -   1   -   -   1   1   1   1   1
-  Sir Savvy             -   -   -   -   1   -   -   1   1   1   1   1
+  Mr No Sleep           -   -   -   -   1   -   1   1   1   1   1   1
+  Sir Savvy             -   -   -   -   1   -   1   1   1   1   1   1
   All Rounder           -   -   -   -   1   -   1   1   1   1   1   1
-  Fatty Doodoo          -   -   -   -   -   -   1   1   1   1   1   1
-  All Rounderi          -   -   -   -   -   -   1   1   1   1   1   1
-  Centaurii             -   -   -   -   -   -   1   1   1   1   1   1
-  Murmollio             -   -   -   -   -   -   1   1   1   1   1   1
-  Strandissi            -   -   -   -   -   -   1   1   1   1   1   1
-  Wispommo              -   -   -   -   -   -   1   1   1   1   1   1
-  Pokaminni             -   -   -   -   -   -   1   1   1   1   1   1
-  Gor Bowzor            -   -   -   -   -   -   1   1   1   1   1   1
-  Sawsaw Salala         -   -   -   -   -   -   1   1   1   1   1   1
-  Cullingo              -   -   -   -   -   -   1   1   1   1   1   1
-  Grim Reaper Major     -   -   -   -   -   -   1   1   1   1   1   1
-  Sir Savvy Major       -   -   -   -   -   -   1   1   1   1   1   1
-  Lukiris               -   -   -   -   -   -   1   1   1   1   1   1
-  The Bulwark           -   -   -   -   -   -   1   1   1   1   1   1
-  Big Brain Major       -   -   -   -   -   -   1   1   1   1   1   1
-  The Fiesty            -   -   -   -   -   -   1   1   1   1   1   1
-  Comatose Major        -   -   -   -   -   -   1   1   1   1   1   1
-  S. Snoozer Major      -   -   -   -   -   -   1   1   1   1   1   1
-  Breedabilli           -   -   -   -   -   -   1   1   1   1   1   1
-  Gordonius Major       -   -   -   -   -   -   1   1   1   1   1   1
-  Scienscion            -   -   -   -   -   -   1   1   1   1   1   1
+  Fatty Doodoo          -   -   -   -   -   -   -   1   1   1   1   1
+  All Rounderi          -   -   -   -   -   -   -   1   1   1   1   1
+  Centaurii             -   -   -   -   -   -   -   1   1   1   1   1
+  Murmollio             -   -   -   -   -   -   -   1   1   1   1   1
+  Strandissi            -   -   -   -   -   -   -   1   1   1   1   1
+  Wispommo              -   -   -   -   -   -   -   1   1   1   1   1
+  Pokaminni             -   -   -   -   -   -   -   1   1   1   1   1
+  Gor Bowzor            -   -   -   -   -   -   -   1   1   1   1   1
+  Sawsaw Salala         -   -   -   -   -   -   -   1   1   1   1   1
+  Cullingo              -   -   -   -   -   -   -   1   1   1   1   1
+  Grim Reaper Major     -   -   -   -   -   -   -   1   1   1   1   1
+  Sir Savvy Major       -   -   -   -   -   -   -   1   1   1   1   1
+  The Bulwark           -   -   -   -   -   -   -   1   1   1   1   1
+  Big Brain Major       -   -   -   -   -   -   -   1   1   1   1   1
+  The Fiesty            -   -   -   -   -   -   -   1   1   1   1   1
+  Comatose Major        -   -   -   -   -   -   -   1   1   1   1   1
+  S. Snoozer Major      -   -   -   -   -   -   -   1   1   1   1   1
   Agitagi               -   -   -   -   -   -   -   1   1   1   1   1
+  Lukiris               -   -   -   -   -   -   -   1   1   1   1   1
   Trapezoidburg         -   -   -   -   -   -   -   1   1   1   1   1
+  Breedabilli           -   -   -   -   -   -   -   1   1   1   1   1
   Preys Bea             -   -   -   -   -   -   -   1   1   1   1   1
   Muscle Magnus         -   -   -   -   -   -   -   1   1   1   1   1
   Cropiovo Minor        -   -   -   -   -   -   -   1   1   1   1   1
@@ -132,8 +130,10 @@ star-signs                              # Star Signs, World 1 to 5 columns from 
   Jadaciussi            -   -   -   -   -   -   -   1   1   1   1   1
   Druipi Major          -   -   -   -   -   -   -   1   1   1   1   1
   Gum Drop Major        -   -   -   -   -   -   -   1   1   1   1   1
+  Gordonius Major       -   -   -   -   -   -   -   1   1   1   1   1
   Damarian Major        -   -   -   -   -   -   -   1   1   1   1   1
   The Overachiever      -   -   -   -   -   -   -   1   1   1   1   1
+  Scienscion            -   -   -   -   -   -   -   1   1   1   1   1
   Artifosho             -   -   -   -   -   -   -   1   1   1   1   1
   Divividov             -   -   -   -   -   -   -   1   1   1   1   1
   C. Shanti Minor       -   -   -   -   -   -   -   1   1   1   1   1

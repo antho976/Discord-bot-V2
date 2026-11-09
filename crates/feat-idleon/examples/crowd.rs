@@ -288,6 +288,11 @@ fn main() {
                         for r in 0..rows.len() {
                             table[r][k] = if keep[r] { col[r] } else { None };
                             prio[r][k] = -rank[r];
+                            // What a base column asks stays asked: a saves column after it never
+                            // asks less (cobalt-gannet: Post Office's 6l asks 7 boxes, 7e only 1).
+                            if keep[r] {
+                                floor[r] = floor[r].max(col[r].unwrap_or(0.0));
+                            }
                         }
                         // The base's counts: its own `@any` rows, and `@first N` as N unlocked.
                         let b = &base[m.key];
