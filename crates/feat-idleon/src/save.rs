@@ -57,8 +57,11 @@ impl Save {
             return Err(SaveError::NotJson);
         };
         let mut names = string_list(root.get("charNames")).or_else(|| string_list(root.get("playerNames"))).unwrap_or_default();
-        let companions = companions(root.remove("companion"));
-        let server = match root.remove("serverVars") {
+        // IdleonToolbox names these `companion` and `serverVars`; Idleon Efficiency's copy
+        // `companions` and `servervars` (plucky-otter, 2026-11-09).
+        let companion = root.remove("companion").or_else(|| root.remove("companions"));
+        let companions = companions(companion);
+        let server = match root.remove("serverVars").or_else(|| root.remove("servervars")) {
             Some(Value::Object(m)) => m,
             _ => Map::new(),
         };
