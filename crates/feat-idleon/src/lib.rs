@@ -140,6 +140,27 @@ async fn access(ctx: &Ctx, guild: u64, viewer: &MaybeUser, member: &MaybeMember)
     page::Access { closed: s.closed, allowed: !s.closed || staff || tester, staff, member: member.0.as_ref().map(|m| m.name.clone()), test: staff || ctx.cfg.preview }
 }
 
+/// Whose a check is, for how often they may start one (`limit`): staff and signed-in testers
+/// are counted by who they are, with room for a round of test saves; everyone else by address.
+/// While the page is open `access` doesn't ask about the testers role, so this does (cached).
+async fn checker(ctx: &Ctx, guild: u64, a: &page::Access, viewer: &MaybeUser, member: &MaybeMember, headers: &HeaderMap) -> (String, limit::Who) {
+    let me = member.0.as_ref().map(|m| m.id);
+    if a.staff
+        && let Some(id) = me.or(viewer.0.as_ref().map(|u| u.id))
+    {
+        return (limit::trusted_key(id), limit::Who::Trusted);
+    }
+    if let Some(id) = me {
+        let role = ctx.settings::<Settings>(guild, KEY).ok().and_then(|s| s.testers_role);
+        if let Some(role) = role
+            && in_server(ctx, guild, id).await.is_some_and(|m| m.roles.contains(&role))
+        {
+            return (limit::trusted_key(id), limit::Who::Trusted);
+        }
+    }
+    (address(headers), limit::Who::Stranger)
+}
+
 /// Someone in the server: their roles, and until when they're timed out.
 #[derive(Clone)]
 struct InServer {
@@ -290,7 +311,8 @@ async fn check(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, P
     }
     // Counted before the paste is read, so pastes still arriving count too (see `limit`). The
     // pass goes with the work below: a visitor who leaves doesn't end what they started.
-    let pass = match limit::enter(address(&headers)) {
+    let (key, who) = checker(&ctx, guild, &a, &viewer, &member, &headers).await;
+    let pass = match limit::enter(key, who) {
         Ok(p) => p,
         Err(why) => return ask_again(&ctx, guild, &a, why.message(), true),
     };
