@@ -80,6 +80,76 @@ still come from the saves.
 
 ## W3–4 (keen-badger)
 
+Searched 2026-11-09. Reddit threads didn't come up in search, so these are mostly guides and the game's own data. The W5 and W6 saves (2 and 7 of them) set the early numbers in `crowd-research.txt`.
+
+Sources:
+- [Step-by-step progression guide, W1–W7](https://gist.github.com/shnaps/161a370ed795e6141e0553eb30ddc8fa) (gist, mid-2026)
+- [Cooking guide](https://idleon.guide/cooking/) (idleon.guide, older)
+- [Gem shop priorities](https://idleon.guide/gem-shop-priorities/) (idleon.guide, 2025)
+- [Perfect money farming build](https://idleon.guide/money-farming-build/) (idleon.guide)
+- [Construction and Refinery guide](https://www.digitaltq.com/wiki/idleon/construction-refinery-guide) (DigitalTQ)
+- [Pet breeding](https://www.digitaltq.com/wiki/idleon/pet-breeding) (DigitalTQ)
+- [Laboratory](https://www.digitaltq.com/wiki/idleon/laboratory) (DigitalTQ)
+- [Prayers](https://www.digitaltq.com/wiki/idleon/prayers) (DigitalTQ)
+- Games Finder's Equinox, cooking and breeding guides. They read as SEO pages, so they count for little.
+
+### Construction
+- **First:** 3D Printer to its cap (11), then Salt Lick, Talent Book Library and Death Note, then Chest Space.
+- **Why:** sample size is the base of every skill's output. Construction EXP cogs raise build rate.
+- The towers and shrines follow. The W6 saves have the Woodular, Boulder Roller and Frozone ahead of the rest.
+
+### Shrines (new card)
+- **First:** Woodular, Isaccian and Crystal, all leveled together. Players move the shrines as a group, so their levels stay close.
+- **Why:** an Equinox unlock dream asks for 140 total shrine levels.
+
+### Cog board
+- **Not a card.** Every save, even at World 5, has 99 or more of its 120 slots flagged, so a card wouldn't say anything.
+
+### Trap boxes and worship skulls (new cards)
+- **How they come:** each one is crafted from the one before, plus critters or souls (the game's recipes). The first is sold in the World 3 shop.
+- **Order:** the W5 saves have the first four trap sets, and the W6 ones go up to Royal. Silkskin is often skipped.
+
+### Atom Collider
+- **First:** Hydrogen and Helium, then Boron, then Neon.
+- **Why:**
+  - Boron lets particles pay for 100M+ bubbles.
+  - Neon cuts every atom's cost.
+- The W5 saves have no atoms, so the tiers start in World 6.
+
+### Equinox
+- **First:** Equinox Symbols (+1 to every talent), then Faux Jewels to its cap (drop rate). Both open late, one upgrade per unlock dream, so the crowd only asks for them in World 7.
+- **Before that:** Dreams, Resources, one point of Shades of K (Killroy respawn) and Liquidvestment. That's what the W6 saves have.
+- **Sources disagree** on Slow Roast Wiz and Liquidvestment (rush them, or not on mobile).
+
+### Meals and kitchens
+- **First:** cooking speed. That means Diamond Chef to about 20, then Cabbage (speed per ten kitchen levels) and Corndog.
+- **Then:** every meal to 11, then to 30. Diamond Chef counts meals at a level, so the card tiers on counts.
+- Ribbons go on the best meals; Yumi Peachring is the top one.
+
+### Lab
+- **Jewels:** guides call them the best gem buy (Mainframe Jewels).
+- **Chips:** two come into the shop rotation each week, which is luck, so the card tiers on how many you own.
+- **By name:**
+  - Omega Nanochip and Omega Motherboard (each doubles a card's bonus)
+  - Silkrode Nanochip
+  - Chocolatey Chip, for money farming
+
+### Breeding
+- **Pets:** each world's eggs give its pets in order, so the card asks how many of a world's pets you have. The W6 saves lag on World 3 and 4 eggs.
+- **Upgrades:**
+  - They open in the game's order as you find each one's meal.
+  - Fence Extension (+10 Fenceyard slots) and Paint Bucket (opens shinies) matter most.
+  - Grand Martial of Shinytown is the big late one.
+- **Shiny:** luck decides which pets go shiny, so the card tiers on counts. By name:
+  - Wode Board, whose shiny bonus is faster shiny level-up for every pet (the game's data)
+  - Tyson, whose shiny bonus raises every meal
+- **Not verified:** the gist also names Quenchie, Crescent Spud and Green Mushroom for shiny speed, but the shiny bonuses past index 26 aren't in our extracted data.
+
+### Prayers
+- **First:** The Royal Sampler early (printer samples), then Skilled Dimwit for skilling, and Zerg Rushogen once it opens.
+- **Watch:** Unending Energy is risky if you forget to take it off.
+
+
 ## W5–6 and caverns (quick-gecko)
 
 Few guides rank World 5 and 6 upgrades; the ones that do are below. Where none does, the order
