@@ -325,3 +325,37 @@ breeding-upgrades                       # Breeding upgrades (W3–4 lane): they 
   Pastpresent Brood          -   -   -   -   -   1   1   1   2
   Paint Bucket               -   -   -   -   -   -   -   1   1
   Overwhelmed Golden Egg     -   -   -   -   -   -   -   1   2
+
+atoms                                   # Atom Collider (W3–4 lane): the W5 saves have no atoms, the W6 ones Hydrogen 5 to 20; guides say Hydrogen and Helium, then Boron, then Neon
+  stages        6e  6m  6l
+  Hydrogen       1   5  10
+  Helium         1   2   3
+  Lithium        1   2   5
+  Boron          -   1   3
+  Beryllium      -   1   3
+  Carbon         -   1   2
+  Neon           -   -   1
+
+construction                            # Construction (W3–4 lane): 3D Printer first, then Salt Lick, Library and Death Note; numbers from the W5 and W6 saves
+  stages                 3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l
+  3D Printer              2   3   4   5   6   7   8   9  10  11  11  11
+  Salt Lick               -   1   1   1   1   2   2   3   5   8  11  11
+  Talent Book Library     -   -   1   1   1   1   2   5  10  25  45  60
+  Death Note              -   -   1   1   1   1   2   5  10  20  35  45
+  Chest Space             -   1   1   2   2   3   3   5   8  15  20  25
+  Woodular Shrine         -   -   1   1   2   2   3   5  10  20  35  45
+  Boulder Roller          -   -   -   1   2   3   4   6  10  18  25  33
+  Pulse Mage              -   -   -   1   1   1   1   2   4   6   9  12
+  Trapper Drone           -   -   -   -   1   1   1   2   4   7  10  12
+  Frozone Malone          -   -   -   -   1   1   1   3   6  12  20  30
+  Cost Cruncher           -   -   -   -   -   1   1   2   5  15  25  30
+  Automation Arm          -   -   -   -   -   1   1   1   2   3   5   5
+  Party Starter           -   -   -   -   -   1   1   2   5  10  18  25
+  Isaccian Shrine         -   -   -   -   -   -   1   2   4   8  12  18
+  Stormcaller             -   -   -   -   -   -   -   1   3   8  14  20
+  Crystal Shrine          -   -   -   -   -   -   -   -   1   3   8  14
+  Fireball Lobber         -   -   -   -   -   -   -   -   1   4   7  10
+  Kraken Cosplayer        -   -   -   -   -   -   -   -   -   5  10  16
+  Poisonic Elder          -   -   -   -   -   -   -   -   -   5  12  20
+  Atom Collider           -   -   -   -   -   -   -   -   -   1   1   3
+  Pantheon Shrine         -   -   -   -   -   -   -   -   -   -   3   5
