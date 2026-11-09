@@ -344,3 +344,53 @@ save reader drops that part today, so a Companions card needs a change there fir
 A [r/idleon thread](https://cal1.lr.ggtyler.dev/r/idleon/comments/1fkvk50/looking_for_early_w6_account_help/lnzxg5u/?context=3)
 (Sep 2024, early World 6) says to clean up first: slab, bubbles, constellations, stamps, obols.
 Then push the Rift and farm vials.
+
+## Round 2: data checks (amber-osprey, 2026-11-09)
+
+### Unlock worlds
+Every `mech("key", WORLD, …)` was checked against guides, the game data and the 119 saves. A
+save-based check flagged anything a save below the mechanic's (or item's) world already had.
+Below World 5 the folder has no saves, so the early worlds rest on guides only.
+- **Statue Flair: World 7 to World 6.** Flair is a Royal Armory upgrade. The armory comes
+  with the Royal Guardian, the masterclass a Lv 600 Divine Knight gets from Masterius in World 6
+  ([DigitalTQ Royal Guardian](https://www.digitaltq.com/wiki/idleon/royal-guardian-guide),
+  [gameslikefinder](https://gameslikefinder.com/article/idleon-royal-guardian-build-guide/)).
+  Six of the seven World 6 saves have flair unlocked and levelled (`RoyalG[2][78]`,
+  `RoyalG[22]`), early World 6 ones included. So its tiers start at Mid World 6 on real data,
+  and the card moves under World 6.
+- **Observations stay World 7.** Every World 6 save has three found (`Research[2]` is
+  1, 0, 1, 1…) before Research exists: the game hands them out. The old 6m column only read
+  those.
+- **Sigils stay World 4.** Alchemy's sigils open from the World 4 Lab
+  ([DigitalTQ alchemy](https://www.digitaltq.com/wiki/idleon/alchemy)).
+- **Exotic Market stays World 7.** It opens from a Spelunking boss
+  ([gameslikefinder farming](https://gameslikefinder.com/article/idleon-farming-guide/)).
+- **Armor sets stay World 3.** The Armor-Set Smithy is in Frostbite Tundra
+  ([DigitalTQ sets](https://www.digitaltq.com/wiki/idleon/equipment-sets)).
+- **The Tome stays account-wide (world 0).** It is a World 4 place
+  ([DigitalTQ Tome](https://www.digitaltq.com/wiki/idleon/the-tome)), and its lines already
+  carry World 4 (`it.world`). World 0 keeps the card on the Account tab.
+- **Obols stay account-wide.** The altar opens after Amarok in World 1; drops come with a
+  World 2 merit ([DigitalTQ obols](https://digitaltq.com/wiki/idleon/obols-guide)).
+- **Cape Vine: World 7, unconfirmed.** Catherine is in the World 4 town
+  ([DigitalTQ](https://www.digitaltq.com/wiki/idleon/the-cape-vine)). Three saves below World
+  7 have one cape on it, but none of the World 6 tiers ask for it. I found nothing on what
+  opens the vine, so it stays as it is.
+- **Items.** Event shop items for World 7 (Big Clot, Extra Lumi) are bought earlier by a few
+  players. They only pay off in World 7, so they stay there. Four World 6 cards in one World 5
+  save come from a save on the edge of World 6. Everything else matched.
+- **Gem shop: Instagrow Generator** is on the shop's World 6 tab. crowd-research.txt asked for
+  it from Late World 5; now it starts at Early World 6.
+
+### Generator rules
+- **No column before a mechanic opens, no cell before an item's world.** Columns from the last
+  run were kept (`had`). For a World 7 mechanic, the World 6 saves taken together then made a
+  6m column. `crowd_txt_asks_nothing_before_its_world` (src/crowd.rs) fails if crowd.txt asks
+  anything early again.
+- **Big tables rise in turns.** The Tome (106 lines) and the Death Note (114 monsters) raised
+  every row at every stage, which made 13 or 14 tiers in one stage. Now, when a stage would
+  raise more than 24 rows (three tiers of 8), each row rises at every Nth stage, with a bigger
+  step, and the turns rotate so none waits longer than the rest. Base and research columns stay
+  as they are. Tome 77 tiers to 28, Death Note 51 to 30, Greenstacks 59 to 40, Achievements 39
+  to 31. No stage has more than 5 tiers now (Greenstacks Mid World 7). A plain cap was tried
+  first: it left rows like Account LV at 50 from Mid World 4 to Late World 7, so it was dropped.
