@@ -578,13 +578,19 @@ fn jade_upg_cost_log10(d: &NinjaDiscounts, levels: &[f64], t: usize, row: &Value
     base + col7.log10() + lv * growth.log10() - centurion - d.shared_log - extra
 }
 
-/// A number given as its log10, the way the game writes it: 400K, 96Qa, past that 1.2e345.
+/// A number given as its log10, as `big` writes it: 400K, 9.6e16, past f64 1.2e345.
 fn big_log10(lg: f64) -> String {
     if lg < 300.0 {
         return big(10f64.powf(lg));
     }
-    let e = lg.floor();
-    format!("{:.1}e{}", 10f64.powf(lg - e), e)
+    // 9.96 rounds to 10.0: that's the next power.
+    let mut e = lg.floor();
+    let mut m = (10f64.powf(lg - e) * 10.0).round() / 10.0;
+    if m >= 10.0 {
+        m /= 10.0;
+        e += 1.0;
+    }
+    format!("{m:.1}e{e}").replace(".0e", "e")
 }
 
 /// Pristine Charms: `Ninja[107][i]` is 1 when found; names from `NjEQ` `NjTrP{i}`.

@@ -116,9 +116,11 @@ pub(crate) fn mech(key: &'static str, world: u8, name: &'static str, picture: Op
     Mechanic { key, world, name, picture, count, unit, items, note: None, tier_names: None, tier_notes: Vec::new(), raises: Vec::new(), have: None, later: Vec::new(), open_order: None, pace: None, crowd: None, levels_note: None, whole_tiers: false, other_side: "Tiers" }
 }
 
-/// A big number the way the game writes it: 400K, 1.5M, 96 Qa. Past the names, 1.2e45.
+/// A big number in one short form: 400K, 1.5M, 2.3B, 7T, then e-notation from a quadrillion
+/// (9.6e16, 6.3e36). Names past T (Qa, Qi, Sx...) read alike and run out long before the
+/// numbers do (bits reach 1e100), and a line mixing "287Sp" with "6.3e36" reads as two scales.
 pub(crate) fn big(n: f64) -> String {
-    const NAMES: [&str; 11] = ["", "K", "M", "B", "T", "Qa", "Qi", "Sx", "Sp", "O", "N"];
+    const NAMES: [&str; 5] = ["", "K", "M", "B", "T"];
     if n.is_nan() {
         return "0".into();
     }
@@ -129,7 +131,7 @@ pub(crate) fn big(n: f64) -> String {
         // + 0.0 turns -0 into 0 ("You have -0.").
         return format!("{}", n.round() + 0.0);
     }
-    let mut k = ((n.abs().log10() / 3.0).floor() as usize).min(NAMES.len());
+    let mut k = (n.abs().log10() / 3.0).floor() as usize;
     let mut v = n / 1000f64.powi(k as i32);
     // 999,960 rounds to 1000K: that's 1M.
     if v.abs().round() >= 1000.0 {
@@ -137,7 +139,8 @@ pub(crate) fn big(n: f64) -> String {
         v /= 1000.0;
     }
     if k >= NAMES.len() {
-        return format!("{n:.1e}");
+        // "9.6e16", and "1e100", not "1.0e100".
+        return format!("{n:.1e}").replace(".0e", "e");
     }
     let digits = if v.abs() >= 10.0 { 0 } else { 1 };
     let s = format!("{v:.digits$}");
@@ -165,7 +168,11 @@ mod tests {
     fn big_numbers_read_like_the_game() {
         assert_eq!(big(400_000.0), "400K");
         assert_eq!(big(1_500_000.0), "1.5M");
-        assert_eq!(big(9.64e16), "96Qa");
+        assert_eq!(big(9.64e16), "9.6e16");
+        assert_eq!(big(2.87e26), "2.9e26");
+        assert_eq!(big(1e100), "1e100");
+        assert_eq!(big(999.96e12), "1e15");
+        assert_eq!(big(7e12), "7T");
         assert_eq!(big(512.0), "512");
         assert_eq!(big(999_960.0), "1M");
         assert_eq!(big(999.6), "1000");
