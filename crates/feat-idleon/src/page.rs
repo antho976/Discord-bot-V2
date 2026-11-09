@@ -791,9 +791,6 @@ fn ladder_fig(m: &Mechanic) -> String {
 
 /// Mechanics whose tiers aren't in a real order yet (owner, 2026-11-06): their cards say so.
 const ON_HOLD: &[&str] = &[
-    "meals",
-    "lab-chips",
-    "shiny",
 ];
 
 /// Tasks shown under the current tier before "and N more".
