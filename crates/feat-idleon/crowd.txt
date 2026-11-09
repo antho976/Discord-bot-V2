@@ -1390,10 +1390,10 @@ cape-vine                               # Cape Vine
 artifacts                               # Artifacts, counts; World 1 to 5 columns from crowd-research.txt
   stages          5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
   Fauxory Tusk     1   1   2   3   3   4   6   6   7   7   7   7
-  Genie Lamp       1   1   2   2   2   3   6   6   7   7   7   7
+  Genie Lamp       -   1   2   2   2   3   6   6   7   7   7   7
   @any 1           3   8  16  20  20  25  35  40  40  40  40  40
   @any 2           -   2   8  16  18  20  35  40  40  40  40  40
-  @any 3           -   1   3   8  11  17  35  40  40  40  40  40
+  @any 3           -   -   -   8  11  17  35  40  40  40  40  40
   @any 4           -   -   -   -   -   8  35  40  40  40  40  40
   @any 5           -   -   -   -   -   -  20  40  40  40  40  40
   @any 6           -   -   -   -   -   -  15  25  40  40  40  40
@@ -1653,22 +1653,22 @@ cavern-schematics                       # Schematics, World 1 to 5 columns from 
 cavern-majiks                           # Majiks, World 1 to 5 columns from crowd-research.txt
   stages               6e  6m  6l  7e  7m  7l  end1  end2  max
   Cosmo, Enhance        1   1   1   1   3   3   3   3   3
-  Opal Enthusiasm       1   1   1   3   5   5   5   5   5
-  Contented Creator     1   1   1   2   4   4   4   4   4
-  Pocket Divinity       1   2   2   1   2   2   2   2   2
+  Opal Enthusiasm       1   1   1   2   5   5   5   5   5
+  Contented Creator     1   1   1   1   4   4   4   4   4
+  Pocket Divinity       1   2   2   2   2   2   2   2   2
   Monumental Vibes      -   -   1   2   4   4   4   4   4
-  String is Strung      -   -   1   2   5   5   5   5   5
+  String is Strung      -   -   1   1   5   5   5   5   5
   Wishy Washy           -   -   1   1   3   3   3   3   3
   Beeg Beeg Forge       -   -   1   1   5   5   5   5   5
-  Lengthmeister         -   -   1   2   4   4   4   4   4
+  Lengthmeister         -   -   1   1   4   4   4   4   4
   Resource Bursting     -   -   1   1   3   3   3   3   3
   Voter Integrity       -   -   1   1   5   5   5   5   5
   Weapon Relevancy      -   -   -   1   4   4   4   4   4
-  Rupies Everywhere     -   -   -   1   5   5   5   5   5
-  Study All Nighter     -   -   -   1   5   5   5   5   5
+  Study All Nighter     -   -   -   -   5   5   5   5   5
   Equinox Maxim         -   -   -   -   5   5   5   5   5
   Profoun-tain          -   -   -   -   5   5   5   5   5
   Equal Spread          -   -   -   -   4   4   4   4   4
+  Rupies Everywhere     -   -   -   -   5   5   5   5   5
 
 cavern-measurements                     # Measurements, no max; World 1 to 5 columns from crowd-research.txt
   stages                                     6e  6m  6l   7e   7m   7l  end1  end2  max
@@ -1925,18 +1925,18 @@ gemstones                               # Gemstones, no max
 
 beanstalk                               # Gold Food Beanstalk, World 1 to 5 columns from crowd-research.txt
   stages                           6m  6l  7e  7m  7l  end1  end2  max
-  Golden Nomwich                    1   1   2   2   2   2   2   2
-  Golden Grilled Cheese Nomwich     -   1   2   2   2   2   2   2
-  Butter Bar                        -   1   -   2   2   2   2   2
+  Golden Nomwich                    1   1   1   2   2   2   2   2
+  Golden Grilled Cheese Nomwich     -   1   1   2   2   2   2   2
+  Butter Bar                        -   1   1   2   2   2   2   2
   Golden Jam                        -   1   1   2   2   2   2   2
   Golden Meat Pie                   -   -   1   2   2   2   2   2
   Golden Hampter Gummy Candy        -   -   1   2   2   2   2   2
   Golden Ribs                       -   -   1   2   2   2   2   2
   Golden Kebabs                     -   -   1   2   2   2   2   2
   Golden Dumpling                   -   -   1   2   2   2   2   2
-  Golden Ham                        -   -   1   2   2   2   2   2
-  Golden Nigiri                     -   -   1   2   2   2   2   2
-  Golden Cheese                     -   -   1   2   2   2   2   2
+  Golden Ham                        -   -   -   2   2   2   2   2
+  Golden Cheese                     -   -   -   2   2   2   2   2
+  Golden Nigiri                     -   -   -   2   2   2   2   2
   Golden Saltwater Taffy            -   -   -   2   2   2   2   2
   Golden Bread                      -   -   -   2   2   2   2   2
   Golden Cake                       -   -   -   2   2   2   2   2
