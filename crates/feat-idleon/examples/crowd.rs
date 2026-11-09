@@ -38,12 +38,14 @@ const BASE_ONLY: [&str; 1] = ["bubbles"];
 /// them depends on what you happen to have (a vial's item, the Arcade's shop rotation), so a
 /// tier that names items makes you chase them; a count lets you take the cheapest.
 /// Artifacts: which one a sailing chest drops, and in which form, is luck (2026-11-09); a level is
-/// a form, Found (1) to Verisimilitude (7). Pristine charms drop at random in Sneaking.
-const COUNTS: [(&str, &[f64]); 4] = [
+/// a form, Found (1) to Verisimilitude (7). Pristine charms drop at random in Sneaking. Which
+/// cards drop is luck too; a card's level is its stars.
+const COUNTS: [(&str, &[f64]); 5] = [
     ("vials", &[1.0, 4.0, 7.0, 10.0, 13.0]),
     ("arcade", &[10.0, 25.0, 50.0, 100.0]),
     ("artifacts", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]),
     ("pristine-charms", &[1.0]),
+    ("cards", &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]),
 ];
 /// Items to get as soon as you can, by name (owner,
 /// 2026-11-08: Gold Ball Gain, Refinery Speed; Drop Rate is the next most maxed in the saves).
