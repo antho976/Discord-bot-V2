@@ -830,7 +830,7 @@ fn upgrade_vault(save: &Save) -> Mechanic {
     let no_awnings = names_where(&|i, r| !awnings.contains(&i) && !(cell(r, 4) < 2.0 && !glimbo.contains(&i)));
     let scaled_n = scaled.iter().filter(|&&f| f == 1).count();
     m.note = Some(format!(
-        "Each max counts every raise below as owned; an upgrade at the cap you have now says which raise lifts it. Glimbo trades (W7) add max levels to the {} upgrades Glimbo trades for, one level per trade, more on {} of them with the VIP Pass and BOGO Offer.",
+        "Maxes count the raises below that you own. An upgrade stuck at your cap names the raise that lifts it. Glimbo trades in World 7 add a max level per trade to {} upgrades, more on {} of them with the VIP Pass and BOGO Offer.",
         glimbo.len(),
         scaled_n
     ));
@@ -851,7 +851,7 @@ fn upgrade_vault(save: &Save) -> Mechanic {
             owned: vip,
         },
         Raise {
-            name: "Glimbo BOGO Offer, W7 research grid".into(),
+            name: "Glimbo BOGO Offer, World 7 research grid".into(),
             amount: format!("+1 more max level per Glimbo trade on those {scaled_n} upgrades, for each of its {bogo:.0} levels"),
             owned: grid >= bogo && bogo > 0.0,
         },
