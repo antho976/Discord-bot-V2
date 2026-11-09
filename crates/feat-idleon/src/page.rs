@@ -1,7 +1,7 @@
 //! The public page: the paste box, then the review.
 //!
 //! The review leads with the answer: how many of the tiers players have by your world you have, with one bar per world,
-//! then "Not started yet" and "Should have by now" (what the ranking expects by your world), then every mechanic by world (tabs switched in the page, no reload), each a
+//! then "Should have by now" (a line per mechanic behind what players have by your world) and "Not started yet", then every mechanic by world (tabs switched in the page, no reload), each a
 //! card that opens to its items, least done first. Worlds wear their own colour (data colour,
 //! not decoration): the bars, the meters and the world tags.
 
@@ -377,9 +377,10 @@ fn done(guild: u64, r: &Review) -> Markup {
                 }
             }
         }
-        // Above Should have by now: a whole mechanic untouched is the biggest gap, and the list is
-        // short. Only the first few up front: a returning player can have twenty-odd, one per line
-        // on a phone.
+        (should_have(r))
+        // Under Should have by now, which says what to do first (an untouched mechanic is in it too,
+        // at its first stage). Only the first few up front: a returning player can have twenty-odd,
+        // one per line on a phone.
         @if !r.not_started.is_empty() {
             section.ia-panel {
                 div.ia-head {
@@ -399,7 +400,6 @@ fn done(guild: u64, r: &Review) -> Markup {
                 }
             }
         }
-        (should_have(r))
         section.ia-worlds {
             div.ia-tabs role="tablist" {
                 @for w in &worlds {
@@ -445,53 +445,60 @@ fn tiers_due(r: &Review, world: Option<u8>) -> (usize, usize) {
 }
 
 
-/// Boxes Should have by now shows, oldest first: two rows of four on a wide screen, never a
-/// third (narrower screens show two rows of what fits, see the CSS).
-const OWED_BOXES: usize = 8;
+/// Mechanics Should have by now lists before "Show the other N".
+const OWED_FIRST: usize = 6;
 
-/// Should have by now: a box per stage (Early, Mid and Late of each world), oldest first, side
-/// by side like the cards, and in each a line per mechanic: the tier you're on and the tier that
-/// stage asks for. A line opens its card; a long box scrolls inside itself. Past Late World 7,
-/// the endgame boxes (Endgame 1, 2, Min-max) are goals from the best saves, not counted as owed.
+/// One mechanic in Should have by now: the oldest stage it falls short of and what it owes.
+struct Behind<'a> {
+    mechanic: usize,
+    /// Index into `crowd::STAGES`: the earliest stage that asks for something you don't have.
+    stage: usize,
+    /// Everything it owes, oldest stage first, what you can do now first inside each.
+    owed: Vec<&'a crate::review::Owed>,
+}
+
+/// Should have by now: a line per mechanic behind what players have by your world, the oldest
+/// first (owner's lead, round 2: a World 6 account had "1040 things" as a wall of stage boxes).
+/// Each line says what to do first, the stage it's behind since and the tier you're on against
+/// the tier your world asks; it opens its card, which lists the rest. The first few show, the
+/// rest behind a toggle. Past Late World 7 the endgame tiers are goals from the best saves, not
+/// owed: mechanics owing only those come last and aren't counted as behind.
 fn should_have(r: &Review) -> Markup {
     let stages = r.should_have();
-    if stages.is_empty() {
+    let mut behind: Vec<Behind> = Vec::new();
+    for (stage, v) in &stages {
+        for o in v {
+            match behind.iter_mut().find(|b| b.mechanic == o.mechanic) {
+                Some(b) => b.owed.push(o),
+                None => behind.push(Behind { mechanic: o.mechanic, stage: *stage, owed: vec![o] }),
+            }
+        }
+    }
+    if behind.is_empty() {
         return html! {};
     }
-    let total: usize = stages.iter().filter(|(s, _)| !crate::crowd::endgame(*s)).map(|(_, v)| v.len()).sum();
-    let goals = stages.iter().any(|(s, _)| crate::crowd::endgame(*s));
+    let owing = behind.iter().filter(|b| !crate::crowd::endgame(b.stage)).count();
+    let laddered = r.mechanics.iter().filter(|m| m.world <= r.world && m.crowd.is_some()).count();
     html! {
         section.ia-owe {
             div.ia-head {
                 h2 { "Should have by now" }
                 p {
-                    (total) " things players have by your world and you don't, oldest first. "
-                    @if goals { "Then the endgame: steps toward the best of every save we have, and Min-max, the best itself. " }
-                    "Click one to open its card."
+                    @if owing > 0 {
+                        (owing) " of your " (laddered) " mechanics are behind what players have by World " (r.world) ". Oldest first."
+                    } @else {
+                        "Nothing is behind what players have by World " (r.world) ". Next, the endgame: steps toward the best saves we have."
+                    }
                 }
             }
-            div.ia-owe-grid {
-                @for (stage, v) in stages.iter().take(OWED_BOXES) {
-                    @let w = crate::crowd::stage_world(*stage);
-                    // A mechanic's items at this stage, in the order the list ranks them.
-                    @let rows = {
-                        let mut rows: Vec<Vec<&crate::review::Owed>> = Vec::new();
-                        for o in v {
-                            match rows.iter_mut().find(|g| g[0].mechanic == o.mechanic) {
-                                Some(g) => g.push(o),
-                                None => rows.push(vec![o]),
-                            }
-                        }
-                        rows
-                    };
-                    div.ia-owe-box style={ "--w: var(--w" (w) ")" } {
-                        div.ia-owe-head {
-                            b { (crate::crowd::stage_label(*stage)) }
-                            @if crate::crowd::endgame(*stage) { span.ia-chip.goal { "Goal" } }
-                            @else if w < r.world { span.ia-chip.miss { "Missed" } } @else { span.ia-chip.next { "Next up" } }
-                            span.ia-owe-n { (v.len()) (if v.len() == 1 { " thing" } else { " things" }) }
-                        }
-                        div.ia-owe-lines { @for g in &rows { (owed(r, g)) } }
+            div.ia-owe-list {
+                @for b in behind.iter().take(OWED_FIRST) { (owed(r, b)) }
+            }
+            @if behind.len() > OWED_FIRST {
+                details.ia-fresh-more {
+                    summary { "Show the other " (behind.len() - OWED_FIRST) }
+                    div.ia-owe-list {
+                        @for b in behind.iter().skip(OWED_FIRST) { (owed(r, b)) }
                     }
                 }
             }
@@ -499,28 +506,42 @@ fn should_have(r: &Review) -> Markup {
     }
 }
 
-/// One mechanic's line at a stage, a link that opens its card: the tier you're on and the one
-/// the stage asks for; what's missing on hover. When none of it can move yet, a line under it
-/// on what it waits for (every locked item says), named when there are several.
-fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
-    let m = &r.mechanics[g[0].mechanic];
+/// "Early W3", "Endgame 1": a stage in a tag's room.
+fn stage_short(stage: usize) -> String {
+    if crate::crowd::endgame(stage) {
+        return crate::crowd::stage_label(stage);
+    }
+    format!("{} W{}", ["Early", "Mid", "Late"][stage % 3], crate::crowd::stage_world(stage))
+}
+
+/// One mechanic's line, a link that opens its card: what to do first (the oldest stage's asks,
+/// what you can do now first), or what it waits for when none of them can move yet; the stage
+/// it's behind since; the tier you're on and the one your world asks for.
+fn owed(r: &Review, b: &Behind) -> Markup {
+    let m = &r.mechanics[b.mechanic];
     let here = m.tiers().iter().position(|t| !t.complete()).unwrap_or(0) + 1;
-    let want = g.iter().map(|o| o.tier).max().unwrap_or(0) + 1;
-    let items: Vec<&Item> = g.iter().map(|o| &m.items[o.item]).collect();
-    let need = items.iter().all(|i| i.state == Step::Locked).then(|| items[0].how.as_deref()).flatten().map(|h| match items.len() {
-        1 => h.to_string(),
-        _ => format!("{}: {h}", items[0].name),
-    });
-    let names = items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", ");
+    let stage_of = |o: &crate::review::Owed| m.crowd.as_ref().map_or(0, |l| l.rungs[o.tier].stage);
+    // The tier your world asks: the last one owed short of the endgame, or the first goal.
+    let want = b.owed.iter().filter(|o| !crate::crowd::endgame(stage_of(o))).map(|o| o.tier).max().unwrap_or(b.owed[0].tier) + 1;
+    let first: Vec<&Item> = b.owed.iter().filter(|o| stage_of(o) == b.stage).map(|o| &m.items[o.item]).collect();
+    let ready: Vec<&str> = first.iter().filter(|i| i.state != Step::Locked).map(|i| i.name.as_str()).collect();
+    let locked = ready.is_empty();
+    let line = if locked {
+        first.first().and_then(|i| i.how.as_deref().map(|h| if first.len() == 1 { h.to_string() } else { format!("{}: {h}", i.name) }))
+    } else {
+        Some(format!("Next: {}", ready.join(", ")))
+    };
+    let w = crate::crowd::stage_world(b.stage);
+    let names = b.owed.iter().map(|o| m.items[o.item].name.as_str()).collect::<Vec<_>>().join(", ");
     html! {
-        a.ia-owe-line href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(m.key)] data-w=(m.world) title={ (items.len()) " left: " (names) } {
+        a.ia-owe-line href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(m.key)] data-w=(m.world) title={ (b.owed.len()) " left: " (names) } {
             (mark(m))
             span.ia-owe-name {
                 b { (m.name) }
-                @if let [i] = items.as_slice() { span { " · " (i.name) } }
+                @if let Some(l) = &line { span.need[locked] { (l) } }
             }
-            span.ia-owe-t { @if want > here { "T " (here) " ▸ T " (want) } @else { "T " (want) } }
-            @if let Some(n) = &need { span.ia-owe-need { (n) } }
+            span.ia-owe-st style={ "--w: var(--w" (w) ")" } { (stage_short(b.stage)) }
+            span.ia-owe-t { @if want > here { "Tier " (here) " → " (want) } @else { "Tier " (want) } }
         }
     }
 }
@@ -1566,33 +1587,20 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-task-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .ia-task-text b { font-size: 14px; font-weight: 500; }
 .ia-task-text span { font-size: 13px; color: var(--ink-3); }
-.ia-chip { font: 600 12px var(--sans); padding: 3px 8px; border-radius: 6px; white-space: nowrap; }
-.ia-chip.miss { color: var(--waiting); background: color-mix(in oklab, var(--waiting) 14%, transparent); }
-.ia-chip.next { color: var(--w); background: color-mix(in oklab, var(--w) 14%, transparent); }
-.ia-chip.goal { color: var(--ink-2); background: color-mix(in oklab, var(--ink-2) 12%, transparent); }
-/* Should have by now: a box per stage like the cards (three on a wide screen, one on a phone),
-   a line per mechanic; a long box scrolls inside itself. */
-.ia-owe-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 12px; align-items: stretch; }
-/* Never more than two rows: as many columns as fit (each at least 340 px), and only twice that
-   many boxes; a phone stacks them all. */
-@container col (min-width: 692px) { .ia-owe-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ia-owe-box:nth-child(n+5) { display: none; } }
-@container col (min-width: 1044px) { .ia-owe-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .ia-owe-box:nth-child(n+5) { display: block; } .ia-owe-box:nth-child(n+7) { display: none; } }
-@container col (min-width: 1396px) { .ia-owe-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .ia-owe-box:nth-child(n+7) { display: block; } }
-.ia-owe-box { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; padding: 14px 16px 6px; min-width: 0; }
-.ia-owe-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.ia-owe-head b { font-size: 14px; font-weight: 600; color: var(--w); }
-.ia-owe-n { margin-left: auto; font-size: 13px; color: var(--ink-3); }
-.ia-owe-lines { margin-top: 6px; max-height: 312px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.ia-owe-line { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 2px; padding: 8px 4px 8px 0; color: inherit; text-decoration: none; border-bottom: 1px solid var(--edge-1); }
-.ia-owe-line:last-child { border-bottom: 0; }
+/* Should have by now: a line per mechanic, two columns on a wide screen, one on a phone. */
+.ia-owe-list { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 32px; margin-top: 8px; padding: 6px 16px; border-radius: 14px; background: var(--raised); border: 1px solid var(--edge-1); }
+.ia-fresh-more .ia-owe-list { margin-top: 10px; }
+@container col (min-width: 820px) { .ia-owe-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ia-owe-line { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto auto; align-items: center; column-gap: 12px; padding: 10px 0; color: inherit; text-decoration: none; }
 .ia-owe-line .ia-mark { width: 24px; height: 24px; }
 .ia-owe-line .ia-mark.blank { width: 8px; height: 8px; margin: 8px; }
-.ia-owe-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-.ia-owe-name b { font-weight: 500; }
-.ia-owe-name span { color: var(--ink-3); }
+.ia-owe-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ia-owe-name b { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-owe-name span { font-size: 12.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-owe-name span.need { color: var(--waiting); }
 .ia-owe-line:hover b, .ia-owe-line:focus-visible b { text-decoration: underline; text-underline-offset: 3px; }
-.ia-owe-t { font: 500 12.5px var(--mono); color: var(--ink-2); white-space: nowrap; }
-.ia-owe-need { grid-column: 2 / -1; font-size: 12px; line-height: 1.35; color: var(--waiting); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ia-owe-st { font: 600 11px var(--mono); color: var(--w); white-space: nowrap; }
+.ia-owe-t { font: 500 12.5px var(--mono); color: var(--ink-2); white-space: nowrap; min-width: 9ch; text-align: right; }
 .ia-hold { padding: 10px 14px; border-radius: 10px; background: color-mix(in oklab, var(--waiting) 10%, transparent); color: var(--ink-2); font-size: 13px; line-height: 1.45; }
 .ia-hold b { color: var(--waiting); font-weight: 600; }
 .ia-spread { display: flex; flex-wrap: wrap; gap: 8px 32px; }
@@ -1683,6 +1691,11 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 }
 
 @media (max-width: 720px) {
+  /* Should have by now: the stage over the tiers on the right, so the name keeps its room. */
+  .ia-owe-line { grid-template-columns: 24px minmax(0, 1fr) auto; row-gap: 2px; }
+  .ia-owe-line .ia-mark { grid-row: span 2; }
+  .ia-owe-name { grid-row: span 2; }
+  .ia-owe-st, .ia-owe-t { grid-column: 3; text-align: right; }
   /* Two halves that share the width, each its name over where it stands: long figures
      ("Pay2Win Tier 26 / 59") ran past the card. */
   .ia-switch { display: flex; flex-wrap: wrap; }
