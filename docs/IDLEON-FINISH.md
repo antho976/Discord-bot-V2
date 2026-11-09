@@ -55,7 +55,9 @@ The lead and integrator is **sly-puffin**. Everyone else owns one lane.
   - Unlocks say "Unlock", never "Lv 0 → Lv 1".
   - Use plain words. Nothing that reads as AI-written.
 - **When the order is real.** Once a card's tiers are in a real order, take it off `ON_HOLD` in `page.rs`. While it's on the list, the card says "Order coming later".
-- **Merged cards** use `FOLD` in `page.rs`, a switch between sides as on Brewing / Pay2Win. Only merge what a player thinks of as one thing.
+- **Merged cards** use `FOLD` in `page.rs`, a switch between sides (up to 6) as on Brewing / Pay2Win. Only merge what a player thinks of as one thing.
+- **Tier layout B (Relay design 23), every card** (owner, 2026-11-09). Stages run down the left with a dash per tier, and the picked tier sits beside them as a page of at most 8 asks with < > to step through. The owner finds the old right-hand column ("Lv 30 → 40", "Unlock", chips) untidy. sly-puffin builds the layout in `page.rs`. Your part is making your tiers fit it: name tiers by stage, ask no more than 8 things in one tier, keep a good order inside each tier, and give each item a short "how" line.
+- **Early-world tiers from research** go in `crowd-research.txt` (crowd-base.txt's format). For a mechanic in that file, the generator takes the columns for stages short of saves from it instead of from AutoReview's base.
 - **UI work.** Load the `house-style` skill before any change to how the page looks, and keep `docs/DESIGN.md`'s phone rules.
 
 ## Lanes

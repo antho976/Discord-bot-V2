@@ -1,0 +1,5 @@
+# Our own early-world tiers, from what players say they do first (Reddit, Steam guides; the
+# sources are in docs/idleon-research.md). Same format as crowd-base.txt: a block per
+# mechanic, a column per stage, `@first N`, `@any L` and `!Name` rows. For a mechanic here,
+# the generator takes the columns of stages short of saves from this file instead of
+# crowd-base.txt (AutoReview's). Edit crowd.txt for one-off changes; this file is the base.

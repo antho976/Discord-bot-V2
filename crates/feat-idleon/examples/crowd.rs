@@ -62,10 +62,18 @@ fn main() {
     let gen_text = std::fs::read_to_string(&gen_path).ok();
     // Early-world base tiers (tools/autoreview-base): a stage without enough saves takes its
     // column from here.
-    let (base, problems) = crowd::parse(&std::fs::read_to_string(format!("{dir}/crowd-base.txt")).unwrap_or_default());
+    let (mut base, problems) = crowd::parse(&std::fs::read_to_string(format!("{dir}/crowd-base.txt")).unwrap_or_default());
     for p in &problems {
         eprintln!("crowd-base.txt {p} (left out)");
     }
+    // Our own early-world tiers, from what players say they do first (crowd-research.txt, same
+    // format): a mechanic there takes its base from there instead of AutoReview's.
+    let (research, problems) = crowd::parse(&std::fs::read_to_string(format!("{dir}/crowd-research.txt")).unwrap_or_default());
+    for p in &problems {
+        eprintln!("crowd-research.txt {p} (left out)");
+    }
+    let researched: Vec<String> = research.keys().map(|k| k.to_string()).collect();
+    base.extend(research);
     let mut unmatched: Vec<String> = Vec::new();
     let mut fuzzy: Vec<String> = Vec::new();
     let (last_gen, _) = crowd::parse(gen_text.as_deref().unwrap_or(""));
@@ -430,14 +438,15 @@ fn main() {
                 }
             }
         }
+        let source = if researched.iter().any(|k| k == m.key) { "crowd-research.txt" } else { "AutoReview's tiers, changed" };
         let count = match (m.count, from_base.is_empty()) {
-            _ if only_base => "every column from AutoReview's tiers, changed",
-            (Count::Open, true) => "no max",
-            (Count::Open, false) => "no max; World 1 to 5 columns from AutoReview's tiers, changed",
-            (_, false) => "World 1 to 5 columns from AutoReview's tiers, changed",
-            _ => "",
+            _ if only_base => format!("every column from {source}"),
+            (Count::Open, true) => "no max".into(),
+            (Count::Open, false) => format!("no max; World 1 to 5 columns from {source}"),
+            (_, false) => format!("World 1 to 5 columns from {source}"),
+            _ => String::new(),
         };
-        let count = if levels.is_empty() { count.to_string() } else if count.is_empty() { "counts".to_string() } else { format!("counts; {count}") };
+        let count = if levels.is_empty() { count } else if count.is_empty() { "counts".to_string() } else { format!("counts; {count}") };
         let count = count.as_str();
         write_block(&mut out, m.key, m.name, count, &block, &lines);
         let gen_lines: Vec<_> = gen_block.rows.iter().map(|(n, c)| (n.clone(), c.clone(), "")).collect();
