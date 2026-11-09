@@ -252,3 +252,10 @@ summoning-stones                        # Summoning Stones and Endless
   Blue stone                 1
   Red stone                  1
   Endless battles won       60
+
+breeding-pets                           # Breeding (W3–4 lane): the W5/W6 saves lag on World 3 and 4 eggs
+  stages          4e  4m  4l  5e  5m  5l  6e  6m  6l
+  World 1 pets     3   5   7   8   9  11  13  14  16
+  World 2 pets     -   -   1   1   2   4   8  12  14
+  World 3 pets     -   -   -   -   -   1   2   6  10
+  World 4 pets     -   -   -   1   1   1   1   1   2
