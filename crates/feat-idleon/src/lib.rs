@@ -137,7 +137,7 @@ async fn access(ctx: &Ctx, guild: u64, viewer: &MaybeUser, member: &MaybeMember)
         (true, Some(role), Some(m)) => in_server(ctx, guild, m.id).await.is_some_and(|m| m.roles.contains(&role)),
         _ => false,
     };
-    page::Access { closed: s.closed, allowed: !s.closed || staff || tester, staff, member: member.0.as_ref().map(|m| m.name.clone()), test: staff || ctx.cfg.preview }
+    page::Access { closed: s.closed, allowed: !s.closed || staff || tester, staff, member: member.0.as_ref().map(|m| m.name.clone()), test: staff || tester || ctx.cfg.preview }
 }
 
 /// Someone in the server: their roles, and until when they're timed out.
@@ -226,7 +226,7 @@ struct TestQuery {
 }
 
 /// A test account: an empty save, everything at 0, seen as a player in the world asked for.
-/// For staff (and the local preview) to see how the page reads, with no save to paste.
+/// For staff and testers (and the local preview) to see how the page reads, with no save to paste.
 async fn test_account(State(ctx): State<Ctx>, viewer: MaybeUser, member: MaybeMember, Path(guild): Path<u64>, Query(q): Query<TestQuery>) -> WebResult {
     open(&ctx, guild)?;
     let a = access(&ctx, guild, &viewer, &member).await;
