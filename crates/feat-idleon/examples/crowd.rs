@@ -240,6 +240,10 @@ fn main() {
             let first = FIRST.iter().find(|f| f.0 == m.key).map_or(&[][..], |f| f.1);
             // The stage the mechanic opens at.
             let open = usize::from(m.world.clamp(1, 7) - 1) * 3;
+            // Mechanics with no early columns from their own world (no base, or research that
+            // starts later) ramp up to their first column like `COUNTS` ones, so an account below
+            // World 7 still gets their tiers.
+            let ramped = !only_base && (counted.is_some() || from_base.keys().min().is_none_or(|&b| b > open + 2));
             // Columns: stages with enough saves, the base's for stages without, and any stage with a
             // hand edit in it. A `COUNTS` mechanic also gets its whole-world columns, and a column
             // at each world's mid stage from where it opens up to its first saves, rising to them
@@ -250,9 +254,9 @@ fn main() {
             if let Some(b) = had.filter(|_| !only_base) {
                 cols.extend(b.stages.iter().copied());
             }
-            if counted.is_some() {
+            if ramped {
                 cols.extend(whole_world.iter().copied());
-                let data = stages.iter().chain(&whole_world).copied().min().unwrap_or(crowd::ENDGAME);
+                let data = stages.iter().chain(&whole_world).chain(from_base.keys().filter(|_| counted.is_none())).copied().min().unwrap_or(crowd::ENDGAME);
                 cols.extend((open..data).filter(|s| s % 3 == 1));
             }
             cols.sort_unstable();
@@ -288,7 +292,7 @@ fn main() {
                 let here: Vec<&Seen> = match s.checked_sub(crowd::ENDGAME) {
                     Some(0 | 1) => seen.iter().filter(|x| x.stage == late7).collect(),
                     Some(_) => seen.iter().collect(),
-                    None if counted.is_some() && whole_world.contains(&s) => seen.iter().filter(|x| x.stage / 3 == s / 3).collect(),
+                    None if ramped && whole_world.contains(&s) => seen.iter().filter(|x| x.stage / 3 == s / 3).collect(),
                     None => seen.iter().filter(|x| x.stage == s).collect(),
                 };
                 let n = here.len();
@@ -375,7 +379,7 @@ fn main() {
             // the first saves don't ask for yet (Refinery Speed in World 6) climbs toward the first
             // column that does, and never drops once asked. A row crowd-research.txt names keeps its
             // cells there as they are, `-` too (AutoReview's base only sets a floor).
-            if let Some(kd) = first_data.filter(|_| counted.is_some()) {
+            if let Some(kd) = first_data.filter(|_| ramped) {
                 let research = researched.iter().any(|k| k == m.key).then(|| &base[m.key]);
                 let ramp = |cells: &mut Vec<Option<f64>>, most: f64, named: bool, fixed: bool| {
                     let to = if named { (kd..cells.len()).find(|&k| cells[k].is_some()) } else { Some(kd) };
@@ -406,9 +410,33 @@ fn main() {
                     let fixed = research.is_some_and(|b| b.rows.iter().any(|(n, _)| crowd::any_level(n) == Some(levels[c]) || (levels[c] <= 1.0 && n == "@first")));
                     ramp(cells, rows.len() as f64, false, fixed);
                 }
-                for (r, cells) in table.iter_mut().enumerate().filter(|(r, _)| keep[*r]) {
+                for (r, cells) in table.iter_mut().enumerate().filter(|(r, _)| keep[*r] && counted.is_some()) {
                     let fixed = research.is_some_and(|b| b.rows.iter().any(|(n, _)| n.eq_ignore_ascii_case(&rows[r])));
                     ramp(cells, maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX), true, fixed);
+                }
+                // Every other table: each row climbs from where the mechanic opens toward the first
+                // saves column that asks it, with the square of the stages since. Rows come in a
+                // few at a time, what the most players there have first: in that order, each is
+                // asked (at Lv 1 at least) from its own even share of the climb.
+                // (Up to its first cell, from the saves or the research: research cells stay.)
+                let firsts: Vec<Option<usize>> = (0..rows.len()).map(|r| (0..cols.len()).find(|&k| table[r][k].is_some() && (k >= kd || from_base.contains_key(&cols[k])))).collect();
+                let mut order: Vec<usize> = (0..rows.len()).filter(|&r| keep[r] && counted.is_none() && firsts[r].is_some()).collect();
+                order.sort_by(|&a, &b| prio[b][firsts[b].unwrap_or(0)].total_cmp(&prio[a][firsts[a].unwrap_or(0)]).then(a.cmp(&b)));
+                let n_rows = order.len().max(1) as f64;
+                for (place, &r) in order.iter().enumerate() {
+                    let cells = &mut table[r];
+                    let Some(to) = firsts[r] else { continue };
+                    let top = cells[to].unwrap_or(0.0);
+                    let after = place as f64 / n_rows;
+                    let mut run = 0.0f64;
+                    for k in 0..to {
+                        let s = cols[k];
+                        let share = if s < open { 0.0 } else { ((s - open + 1) as f64 / (cols[to] - open + 1) as f64).powi(2) };
+                        let due = s >= open && share >= after;
+                        let v = crowd::nice(top * share).floor().max(if due { 1.0 } else { 0.0 }).max(cells[k].unwrap_or(0.0)).max(run).min(top);
+                        run = v;
+                        cells[k] = (v > 0.0).then_some(v);
+                    }
                 }
             }
             (cols, table, prio, anyone, from_base, keep, levels, count_table)
