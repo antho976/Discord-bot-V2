@@ -535,7 +535,7 @@ fn owed(r: &Review, b: &Behind) -> Markup {
     let w = crate::crowd::stage_world(b.stage);
     let names = b.owed.iter().map(|o| m.items[o.item].name.as_str()).collect::<Vec<_>>().join(", ");
     html! {
-        a.ia-owe-line href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(r, m.key)] data-w=(m.world) title={ (b.owed.len()) " left: " (names) } {
+        a.ia-owe-line href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(r, m.key)] data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } title={ (b.owed.len()) " left: " (names) } {
             (mark(m))
             span.ia-owe-name {
                 b { (m.name) }
