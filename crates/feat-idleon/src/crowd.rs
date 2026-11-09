@@ -52,14 +52,14 @@ pub const BEST: [&str; 5] = ["statues", "stamps", "owl", "forge", "upgrade-vault
 /// Mechanics whose items differ from account to account (one per character), so they have no
 /// rows in `crowd.txt`: their ladder is made from each item's own max on the `best_curve`, a
 /// stage at a time from the mechanic's world (`by_max`).
-pub const BY_MAX: [&str; 3] = ["anvil-points", "cauldron-upgrades", "pay2win"];
+pub const BY_MAX: [&str; 4] = ["anvil-points", "cauldron-upgrades", "pay2win", "obols"];
 
 /// Every crowd ladder fits on its card (owner, 2026-11-08: "enough tiers to not have more
 /// bubbles in a tier than it can show"; 2026-11-09, tier layout B: a tier is a page of at most
 /// 8 asks): a stage that raises more than `PART` items is split into as many parts as that
 /// takes. `whole` tables (`BEST`, a tier per stage where every item rises) stay whole unless
 /// they're here too.
-pub const FITS: [&str; 3] = ["bubbles", "cauldron-upgrades", "pay2win"];
+pub const FITS: [&str; 4] = ["bubbles", "cauldron-upgrades", "pay2win", "obols"];
 
 /// Share of the best asked for at `stage` for something from `world` (`BEST` tables and
 /// `BY_MAX` ladders): nothing before the world opens, then rising with the square of the
