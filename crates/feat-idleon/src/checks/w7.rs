@@ -991,19 +991,21 @@ fn the_button(save: &Save) -> Mechanic {
 /// `ClassIcons{42 + t}`; Research is `Lv0[20]`, so `ClassIcons61`).
 fn research_grid(save: &Save) -> Mechanic {
     let levels = save.numbers("Research", &[0]);
-    let mut items: Vec<Item> = rows("ResGridSquares", &[])
+    let items: Vec<Item> = rows("ResGridSquares", &[])
         .iter()
         .enumerate()
         .filter(|(_, r)| text(r, 0) != "Name" && cell(r, 1) > 0.0)
-        .map(|(i, r)| Item::new(label(text(r, 0)), None, at(&levels, i), cell(r, 1)))
+        .map(|(i, r)| {
+            let mut it = Item::new(label(text(r, 0)), None, at(&levels, i), cell(r, 1));
+            it.how = node_effect(text(r, 5), cell(r, 2)).map(|e| format!("{e}."));
+            it
+        })
         .collect();
-    for it in items.iter_mut().filter(|it| it.level < it.max) {
-        it.how = Some("Each level costs 1 Grid Point.".into());
-    }
     let lv = research_level(save);
     let earned = (lv + (lv / 10.0).floor() * (1.0 + (lv / 60.0).floor().min(1.0) + at(&levels, 50))).floor();
     let spent: f64 = levels.iter().filter(|v| v.is_finite()).sum();
     let mut m = mech("research", 7, "Research Grid", pic("ClassIcons61".into()), Count::Levels, "levels", items);
+    m.note = Some("Each level costs 1 Grid Point. Figures are for one level, before your shapes.".into());
     let free = earned - spent;
     if free >= 1.0 && free.is_finite() {
         m.have = Some(Have {
@@ -1012,6 +1014,32 @@ fn research_grid(save: &Save) -> Mechanic {
         });
     }
     m
+}
+
+/// What a research grid node does, in one sentence, from its text (`ResGridSquares` col 5) with
+/// one level's number put in: `{` is col 2, `}` the multiplier 1 + col 2 / 100, `|` the level
+/// (N.js `Grid_Bonus` with 1), so 1. `$` and `^` are running totals the page can't know; the
+/// clause holding one is cut. The game's jokes come before a "..." ("Psst... you forgot to give
+/// Observation LV a purpose... Observations give 1.04x more EXP per LV"), so the text after the
+/// last one is the effect, when nothing before the first "..." has a number.
+/// `None` when nothing readable is left.
+fn node_effect(desc: &str, v: f64) -> Option<String> {
+    let short = |n: f64| {
+        let s = format!("{n:.2}");
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    };
+    let filled = desc.replace("i.e._", "ie_").replace('{', &short(v)).replace('}', &short(1.0 + v / 100.0)).replace('|', "1");
+    let part = filled.split('@').next().unwrap_or("");
+    let joke = part.split("..._").next().is_some_and(|before| part.contains("..._") && !before.chars().any(|c| c.is_ascii_digit()));
+    let part = if joke { part.rsplit("..._").next().unwrap_or(part) } else { part };
+    part.split('!')
+        .flat_map(|p| p.split("._"))
+        .map(|p| match p.find('$').or_else(|| p.find('^')) {
+            Some(k) => p[..k].rfind(',').map_or("", |c| &p[..c]),
+            None => p,
+        })
+        .map(|p| clean(p.trim_start_matches("Also,_")))
+        .find(|p| p.len() > 3)
 }
 
 /// The upgrades of a shop kept the same way: levels at `key[path][i]`, max in col 1 (0 for a row
