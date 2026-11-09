@@ -54,9 +54,11 @@ pub const BEST: [&str; 5] = ["statues", "stamps", "owl", "forge", "upgrade-vault
 /// stage at a time from the mechanic's world (`by_max`).
 pub const BY_MAX: [&str; 3] = ["anvil-points", "cauldron-upgrades", "pay2win"];
 
-/// Mechanics whose every tier fits on its card (owner, 2026-11-08: "enough tiers to not have
-/// more bubbles in a tier than it can show"): a stage that raises more than `PART` items is
-/// split into as many parts as that takes, never fewer, and their `whole` tables are split too.
+/// Every crowd ladder fits on its card (owner, 2026-11-08: "enough tiers to not have more
+/// bubbles in a tier than it can show"; 2026-11-09, tier layout B: a tier is a page of at most
+/// 8 asks): a stage that raises more than `PART` items is split into as many parts as that
+/// takes. `whole` tables (`BEST`, a tier per stage where every item rises) stay whole unless
+/// they're here too.
 pub const FITS: [&str; 3] = ["bubbles", "cauldron-upgrades", "pay2win"];
 
 /// Share of the best asked for at `stage` for something from `world` (`BEST` tables and
@@ -97,7 +99,7 @@ pub struct Block {
     pub off: bool,
     /// A `BEST` mechanic's table: a tier per stage, not split into parts.
     pub whole: bool,
-    /// A `FITS` mechanic's table: every step split into parts of `PART` at most.
+    /// A `FITS` mechanic's table: split into parts even when it's `whole`.
     pub fits: bool,
     /// Its columns, as indexes into `STAGES`, in game order.
     pub stages: Vec<usize>,
@@ -293,9 +295,8 @@ pub struct Ladder {
     pub rungs: Vec<Rung>,
 }
 
-/// Items a tier adds at most before it's split into parts, and the most parts a step becomes.
+/// Items a tier adds at most before it's split into parts.
 pub const PART: usize = 8;
-pub const MAX_PARTS: usize = 10;
 
 /// The parts of one step from `prev` to `next` (targets in item order): the items it raises,
 /// taken in `order` (best first), a part at a time, each part keeping the ones before it. One
@@ -358,11 +359,7 @@ impl Ladder {
                 })
                 .collect();
             if targets.iter().any(|&t| t > 0.0) && last_targets.as_ref() != Some(&targets) {
-                let parts = match (block.fits, block.whole) {
-                    (true, _) => split(&prev, &targets, &order, PART, usize::MAX),
-                    (false, true) => vec![targets.clone()],
-                    (false, false) => split(&prev, &targets, &order, PART, MAX_PARTS),
-                };
+                let parts = if block.whole && !block.fits { vec![targets.clone()] } else { split(&prev, &targets, &order, PART, usize::MAX) };
                 let n = parts.len();
                 for (p, t) in parts.into_iter().enumerate() {
                     let label = if n == 1 { stage_label(stage) } else { format!("{} · {} of {n}", stage_label(stage), p + 1) };
@@ -462,7 +459,7 @@ bad
 
     #[test]
     fn a_ladder_that_fits_never_asks_more_than_a_part() {
-        // 100 items raised at one stage: past MAX_PARTS parts, still 8 at most each.
+        // 100 items raised at one stage: 13 parts, 8 at most each.
         let mut text = String::from("bubbles\n  stages 2e 2m\n");
         for k in 0..100 {
             text.push_str(&format!("  I{k}  5  9\n"));

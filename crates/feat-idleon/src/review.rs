@@ -398,13 +398,12 @@ impl Mechanic {
         if self.crowd.is_some() { i.crowd_level() } else { i.level }
     }
 
-    /// What tier `k` of `tiers` itself asks for that you don't have yet. For a mechanic whose
-    /// tiers fit on the card (`crowd::FITS`), only what it adds to the tier before it, so a
-    /// tier picked ahead never lists more than it asks; otherwise everything it waits on
-    /// (`tasks`).
+    /// What tier `k` of `tiers` itself asks for that you don't have yet. On a crowd ladder,
+    /// only what it adds to the tier before it, so a tier picked ahead never lists more than it
+    /// asks; otherwise everything it waits on (`tasks`).
     pub fn tier_tasks<'a>(&'a self, tiers: &[Tier], k: usize) -> Vec<(&'a Item, f64)> {
         let v = self.tasks(&tiers[k]);
-        if self.crowd.is_none() || !crate::crowd::FITS.contains(&self.key) {
+        if self.crowd.is_none() {
             return v;
         }
         let before = k.checked_sub(1).and_then(|p| tiers[p].targets.as_ref());
