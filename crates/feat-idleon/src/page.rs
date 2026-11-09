@@ -1,6 +1,6 @@
 //! The public page: the paste box, then the review.
 //!
-//! The review leads with the answer: how far the account is overall with one bar per world,
+//! The review leads with the answer: how many of the tiers players have by your world you have, with one bar per world,
 //! then "Not started yet" and "Should have by now" (what the ranking expects by your world), then every mechanic by world (tabs switched in the page, no reload), each a
 //! card that opens to its items, least done first. Worlds wear their own colour (data colour,
 //! not decoration): the bars, the meters and the world tags.
@@ -337,24 +337,42 @@ fn done(guild: u64, r: &Review) -> Markup {
                 " Everything is at 0, as a World " (r.world) " player would see the page. Paste a real save to check one."
             }
         }
+        // The answer in tiers from players' saves: how many of the tiers players have by your
+        // world you have, then the same for each world's mechanics. Without any such ladder
+        // (never on a real account), the maxes the checks read.
+        @let (done_t, due_t) = tiers_due(r, None);
         section.ia-panel.ia-lead {
             div.ia-lead-who {
-                b.ia-big { (pct(r.share())) }
-                span { "of the maxes this check reads, across " (r.mechanics.iter().filter(|m| m.world <= r.world && m.total() > 0.0).count()) " mechanics" }
+                @if due_t > 0 {
+                    b.ia-big { (pct(done_t as f64 / due_t as f64)) }
+                    span { "of the tiers players have by World " (r.world) ": " (num(done_t as f64)) " of " (num(due_t as f64)) }
+                } @else {
+                    b.ia-big { (pct(r.share())) }
+                    span { "of the maxes this check reads" }
+                }
                 p.ia-lead-line {
                     "World " (r.world) " · " (r.characters) " characters"
                     @if r.packs != Packs::Buy { " · " (r.packs.label()) }
                     " · " a.ia-again href={ "/p/" (guild) "/idleon" } { "Check another account" }
                 }
             }
-            div.ia-cols role="img" aria-label="How far each world is from max" {
+            div.ia-cols role="img" aria-label={ "Tiers players have by World " (r.world) " you have, by world" } {
                 @for w in (1..=7u8).chain([0]) {
-                    @let share = r.world_share(w);
+                    @let (d, t) = tiers_due(r, Some(w));
                     @let reached = w == 0 || w <= r.world;
-                    div.ia-col.off[!reached || share.is_none()] style={ "--w: var(--w" (w) ")" } data-tip={ (WORLD_NAMES[w as usize]) ": " (share.filter(|_| reached).map_or("not reached".into(), pct)) } {
-                        span.ia-col-track { span.ia-col-fill style={ "--s:" (share.filter(|_| reached).unwrap_or(0.0)) } {} }
-                        b { (share.filter(|_| reached).map_or("·".into(), |s| format!("{:.0}", s * 100.0))) }
-                        span { (world_tag(w)) }
+                    @let share = if due_t > 0 { (t > 0).then(|| d as f64 / t as f64) } else { r.world_share(w) };
+                    @let share = share.filter(|_| reached);
+                    @let tip = match share {
+                        Some(_) if due_t > 0 => format!("{} of {} tiers", num(d as f64), num(t as f64)),
+                        Some(s) => pct(s),
+                        None if reached => "nothing to count".into(),
+                        None => "not reached".into(),
+                    };
+                    div.ia-col.off[share.is_none()] style={ "--w: var(--w" (w) ")" } data-tip={ (WORLD_NAMES[w as usize]) ": " (tip) } {
+                        span.ia-col-track { span.ia-col-fill style={ "--s:" (share.unwrap_or(0.0)) } {} }
+                        b { (share.map_or("·".into(), |s| format!("{:.0}", s * 100.0))) }
+                        // Account-wide mechanics, not the whole account: "All" read as the total.
+                        span { (if w == 0 { "Acct".into() } else { world_tag(w) }) }
                     }
                 }
             }
@@ -409,6 +427,22 @@ fn done(guild: u64, r: &Review) -> Markup {
 
 /// Not started chips shown before "Show N more".
 const FRESH: usize = 8;
+
+/// Tiers players have by your world, done and asked, for the mechanics of one world (`Some(w)`)
+/// or every world you've reached (`None`). Endgame tiers aren't asked of anyone.
+fn tiers_due(r: &Review, world: Option<u8>) -> (usize, usize) {
+    let mut out = (0, 0);
+    for m in r.mechanics.iter().filter(|m| m.world <= r.world && world.is_none_or(|w| m.world == w)) {
+        let Some(l) = &m.crowd else { continue };
+        for (rung, t) in l.rungs.iter().zip(m.tiers()) {
+            if !crate::crowd::endgame(rung.stage) && rung.world <= r.world {
+                out.0 += usize::from(t.complete());
+                out.1 += 1;
+            }
+        }
+    }
+    out
+}
 
 
 /// Boxes Should have by now shows, oldest first: two rows of four on a wide screen, never a
@@ -1090,7 +1124,7 @@ fn pct(s: f64) -> String {
 }
 
 /// Whole numbers with thousands separators; anything else with one decimal. From a quadrillion
-/// on, the game's short form ("1.2Qa", "3.4e21"): past 2^53 the digits aren't real, and past
+/// on, `checks::big`'s short form ("9.6e16"): past 2^53 the digits aren't real, and past
 /// 2^64 a plain cast reads 18,446,744,073,709,551,615.
 pub(crate) fn num(n: f64) -> String {
     if n.is_nan() {
