@@ -108,9 +108,6 @@ mod tests {
     const KNOWN: &[&str] = &[
         // The final tier, everything at its max, isn't split (up to 235 asks on cards).
         "(Everything maxed) asks",
-        // World 7 mechanics asked for in World 6 (data lane).
-        "statue-flair (World 7) has rung \"Mid World 6\"",
-        "observations (World 7) has rung \"Mid World 6\"",
         // A by-max ladder, never split: 11 anvil points a tier.
         "anvil-points tier ",
     ];
