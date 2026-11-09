@@ -1114,10 +1114,11 @@ pub(crate) fn num(n: f64) -> String {
 }
 
 /// The paste box's file picker, and cards that grow out of their place: when one opens it
-/// spans the grid, so every card is measured before and after (FLIP). The opened one is
-/// revealed from its old size rather than stretched and draws on top; cards that only moved up
-/// or down slide; cards that changed column fade in where they land, since sliding them across
-/// their neighbours reads as a double image. Should have by now
+/// takes the full row under its own row, so every card is measured before and after (FLIP).
+/// The opened one is revealed from its old size rather than stretched, with its body there from
+/// the first frame, and draws on top; the cards under it slide on the same clock as its edge;
+/// the few that changed column fade in where they land, since sliding them across their
+/// neighbours reads as a double image. Should have by now
 /// and Not started links switch the world, open the card the same way and scroll to it.
 const JS: &str = r##"(function(){
 var f=document.getElementById("ia-file"),t=document.getElementById("ia-save"),pb=document.getElementById("ia-paste"),er=document.getElementById("ia-err");
@@ -1201,53 +1202,73 @@ var still=matchMedia("(prefers-reduced-motion: reduce)"),ease="cubic-bezier(.16,
 // Bars draw in once, with the page. After that a bar that appears (a card opening, another
 // world's tab) is just there, so nothing regrows while a card moves.
 setTimeout(function(){document.documentElement.classList.add("ia-settled")},1200);
-var busy=new Set(),easeIn="cubic-bezier(.4,0,1,1)";
+var busy=new Set();
 function rects(cs){return cs.map(function(c){return c.getBoundingClientRect()})}
-// After the grid changes shape: keep the clicked card where your eye is (scroll by however far
-// the layout moved it), slide cards that only moved up or down, and let cards that changed
-// column come up where they land (sliding them across their neighbours reads as a double image).
-function settle(cs,was,d){
-  var i=cs.indexOf(d),a=was[i],b=d.getBoundingClientRect(),shift=b.top-a.top;
-  if(Math.abs(shift)>1)window.scrollBy(0,shift);
-  cs.forEach(function(c,k){
-    if(c===d)return;
-    // Both rects are on screen, so dy also carries the scroll: cards slide from where you saw them.
-    var q=c.getBoundingClientRect(),dx=was[k].left-q.left,dy=was[k].top-q.top;
-    if(Math.abs(dx)>1)c.animate([{opacity:.25},{opacity:1}],{duration:260,easing:ease});
-    else if(Math.abs(dy)>1)c.animate([{transform:"translateY("+dy+"px)"},{transform:"none"}],{duration:420,easing:ease});
-  });
-  return d.getBoundingClientRect();
+// An open card takes the full row right under its own row: the cards after it in that row
+// step one place left and every card below keeps its column. Without this, every card after
+// it changed column. Rows are counted as if every card were closed.
+function arrange(g){
+  var cs=[].slice.call(g.children),n=getComputedStyle(g).gridTemplateColumns.split(" ").length;
+  cs.forEach(function(c,i){c.style.order=n>1&&c.open?2*Math.min(cs.length-1,(Math.floor(i/n)+1)*n-1)+1:n>1?2*i:""});
 }
+var rearrange=0;
+addEventListener("resize",function(){clearTimeout(rearrange);rearrange=setTimeout(function(){
+  document.querySelectorAll(".ia-grid").forEach(function(g){if(g.querySelector(":scope > .ia-card[open]"))arrange(g)})},120)});
+// Cards that changed column come up where they land (sliding them across their neighbours
+// reads as a double image).
+function land(cs,was,now,d){
+  cs.forEach(function(c,k){if(c!==d&&Math.abs(was[k].left-now[k].left)>1)c.animate([{opacity:.25},{opacity:1}],{duration:200,easing:ease})});
+}
+// The card's edge carries its body and the cards under it move with that edge, on one curve
+// and one clock, so nothing is ever blank or covered. The body is there from the first frame.
 function flip(d,open){
-  if(d.open===open||busy.has(d))return;
+  if(d.open===open||busy.size)return;
+  var g=d.parentElement,cs=[].slice.call(g.children),body=d.querySelector(".ia-body"),r="px 0 round 14px)";
   // Closed from its sticky head, far down a long card: the card's top is off screen, so fold it
   // at once and bring its head back into view rather than animating a part you can't see.
   if(!open&&d.getBoundingClientRect().top<-8){
-    d.open=false;
+    d.open=false;arrange(g);
     window.scrollBy(0,d.getBoundingClientRect().top-16);
     return;
   }
-  var cs=[].slice.call(d.parentElement.children);
-  if(still.matches||!d.animate){d.open=open;return}
+  if(still.matches||!d.animate){
+    d.open=open;arrange(g);
+    // Reduced motion: nothing moves, the body fades in.
+    if(open&&body&&d.animate)body.animate([{opacity:0},{opacity:1}],{duration:120,easing:"ease"});
+    return;
+  }
   busy.add(d);d.style.zIndex=2;
-  var fin=function(){d.style.zIndex="";busy.delete(d)},body=d.querySelector(".ia-body"),r="px 0 round 14px)";
+  var fin=function(){d.style.zIndex="";busy.delete(d)},was=rects(cs),i=cs.indexOf(d);
   if(open){
-    var was=rects(cs),a=was[cs.indexOf(d)];
-    d.open=true;
-    var b=settle(cs,was,d);
+    // The card moves at most one row, so the page doesn't scroll: the text above the grid stays put.
+    d.open=true;arrange(g);
+    // The tier page and the side shown fade in when they appear; in a card that is opening
+    // they are just there, like the rest of the body.
+    d.getAnimations({subtree:true}).forEach(function(x){if(x.animationName)x.finish()});
+    var now=rects(cs),a=was[i],b=now[i];
+    land(cs,was,now,d);
+    cs.forEach(function(c,k){
+      var dy=was[k].top-now[k].top;
+      if(c!==d&&Math.abs(was[k].left-now[k].left)<=1&&Math.abs(dy)>1)c.animate([{transform:"translateY("+dy+"px)"},{transform:"none"}],{duration:420,easing:ease});
+    });
     d.animate([{transform:"translate("+(a.left-b.left)+"px,"+(a.top-b.top)+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+r},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:420,easing:ease}).finished.then(fin,fin);
-    if(body)body.animate([{opacity:0,transform:"translateY(-4px)"},{opacity:1,transform:"none"}],{duration:300,delay:140,easing:ease,fill:"backwards"});
   }else{
-    // Fold into the size it will have, then let the grid close up around it.
-    var big=d.getBoundingClientRect();
-    d.open=false;var small=d.getBoundingClientRect();d.open=true;
-    var fade=body&&body.animate([{opacity:1},{opacity:0}],{duration:150,easing:easeIn,fill:"forwards"});
-    var fold=d.animate([{clipPath:"inset(0 0 0 0 round 14px)"},{clipPath:"inset(0 "+Math.max(0,big.width-small.width)+"px "+Math.max(0,big.height-small.height)+r}],{duration:260,easing:ease,fill:"forwards"});
+    // Closing is the same in reverse, a little quicker. Measure the closed layout, go back to
+    // the open one, and move everything to where it will be; then switch, all in one frame.
+    d.open=false;arrange(g);var after=rects(cs),room=document.documentElement.scrollHeight-innerHeight;d.open=true;arrange(g);
+    // The page gets shorter: if it ends above the window's bottom, the browser would pull the
+    // scroll up at the end; move everything to where that leaves it instead.
+    var big=was[i],small=after[i],shift=Math.min(0,room-scrollY),moves=[];
+    cs.forEach(function(c,k){
+      var dy=after[k].top-shift-was[k].top;
+      if(c!==d&&Math.abs(was[k].left-after[k].left)<=1&&Math.abs(dy)>1)moves.push(c.animate([{transform:"none"},{transform:"translateY("+dy+"px)"}],{duration:300,easing:ease,fill:"forwards"}));
+    });
+    var fold=d.animate([{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"},{transform:"translate("+(small.left-big.left)+"px,"+(small.top-shift-big.top)+"px)",clipPath:"inset(0 "+Math.max(0,big.width-small.width)+"px "+Math.max(0,big.height-small.height)+r}],{duration:300,easing:ease,fill:"forwards"});
     fold.finished.then(function(){
-      var was=rects(cs);
-      d.open=false;fold.cancel();if(fade)fade.cancel();
-      var b=settle(cs,was,d);
-      d.animate([{transform:"translate("+(big.left-b.left)+"px,0)"},{transform:"none"}],{duration:360,easing:ease}).finished.then(fin,fin);
+      d.open=false;arrange(g);
+      if(Math.abs(shift)>1)window.scrollBy(0,shift);
+      moves.forEach(function(m){m.cancel()});fold.cancel();
+      land(cs,was,rects(cs),d);fin();
     },fin);
   }
 }
