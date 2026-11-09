@@ -262,7 +262,7 @@ fn land_rank(save: &Save) -> Mechanic {
 /// Pictures: a row is `NjJupg` + `JadeUpg` col 3; the card shows the first row.
 ///
 /// The shop only offers places below your purchases + 3 (`EmporiumOptions`: the bought string's
-/// length + 3); later places show up as you buy.
+/// length + 3); later places show up as you buy. Items are listed in that order.
 fn jade_emporium(save: &Save) -> Mechanic {
     let bought = save.at("Ninja", &[102, 9]).and_then(Value::as_str).unwrap_or("");
     let jade = save.at("Ninja", &[102, 1]).map_or(0.0, num).max(0.0) + 0.0;
@@ -271,10 +271,14 @@ fn jade_emporium(save: &Save) -> Mechanic {
     let offered = bought.chars().count() + 3;
     let w7 = super::world_reached(save) >= 7;
     let mut costs: Vec<(f64, String)> = Vec::new();
-    let items: Vec<Item> = rows("JadeUpg", &[])
-        .iter()
-        .take(48)
-        .enumerate()
+    // In the order the shop offers them (`NinjaInfo[24]`), so the card reads as you buy; rows
+    // the order leaves out come after.
+    let table = rows("JadeUpg", &[]);
+    let mut seq: Vec<usize> = order.iter().copied().filter(|&i| i < 48 && i < table.len()).collect();
+    seq.extend((0..table.len().min(48)).filter(|i| !order.contains(i)));
+    let items: Vec<Item> = seq
+        .into_iter()
+        .map(|i| (i, table[i]))
         .filter(|(_, r)| text(r, 0) != "UNDER_CONSTRUCTION")
         .map(|(i, r)| {
             let have = letters.get(i).is_some_and(|c| bought.contains(*c));
