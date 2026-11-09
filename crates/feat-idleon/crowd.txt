@@ -272,39 +272,39 @@ stamps                                  # Stamps
   Corale Stamp                 -   -   -   -   -   -   -   -   -    -    -    -    -    -    -    -    -    -   10   40   95  170  270  390
 
 statue-flair                            # Statue Flair
-  stages                7e  7m  7l  end1  end2  max
-  Speed Statue           1   1   2   3   3   3
-  Mining Statue          1   1   2   3   3   4
-  Feasty Statue          1   1   2   3   3   4
-  Power Statue           2   2   3   3   4   4
-  Health Statue          -   1   1   3   3   3
-  Lumberbob Statue       -   1   2   3   3   3
-  Thicc Skin Statue      -   -   1   3   3   3
-  Battleaxe Statue       -   -   1   2   2   3
-  Anvil Statue           -   -   1   2   3   3
-  Kachow Statue          -   -   -   1   2   2
-  Dragon Statue          -   -   -   1   1   2
-  Oceanman Statue        -   -   -   1   2   2
-  Ol Reliable Statue     -   -   -   1   2   2
-  Exp Statue             -   -   -   -   1   2
-  Cauldron Statue        -   -   -   -   1   2
-  Beholder Statue        -   -   -   -   1   1
-  Bullseye Statue        -   -   -   -   1   2
-  Box Statue             -   -   -   -   1   1
-  Seesaw Statue          -   -   -   -   1   1
-  Pecunia Statue         -   -   -   -   1   2
-  Twosoul Statue         -   -   -   -   -   2
-  Ehexpee Statue         -   -   -   -   -   1
-  Mutton Statue          -   -   -   -   -   -  # no save has it yet
-  Egg Statue             -   -   -   -   -   -  # no save has it yet
-  Spiral Statue          -   -   -   -   -   -  # no save has it yet
-  Boat Statue            -   -   -   -   -   -  # no save has it yet
-  Compost Statue         -   -   -   -   -   -  # no save has it yet
-  Stealth Statue         -   -   -   -   -   -  # no save has it yet
-  Essence Statue         -   -   -   -   -   -  # no save has it yet
-  Villager Statue        -   -   -   -   -   -  # no save has it yet
-  Spelunky Statue        -   -   -   -   -   -  # no save has it yet
-  Coral Statue           -   -   -   -   -   -  # no save has it yet
+  stages                6m  7e  7m  7l  end1  end2  max
+  Speed Statue           1   1   1   2   3   3   3
+  Mining Statue          1   1   1   2   3   3   4
+  Feasty Statue          1   1   1   2   3   3   4
+  Power Statue           2   2   2   3   3   4   4
+  Health Statue          -   -   1   1   3   3   3
+  Lumberbob Statue       -   -   1   2   3   3   3
+  Thicc Skin Statue      -   -   -   1   3   3   3
+  Battleaxe Statue       -   -   -   1   2   2   3
+  Anvil Statue           -   -   -   1   2   3   3
+  Kachow Statue          -   -   -   -   1   2   2
+  Dragon Statue          -   -   -   -   1   1   2
+  Oceanman Statue        -   -   -   -   1   2   2
+  Ol Reliable Statue     -   -   -   -   1   2   2
+  Exp Statue             -   -   -   -   -   1   2
+  Cauldron Statue        -   -   -   -   -   1   2
+  Beholder Statue        -   -   -   -   -   1   1
+  Bullseye Statue        -   -   -   -   -   1   2
+  Box Statue             -   -   -   -   -   1   1
+  Seesaw Statue          -   -   -   -   -   1   1
+  Pecunia Statue         -   -   -   -   -   1   2
+  Twosoul Statue         -   -   -   -   -   -   2
+  Ehexpee Statue         -   -   -   -   -   -   1
+  Mutton Statue          -   -   -   -   -   -   -  # no save has it yet
+  Egg Statue             -   -   -   -   -   -   -  # no save has it yet
+  Spiral Statue          -   -   -   -   -   -   -  # no save has it yet
+  Boat Statue            -   -   -   -   -   -   -  # no save has it yet
+  Compost Statue         -   -   -   -   -   -   -  # no save has it yet
+  Stealth Statue         -   -   -   -   -   -   -  # no save has it yet
+  Essence Statue         -   -   -   -   -   -   -  # no save has it yet
+  Villager Statue        -   -   -   -   -   -   -  # no save has it yet
+  Spelunky Statue        -   -   -   -   -   -   -  # no save has it yet
+  Coral Statue           -   -   -   -   -   -   -  # no save has it yet
 
 owl                                     # Owl
   stages                        1e  1m  1l  2e  2m  2l  3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
