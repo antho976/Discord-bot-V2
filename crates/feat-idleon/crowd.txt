@@ -1059,13 +1059,13 @@ meals                                   # Meals, counts; World 1 to 5 columns fr
   stages      4e  4m  4l  5e  5m  5l  6e  6m   7e   7m   7l  end1  end2  max
   Cabbage      1   1   1   1   5  11  11  50  110  120  140  150  150  150
   Corndog      -   1   1   1   5  11  11  50  110  120  140  150  150  150
-  @any 1       2   3   4   5   6   8  15  55   70   70   70   70   70   70  # new since the last run
-  @any 11      -   -   -   -   1   3   8  55   70   70   70   70   70   70  # new since the last run
-  @any 30      -   -   -   -   -   -   3  55   70   70   70   70   70   70  # new since the last run
-  @any 60      -   -   -   -   -   -   -   -   70   70   70   70   70   70  # new since the last run
-  @any 90      -   -   -   -   -   -   -   -   65   70   70   70   70   70  # new since the last run
-  @any 120     -   -   -   -   -   -   -   -    -   25   70   70   70   70  # new since the last run
-  @any 150     -   -   -   -   -   -   -   -    -    -    -   25   45   70  # new since the last run
+  @any 1       2   3   4   5   6   8  15  55   70   70   70   70   70   70
+  @any 11      -   -   -   -   1   3   8  55   70   70   70   70   70   70
+  @any 30      -   -   -   -   -   -   3  55   70   70   70   70   70   70
+  @any 60      -   -   -   -   -   -   -   -   70   70   70   70   70   70
+  @any 90      -   -   -   -   -   -   -   -   65   70   70   70   70   70
+  @any 120     -   -   -   -   -   -   -   -    -   25   70   70   70   70
+  @any 150     -   -   -   -   -   -   -   -    -    -    -   25   45   70
 
 kitchens                                # Kitchens
   stages        4m  5m  6m  7e  7m  7l  end1  end2  max
@@ -1112,7 +1112,7 @@ lab-chips                               # Lab Chips, counts; World 1 to 5 column
   Silkrode Nanochip     -   -   -   1   1   1   1   1   1   1   1   1   1
   Omega Nanochip        -   -   -   -   1   1   1   1   1   1   1   1   1
   Omega Motherboard     -   -   -   -   -   1   1   1   1   1   1   1   1
-  @any 1                1   2   3   4   5   6   7  17  20  20  20  20  20  # new since the last run
+  @any 1                1   2   3   4   5   6   7  17  20  20  20  20  20
 
 breeding-pets                           # Breeding Pets, World 1 to 5 columns from crowd-research.txt
   stages          4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
@@ -1125,12 +1125,12 @@ shiny                                   # Shiny Pets, counts; World 1 to 5 colum
   stages        4m  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
   Wode Board     -   -   1   2   2   6   6  13  20  20  25  30
   Tyson          -   -   -   1   1   5   5  10  20  20  20  25
-  @any 1         -   -   2   4   4  15  30  65  65  65  65  65  # new since the last run
-  @any 5         -   -   -   -   -   5  30  65  65  65  65  65  # new since the last run
-  @any 10        -   -   -   -   -   -  14  50  65  65  65  65  # new since the last run
-  @any 15        -   -   -   -   -   -   1  25  65  65  65  65  # new since the last run
-  @any 20        -   -   -   -   -   -   -   3  45  65  65  65  # new since the last run
-  @any 25        -   -   -   -   -   -   -   -   -   -   3  25  # new since the last run
+  @any 1         -   -   2   4   4  15  30  65  65  65  65  65
+  @any 5         -   -   -   -   -   5  30  65  65  65  65  65
+  @any 10        -   -   -   -   -   -  14  50  65  65  65  65
+  @any 15        -   -   -   -   -   -   1  25  65  65  65  65
+  @any 20        -   -   -   -   -   -   -   3  45  65  65  65
+  @any 25        -   -   -   -   -   -   -   -   -   -   3  25
 
 breeding-upgrades                       # Breeding Upgrades, World 1 to 5 columns from crowd-research.txt
   stages                        4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
@@ -1863,10 +1863,11 @@ summoning-stones                        # Summoning Stones and Endless, no max; 
 research                                # Research Grid
   stages                             6m  7e  7m  7l  end1  end2  max
   See 'Em All                         -   1   1   1   1   1   1
+  All Night Studying                  -   2   2   2   2   2   2
+  Takin' Notes                        -   3   4   4   4   4   4
   Oracular Spectacular                -   1   1   2   2   2   2
   Game Design 101                     -   1   2   3   3   3   3
   Transcendent Artifacts              -   1   1   1   1   1   1
-  All Night Studying                  -   2   2   2   2   2   2
   Mr Minehead Linguistics             -   1   1   1   4   4   4
   Glimbo Linguistics                  -   1   1   1   1   1   1
   Sharp Eye                           -   1   1   2   4   4   4
@@ -1881,7 +1882,6 @@ research                                # Research Grid
   Rat King of Olde                    -   1   1   1   2   2   2
   Masterclass Research                -   1   1   1   2   2   2
   Holding Onto You                    -   1   1   1   3   3   3
-  Takin' Notes                        -   3   4   4   4   4   4
   Spelunking Research                 -   1   1   2   2   2   2
   Polymer Refinery                    -   -   1   1   2   2   2
   Gaming Zuperbits                    -   -   1   1   2   2   2
@@ -2197,8 +2197,8 @@ zenith                                  # Zenith Market
 
 legend-talents                          # Legend Talents
   stages                        6m  7e  7m  7l  end1  end2  max
-  Shrine World Order Bill        -   1   1   1   1   1   1
   Super Talent Points            -   1   1   1   1   1   1
+  Shrine World Order Bill        -   1   1   1   1   1   1
   Super Duper Talents            -   5   5   5   5   5   5
   Obsolete No More               -   1   1   1   1   1   1
   Greatest Drop Party Ever       -   1   4   6   7   7   7
@@ -2242,6 +2242,9 @@ legend-talents                          # Legend Talents
 
 spelunk-shop                            # Spelunking Shop
   stages                                                       6m  7e   7m   7l  end1  end2  max
+  Deep Pockets                                                  -  12   30   40   40   40   40
+  Big Time Stamina                                              -  35   50   50   50   50   50
+  Stamina Resurgence                                            -  50  100  140  150  150  150
   The Biggest Haul                                              -   1    1    1    1    1    1
   Auto Button                                                   -   1    1    1    1    1    1
   Overpow Technique                                             -   1    1    1    1    1    1
@@ -2250,13 +2253,10 @@ spelunk-shop                            # Spelunking Shop
   Hidden Elixirs                                                -   1    1    1    1    1    1
   Partaking in Skull Fluid                                      -   1    3    3    3    3    3
   Uncanny Ability to Find Narrow Passages                       -   3    8   10   10   10   10
-  Deep Pockets                                                  -  12   30   40   40   40   40
   Duplicate Elixirs                                             -   2    4    4    4    4    4
   Nova Blast                                                    -   2   30   30   30   30   30
   Amber Mitosis                                                 -  13   40   40   40   40   40
   Grand Discoveries                                             -   1  240  420  460  490  510
-  Big Time Stamina                                              -  35   50   50   50   50   50
-  Stamina Resurgence                                            -  50  100  140  150  150  150
   Unexplainable daily Amber Gains to satiate the playerbase     -  35   50   50   50   50   50
   New Brand of Elixir                                           -  11   12   12   12   12   12
   Free Refills                                                  -   8   25   40   45   45   50
