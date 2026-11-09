@@ -306,3 +306,22 @@ lab-chips                               # Lab chips (W3–4 lane): two a week fr
   Omega Nanochip       -   -   -   -   1   1   1
   Omega Motherboard    -   -   -   -   -   1   1
   @any 1               1   2   3   4   5   6   8
+
+equinox-upgrades                        # Equinox (W3–4 lane): upgrades open in order, one per unlock dream; W5 saves have Dreams at 1 or 2, W6 ones Dreams 5, Resources 4, Liquidvestment 4 to 7
+  stages              4e  4m  4l  5e  5m  5l  6e  6m  6l
+  Equinox Dreams       1   1   1   1   2   3   4   5   5
+  Equinox Resources    -   -   -   -   1   2   3   4   4
+  Shades of K          -   -   -   -   -   -   1   1   1
+  Liquidvestment       -   -   -   -   -   -   2   4   6
+
+breeding-upgrades                       # Breeding upgrades (W3–4 lane): they open in the game's order as you find their meals; Fence Extension's slots and Paint Bucket's shinies matter most
+  stages                    4e  4m  4l  5e  5m  5l  6e  6m  6l
+  Gene Splicing              1   2   3   4   5   5   6   6   7
+  Egg Capacity               1   1   2   2   3   3   3   4   4
+  Breedability Mobs          -   1   2   3   3   4   4   5   5
+  Fence Extension            -   -   1   2   3   3   4   4   5
+  Rarity of the Egg          -   -   -   1   1   2   2   2   3
+  Blooming Axe               -   -   -   -   1   1   2   2   3
+  Pastpresent Brood          -   -   -   -   -   1   1   1   2
+  Paint Bucket               -   -   -   -   -   -   -   1   1
+  Overwhelmed Golden Egg     -   -   -   -   -   -   -   1   2
