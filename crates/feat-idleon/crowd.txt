@@ -599,6 +599,33 @@ arcade                                  # Arcade, counts
   @any 50            -   -   -   1   2   12   25   50   65   65   70
   @any 100           -   -   -   -   -    7   16   45   60   65   70
 
+post-office                             # Post Office
+  stages                     7e     7m      7l     end1     end2      max
+  Non Predatory Loot Box    400    400     400      400      400      400
+  Crate of the Creator        -    400     400      400      400      400
+  Civil War Memory Box        -    400     400      400      400      400
+  Locally Sourced Organs      -    400     400      400      400      400
+  Magician Starterpack        -    400     400      400      400      400
+  Box of Unwanted Stats       -    400     400      400      400      400
+  Dwarven Supplies            -    400     400      400      400      400
+  Blacksmith Box              -    400     400      400      400      400
+  Carepack From Mum           -    400     400      400      400      400
+  Deaths Storage Unit         -    400     400      400      400      400
+  Utilitarian Capsule         -    400     400      400      400      400
+  Lazzzy Lootcrate            -    400     400      400      400      400
+  Science Spare Parts         -    400     400      400      400      400
+  Trapping Lockbox            -    400     400      400      400      400
+  Scurvy C'arr'ate            -    800     800      800      800      800
+  Box of Gosh                 -    800     800      800      800      800
+  Gaming Lootcrate            -    800     800      800      800      800
+  Taped Up Timber             -    400     400      400      400      400
+  Sealed Fishheads            -    400     400      400      400      400
+  Potion Package              -    400     400      400      400      400
+  Bug Hunting Supplies        -    400     400      400      400      400
+  Construction Container      -    400     400      400      400      400
+  Chefs Essentials            -    400     400      400      400      400
+  Myriad Crate                -  3,300  13,000  100,000  100,000  100,000
+
 islands                                 # Islands
   stages            7e  7m  7l  end1  end2  max
   Trash Island       1   1   1   1   1   1
