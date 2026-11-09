@@ -288,10 +288,14 @@ pub fn any_level(name: &str) -> Option<f64> {
 pub fn count_text(n: usize, level: f64, names: Option<&[String]>) -> String {
     let n_text = cell_text(Some(n as f64));
     if let Some(name) = names.and_then(|ns| ns.get((level as usize).checked_sub(1)?)).filter(|_| level.fract() == 0.0 && level >= 2.0) {
-        return format!("{n_text} {name}");
+        // "8 Ancient", but "3 at 2 stars" where the name is a number itself.
+        return if name.starts_with(|c: char| c.is_ascii_digit()) { format!("{n_text} at {name}") } else { format!("{n_text} {name}") };
     }
     if level <= 1.0 { format!("{n_text} unlocked") } else { format!("{n_text} at Lv {}", cell_text(Some(level))) }
 }
+
+/// What a count of things had says instead of "unlocked", per mechanic.
+pub const UNLOCK_WORD: [(&str, &str); 4] = [("shiny", "shiny"), ("lab-chips", "owned"), ("companions", "owned"), ("cards", "found")];
 
 /// A mechanic's ladder from its table: a tier per stage, a stage that asks for many new things
 /// split into parts of about `PART` (see `split`).
@@ -333,6 +337,19 @@ pub fn split(prev: &[f64], next: &[f64], order: &[usize], part: usize, max_parts
 impl Ladder {
     /// Count rungs named with the mechanic's names for its levels (`Mechanic::tier_names`), when
     /// it has them: "20 Ancient" rather than "20 at Lv 2".
+    /// A count of things had, in the mechanic's own word ("4 shiny", "12 owned") instead of
+    /// "unlocked" (keen-badger, 2026-11-09). `UNLOCK_WORD` holds them.
+    pub fn had_as(mut self, key: &str) -> Ladder {
+        if let Some((_, word)) = UNLOCK_WORD.iter().find(|w| w.0 == key) {
+            for r in self.rungs.iter_mut().filter(|r| r.count.is_some()) {
+                if let Some(head) = r.label.strip_suffix(" unlocked") {
+                    r.label = format!("{head} {word}");
+                }
+            }
+        }
+        self
+    }
+
     pub fn named(mut self, names: Option<&[String]>) -> Ladder {
         if names.is_some() {
             for r in &mut self.rungs {

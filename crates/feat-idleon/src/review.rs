@@ -530,10 +530,12 @@ impl Review {
         }
         crate::crowd::with(|table| {
             for m in &mut mechanics {
-                // Only when the table has a tier for your world or an earlier one: until there are
-                // saves from earlier worlds, an account short of World 7 keeps the game-max ladder.
+                // Every table now has tiers from the world its mechanic opens in (research, or the
+                // generator's climb to the first saves), so a table whose first tier is in a later
+                // world than yours says just that (keen-badger, 2026-11-09: shiny pets from Late
+                // World 5 read better to a World 4 account than the game-max "Started · 1 of 9").
                 let made = crate::crowd::BY_MAX.contains(&m.key).then(|| crate::crowd::by_max(m.key, &m.items, m.world));
-                m.crowd = table.get(m.key).or(made.as_ref()).and_then(|b| Ladder::new(b, &m.items)).map(|l| l.named(m.tier_names.as_deref())).filter(|l| l.rungs.iter().any(|r| r.world <= world));
+                m.crowd = table.get(m.key).or(made.as_ref()).and_then(|b| Ladder::new(b, &m.items)).map(|l| l.named(m.tier_names.as_deref()).had_as(m.key));
             }
         });
         if packs == Packs::Free {
