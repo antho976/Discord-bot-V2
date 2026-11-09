@@ -529,9 +529,10 @@ fn card(m: &Mechanic, partners: &[(&'static str, &Mechanic)], reached: u8) -> Ma
         None => m.levels_view().zip(m.tiers_view()).map(|(lv, tv)| vec![("Levels", lv), (m.other_side, tv)]),
     };
     let all = || std::iter::once(m).chain(partners.iter().map(|p| p.1));
-    let (have, total) = all().fold((0.0, 0.0), |(h, t), x| (h + x.have(), t + x.total()));
+    // A side with no max (boat upgrades) has levels but nothing to count them against.
+    let (have, total) = all().filter(|x| x.count != Count::Open && x.total() > 0.0).fold((0.0, 0.0), |(h, t), x| (h + x.have(), t + x.total()));
     let share = if fold.is_some() && total > 0.0 { (have / total).clamp(0.0, 1.0) } else { m.share() };
-    let done = if fold.is_some() { all().all(|x| x.done()) } else { m.done() };
+    let done = if fold.is_some() { all().filter(|x| x.count != Count::Open).all(|x| x.done()) } else { m.done() };
     html! {
         details.ia-card #{ "m-" (m.key) } {
             summary {
@@ -738,7 +739,9 @@ fn ladder(m: &Mechanic, tiers: &[Tier], current: Option<usize>, reached: u8, tag
                 @if cut {
                     label.ia-st-more for={ "s-" (m.key) "-" (tag) } {
                         span.more {
-                            @if to < groups.len() { (groups.len() - to) " more stages, to " (groups[groups.len() - 1].0) }
+                            @if to + 1 == groups.len() { "1 more stage, " (groups[groups.len() - 1].0) }
+                            @else if to < groups.len() { (groups.len() - to) " more stages, to " (groups[groups.len() - 1].0) }
+                            @else if from == 1 { "Show the stage before" }
                             @else { "Show the " (from) " stages before" }
                         }
                         span.less { "Show fewer stages" }
@@ -805,7 +808,9 @@ fn ask_text(m: &Mechanic, i: &Item, target: f64) -> (String, Option<String>) {
         // Something not had at all (a stamp not found) is "Unlock": its level 0 says nothing.
         return match () {
             _ if level <= 0.0 && target <= 1.0 => ("Unlock".into(), None),
-            _ if i.raw.is_some_and(|r| r <= 0.0) => (format!("Lv {}", num(target)), Some("Unlock first".into())),
+            _ if i.raw.is_some_and(|r| r <= 0.0) => (level_text(m, target), Some("Unlock first".into())),
+            // Named levels (an artifact's Ancient, Eldritch) read as names.
+            _ if m.tier_names.is_some() => (level_text(m, target), (level > 0.0).then(|| format!("from {}", level_text(m, level)))),
             _ => (format!("Lv {}", num(target)), (level > 0.0).then(|| format!("from {}", num(level)))),
         };
     }
@@ -1479,8 +1484,8 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 @media (max-width: 720px) {
   /* Two halves that share the width, each its name over where it stands: long figures
      ("Pay2Win Tier 26 / 59") ran past the card. */
-  .ia-switch { display: flex; }
-  .ia-switch label { flex: 1 1 0; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .ia-switch { display: flex; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .ia-switch label { flex: 1 0 auto; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; white-space: nowrap; }
   .ia-switch label .ia-fig { font-size: 12px; }
   .ia-hero { min-height: 180px; }
   .ia-hero .ov-hello h1 { font-size: 26px; }
