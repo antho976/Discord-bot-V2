@@ -2148,6 +2148,73 @@ sushi                                   # Sushi Station
   Potassium Firelighter     -   -    1    1    1    1
   Lithium Firelighter       -   -    1    1    1    1
 
+sushi-types                             # Sushi Types
+  stages                     7e  7m  7l  end1  end2  max
+  Fish Eggs                   1   1   1   1   1   1
+  Eggroll                     1   1   1   1   1   1
+  Egg Maki                    1   1   1   1   1   1
+  Sashimi                     1   1   1   1   1   1
+  Tuna Maki                   1   1   1   1   1   1
+  Salmon Uramaki              1   1   1   1   1   1
+  Salmon Maki                 1   1   1   1   1   1
+  Cucumber Uramaki            1   1   1   1   1   1
+  Cucumber Maki               1   1   1   1   1   1
+  Onigiri                     1   1   1   1   1   1
+  Toro Slice                  1   1   1   1   1   1
+  Toro Nigiri                 1   1   1   1   1   1
+  Beef Nigiri                 1   1   1   1   1   1
+  Beef Tobo Nigiri            1   1   1   1   1   1
+  Tobiko Maki                 1   1   1   1   1   1
+  Tobiko Temaki               1   1   1   1   1   1
+  Tobiko Cluster              1   1   1   1   1   1
+  Tobo Sardine                1   1   1   1   1   1
+  Tobo Twins                  1   1   1   1   1   1
+  Live Squid                  1   1   1   1   1   1
+  Live Octopus                1   1   1   1   1   1
+  Calamari Ring               1   1   1   1   1   1
+  Bluefin Ring                1   1   1   1   1   1
+  Tobo Tamago                 1   1   1   1   1   1
+  Tako Sashimi                1   1   1   1   1   1
+  Hamachi Sashimi             1   1   1   1   1   1
+  Fat Tuna Sashimi            1   1   1   1   1   1
+  King Beef Sashimi           1   1   1   1   1   1
+  Salmon Sashimi              1   1   1   1   1   1
+  Salmon Nigiri               1   1   1   1   1   1
+  Fried Bass Nigiri           1   1   1   1   1   1
+  Seasoned Bass Nigiri        1   1   1   1   1   1
+  Jumbo Shrimp                -   1   1   1   1   1
+  Aged Shrimp Nigiri          -   1   1   1   1   1
+  Tempura Shrimp              -   1   1   1   1   1
+  Ika Sashimi                 -   1   1   1   1   1
+  Abalone Sashimi             -   1   1   1   1   1
+  Aji Sashimi                 -   1   1   1   1   1
+  Aji Aji Sashimi             -   1   1   1   1   1
+  Bubba Grand Salmon          -   1   1   1   1   1
+  Tobiko Roll                 -   1   1   1   1   1
+  Spicy Tuna Roll             -   1   1   1   1   1
+  Salmon Uramajor             -   1   1   1   1   1
+  Sesame Salmon Muramajor     -   1   1   1   1   1
+  Dragon Roll                 -   1   1   1   1   1
+  Imaginei Dragonroll         -   1   1   1   1   1
+  Dragon Nigiri               -   1   1   1   1   1
+  Tamago Nigiri               -   1   1   1   1   1
+  Unagi Nigiri                -   1   1   1   1   1
+  Soylent Nigiri              -   1   1   1   1   1
+  Masago                      -   1   1   1   1   1
+  Masago Temaki               -   1   1   1   1   1
+  Masagoroll                  -   1   1   1   1   1
+  Caviar Supreme              -   1   1   1   1   1
+  Dulce Vitiri                -   1   1   1   1   1
+  Wasabaisamarama             -   1   1   1   1   1
+  Kraken Roll                 -   1   1   1   1   1
+  Leviathan Roll              -   1   1   1   1   1
+  Golthulu Roll               -   1   1   1   1   1
+  Wasomber Nigiri             -   1   1   1   1   1
+  Leek Nigiri                 -   -   1   1   1   1
+  Atomiroll                   -   -   1   1   1   1
+  Octolingo                   -   -   1   1   1   1
+  Chromatic Nigiri            -   -   1   1   1   1
+
 jelly                                   # Jelly Operator
   stages                            7e  7m  7l  end1  end2  max
   Amoeba Cell Cultivation            1   1   1   1   1   1
@@ -2174,6 +2241,81 @@ jelly                                   # Jelly Operator
   Proximity Stimulus                 -   -   -   1   1   1
   Gigacyst Cell Cultivation          -   -   -   -   -   -  # no save has it yet
   Revival Shots                      -   -   -   -   -   -  # no save has it yet
+
+jelly-obstructions                      # Jelly Operator Obstructions
+  stages              7e  7m  7l  end1  end2  max
+  Longbone             1   1   1   1   1   1
+  Jawbone              1   1   1   1   1   1
+  Spine                1   1   1   1   1   1
+  Antler               1   1   1   1   1   1
+  Vertebrae            1   1   1   1   1   1
+  Skull                1   1   1   1   1   1
+  Mawbone              1   1   1   1   1   1
+  Reintler             1   1   1   1   1   1
+  Fatbone              1   1   1   1   1   1
+  Invertedbrae         1   1   1   1   1   1
+  Spinine              1   1   1   1   1   1
+  Demonicle            1   1   1   1   1   1
+  Ruby Ring            1   1   1   1   1   1
+  Starry Bling         1   1   1   1   1   1
+  Gold Bangle          1   1   1   1   1   1
+  Emerald Broach       1   1   1   1   1   1
+  Gildrose             1   1   1   1   1   1
+  Opal Pendant         1   1   1   1   1   1
+  Crescent Bling       -   1   1   1   1   1
+  Sapphire Ring        -   1   1   1   1   1
+  Stud Pendant         -   1   1   1   1   1
+  Wiltrose             -   1   1   1   1   1
+  Morning Glory        -   1   1   1   1   1
+  Tiger Eye            -   1   1   1   1   1
+  Apol                 -   -   1   1   1   1
+  Blubbury             -   -   1   1   1   1
+  Pair                 -   -   1   1   1   1
+  Mongo                -   -   1   1   1   1
+  Strabbury            -   -   1   1   1   1
+  Cosmico              -   -   1   1   1   1
+  Surrage              -   -   1   1   1   1
+  Big Nut              -   -   1   1   1   1
+  Splega               -   -   1   1   1   1
+  Onyx Apple           -   -   1   1   1   1
+  Rassbury             -   -   1   1   1   1
+  Diamapair            -   -   1   1   1   1
+  Bowling Pin          -   -   1   1   1   1
+  Broken Ball          -   -   1   1   1   1
+  Sody Can             -   -   -   1   1   1
+  Balloon              -   -   -   1   1   1
+  Arcade Ticket        -   -   -   1   1   1
+  Proball              -   -   -   -   1   1
+  Empty Can            -   -   -   -   -   1
+  Ceramic Ball         -   -   -   -   -   1
+  Loveloon             -   -   -   -   -   -  # no save has it yet
+  Mangled Ball         -   -   -   -   -   -  # no save has it yet
+  Golden Ticket        -   -   -   -   -   -  # no save has it yet
+  Angelpin             -   -   -   -   -   -  # no save has it yet
+  Cool Gem             -   -   -   -   -   -  # no save has it yet
+  Pointed Prism        -   -   -   -   -   -  # no save has it yet
+  Fancy Facet          -   -   -   -   -   -  # no save has it yet
+  Smooth Stone         -   -   -   -   -   -  # no save has it yet
+  Funky Rock           -   -   -   -   -   -  # no save has it yet
+  Quirky Quartz        -   -   -   -   -   -  # no save has it yet
+  Janky Jewel          -   -   -   -   -   -  # no save has it yet
+  Jaguar Shard         -   -   -   -   -   -  # no save has it yet
+  Slick Sphere         -   -   -   -   -   -  # no save has it yet
+  Barbed Ball          -   -   -   -   -   -  # no save has it yet
+  Jagged Mineral       -   -   -   -   -   -  # no save has it yet
+  Conical Crystal      -   -   -   -   -   -  # no save has it yet
+  Soldier Shiv         -   -   -   -   -   -  # no save has it yet
+  Knightly Rapier      -   -   -   -   -   -  # no save has it yet
+  Tribunal Helmet      -   -   -   -   -   -  # no save has it yet
+  Sharpened Axe        -   -   -   -   -   -  # no save has it yet
+  Hotforge Mace        -   -   -   -   -   -  # no save has it yet
+  Lord Shield          -   -   -   -   -   -  # no save has it yet
+  Molten Shiv          -   -   -   -   -   -  # no save has it yet
+  Damascus Axe         -   -   -   -   -   -  # no save has it yet
+  Coldsteel Mace       -   -   -   -   -   -  # no save has it yet
+  Radiant Shield       -   -   -   -   -   -  # no save has it yet
+  Eloquent Rapier      -   -   -   -   -   -  # no save has it yet
+  Centurion Helmet     -   -   -   -   -   -  # no save has it yet
 
 minehead                                # Minehead
   stages                      7e  7m  7l  end1  end2  max
