@@ -9,6 +9,7 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
         crops(save),
         markets(save),
         exotic_market(save),
+        land_rank_upgrades(save),
         land_rank(save),
         jade_emporium(save),
         ninja_upgrades(save),
@@ -179,6 +180,52 @@ fn exotic_market(save: &Save) -> Mechanic {
     m
 }
 
+/// Land rank points: N.js `LankRankPTSleft`, the 36 plot ranks added up (`FarmRank[0]`), less
+/// every database level bought (`FarmRank[2]`, 20 upgrades). A level costs one point. Returns
+/// the levels, the plot ranks and the points left.
+fn land_rank_points(save: &Save) -> (Vec<f64>, f64, f64) {
+    let levels = save.numbers("FarmRank", &[2]);
+    let total: f64 = save.numbers("FarmRank", &[0]).iter().take(36).sum();
+    let spent: f64 = levels.iter().take(20).sum();
+    let left = (total - spent).max(0.0);
+    (levels, total, left)
+}
+
+/// The Land Rank Database's first four columns: 16 upgrades with no cap, each opening at the
+/// total plot rank in `NinjaInfo[37]`; names in `NinjaInfo[34]` (every 5th is a capped seed, on
+/// the Land Rank Database card). Listed in the order they open.
+fn land_rank_upgrades(save: &Save) -> Mechanic {
+    let (levels, total, left) = land_rank_points(save);
+    let unlock = rows("NinjaInfo", &[37]);
+    let items: Vec<Item> = rows("NinjaInfo", &[34])
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| i % 5 != 4)
+        .map(|(i, v)| {
+            let mut it = Item::new(label(v.as_str().unwrap_or("")), pic(format!("RankUpg{i}")), at(&levels, i), 0.0);
+            let need = unlock.get(i).map_or(0.0, |u| num(u));
+            if total < need {
+                it.how = Some(format!("Opens at {need} land ranks over all 36 plots. You have {total}."));
+                it.state = State::Locked;
+            } else {
+                it.how = Some("Next level costs 1 land rank point.".into());
+                if left >= 1.0 {
+                    it.state = State::Ready;
+                }
+            }
+            it
+        })
+        .collect();
+    let picture = items.first().and_then(|i| i.picture.clone());
+    let mut m = mech("land-rank-upgrades", 6, "Land Rank Upgrades", picture, Count::Open, "levels", items);
+    m.have = Some(Have {
+        figure: format!("{} land rank points", big(left)),
+        text: if left >= 1.0 { format!("Enough for {} levels.", big(left)) } else { "No points left. Each plot rank gained gives 1.".into() },
+    });
+    m.note = Some("No max. Points come from plot ranks, shared with the seeds.".into());
+    m
+}
+
 /// Land Rank Database: `FarmRank[2][i]`, names in `NinjaInfo[34]`. Only the 5th column has a cap
 /// (N.js `LandRank5thColumnMaxLV`): 1 + Grimoire upgrade 9 + ceil(Exotic DATADIGGING) + Legend
 /// Talent 3, each at its most. DATADIGGING doubles when it is organic. DATADIGGING and the Legend
@@ -186,18 +233,14 @@ fn exotic_market(save: &Save) -> Mechanic {
 ///
 /// Pictures: upgrade i is `RankUpg{i}`; the card shows the first one listed.
 fn land_rank(save: &Save) -> Mechanic {
-    let levels = save.numbers("FarmRank", &[2]);
+    let (levels, total, left) = land_rank_points(save);
     let w7 = super::world_reached(save) >= 7;
     let grimoire = rows("GrimoireUpg", &[]).get(9).map_or(0.0, |r| cell(r, 4) * cell(r, 5));
     let digging = rows("MarketExoticInfo", &[]).get(15).map_or(0.0, |r| (2.0 * cell(r, 3)).ceil());
     let node = rows("ResGridSquares", &[]).get(130).map_or(0.0, |r| cell(r, 1));
     let legend = rows("LegendTalents", &[]).get(3).map_or(0.0, |r| (cell(r, 1) + node) * cell(r, 2));
     let max = (1.0 + grimoire + if w7 { digging + legend } else { 0.0 }).round();
-    // N.js `LankRankPTSleft`: the 36 plot ranks added up, less every database level bought. A
-    // level costs one point; an upgrade opens at the total rank in `NinjaInfo[37]`.
-    let total: f64 = save.numbers("FarmRank", &[0]).iter().take(36).sum();
-    let spent: f64 = levels.iter().take(20).sum();
-    let left = (total - spent).max(0.0);
+    // An upgrade opens at the total rank in `NinjaInfo[37]`.
     let unlock = rows("NinjaInfo", &[37]);
     // The cap today, the same sum with your own levels (DATADIGGING: 5 × lv / (lv + 1000),
     // doubled when organic, `Spelunk[50]`).
