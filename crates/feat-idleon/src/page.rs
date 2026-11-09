@@ -1245,6 +1245,10 @@ document.addEventListener("click",function(e){
   flip(m,true);
   m.scrollIntoView({behavior:still.matches?"auto":"smooth",block:"start"});
 });
+// Focus rings are for the keyboard: a tap or click on a tier or a switch doesn't draw one.
+var root=document.documentElement;
+document.addEventListener("pointerdown",function(){root.classList.add("ia-pointer")},true);
+document.addEventListener("keydown",function(){root.classList.remove("ia-pointer")},true);
 // Tier layout B: picking a tier moves the highlight in the stage list (the page itself is CSS).
 document.addEventListener("change",function(e){
   var p=e.target;if(!p.classList||!p.classList.contains("ia-pick"))return;
@@ -1405,6 +1409,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-peek-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ia-peek-head h3 { font-size: 15px; font-weight: 600; }
 .ia-pick:focus-visible + .ia-peek .ia-peek-head h3 { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+html.ia-pointer .ia-pick:focus-visible + .ia-peek .ia-peek-head h3, html.ia-pointer .ia-switch label:has(input:focus-visible) { outline: none; }
 .ia-peek > .ia-note { margin-top: 4px; }
 .ia-steps { display: flex; gap: 6px; }
 .ia-step { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--well); color: var(--ink-2); cursor: pointer; }
@@ -1555,6 +1560,8 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-switch { display: flex; flex-wrap: wrap; }
   .ia-switch label { flex: 1 1 30%; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; white-space: nowrap; }
   .ia-switch label .ia-fig { font-size: 12px; }
+  /* Four sides are two rows of two, not three and one. */
+  .ia-switch:has(> label:nth-child(4):last-child) label { flex-basis: 40%; }
   .ia-hero { min-height: 180px; }
   .ia-hero .ov-hello h1 { font-size: 26px; }
   .ia-page { padding: 0 16px 56px; gap: 14px; }
