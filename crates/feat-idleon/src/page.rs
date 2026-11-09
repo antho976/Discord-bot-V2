@@ -483,6 +483,12 @@ const FOLD: &[(&[(&str, &str)], &str)] = &[
     (&[("crops", "Crops"), ("farm-market", "Market"), ("land-rank", "Land Rank"), ("exotic-market", "Exotic")], "Farming"),
     (&[("ninja-upgrades", "Upgrades"), ("jade-emporium", "Emporium"), ("pristine-charms", "Charms"), ("gemstones", "Gemstones")], "Sneaking"),
     (&[("summoning", "Upgrades"), ("summoning-battles", "Battles"), ("summoning-stones", "Stones")], "Summoning"),
+    (&[("spelunk-shop", "Shop"), ("spelunk-caves", "Bosses"), ("spelunk-chapters", "Lore"), ("spelunk-depth", "Depths")], "Spelunking"),
+    (&[("clam-upgrades", "Upgrades"), ("clam-work", "Promotions")], "Clamworks"),
+    (&[("coral-reef", "Reef"), ("dancing-coral", "Dancing Coral")], ""),
+    (&[("gallery-trophies", "Trophies"), ("gallery-podiums", "Podiums"), ("gallery-nametags", "Nametags")], "Gallery"),
+    (&[("menagerie-unlocks", "Unlocks"), ("menagerie-boosts", "Boosts"), ("menagerie-missions", "Missions"), ("menagerie-jellyfish", "Jellyfish")], "Menagerie"),
+    (&[("observations", "Found"), ("observation-levels", "Insight")], "Observations"),
 ];
 
 /// Most sides a switch has (the page's CSS has a rule per side).
