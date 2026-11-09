@@ -738,7 +738,7 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
                 // A one-time thing has no level to show; the chip or the line says the rest.
                 // Something not had at all (a stamp not found) is "Unlock": its level 0 says nothing.
                 @if m.crowd.is_some() && !(once && i.raw.is_none()) {
-                    @if i.raw.is_some_and(|r| r <= 0.0) && target <= 1.0 { "Unlock" }
+                    @if m.tier_level(i) <= 0.0 && target <= 1.0 { "Unlock" }
                     @else if i.raw.is_some_and(|r| r <= 0.0) { "Unlock → Lv " (num(target)) }
                     @else { "Lv " (num(m.tier_level(i))) " → Lv " (num(target)) }
                 }
@@ -769,7 +769,11 @@ fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>) -> Marku
             p.ia-note { "Everything this tier adds is done; a tier before it isn't yet." }
         } @else {
             p.ia-note {
-                @if t.targets.is_none() { (t.need - t.met) " more, any of these. " }
+                @if t.targets.is_none() {
+                    (t.need - t.met) " more"
+                    @if let Some(l) = t.at.filter(|l| *l > 1.0) { " at Lv " (num(l)) }
+                    ", any of these. "
+                }
                 (tasks.len()) " left."
                 @if ready == tasks.len() && ready > 0 { " You can do all of them now." }
                 @else if ready > 0 { " " (ready) " you can do right now." }

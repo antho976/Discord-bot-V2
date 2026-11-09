@@ -268,6 +268,22 @@ pub struct Rung {
     pub stage: usize,
     /// The level each item needs, in item order; 0 for not asked.
     pub targets: Vec<f64>,
+    /// A count rung (an `@any` row): how many items, any of them, and the level each needs.
+    /// Its `targets` are all 0.
+    pub count: Option<(usize, f64)>,
+}
+
+/// The level an `@any <L>` row counts at: "@any 13" is 13. A row named like this is a count,
+/// not an item: each cell says how many items, any of them, need Lv L or more at that stage.
+/// Mechanics where what matters is how many you've done, not which (vials, the Arcade).
+pub fn any_level(name: &str) -> Option<f64> {
+    let l: f64 = name.strip_prefix("@any ")?.trim().replace(',', "").parse().ok()?;
+    (l.is_finite() && l > 0.0).then_some(l)
+}
+
+/// A count rung's name after its stage: "52 unlocked", "38 at Lv 7".
+pub fn count_text(n: usize, level: f64) -> String {
+    if level <= 1.0 { format!("{} unlocked", cell_text(Some(n as f64))) } else { format!("{} at Lv {}", cell_text(Some(n as f64)), cell_text(Some(level))) }
 }
 
 /// A mechanic's ladder from its table: a tier per stage, a stage that asks for many new things
@@ -321,8 +337,17 @@ impl Ladder {
         // Priority: the table's row order (the generator writes rows most important first).
         let mut order: Vec<usize> = (0..items.len()).collect();
         order.sort_by_key(|&i| block.index.get(&items[i].name).copied().unwrap_or(usize::MAX));
+        // `@any` rows, lowest level first; each with the most items that could ever count (an
+        // item whose max is under the level never does), and the count its last rung asked.
+        let mut counts: Vec<(&[Option<f64>], f64, usize, usize)> = block
+            .rows
+            .iter()
+            .filter_map(|(name, cells)| any_level(name).map(|l| (cells.as_slice(), l, items.iter().filter(|i| i.max <= 0.0 || i.max >= l).count(), 0)))
+            .collect();
+        counts.sort_by(|a, b| a.1.total_cmp(&b.1));
         let mut rungs: Vec<Rung> = Vec::new();
         let mut prev = vec![0.0; items.len()];
+        let mut last_targets: Option<Vec<f64>> = None;
         for (col, &stage) in block.stages.iter().enumerate() {
             let targets: Vec<f64> = items
                 .iter()
@@ -332,20 +357,28 @@ impl Ladder {
                     if i.max > 0.0 && i.raw.is_none() { t.min(i.max) } else { t }
                 })
                 .collect();
-            if targets.iter().all(|&t| t <= 0.0) || rungs.last().is_some_and(|r| r.targets == targets) {
-                continue;
+            if targets.iter().any(|&t| t > 0.0) && last_targets.as_ref() != Some(&targets) {
+                let parts = match (block.fits, block.whole) {
+                    (true, _) => split(&prev, &targets, &order, PART, usize::MAX),
+                    (false, true) => vec![targets.clone()],
+                    (false, false) => split(&prev, &targets, &order, PART, MAX_PARTS),
+                };
+                let n = parts.len();
+                for (p, t) in parts.into_iter().enumerate() {
+                    let label = if n == 1 { stage_label(stage) } else { format!("{} · {} of {n}", stage_label(stage), p + 1) };
+                    rungs.push(Rung { label, world: stage_world(stage), stage, targets: t, count: None });
+                }
+                prev = targets.clone();
+                last_targets = Some(targets);
             }
-            let parts = match (block.fits, block.whole) {
-                (true, _) => split(&prev, &targets, &order, PART, usize::MAX),
-                (false, true) => vec![targets.clone()],
-                (false, false) => split(&prev, &targets, &order, PART, MAX_PARTS),
-            };
-            let n = parts.len();
-            for (p, t) in parts.into_iter().enumerate() {
-                let label = if n == 1 { stage_label(stage) } else { format!("{} · {} of {n}", stage_label(stage), p + 1) };
-                rungs.push(Rung { label, world: stage_world(stage), stage, targets: t });
+            // The stage's counts after what it names: a rung each for a count that rose.
+            for (cells, level, most, last) in &mut counts {
+                let n = (cells.get(col).copied().flatten().unwrap_or(0.0).max(0.0) as usize).min(*most);
+                if n > *last {
+                    *last = n;
+                    rungs.push(Rung { label: format!("{} · {}", stage_label(stage), count_text(n, *level)), world: stage_world(stage), stage, targets: vec![0.0; items.len()], count: Some((n, *level)) });
+                }
             }
-            prev = targets;
         }
         (!rungs.is_empty()).then_some(Ladder { rungs })
     }
@@ -408,7 +441,7 @@ bad
         let items = vec![Item::new("A", None, 5.0, 10.0), Item::new("B", None, 0.0, 15.0), Item::new("C", None, 0.0, 10.0)];
         let l = Ladder::new(&t["m"], &items).unwrap();
         assert_eq!(l.rungs.len(), 2);
-        assert_eq!(l.rungs[0], Rung { label: "Early World 7".into(), world: 7, stage: 18, targets: vec![5.0, 0.0, 0.0] });
+        assert_eq!(l.rungs[0], Rung { label: "Early World 7".into(), world: 7, stage: 18, targets: vec![5.0, 0.0, 0.0], count: None });
         assert_eq!(l.rungs[1].targets, vec![9.0, 15.0, 0.0]);
         // A stage that raises many items comes in parts, in the table's row order.
         let mut text = String::from("m\n  stages 7e\n");
@@ -450,5 +483,19 @@ bad
         let l = Ladder::new(&b, &items).unwrap();
         assert_eq!(l.rungs[0].label, "Early World 2 · 1 of 2");
         assert!(l.rungs.last().unwrap().targets.iter().all(|&t| t == 170.0));
+    }
+
+    #[test]
+    fn any_rows_are_counts_after_the_named_items() {
+        let (t, problems) = parse("m\n  stages 6m 7e 7m\n  A        -   5   5\n  @any 1   2   3   3\n  @any 10  -   1   9\n");
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!((any_level("@any 10"), any_level("@any x"), any_level("A")), (Some(10.0), None, None));
+        // C's max is under 10: it can never count there, so that count stops at 2.
+        let items = vec![Item::new("A", None, 5.0, 10.0), Item::new("B", None, 0.0, 15.0), Item::new("C", None, 0.0, 5.0)];
+        let l = Ladder::new(&t["m"], &items).unwrap();
+        let labels: Vec<&str> = l.rungs.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["Mid World 6 · 2 unlocked", "Early World 7", "Early World 7 · 3 unlocked", "Early World 7 · 1 at Lv 10", "Mid World 7 · 2 at Lv 10"]);
+        assert_eq!(l.rungs[3].count, Some((1, 10.0)));
+        assert!(l.rungs[3].targets.iter().all(|&t| t == 0.0));
     }
 }

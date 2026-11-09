@@ -33,6 +33,15 @@ const NEWEST: usize = 300;
 /// none from the saves (owner, 2026-11-08: bubbles "with an order like scoli's autoreview but
 /// tweaked a bit with the levels").
 const BASE_ONLY: [&str; 1] = ["bubbles"];
+/// Mechanics tiered on how many items are at a level, any of them, not on each item's own
+/// level: an `@any L` row for each level here (see `crowd::any_level`). What you can level in
+/// them depends on what you happen to have (a vial's item, the Arcade's shop rotation), so a
+/// tier that names items makes you chase them; a count lets you take the cheapest.
+const COUNTS: [(&str, &[f64]); 2] = [("vials", &[1.0, 4.0, 7.0, 10.0, 13.0]), ("arcade", &[10.0, 25.0, 50.0, 100.0])];
+/// In a `COUNTS` mechanic, the items still asked for by name, to get as soon as you can (owner,
+/// 2026-11-08: Gold Ball Gain, Refinery Speed; Drop Rate is the next most maxed in the saves).
+/// Any other named row typed into `crowd.txt` by hand stays too.
+const FIRST: [(&str, &[&str]); 1] = [("arcade", &["Gold Ball Gain", "Drop Rate", "Refinery Speed"])];
 
 /// Per mechanic key, per item name (interned in `names`): its level.
 type Levels = HashMap<&'static str, HashMap<u32, f32>>;
@@ -133,6 +142,14 @@ fn main() {
     counts[crowd::ENDGAME + 1] = counts[late7];
     counts[crowd::ENDGAME + 2] = total;
     let stages: Vec<usize> = (0..STAGES.len()).filter(|&s| counts[s] >= MIN_SAVES).collect();
+    // For `COUNTS` mechanics, a world whose early, mid and late are each short of saves but that
+    // has enough between them gets one column at its mid stage from all of them: a count is one
+    // number per level, steady on a handful of saves where a row per item isn't.
+    let whole_world: Vec<usize> = (0..6)
+        .map(|w| w * 3)
+        .filter(|&s0| (s0..s0 + 3).all(|s| counts[s] < MIN_SAVES) && (s0..s0 + 3).map(|s| counts[s]).sum::<usize>() >= MIN_SAVES)
+        .map(|s0| s0 + 1)
+        .collect();
 
     let mut out = String::from(HEAD);
     let _ = writeln!(out, "# Saves per stage: {}", (0..crowd::ENDGAME).filter(|&s| counts[s] > 0).map(|s| format!("{} {}", STAGES[s], counts[s])).collect::<Vec<_>>().join(", "));
@@ -178,11 +195,12 @@ fn main() {
         }
         // Columns, every row's cell per column, how much each row matters there, whether any
         // save has it, and the base columns used.
-        let (cols, table, prio, anyone, from_base) = if crowd::BEST.contains(&m.key) {
+        let (cols, table, prio, anyone, from_base, keep, levels, count_table) = if crowd::BEST.contains(&m.key) {
             let (cols, table) = best_table(m, &rows, &ids, &seen);
             let anyone = rows.iter().map(|n| ids.get(n).is_some_and(|id| seen.iter().any(|x| x.levels.get(m.key).and_then(|l| l.get(id)).is_some_and(|v| *v > 0.0)))).collect();
             let prio = vec![vec![0.0; cols.len()]; rows.len()];
-            (cols, table, prio, anyone, HashMap::new())
+            let keep = vec![true; rows.len()];
+            (cols, table, prio, anyone, HashMap::new(), keep, &[][..], Vec::new())
         } else {
             // The base's columns for stages short of saves, matched to these rows.
             let maxes: HashMap<&str, f64> = m.items.iter().chain(&m.later).filter(|i| i.raw.is_none() && i.max > 0.0).map(|i| (i.name.as_str(), i.max)).collect();
@@ -196,13 +214,26 @@ fn main() {
                         .collect()
                 })
                 .unwrap_or_default();
+            // A `COUNTS` mechanic names only its `FIRST` items and rows typed in by hand (a row
+            // that isn't what the last run wrote); the rest are asked for by the counts.
+            let counted = COUNTS.iter().find(|c| c.0 == m.key).map(|c| c.1);
+            let first = FIRST.iter().find(|f| f.0 == m.key).map_or(&[][..], |f| f.1);
+            // The stage the mechanic opens at.
+            let open = usize::from(m.world.clamp(1, 7) - 1) * 3;
             // Columns: stages with enough saves, the base's for stages without, and any stage with a
-            // hand edit in it.
+            // hand edit in it. A `COUNTS` mechanic also gets its whole-world columns, and a column
+            // at each world's mid stage from where it opens up to its first saves, rising to them
+            // (see the ramp below).
             let mut cols = if only_base { Vec::new() } else { stages.clone() };
             cols.extend(from_base.keys().copied());
             // (A base-only table keeps the base's columns: the old ones were the saves'.)
             if let Some(b) = had.filter(|_| !only_base) {
                 cols.extend(b.stages.iter().copied());
+            }
+            if counted.is_some() {
+                cols.extend(whole_world.iter().copied());
+                let data = stages.iter().chain(&whole_world).copied().min().unwrap_or(crowd::ENDGAME);
+                cols.extend((open..data).filter(|s| s % 3 == 1));
             }
             cols.sort_unstable();
             cols.dedup();
@@ -211,28 +242,68 @@ fn main() {
             }
 
             let row_ids: Vec<Option<u32>> = rows.iter().map(|n| ids.get(n).copied()).collect();
-            let level = |x: &Seen, r: usize| row_ids[r].and_then(|id| x.levels.get(m.key)?.get(&id).copied()).unwrap_or(0.0);
-            let anyone: Vec<bool> = (0..rows.len()).map(|r| seen.iter().any(|x| level(x, r) > 0.0)).collect();
+            let full_level = |x: &Seen, r: usize| row_ids[r].and_then(|id| x.levels.get(m.key)?.get(&id).copied()).unwrap_or(0.0);
+            let keep: Vec<bool> = rows
+                .iter()
+                .map(|name| {
+                    counted.is_none()
+                        || first.contains(&name.as_str())
+                        || (gen_text.is_some() && had.and_then(|b| b.row(name)).is_some_and(|cells| last_gen.get(m.key).and_then(|g| g.row(name)) != Some(cells)))
+                })
+                .collect();
+            let level = |x: &Seen, r: usize| if keep[r] { full_level(x, r) } else { 0.0 };
+            let anyone: Vec<bool> = (0..rows.len()).map(|r| seen.iter().any(|x| full_level(x, r) > 0.0)).collect();
+            // The `@any` rows: per level, a cell per column, and what the last column asked.
+            let levels: &[f64] = counted.unwrap_or(&[]);
+            let mut count_table: Vec<Vec<Option<f64>>> = vec![vec![None; cols.len()]; levels.len()];
+            let mut count_floor = vec![0.0f64; levels.len()];
             let mut table: Vec<Vec<Option<f64>>> = vec![vec![None; cols.len()]; rows.len()];
             // How much each row matters at each stage, higher first: the share of the stage's saves
             // that have it, or for a base column, how early AutoReview's tiers ask for it.
             let mut prio: Vec<Vec<f64>> = vec![vec![0.0; cols.len()]; rows.len()];
             let mut floor = vec![0.0f64; rows.len()];
+            // The first column with enough saves.
+            let mut first_data: Option<usize> = None;
             for (k, &s) in cols.iter().enumerate() {
                 let here: Vec<&Seen> = match s.checked_sub(crowd::ENDGAME) {
                     Some(0 | 1) => seen.iter().filter(|x| x.stage == late7).collect(),
                     Some(_) => seen.iter().collect(),
+                    None if counted.is_some() && whole_world.contains(&s) => seen.iter().filter(|x| x.stage / 3 == s / 3).collect(),
                     None => seen.iter().filter(|x| x.stage == s).collect(),
                 };
                 let n = here.len();
+                if n >= MIN_SAVES && first_data.is_none() && !only_base {
+                    first_data = Some(k);
+                }
                 if n < MIN_SAVES || only_base {
                     if let Some((col, rank)) = from_base.get(&s) {
                         for r in 0..rows.len() {
-                            table[r][k] = col[r];
+                            table[r][k] = if keep[r] { col[r] } else { None };
                             prio[r][k] = -rank[r];
+                        }
+                        // The base's counts: its own `@any` rows, and `@first N` as N unlocked.
+                        let b = &base[m.key];
+                        for (c, &l) in levels.iter().enumerate() {
+                            let named = b.cell(&format!("@any {}", crowd::cell_text(Some(l))), s).flatten();
+                            let v = named.or_else(|| (l <= 1.0).then(|| b.cell("@first", s).flatten()).flatten());
+                            if let Some(v) = v {
+                                count_floor[c] = count_floor[c].max(v.min(rows.len() as f64));
+                                count_table[c][k] = Some(count_floor[c]);
+                            }
                         }
                     }
                     continue;
+                }
+                // Each count: how many items the stage's saves have at the level; the count half of
+                // them reach (the endgame: the top quarter, tenth, then the most of any save).
+                for (c, &l) in levels.iter().enumerate() {
+                    let mut have: Vec<usize> = here.iter().map(|x| (0..rows.len()).filter(|&r| f64::from(full_level(x, r)) >= l).count()).collect();
+                    have.sort_unstable_by(|a, b| b.cmp(a));
+                    let q = s.checked_sub(crowd::ENDGAME).map_or(0.5, |e| [0.25, 0.10, 0.0][e.min(2)]);
+                    let at = ((q * n as f64).ceil() as usize).clamp(1, n) - 1;
+                    let v = crowd::nice(have[at] as f64).max(count_floor[c]);
+                    count_floor[c] = v;
+                    count_table[c][k] = (v > 0.0).then_some(v);
                 }
                 // lv[r][j]: row r's level in save j; sorted[r]: highest first.
                 let lv: Vec<Vec<f32>> = (0..rows.len()).map(|r| here.iter().map(|x| level(x, r)).collect()).collect();
@@ -270,7 +341,36 @@ fn main() {
                 }
                 floor = targets;
             }
-            (cols, table, prio, anyone, from_base)
+            // The ramp (`COUNTS` mechanics): from where the mechanic opens to the first column with
+            // saves that asks for it, each count and each named row rises with the square of the
+            // stages since it opened toward what that column asks, so the climb starts small (a base
+            // column that asks more keeps its number); whole numbers, never down from one column to
+            // the next. A count climbs to what its first saves say, nothing when they say none. A
+            // named row is to get as soon as you can: Lv 1 from where the mechanic opens, and one
+            // the first saves don't ask for yet (Refinery Speed in World 6) climbs toward the first
+            // column that does.
+            if let Some(kd) = first_data.filter(|_| counted.is_some()) {
+                let ramp = |cells: &mut Vec<Option<f64>>, most: f64, named: bool| {
+                    let to = if named { (kd..cells.len()).find(|&k| cells[k].is_some()) } else { Some(kd) };
+                    let Some(to) = to else { return };
+                    let top = cells[to].unwrap_or(0.0);
+                    let share = |s: usize| if s < open { 0.0 } else { ((s - open + 1) as f64 / (cols[to] - open + 1) as f64).powi(2) };
+                    let start = |s: usize| if named && s >= open { 1.0 } else { 0.0 };
+                    let mut run = 0.0f64;
+                    for k in 0..to {
+                        let v = crowd::nice(top * share(cols[k])).floor().max(start(cols[k])).max(cells[k].unwrap_or(0.0)).max(run).min(most);
+                        run = v;
+                        cells[k] = (v > 0.0).then_some(v);
+                    }
+                };
+                for cells in &mut count_table {
+                    ramp(cells, rows.len() as f64, false);
+                }
+                for (r, cells) in table.iter_mut().enumerate().filter(|(r, _)| keep[*r]) {
+                    ramp(cells, maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX), true);
+                }
+            }
+            (cols, table, prio, anyone, from_base, keep, levels, count_table)
         };
         let mut gen_block = Block::new(cols.clone());
         let mut block = Block::new(cols.clone());
@@ -284,10 +384,17 @@ fn main() {
             if k == usize::MAX { std::cmp::Ordering::Equal } else { prio[b][k].total_cmp(&prio[a][k]) }
         }).then(a.cmp(&b)));
         let mut lines = Vec::new();
-        for r in by_prio {
-            let name = &rows[r];
-            let anyone = anyone[r];
-            let generated = table[r].clone();
+        // Named rows, then the counts (`@any` rows), lowest level first.
+        let count_names: Vec<String> = levels.iter().map(|&l| format!("@any {}", crowd::cell_text(Some(l)))).collect();
+        let all: Vec<(String, Vec<Option<f64>>, bool)> = by_prio
+            .into_iter()
+            .filter(|&r| keep[r])
+            .map(|r| (rows[r].clone(), table[r].clone(), anyone[r]))
+            .chain(count_names.iter().cloned().zip(count_table.iter().cloned()).map(|(n, c)| (n, c, true)))
+            .collect();
+        for (name, generated, anyone) in &all {
+            let (name, anyone) = (name, *anyone);
+            let generated = generated.clone();
             let mut cells = generated.clone();
             let mut hand = false;
             if let Some(b) = had {
@@ -318,7 +425,7 @@ fn main() {
         }
         if let Some(b) = had {
             for (name, _) in &b.rows {
-                if !rows.contains(name) {
+                if !rows.contains(name) && crowd::any_level(name).is_none() {
                     eprintln!("{}: {name} isn't in the game or any save any more; dropped", m.key);
                 }
             }
@@ -330,6 +437,8 @@ fn main() {
             (_, false) => "World 1 to 5 columns from AutoReview's tiers, changed",
             _ => "",
         };
+        let count = if levels.is_empty() { count.to_string() } else if count.is_empty() { "counts".to_string() } else { format!("counts; {count}") };
+        let count = count.as_str();
         write_block(&mut out, m.key, m.name, count, &block, &lines);
         let gen_lines: Vec<_> = gen_block.rows.iter().map(|(n, c)| (n.clone(), c.clone(), "")).collect();
         write_block(&mut gen_out, m.key, m.name, count, &gen_block, &gen_lines);
@@ -500,6 +609,10 @@ const HEAD: &str = "\
 #   - to stop asking for something everyone levels but shouldn't, write -
 #   - to ask for something sooner, write a level in an earlier column
 #   - `off` after a mechanic's key keeps the page on its old ladder for it
+# A table marked `counts` (vials, the Arcade) names only what to get first; its `@any L` rows
+# say how many items, any of them, a stage asks at Lv L or more (`@any 1`: how many unlocked).
+# Each count that rises is its own tier, after the stage's named items. Type an item's row in
+# to ask for it by name too.
 # Rewrite from saves (keeps your edits):
 #   cargo run --release -p feat-idleon --example crowd -- <folder of saves>/*.json
 # `bot preview` (a debug build) reads this file on every check: edit, save, check again.

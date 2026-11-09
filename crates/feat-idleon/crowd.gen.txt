@@ -7,6 +7,10 @@
 #   - to stop asking for something everyone levels but shouldn't, write -
 #   - to ask for something sooner, write a level in an earlier column
 #   - `off` after a mechanic's key keeps the page on its old ladder for it
+# A table marked `counts` (vials, the Arcade) names only what to get first; its `@any L` rows
+# say how many items, any of them, a stage asks at Lv L or more (`@any 1`: how many unlocked).
+# Each count that rises is its own tier, after the stage's named items. Type an item's row in
+# to ask for it by name too.
 # Rewrite from saves (keeps your edits):
 #   cargo run --release -p feat-idleon --example crowd -- <folder of saves>/*.json
 # `bot preview` (a debug build) reads this file on every check: edit, save, check again.
@@ -550,95 +554,13 @@ bubbles                                 # Alchemy Bubbles, every column from Aut
   Kattle Da Goat         -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
   Codfrey Rulz Ok        -   -   -   -   -    -    -    -    -    -      -      -      -      -      -       -
 
-vials                                   # Vials, World 1 to 5 columns from AutoReview's tiers, changed
-  stages                2l  3e  3m  3l  4e  4m  4l  5e  5m  5l  7e  7m  7l  end1  end2  max
-  Copper Corona          1   -   1   -   1   1   1   1   1   1  13  13  13  13  13  13
-  Sippy Splinters        1   -   1   -   1   1   1   1   1   1  13  13  13  13  13  13
-  Mushroom Soup          1   -   1   -   1   1   1   1   1   1  13  13  13  13  13  13
-  Spool Sprite           1   -   1   -   1   1   1   1   1   1  11  13  13  13  13  13
-  Barium Mixture         1   -   1   -   1   1   1   1   1   1  10  13  13  13  13  13
-  Dieter Drink           1   -   1   -   1   1   1   1   1   1  12  13  13  13  13  13
-  Skinny 0 Cal           1   -   1   -   1   1   1   1   1   1  12  13  13  13  13  13
-  Thumb Pow              -   -   1   -   1   1   1   1   1   1  10  13  13  13  13  13
-  Jungle Juice           -   -   1   -   1   1   1   1   1   1  13  13  13  13  13  13
-  Barley Brew            -   -   1   -   1   1   1   1   1   1   9  13  13  13  13  13
-  Anearful               -   -   1   -   1   1   1   1   1   1  11  13  13  13  13  13
-  Tea With Pea           -   -   1   -   1   1   1   1   1   1  13  13  13  13  13  13
-  Gold Guzzle            -   -   1   -   1   1   1   1   1   1  13  13  13  13  13  13
-  Ramificoction          -   -   1   -   1   1   1   1   1   1  12  13  13  13  13  13
-  Seawater               -   -   -   -   1   1   1   1   1   1  13  13  13  13  13  13
-  Tail Time              -   -   -   -   1   1   1   1   1   1  11  13  13  13  13  13
-  Fly In My Drink        -   -   -   -   1   1   1   1   1   1  13  13  13  13  13  13
-  Mimicraught            -   -   -   -   1   1   1   1   1   1  11  13  13  13  13  13
-  Blue Flav              -   -   -   -   1   1   1   1   1   1  13  13  13  13  13  13
-  Slug Slurp             -   -   -   -   -   1   1   1   1   1  12  13  13  13  13  13
-  Fur Refresher          -   -   -   -   -   1   1   1   1   1  12  13  13  13  13  13
-  Sippy Soul             -   -   -   -   -   1   1   1   1   1   9  13  13  13  13  13
-  Crab Juice             -   -   -   -   -   1   1   1   1   1   9  13  13  13  13  13
-  Void Vial              -   -   -   -   -   1   1   1   1   1  13  13  13  13  13  13
-  Red Malt               -   -   -   -   -   1   1   1   1   1   7  10  12  13  13  13
-  Ew Gross Gross         -   -   -   -   -   1   1   1   1   1  10  13  13  13  13  13
-  The Spanish Sahara     -   -   -   -   -   1   1   1   1   1  13  13  13  13  13  13
-  Poison Tincture        -   -   -   -   -   -   1   1   1   1   2   3   5   7   8  13
-  Etruscan Lager         -   -   -   -   -   -   1   1   1   1  11  13  13  13  13  13
-  Chonker Chug           -   -   -   -   -   -   1   1   1   1   9  13  13  13  13  13
-  Bubonic Burp           -   -   -   -   -   -   1   1   1   1   9  13  13  13  13  13
-  Visible Ink            -   -   -   -   -   -   1   1   1   1  10  13  13  13  13  13
-  Orange Malt            -   -   -   -   -   -   1   1   1   1   6   6  11  12  13  13
-  Snow Slurry            -   -   -   -   -   -   -   1   1   1  10  13  13  13  13  13
-  Slowergy Drink         -   -   -   -   -   -   -   1   1   1   7  12  13  13  13  13
-  Sippy Cup              -   -   -   -   -   -   -   1   1   1  10  13  13  13  13  13
-  Bunny Brew             -   -   -   -   -   -   -   1   1   1   7  10  13  13  13  13
-  40-40 Purity           -   -   -   -   -   -   -   1   1   1  12  13  13  13  13  13
-  Shaved Ice             -   -   -   -   -   -   -   -   1   1   2   5  10  12  12  13
-  Goosey Glug            -   -   -   -   -   -   -   -   1   1   7  12  13  13  13  13
-  Ball Pickle Jar        -   -   -   -   -   -   -   -   1   1   -   -   -   1   1  13
-  Capachino              -   -   -   -   -   -   -   -   1   1  11  13  13  13  13  13
-  Donut Drink            -   -   -   -   -   -   -   -   1   1  10  13  13  13  13  13
-  Long Island Tea        -   -   -   -   -   -   -   -   1   1  11  13  13  13  13  13
-  Spook Pint             -   -   -   -   -   -   -   -   1   1   7  12  13  13  13  13
-  Calcium Carbonate      -   -   -   -   -   -   -   -   1   1  10  13  13  13  13  13
-  Bloat Draft            -   -   -   -   -   -   -   -   1   1   7  13  13  13  13  13
-  Choco Milkshake        -   -   -   -   -   -   -   -   1   1   8  13  13  13  13  13
-  Pearl Seltzer          -   -   -   -   -   -   -   -   1   1   2   4  12  13  13  13
-  Krakenade              -   -   -   -   -   -   -   -   1   1   8  13  13  13  13  13
-  Electrolyte            -   -   -   -   -   -   -   -   1   1   9  13  13  13  13  13
-  Ash Agua               -   -   -   -   -   -   -   -   -   1   6  13  13  13  13  13
-  Maple Syrup            -   -   -   -   -   -   -   -   -   1   5  13  13  13  13  13
-  Hampter Drippy         -   -   -   -   -   -   -   -   -   1   1   3  10  13  13  13
-  Dreadnog               -   -   -   -   -   -   -   -   -   1   2   9  12  13  13  13
-  Dusted Drink           -   -   -   -   -   -   -   -   -   1   -  13  13  13  13  13
-  Oj Jooce               -   -   -   -   -   -   -   -   -   1   9  13  13  13  13  13
-  Oozie Ooblek           -   -   -   -   -   -   -   -   -   1   -  10  13  13  13  13
-  Venison Malt           -   -   -   -   -   -   -   -   -   1  10  13  13  13  13  13
-  Marble Mocha           -   -   -   -   -   -   -   -   -   1  10  12  13  13  13  13
-  Willow Sippy           -   -   -   -   -   -   -   -   -   1  12  13  13  13  13  13
-  Shinyfin Stew          -   -   -   -   -   -   -   -   -   1   -  13  13  13  13  13
-  Dreamy Drink           -   -   -   -   -   -   -   -   -   1   2  13  13  13  13  13
-  Pickle Jar             -   -   -   -   -   -   -   -   -   -   1   2   2   2   2  13
-  Ricecakorade           -   -   -   -   -   -   -   -   -   -   7   7  13  13  13  13
-  Ladybug Serum          -   -   -   -   -   -   -   -   -   -   -   9  13  13  13  13
-  Flavorgil              -   -   -   -   -   -   -   -   -   -   -  13  13  13  13  13
-  Greenleaf Tea          -   -   -   -   -   -   -   -   -   -   -  13  13  13  13  13
-  Firefly Grog           -   -   -   -   -   -   -   -   -   -   -  12  13  13  13  13
-  Refreshment            -   -   -   -   -   -   -   -   -   -   -  10  13  13  13  13
-  Royale Cola            -   -   -   -   -   -   -   -   -   -   -  13  13  13  13  13
-  Sippy Seaweed          -   -   -   -   -   -   -   -   -   -   -   7  13  13  13  13
-  Wriggle Water          -   -   -   -   -   -   -   -   -   -   -   9  13  13  13  13
-  Trash Drank            -   -   -   -   -   -   -   -   -   -   -   8  13  13  13  13
-  Dabar Special          -   -   -   -   -   -   -   -   -   -   -   7  10  13  13  13
-  Ded Sap                -   -   -   -   -   -   -   -   -   -   -  10  13  13  13  13
-  Turtle Tisane          -   -   -   -   -   -   -   -   -   -   -  11  13  13  13  13
-  Chapter Chug           -   -   -   -   -   -   -   -   -   -   -   7  12  13  13  13
-  Rocky Boba             -   -   -   -   -   -   -   -   -   -   -  13  13  13  13  13
-  Scale On Ice           -   -   -   -   -   -   -   -   -   -   -   9  13  13  13  13
-  Gibbed Drink           -   -   -   -   -   -   -   -   -   -   -   -  13  13  13  13
-  Octosoda               -   -   -   -   -   -   -   -   -   -   -   -  13  13  13  13
-  Crabomayse             -   -   -   -   -   -   -   -   -   -   -   -  13  13  13  13
-  Shipinabottle          -   -   -   -   -   -   -   -   -   -   -   -   4   7   9  13
-  Canteen Read           -   -   -   -   -   -   -   -   -   -   -   -   8  11  12  13
-  Paper Pint             -   -   -   -   -   -   -   -   -   -   -   -  10  13  13  13
-  Spiked Drink           -   -   -   -   -   -   -   -   -   -   -   -   -   8   9  13
+vials                                   # Vials, counts; World 1 to 5 columns from AutoReview's tiers, changed
+  stages     2m  2l  3e  3m  3l  4e  4m  4l  5e  5m  5l  6m  7e  7m  7l  end1  end2  max
+  @any 1      1   7   7  14  14  19  27  33  38  51  63  63  75  85  85  85  85  85
+  @any 4      -   2   3   5   8  11  14  18  20  25  30  45  75  80  85  85  85  85
+  @any 7      -   1   2   4   6   8  11  14  17  20  25  35  70  80  80  80  80  85
+  @any 10     -   -   1   2   3   4   6   7   9  11  13  19  65  75  80  80  80  85
+  @any 13     -   -   -   -   -   -   -   1   1   1   2   3  50  65  75  75  80  85
 
 sigils                                  # Sigils
   stages            7e  7m  7l  end1  end2  max
@@ -667,80 +589,15 @@ sigils                                  # Sigils
   Div Spiral         -   4   4   4   5   5
   Cool Coin          -   4   4   4   4   5
 
-arcade                                  # Arcade
-  stages                  7e   7m   7l  end1  end2  max
-  Gold Ball Gain         100  100  100  100  100  100
-  Multikill per Tier       2   15  100  100  100  100
-  Drop Rate               20   85  100  100  100  100
-  Artifact Find           20   25   55  100  100  100
-  Kingdom Resources        7   10   60  100  100  100
-  Emperor Bonuses          -   35  100  100  100  100
-  Prisma Bonuses           -   30  100  100  100  100
-  Palette Luck             -    3    6  100  100  100
-  Cap for all Liquids      -    5   25  100  100  100
-  Starting TD Pts          -    4   11  100  100  100
-  Refinery Speed           -   25  100  100  100  100
-  Deathbringer Bones       -   20  100  100  100  100
-  Construction Build       -    4   50  100  100  100
-  Total Damage             -    3   20  100  100  100
-  x Research XP            -   25  100  100  100  100
-  New Crown Chance         -    6   40  100  100  100
-  x Fountain Speed         -    7   65  100  100  100
-  Equinox Fill Rate        -    -   12  100  100  100
-  Kruk Bubble LVs          -    -   30  100  100  100
-  Sample Size              -    -   20  100  100  100
-  AFK Gains Rate           -    -    4  100  100  100
-  Monument AFK             -    -   14  100  100  100
-  Arcane Tachyons          -    -    6  100  100  100
-  Meritocracy Bonus        -    -    7  100  100  100
-  Class XP multi           -    -  100  100  100  100
-  Base Damage              -    -   10  100  100  100
-  Cash from Mobs           -    -   12  100  100  100
-  Class EXP gain           -    -    5  100  100  100
-  Shiny Chance             -    -    7  100  100  100
-  Weapon Power             -    -    6  100  100  100
-  Base STR                 -    -  100  100  100  100
-  Breed Mob DMG            -    -    2  100  100  100
-  x Summon XP multi        -    -   13  100  100  100
-  x Spelunking Amber       -    -   20  100  100  100
-  x Minehead Currency      -    -   35  100  100  100
-  Megacrop Chance          -    -   35  100  100  100
-  x Villager XP multi      -    -    -  100  100  100
-  x Sigil EXP gains        -    -    -  100  100  100
-  Fishing EXP gain         -    -    -  100  100  100
-  Catching EXP gain        -    -    -  100  100  100
-  x hourly Lumi Gain       -    -    -  100  100  100
-  Windwalker Dust          -    -    -  100  100  100
-  Sneaking XP multi        -    -    -  100  100  100
-  x Sushi Bucks            -    -    -  100  100  100
-  Jade gain                -    -    -  100  100  100
-  Farming EXP              -    -    -  100  100  100
-  x Worship Souls          -    -    -  100  100  100
-  Cook Mastery EXP         -    -    -  100  100  100
-  Trapping EXP             -    -    -  100  100  100
-  Mining EXP gain          -    -    -  100  100  100
-  Divinity EXP             -    -    -  100  100  100
-  Marble Drop Rate         -    -    -  100  100  100
-  Sailing Loot             -    -    -  100  100  100
-  x Jelly Bloodcells       -    -    -  100  100  100
-  Spelunk XP multi         -    -    -  100  100  100
-  Base AGI                 -    -    -  100  100  100
-  Lab EXP gain             -    -    -  100  100  100
-  Base WIS                 -    -    -  100  100  100
-  x Cooking Speed          -    -    -  100  100  100
-  Burger                   -    -    -  100  100  100
-  Skill EXP gain           -    -    -  100  100  100
-  Forge Capacity           -    -    -  100  100  100
-  Nugget Regen             -    -    -  100  100  100
-  Total Accuracy           -    -    -   20   40  100
-  Daily Coral              -    -    -  100  100  100
-  Base Defence             -    -    -  100  100  100
-  x Medallion Chance       -    -    -  100  100  100
-  Tab 1 Talent Pt          -    -    -   60  100  100
-  Base LUK                 -    -    -   95  100  100
-  x Trapping Critters      -    -    -   30   40  100
-  W Ess gain               -    -    -   30  100  100
-  x Breedability Rate      -    -    -   50  100  100
+arcade                                  # Arcade, counts
+  stages            2m  3m  4m  5m  6m   7e   7m   7l  end1  end2  max
+  Refinery Speed     1   3  10  18  30   40  100  100  100  100  100
+  Drop Rate          1   2   5  11  18   55  100  100  100  100  100
+  Gold Ball Gain     1   5  13  20  40  100  100  100  100  100  100
+  @any 10            -   1   4   8  14   35   50   60   70   70   70
+  @any 25            -   -   1   2   4   25   40   55   65   70   70
+  @any 50            -   -   -   1   2   12   25   50   65   65   70
+  @any 100           -   -   -   -   -    7   16   45   60   65   70
 
 islands                                 # Islands
   stages            7e  7m  7l  end1  end2  max

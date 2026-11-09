@@ -105,7 +105,7 @@ mod tests {
     use crate::save::Save;
 
     fn tier(done: bool) -> Tier {
-        Tier { label: String::new(), targets: None, met: usize::from(done), need: 1 }
+        Tier { label: String::new(), targets: None, at: None, met: usize::from(done), need: 1 }
     }
 
     #[test]
