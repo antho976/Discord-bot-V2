@@ -1812,33 +1812,34 @@ emperor                                 # Emperor Showdown, no max
   Arcane Cultist Extra Tachyons     -   4   7   9   9  12  12
 
 summoning                               # Summoning Upgrades, World 1 to 5 columns from crowd-research.txt
-  stages                6e  6m   6l   7e   7m   7l  end1  end2  max
-  Mana Overflow          1   1    1    1    1    1    1    1    1
-  Re-Draw                3   3    3    3    3    3    3    3    3
-  Final Card             2   2    3    3    3    3    3    3    3
-  Another Slot           1   1    1    1    1    1    1    1    1
-  Familiar Merging       1   1    1    1    1    1    1    1    1
-  Multi-Number Cards     1   1    1    1    1    1    1    1    1
-  Dodge Roll            30  30   30   30   30   30   30   30   30
-  Vrumbi                 8   9   10   10   10   10   10   10   10
-  Bloomy                 5   8   10   10   10   10   10   10   10
-  Luck of the Draw      10  10   10   10   10   10   10   10   10
-  Slime Cellsplit       30  30   30   30   30   30   30   30   30
-  Tonka                 20  20   20   20   20   20   20   20   20
-  Slime Mitosis         30  30   30   30   30   30   30   30   30
-  Jeweled Cards          2   2    3    3    3    3    3    3    3
-  Regalis               19  24   30   30   30   30   30   30   30
-  Familiar Skipping     40  70  100  100  100  100  100  100  100
-  Sparkie                9  20   30   30   30   30   30   30   30
-  Seeing Red             7   8   10   10   10   10   10   10   10
-  Slime Duplication      8  24   40   40   40   40   40   40   40
-  Sharpened Spikes      20  20   20   20   20   20   20   20   20
-  Endless Summoning      -   -    1    1    1    1    1    1    1
-  I Frames               -   -   30   30   30   30   30   30   30
-  Guardio                -   -   20   30   30   30   30   30   30
-  Muddah                 -   -    -    1    1    1    1    1    1
-  Whims of the Tide      -   -    -   14   20   30   30   30   30
-  Allstar                -   -    -    8   11   16   16   16   17
+  stages                   6e  6m   6l   7e   7m   7l  end1  end2  max
+  Mana Overflow             1   1    1    1    1    1    1    1    1
+  Re-Draw                   3   3    3    3    3    3    3    3    3
+  Final Card                2   2    3    3    3    3    3    3    3
+  Familiar Merging          1   1    1    1    1    1    1    1    1
+  Multi-Number Cards        1   1    1    1    1    1    1    1    1
+  Dodge Roll               30  30   30   30   30   30   30   30   30
+  Vrumbi                    8   9   10   10   10   10   10   10   10
+  Bloomy                    5   8   10   10   10   10   10   10   10
+  Luck of the Draw         10  10   10   10   10   10   10   10   10
+  Slime Cellsplit          30  30   30   30   30   30   30   30   30
+  Tonka                    20  20   20   20   20   20   20   20   20
+  Slime Mitosis            30  30   30   30   30   30   30   30   30
+  Jeweled Cards             2   2    3    3    3    3    3    3    3
+  Regalis                  19  24   30   30   30   30   30   30   30
+  Familiar Skipping        40  70  100  100  100  100  100  100  100
+  Sparkie                   9  20   30   30   30   30   30   30   30
+  Seeing Red                7   8   10   10   10   10   10   10   10
+  Slime Duplication         8  24   40   40   40   40   40   40   40
+  Sharpened Spikes         20  20   20   20   20   20   20   20   20
+  Endless Summoning         -   -    1    1    1    1    1    1    1
+  I Frames                  -   -   30   30   30   30   30   30   30
+  Guardio                   -   -   20   30   30   30   30   30   30
+  Another Slot (Yellow)     -   -    -    1    1    1    1    1    1  # new since the last run
+  Another Slot (Blue)       -   -    -    1    1    1    1    1    1  # new since the last run
+  Muddah                    -   -    -    1    1    1    1    1    1
+  Whims of the Tide         -   -    -   14   20   30   30   30   30
+  Allstar                   -   -    -    8   11   16   16   16   17
 
 summoning-battles                       # Summoning Battles, World 1 to 5 columns from crowd-research.txt
   stages                      6e  6m  6l  7e  7m  7l  end1  end2  max

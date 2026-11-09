@@ -305,7 +305,7 @@ fn majiks(save: &Save, h: &Holes) -> Mechanic {
     let have = Have {
         figure: format!("{left} majik point{}", if left == 1.0 { "" } else { "s" }),
         text: if left < 1.0 {
-            "None unspent. Each Cosmo level gives one more.".into()
+            "All spent. Each Cosmo level gives one more.".into()
         } else if buy >= 1.0 {
             format!("Enough for {buy} more majik level{}.", if buy == 1.0 { "" } else { "s" })
         } else if items.iter().all(Item::done) {

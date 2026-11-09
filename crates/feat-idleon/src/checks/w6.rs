@@ -721,7 +721,7 @@ fn beanstalk(save: &Save) -> Mechanic {
     items.push(it);
     let mut m = mech("beanstalk", 6, "Gold Food Beanstalk", pic("FoodG1".into()), Count::Levels, "stacks", items);
     m.raises = vec![Raise { name: "Supersized Gold Beanstacking, Jade Emporium".into(), amount: "+1 stack on every food (the 100,000 stack)".into(), owned: supersized }];
-    m.note = Some("Stacks a food: 10,000, then 100,000 (Supersized Gold Beanstacking in the Jade Emporium), then 1,000,000 (the beanstalk upgrade from Urie's quest in World 7, counted on its own).".into());
+    m.note = Some("A food's first level is a stack of 10,000; the raise below adds a second at 100,000.".into());
     m
 }
 
@@ -786,8 +786,11 @@ fn summoning(save: &Save) -> Mechanic {
         .map(|(i, r)| {
             let lv = at(&levels, i);
             // N.js draws upgrade i as `SumUpgIc{i}`.
-            let mut it = Item::new(label(text(r, 3)), pic(format!("SumUpgIc{i}")), lv, cell(r, 8));
             let colour = cell(r, 2) as usize;
+            // Two upgrades share a name (Another Slot): the essence colour tells them apart.
+            let name = label(text(r, 3));
+            let name = if table.iter().filter(|x| text(x, 3) == text(r, 3)).count() > 1 { format!("{name} ({})", COLOURS.get(colour).copied().unwrap_or("?")) } else { name };
+            let mut it = Item::new(name, pic(format!("SumUpgIc{i}")), lv, cell(r, 8));
             // Colour 7 (Teal) is World 7's summoning.
             if colour == 7 {
                 it.world = Some(7);

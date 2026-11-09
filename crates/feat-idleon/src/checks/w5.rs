@@ -96,7 +96,7 @@ fn artifacts(save: &Save) -> Mechanic {
             it
         })
         .collect();
-    let mut m = mech("artifacts", 5, "Artifacts", pic("Arti0".into()), Count::Levels, "tiers", items);
+    let mut m = mech("artifacts", 5, "Artifacts", pic("Arti0".into()), Count::Levels, "forms", items);
     m.tier_names = Some(ARTIFACT_TIERS[1..].iter().map(|s| s.to_string()).collect());
     m
 }
