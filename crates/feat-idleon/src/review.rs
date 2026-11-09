@@ -411,6 +411,21 @@ impl Mechanic {
         v.into_iter().filter(|(i, t)| before.and_then(|b| pos(i).map(|p| b[p])).is_none_or(|was| *t > was)).collect()
     }
 
+    /// Everything tier `k` adds to the tier before it, done or not (tier layout B lists a tier
+    /// whole): what's left first, in `tasks` order, then what's done, each with its target and
+    /// whether it's done. A count tier lists what could still count.
+    pub fn tier_asks<'a>(&'a self, tiers: &[Tier], k: usize) -> Vec<(&'a Item, f64, bool)> {
+        let Some(targets) = &tiers[k].targets else {
+            return self.tasks(&tiers[k]).into_iter().map(|(i, t)| (i, t, false)).collect();
+        };
+        let before = k.checked_sub(1).and_then(|p| tiers[p].targets.as_ref());
+        let added = |p: usize| targets[p] > before.map_or(0.0, |b| b[p]);
+        let pos = |i: &Item| self.items.iter().position(|x| std::ptr::eq(x, i));
+        let mut v: Vec<(&Item, f64, bool)> = self.tasks(&tiers[k]).into_iter().filter(|(i, _)| pos(i).is_some_and(added)).map(|(i, t)| (i, t, false)).collect();
+        v.extend(self.items.iter().zip(targets).enumerate().filter(|&(p, (i, t))| added(p) && self.tier_level(i) >= *t).map(|(_, (i, t))| (i, *t, true)));
+        v
+    }
+
     /// The items a tier still waits on, the ones you can take now first, then the furthest off.
     /// For a count tier, every item you don't have yet, in the game's order after the ready ones;
     /// for a count at a level (`at`), every item under it that can reach it, the ones closest to
