@@ -495,7 +495,7 @@ fn should_have(r: &Review) -> Markup {
             }
             @if behind.len() > OWED_FIRST {
                 details.ia-fresh-more {
-                    summary { "Show the other " (behind.len() - OWED_FIRST) }
+                    summary { "Show the other " (behind.len() - OWED_FIRST) (if behind.len() - OWED_FIRST == 1 { " mechanic" } else { " mechanics" }) }
                     div.ia-owe-list {
                         @for b in behind.iter().skip(OWED_FIRST) { (owed(r, b)) }
                     }
@@ -528,7 +528,9 @@ fn owed(r: &Review, b: &Behind) -> Markup {
     let line = if locked {
         first.first().and_then(|i| i.how.as_deref().map(|h| if first.len() == 1 { h.to_string() } else { format!("{}: {h}", i.name) }))
     } else {
-        Some(format!("Next: {}", ready.join(", ")))
+        // Three by name: a new account's first stamps tier names twenty.
+        let more = ready.len().saturating_sub(3);
+        Some(format!("Next: {}{}", ready[..ready.len().min(3)].join(", "), if more > 0 { format!(" and {more} more") } else { String::new() }))
     };
     let w = crate::crowd::stage_world(b.stage);
     let names = b.owed.iter().map(|o| m.items[o.item].name.as_str()).collect::<Vec<_>>().join(", ");
