@@ -60,7 +60,7 @@ pub const BY_MAX: [&str; 4] = ["anvil-points", "cauldron-upgrades", "pay2win", "
 /// 8 asks): a stage that raises more than `PART` items is split into as many parts as that
 /// takes. `whole` tables (the made `BY_MAX` ones, a tier per stage where every item rises) stay
 /// whole unless they're here too.
-pub const FITS: [&str; 4] = ["bubbles", "cauldron-upgrades", "pay2win", "obols"];
+pub const FITS: [&str; 5] = ["bubbles", "anvil-points", "cauldron-upgrades", "pay2win", "obols"];
 
 /// Share of the best asked for at `stage` for something from `world` (`BEST` tables and
 /// `BY_MAX` ladders): nothing before the world opens, then rising with the square of the

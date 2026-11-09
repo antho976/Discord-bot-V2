@@ -2,8 +2,8 @@
 //! them on an empty save, which builds every mechanic and ladder; `examples/invariants.rs`
 //! runs them on real saves, rendered page included.
 //!
-//! - No tier asks more than `crowd::PART` items, except the `BEST` tables and game tiers drawn
-//!   whole (a statue tier is every statue), and count tiers ("any 20 of 80").
+//! - No tier asks more than `crowd::PART` items, except game tiers drawn whole (a statue tier
+//!   is every statue) and count tiers ("any 20 of 80").
 //! - Every rung of a ladder from other players' saves belongs to its mechanic's world or later:
 //!   nothing is expected before you can have it.
 //! - The rendered results have no NaN, inf, null or "undefined", and the tier data the page
@@ -12,7 +12,7 @@
 
 use bot_core::serde_json::{self, Value};
 
-use crate::crowd::{BEST, PART, endgame};
+use crate::crowd::{PART, endgame};
 use crate::review::{Mechanic, Review};
 
 /// What breaks a rule in `r`'s mechanics and ladders, a line each.
@@ -25,7 +25,7 @@ pub fn review(r: &Review) -> Vec<String> {
             None => vec![m.clone()],
         };
         for v in &views {
-            if BEST.contains(&v.key) || v.whole_tiers {
+            if v.whole_tiers {
                 continue;
             }
             let tiers = v.tiers();
@@ -108,8 +108,6 @@ mod tests {
     const KNOWN: &[&str] = &[
         // The final tier, everything at its max, isn't split (up to 235 asks on cards).
         "(Everything maxed) asks",
-        // A by-max ladder, never split: 11 anvil points a tier.
-        "anvil-points tier ",
     ];
 
     #[test]
