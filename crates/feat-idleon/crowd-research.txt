@@ -252,3 +252,8 @@ summoning-stones                        # Summoning Stones and Endless
   Blue stone                 1
   Red stone                  1
   Endless battles won       60
+
+land-rank-upgrades                      # Land Rank Upgrades: Production first, then Soil EXP, Overgrowth, Farmtastic, Evolution
+  stages                    6l
+  Production Boost           5
+  Evolution Boost            3

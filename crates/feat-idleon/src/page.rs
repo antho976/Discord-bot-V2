@@ -480,7 +480,7 @@ const FOLD: &[(&[(&str, &str)], &str)] = &[
     (&[("superbits", "Superbits"), ("snail", "Snail")], "Gaming"),
     (&[("cavern-villagers", "Villagers"), ("cavern-schematics", "Schematics"), ("cavern-majiks", "Majiks"), ("cavern-measurements", "Measurements"), ("cavern-studies", "Studies")], "The Hole"),
     (&[("cavern-shallow", "Shallow"), ("cavern-glowshroom", "Glowshroom"), ("cavern-overgrowth", "Overgrowth")], "Caverns"),
-    (&[("crops", "Crops"), ("farm-market", "Market"), ("land-rank", "Land Rank"), ("exotic-market", "Exotic")], "Farming"),
+    (&[("crops", "Crops"), ("farm-market", "Market"), ("land-rank-upgrades", "Land Rank"), ("land-rank", "Seeds"), ("exotic-market", "Exotic")], "Farming"),
     (&[("ninja-upgrades", "Upgrades"), ("jade-emporium", "Emporium"), ("pristine-charms", "Charms"), ("gemstones", "Gemstones")], "Sneaking"),
     (&[("summoning", "Upgrades"), ("summoning-battles", "Battles"), ("summoning-stones", "Stones")], "Summoning"),
     (&[("spelunk-shop", "Shop"), ("spelunk-caves", "Bosses"), ("spelunk-chapters", "Lore"), ("spelunk-depth", "Depths")], "Spelunking"),
