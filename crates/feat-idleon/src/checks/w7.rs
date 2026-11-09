@@ -231,8 +231,12 @@ fn spelunk_depth(save: &Save) -> Mechanic {
     let manic = save.numbers("Spelunk", &[47]);
     let mut items = Vec::new();
     for (i, name) in caves() {
-        items.push(Item::new(name.clone(), pic(format!("CaveDoor{i}")), at(&normal, i), 0.0));
-        items.push(Item::new(format!("{name} (Manic)"), pic(format!("CaveDoor{i}")), at(&manic, i), 0.0));
+        let mut it = Item::new(name.clone(), pic(format!("CaveDoor{i}")), at(&normal, i), 0.0);
+        it.how = Some(format!("Your deepest delve in {name}. Depths from every cave add up to Total Depths, a Menagerie mission."));
+        items.push(it);
+        let mut it = Item::new(format!("{name} (Manic)"), pic(format!("CaveDoor{i}")), at(&manic, i), 0.0);
+        it.how = Some(format!("Your deepest Manic Mode delve in {name}. Manic Mode comes from the Spelunking Shop, and these depths count for Total Depths too."));
+        items.push(it);
     }
     mech("spelunk-depth", 7, "Spelunking Depths", pic("CaveDoor0".into()), Count::Open, "depth", items)
 }
@@ -878,7 +882,14 @@ fn observation_rows() -> impl Iterator<Item = (usize, String)> {
 /// Observation insight levels: `Research[4][i]`. N.js `ObservationInsightExpREQ` grows without a cap.
 fn observation_levels(save: &Save) -> Mechanic {
     let levels = save.numbers("Research", &[4]);
-    let items = observation_rows().map(|(i, name)| Item::new(name, pic(format!("ResObj{i}")), at(&levels, i), 0.0)).collect();
+    let found = save.numbers("Research", &[2]);
+    let items = observation_rows()
+        .map(|(i, name)| {
+            let mut it = Item::new(name, pic(format!("ResObj{i}")), at(&levels, i), 0.0);
+            it.how = Some(if at(&found, i) >= 1.0 { "Put an Optical Monocle on it to give it insight.".into() } else { "Find this observation first, then put an Optical Monocle on it.".into() });
+            it
+        })
+        .collect();
     mech("observation-levels", 7, "Observation Insight", pic("ResObj0".into()), Count::Open, "levels", items)
 }
 
@@ -943,7 +954,9 @@ fn glimbo(save: &Save) -> Mechanic {
 /// The Button: `OptLacc[594]` counts presses (N.js `Button_Bonuses`), with no end. The button is a
 /// town sprite (animation "ButtonG"), not one of the game's pictures, so it has none.
 fn the_button(save: &Save) -> Mechanic {
-    let items = vec![Item::new("Presses", None, save.option(594), 0.0)];
+    let mut press = Item::new("Presses", None, save.option(594), 0.0);
+    press.how = Some("Every press counts toward its next bonus.".into());
+    let items = vec![press];
     let mut m = mech("the-button", 7, "The Button", None, Count::Open, "presses", items);
     m.note = Some("Every five presses feed the next of its nine bonuses, round and round.".into());
     m
