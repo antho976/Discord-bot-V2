@@ -1014,82 +1014,17 @@ armor-sets                              # Armor Sets
   Secret Set          -   1   1   1   1   1
   Prehistoric Set     -   1   1   1   1   1
 
-meals                                   # Meals
-  stages              7e   7m   7l  end1  end2  max
-  Salad               90  120  140  150  150  160
-  Frenk Fries         90  120  140  150  150  150
-  Spaghetti           90  120  140  150  150  150
-  Corn                90  120  140  150  150  150
-  Garlic Bread        90  120  140  150  150  150
-  Garlicles Bread     90  120  140  150  150  150
-  Pizza               90  120  140  150  150  150
-  Apple               90  120  140  150  150  150
-  Pancakes            90  120  140  150  150  150
-  Potato P Pastry     90  110  140  150  150  150
-  Dango               90  110  140  150  150  150
-  Octoplop            90  110  140  150  150  150
-  Croissant           90  110  140  150  150  150
-  Sourish Fish        90  110  140  150  150  150
-  Canopy              90  110  130  150  150  150
-  Donut               90  110  140  140  150  150
-  Riceball            90  110  140  140  150  150
-  Cauliflower         90  110  130  140  150  150
-  Durian Fruit        90  110  130  140  150  150
-  Orange              90  110  130  140  140  150
-  Bunt Cake           90  110  130  140  150  150
-  Chocala Truffle     90  110  130  140  140  150
-  Leek                90  110  130  140  140  150
-  Fortune Cookie      90  110  130  140  140  150
-  Sea Urchin          90  110  130  140  140  150
-  Mashed Potato       90  110  130  140  140  150
-  Mutton              90  110  130  140  140  150
-  Eel                 90  110  130  140  140  150
-  Whipped Cocoa       90  110  130  140  140  150
-  Onion               90  110  130  140  150  150
-  Sushi Roll          90  110  130  140  150  150
-  Buncha Banana       90  110  130  140  150  150
-  Pumpkin             90  110  130  140  150  150
-  Cotton Candy        90  110  130  140  150  150
-  Massive Fig         90  110  130  140  150  150
-  Chef Geustloaf      90  110  130  140  140  150
-  Kiwi Fruit          90  110  130  140  140  150
-  Popped Corn         90  110  130  140  140  150
-  Ratatouey           90  110  130  140  150  150
-  Giant Tomato        90  110  130  140  150  150
-  Wrath Grapes        90  110  130  140  150  150
-  Sausy Sausage       90  110  130  140  140  150
-  Seasoned Marrow     90  110  130  140  150  150
-  Sticky Bun          90  110  130  140  150  150
-  Frazzleberry        90  110  130  140  150  150
-  MrLoin Steak        90  110  130  140  150  150
-  Large Pohayoh       90  110  130  140  140  150
-  Bill Jack Pep       90  110  130  140  140  150
-  Plumpcakes          90  110  130  140  150  150
-  Turkey of Thank    110  120  140  150  150  160
-  Egg                100  120  140  150  150  160
-  Yumi Peachring     100  110  130  140  140  150
-  Nyanborgir          90  110  130  140  150  150
-  Woahtermelon        50  110  130  140  140  150
-  Pie                100  120  140  150  150  150
-  Corndog            100  120  140  150  150  150
-  Cabbage            100  120  140  150  150  150
-  Cannoli             95  110  140  140  150  150
-  Cheese              95  110  140  140  150  150
-  Sawdust             95  110  130  140  150  150
-  Eggplant            95  110  130  140  150  150
-  Cheesy Bread        95  110  140  140  150  150
-  Wild Boar           95  110  140  140  150  150
-  Pretzel             95  110  130  140  140  150
-  Wedding Cake        95  110  130  140  140  150
-  Soda               100  110  130  140  150  150
-  Double Cherry      100  110  130  140  140  150
-  Burned Mello        95  110  130  140  150  150
-  Tempura Shrimp      60  110  130  140  150  150
-  Cookies             45  110  130  140  140  150
-  Singing Seed        50  110  130  140  140  150
-  Tasty Treat          -  110  130  140  150  150
-  Giga Chip            -  110  130  140  140  150
-  Divorce Cake         -  110  130  140  140  150
+meals                                   # Meals, counts; World 1 to 5 columns from crowd-research.txt
+  stages      4e  4m  4l  5e  5m  5l  6e  6m   7e   7m   7l  end1  end2  max
+  Cabbage      1   1   1   1   5  11  11  50  110  120  140  150  150  150
+  Corndog      -   1   1   1   5  11  11  50  110  120  140  150  150  150
+  @any 1       2   3   4   5   6   8  15  55   70   70   70   70   70   70
+  @any 11      -   -   -   -   1   3   8  55   70   70   70   70   70   70
+  @any 30      -   3   7  13  20  30  40  55   70   70   70   70   70   70
+  @any 60      -   -   -   -   -   -   -   -   70   70   70   70   70   70
+  @any 90      -   -   -   -   -   -   -   -   65   70   70   70   70   70
+  @any 120     -   -   -   -   -   -   -   -    -   25   70   70   70   70
+  @any 150     -   -   -   -   -   -   -   -    -    -    -   25   45   70
 
 kitchens                                # Kitchens
   stages        7e  7m  7l  end1  end2  max
@@ -1131,30 +1066,12 @@ jewels                                  # Lab Jewels
   Sapphire Pyramite            -   1   1   1   1   1
   Black Diamond Ulthurite      -   1   1   1   1   1
 
-lab-chips                               # Lab Chips
-  stages                    7e  7m  7l  end1  end2  max
-  Chocolatey Chip            1   1   1   1   1   1
-  Grounded Nanochip          1   1   1   1   1   1
-  Grounded Motherboard       1   1   1   1   1   1
-  Grounded Processor         1   1   1   1   1   1
-  Conductive Motherboard     1   1   1   1   1   1
-  Conductive Software        1   1   1   1   1   1
-  Conductive Processor       1   1   1   1   1   1
-  Galvanic Nanochip          1   1   1   1   1   1
-  Galvanic Motherboard       1   1   1   1   1   1
-  Grounded Software          1   1   1   1   1   1
-  Wood Chip                  1   1   1   1   1   1
-  Conductive Nanochip        1   1   1   1   1   1
-  Potato Chip                1   1   1   1   1   1
-  Galvanic Software          1   1   1   1   1   1
-  Silkrode Nanochip          -   1   1   1   1   1
-  Galvanic Processor         -   1   1   1   1   1
-  Poker Chip                 -   1   1   1   1   1
-  Omega Nanochip             -   1   1   1   1   1
-  Silkrode Software          -   1   1   1   1   1
-  Silkrode Processor         -   1   1   1   1   1
-  Silkrode Motherboard       -   -   1   1   1   1
-  Omega Motherboard          -   -   1   1   1   1
+lab-chips                               # Lab Chips, counts; World 1 to 5 columns from crowd-research.txt
+  stages               4m  4l  5e  5m  5l  6e  6m  7e  7m  7l  end1  end2  max
+  Silkrode Nanochip     -   -   -   1   1   1   1   1   1   1   1   1   1
+  Omega Nanochip        -   -   -   -   1   1   1   1   1   1   1   1   1
+  Omega Motherboard     -   -   -   -   -   1   1   1   1   1   1   1   1
+  @any 1                1   2   3   4   5   6   7  17  20  20  20  20  20
 
 breeding-pets                           # Breeding Pets, World 1 to 5 columns from crowd-research.txt
   stages          4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
@@ -1163,76 +1080,16 @@ breeding-pets                           # Breeding Pets, World 1 to 5 columns fr
   World 4 pets     -   -   -   1   1   1   1   1   2  16  16  16  16  16  16
   World 3 pets     -   -   -   -   -   1   2   6  10  18  18  18  18  18  18
 
-shiny                                   # Shiny Pets
-  stages               7e  7m  7l  end1  end2  max
-  Green Mushroom        7   7  20  20  25  30
-  Bored Bean            3   5  17  20  20  25
-  Squirrel              7   7  11  20  20  25
-  Frog                  3   3  12  20  20  25
-  Red Mushroom          4   8  18  20  20  25
-  Baby Boa              -   5  17  20  20  25
-  Sheepie               -   9  20  20  20  25
-  Sir Stache            -   3  10  20  20  20
-  Penguin               -   3  11  20  20  20
-  Slime                 -   5  17  20  20  25
-  Mr Pig                -   6  10  20  20  25
-  Carrotman             -   6  17  20  20  25
-  Glublin               -   7  12  20  20  25
-  Wode Board            -  10  20  20  25  30
-  Gigafrog              -   6  18  20  20  25
-  Crescent Spud         -   6  19  20  25  30
-  Bloque                -   1  17  20  20  20
-  Quenchie              -  11  19  20  20  30
-  Beefie                -   -  12  20  20  20
-  Nutto                 -   -  10  20  20  25
-  Neyeptune             -   -  11  20  20  25
-  Demon Genie           -   -  15  20  20  20
-  Soda Can              -   -  13  20  20  20
-  Biggole Wurm          -   -  15  20  20  20
-  Poop                  -   -  12  20  20  25
-  Mafioso               -   -  12  20  20  25
-  Pincermin             -   -  12  20  20  20
-  Mamooth               -   -  13  20  20  25
-  Bop Box               -   -  11  20  20  20
-  Dedotated Ram         -   -  14  20  20  20
-  Bloodbone             -   -  11  20  20  20
-  Purp Mushroom         -   -  15  20  20  20
-  TV                    -   -  13  20  20  20
-  Dog                   -   -  15  20  20  20
-  Cool Bird             -   -  15  20  20  20
-  Octodar               -   -  15  20  20  20
-  Flombeige             -   -  15  20  20  20
-  Wild Boar             -   -  14  20  20  25
-  Walking Stick         -   -  14  20  20  25
-  Rat                   -   -  18  20  20  25
-  Sandy Pot             -   -  15  20  20  25
-  Mimic                 -   -  12  20  20  25
-  Crabcake              -   -  17  20  20  20
-  Mallay                -   -  12  20  20  25
-  Sand Castle           -   -  14  20  20  20
-  Mashed Potato         -   -  17  20  20  20
-  Tyson                 -   -  16  20  20  25
-  Whale                 -   -  16  20  20  25
-  Moonmoon              -   -  15  20  20  25
-  Sand Giant            -   -  16  20  20  25
-  Snelbie               -   -  11  20  20  25
-  Dig Doug              -   -  13  20  20  25
-  Chippy                -   -  15  20  20  20
-  Frost Flake           -   -  12  20  20  20
-  Xylobone              -   -  16  20  20  20
-  Bunny                 -   -  13  20  20  20
-  Snowman               -   -  15  20  20  20
-  Thermister            -   -  13  20  20  20
-  Cryosnake             -   -  12  20  20  20
-  Mechanical Mouse      -   -  13  20  20  20
-  Panda                 -   -  11  20  20  20
-  Donut                 -   -  16  20  20  20
-  Flying Worm           -   -  15  20  20  20
-  Gelatinous Cuboid     -   -  13  20  20  20
-  Choccie               -   -  14  20  20  20
-  Clammie               -   -  13  20  20  20
-  Stilted Seeker        -   -  14  20  20  20
-  Hedgehog              -   -  15  20  20  20
+shiny                                   # Shiny Pets, counts; World 1 to 5 columns from crowd-research.txt
+  stages        4m  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Wode Board     1   1   1   2   2   6   6  13  20  20  25  30
+  Tyson          1   1   -   1   1   5   5  10  20  20  20  25
+  @any 1         -   1   2   4   4  15  30  65  65  65  65  65
+  @any 5         -   -   -   -   -   5  30  65  65  65  65  65
+  @any 10        -   -   -   -   -   -  14  50  65  65  65  65
+  @any 15        -   -   -   -   -   -   1  25  65  65  65  65
+  @any 20        -   -   -   -   -   -   -   3  45  65  65  65
+  @any 25        -   -   -   -   -   -   -   -   -   -   3  25
 
 breeding-upgrades                       # Breeding Upgrades
   stages                        7e  7m  7l  end1  end2  max
