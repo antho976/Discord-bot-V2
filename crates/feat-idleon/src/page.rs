@@ -9,7 +9,6 @@ use bot_core::Ctx;
 use bot_core::maud::{DOCTYPE, Markup, PreEscaped, html};
 use bot_core::web::ui;
 
-use crate::expected::Pace;
 use crate::game::GAME;
 use crate::pictures;
 use crate::review::{Count, Item, Mechanic, Packs, Review, State as Step, Tier};
@@ -587,9 +586,37 @@ fn item_fig(i: &Item) -> String {
     }
 }
 
-/// Where a mechanic stands against its tiers' worlds, in a line: what world it's at, and the
-/// first tier overdue for the world you're in.
-fn pace_line(p: &Pace, reached: u8) -> Option<String> {
+/// Spaces that don't break.
+fn nb(s: &str) -> String {
+    s.replace(' ', "\u{a0}")
+}
+
+/// The stage tier `k` belongs to: "Late World 1", "Endgame 1" from a ladder from players'
+/// saves, "World 4" from the owner's tier worlds, `None` when it has neither ("Everything
+/// maxed").
+fn tier_stage(m: &Mechanic, k: usize) -> Option<String> {
+    match &m.crowd {
+        Some(l) => l.rungs.get(k).map(|r| crate::crowd::stage_label(r.stage)),
+        None => m.pace.as_ref().and_then(|p| p.worlds.get(k).copied().flatten()).map(|w| format!("World {w}")),
+    }
+}
+
+/// Where a mechanic stands against the world you're in, in a line under the card head: the
+/// stage of the tier you're on, against your world.
+fn pace_line(m: &Mechanic, reached: u8) -> Option<String> {
+    let k = m.tiers().iter().position(|t| !t.complete())?;
+    if let Some(l) = &m.crowd {
+        let r = l.rungs.get(k)?;
+        let stage = crate::crowd::stage_label(r.stage);
+        return Some(if crate::crowd::endgame(r.stage) {
+            format!("Every tier players have by World {reached} is done. The rest are goals from the best saves we have.")
+        } else if r.world <= reached {
+            format!("Tier {} is what players have by {stage}. You're in World {reached}.", k + 1)
+        } else {
+            format!("Every tier players have by World {reached} is done. Tier {} is {stage}'s.", k + 1)
+        });
+    }
+    let p = m.pace.as_ref()?;
     let at = p.at.map(|w| format!("Where a World {w} player would be."));
     match (at, p.due.and_then(|k| p.worlds[k].map(|w| (k, w)))) {
         (at, Some((k, w))) => Some(format!("{}Tier {} is expected by World {w}, and you're in World {reached}.", at.map(|a| a + " ").unwrap_or_default(), k + 1)),
@@ -688,23 +715,20 @@ fn card(m: &Mechanic, partners: &[(&'static str, &Mechanic)], reached: u8) -> Ma
                 (mark(m))
                 span.ia-card-name {
                     b { (title) }
-                    // The tier you're on, numbered as the ladder numbers it ("Tier 3 · you're here").
+                    // The tier you're on, numbered and named as the ladder names it ("Tier 9 of 57
+                    // · Late World 1", owner's design 23). "World 1 level" beside 72% read as a
+                    // contradiction: the stage names the tier you're on, not a level for the card.
                     span {
-                        @if fold.is_some() { (fig(m)) } @else if let Some((_, tv)) = split.as_ref().and_then(|s| s.last()) { (ladder_fig(tv)) } @else { (fig(m)) }
+                        @if fold.is_some() { (nb(&fig(m))) } @else if let Some((_, tv)) = split.as_ref().and_then(|s| s.last()) { (nb(&ladder_fig(tv))) } @else { (nb(&fig(m))) }
+                        // Each part whole on a narrow card: "Early" and "World 7" on two lines read
+                        // as two things.
                         @match current {
-                            Some(k) if fold.is_some() => { " · Tier " (k + 1) "/" (tiers.len()) },
-                            Some(k) if split.is_some() => { " · Level tier " (k + 1) "/" (tiers.len()) },
-                            Some(k) => { " · Tier " (k + 1) "/" (tiers.len()) },
-                            None if !tiers.is_empty() => { " · All tiers" },
+                            Some(k) if split.is_some() && fold.is_none() => { " · " (nb(&format!("Levels tier {} of {}", k + 1, tiers.len()))) },
+                            Some(k) => { " · " (nb(&format!("Tier {} of {}", k + 1, tiers.len()))) },
+                            None if !tiers.is_empty() => { " · " (nb("All tiers")) },
                             None => {},
                         }
-                        @if let Some(p) = &m.pace {
-                            @match (p.at, p.worlds.iter().flatten().min()) {
-                                (Some(w), _) => { " · World " (w) " level" },
-                                (None, Some(f)) if *f <= reached => { " · Under World " (f) " level" },
-                                _ => {},
-                            }
-                        }
+                        @if let Some(st) = current.and_then(|k| tier_stage(m, k)) { " · " (nb(&st)) }
                     }
                 }
                 @if m.count == Count::Open {
@@ -777,7 +801,7 @@ fn view(m: &Mechanic, reached: u8, tag: &str) -> Markup {
     let side = current.is_some() && (m.have.is_some() || !m.raises.is_empty());
     html! {
         @if let Some(n) = &m.note { p.ia-note { (n) } }
-        @if let Some(line) = m.pace.as_ref().and_then(|p| pace_line(p, reached)) { p.ia-pace { (line) } }
+        @if let Some(line) = pace_line(m, reached) { p.ia-pace { (line) } }
         @if m.count == Count::Open {
             @if let Some([avg, median, top, low]) = m.spread() {
                 div.ia-spread {
@@ -912,7 +936,7 @@ fn ladder(m: &Mechanic, tiers: &[Tier], current: Option<usize>, reached: u8, tag
 }
 
 /// Where a side of the switch stands, for its label and the card head: "Onyx 23 / 32",
-/// "Tier 10 / 24", "86 / 120 unlocked", "All tiers".
+/// "Tier 10 of 24", "86 / 120 unlocked", "All tiers".
 fn ladder_fig(m: &Mechanic) -> String {
     let tiers = m.tiers();
     if m.crowd.is_none() && m.tier_names.is_none() {
@@ -920,7 +944,7 @@ fn ladder_fig(m: &Mechanic) -> String {
     }
     match tiers.iter().position(|t| !t.complete()) {
         Some(k) if m.crowd.is_none() => format!("{} {} / {}", tiers[k].label, tiers[k].met, tiers[k].need),
-        Some(k) => format!("Tier {} / {}", k + 1, tiers.len()),
+        Some(k) => format!("Tier {} of {}", k + 1, tiers.len()),
         None => "All tiers".into(),
     }
 }
@@ -1717,11 +1741,15 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 }
 
 @media (max-width: 720px) {
-  /* Should have by now: the stage over the tiers on the right, so the name keeps its room. */
-  .ia-owe-line { grid-template-columns: 24px minmax(0, 1fr) auto; row-gap: 2px; }
+  /* Should have by now: the stage and the tiers beside the name, so what to do next gets the
+     whole width under them. */
+  .ia-owe-line { column-gap: 10px; row-gap: 2px; }
   .ia-owe-line .ia-mark { grid-row: span 2; }
-  .ia-owe-name { grid-row: span 2; }
-  .ia-owe-st, .ia-owe-t { grid-column: 3; text-align: right; }
+  .ia-owe-name { display: contents; }
+  .ia-owe-name b { grid-column: 2; grid-row: 1; }
+  .ia-owe-name span { grid-column: 2 / -1; grid-row: 2; }
+  .ia-owe-st { grid-column: 3; grid-row: 1; }
+  .ia-owe-t { grid-column: 4; grid-row: 1; min-width: 0; }
   /* Two halves that share the width, each its name over where it stands: long figures
      ("Pay2Win Tier 26 / 59") ran past the card. */
   .ia-switch { display: flex; flex-wrap: wrap; }
