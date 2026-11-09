@@ -351,7 +351,7 @@ Then push the Rift and farm vials.
 Every `mech("key", WORLD, …)` was checked against guides, the game data and the 119 saves. A
 save-based check flagged anything a save below the mechanic's (or item's) world already had.
 Below World 5 the folder has no saves, so the early worlds rest on guides only.
-- **Statue Flair: World 7 to World 6.** Flair is a Royal Armory upgrade. The armory comes
+- **Statue Flair: World 7 to World 6** (the owner expected World 7; the saves say otherwise). Flair is a Royal Armory upgrade. The armory comes
   with the Royal Guardian, the masterclass a Lv 600 Divine Knight gets from Masterius in World 6
   ([DigitalTQ Royal Guardian](https://www.digitaltq.com/wiki/idleon/royal-guardian-guide),
   [gameslikefinder](https://gameslikefinder.com/article/idleon-royal-guardian-build-guide/)).
@@ -394,3 +394,8 @@ Below World 5 the folder has no saves, so the early worlds rest on guides only.
   as they are. Tome 77 tiers to 28, Death Note 51 to 30, Greenstacks 59 to 40, Achievements 39
   to 31. No stage has more than 5 tiers now (Greenstacks Mid World 7). A plain cap was tried
   first: it left rows like Account LV at 50 from Mid World 4 to Late World 7, so it was dropped.
+- **Stamps, Statues and the Vault split too.** These `BEST` tables were a whole tier per stage:
+  up to 122 stamps, 32 statues or 84 vault upgrades in one tier, most of them +1 bumps. They
+  now rise in turns like the Tome and split into parts of 8: Stamps 24 tiers to 68, Statues 24
+  to 56, Upgrade Vault 25 to 65, at most 3 a stage. The Statues game-tier side (Gold, Onyx,
+  Zenith) stays whole.
