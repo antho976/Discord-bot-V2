@@ -895,7 +895,7 @@ fn sampling(save: &Save) -> Mechanic {
         items.push(Item::new("No samples yet", None, 0.0, 0.0));
     }
     let mut m = mech("sampling", 3, "3D Printer Samples", pic("ConTower0".into()), Count::Open, "sample size", items);
-    m.note = Some("Your best sample of each item. Sample sizes have no cap.".into());
+    m.note = Some("Your best sample of each item. Sample sizes have no cap, so there are no tiers: the Royal Sampler prayer and the Salt Lick's Printer Sample Size make every new sample bigger.".into());
     m
 }
 
