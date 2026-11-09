@@ -20,3 +20,5 @@ picture TaskAch[A-F]\d+
 cell PlayerCapacities 2 1
 # Greenstacks: every stackable item's own picture (the item ID).
 listed general stackable
+# The Tome: each line its target, its curve and its points.
+table Tome
