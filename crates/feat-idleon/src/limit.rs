@@ -19,6 +19,10 @@ const PER_ADDRESS: usize = 3;
 /// Checks one address can start in a burst (an account and its alts), then one per `REFILL`.
 const BURST: f64 = 10.0;
 const REFILL_SECS: f64 = 20.0;
+/// The same for a tester or staff (`Who::Trusted`), who check save after save on purpose: a
+/// round of test saves, then about one every few seconds. Busy limits still hold for them.
+const TRUSTED_BURST: f64 = 60.0;
+const TRUSTED_REFILL_SECS: f64 = 3.0;
 /// Addresses kept at most. Past it, the ones back to a full burst are forgotten, then the one
 /// idle longest: a flood of new addresses resets its own allowances, never locks others out.
 const KEPT: usize = 4096;
@@ -26,17 +30,42 @@ const KEPT: usize = 4096;
 static TOTAL: AtomicUsize = AtomicUsize::new(0);
 static ADDRESSES: LazyLock<Mutex<HashMap<String, Allowance>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Whose check it is, for how often they may start one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Who {
+    /// Anyone, counted by address.
+    Stranger,
+    /// A signed-in tester or staff member, counted by who they are.
+    Trusted,
+}
+
+impl Who {
+    /// (burst, seconds per check after it)
+    fn pace(self) -> (f64, f64) {
+        match self {
+            Who::Stranger => (BURST, REFILL_SECS),
+            Who::Trusted => (TRUSTED_BURST, TRUSTED_REFILL_SECS),
+        }
+    }
+}
+
 struct Allowance {
     tokens: f64,
     at: Instant,
     under_way: usize,
+    who: Who,
 }
 
 impl Allowance {
     /// Tops the burst back up for the time since it was last used.
     fn refill(&mut self, now: Instant) {
-        self.tokens = (self.tokens + now.saturating_duration_since(self.at).as_secs_f64() / REFILL_SECS).min(BURST);
+        let (burst, secs) = self.who.pace();
+        self.tokens = (self.tokens + now.saturating_duration_since(self.at).as_secs_f64() / secs).min(burst);
         self.at = now;
+    }
+
+    fn full(&self) -> bool {
+        self.tokens >= self.who.pace().0
     }
 }
 
@@ -73,8 +102,9 @@ impl Drop for Pass {
     }
 }
 
-/// Starts a check for `key` (the address's limit key), or says why not.
-pub fn enter(key: String) -> Result<Pass, Refused> {
+/// Starts a check for `key`, or says why not: a stranger's key is their address's limit key, a
+/// trusted one's says who they are (see `trusted_key`), so the two never share an allowance.
+pub fn enter(key: String, who: Who) -> Result<Pass, Refused> {
     if TOTAL.fetch_add(1, Ordering::AcqRel) >= UNDER_WAY {
         TOTAL.fetch_sub(1, Ordering::AcqRel);
         return Err(Refused::Busy);
@@ -88,7 +118,7 @@ pub fn enter(key: String) -> Result<Pass, Refused> {
     if map.len() >= KEPT && !map.contains_key(&key) {
         map.retain(|_, a| {
             a.refill(now);
-            a.under_way > 0 || a.tokens < BURST
+            a.under_way > 0 || !a.full()
         });
         if map.len() >= KEPT {
             // At most `UNDER_WAY` are under way, so there's always an idle one.
@@ -101,7 +131,7 @@ pub fn enter(key: String) -> Result<Pass, Refused> {
             }
         }
     }
-    let a = map.entry(key.clone()).or_insert(Allowance { tokens: BURST, at: now, under_way: 0 });
+    let a = map.entry(key.clone()).or_insert(Allowance { tokens: who.pace().0, at: now, under_way: 0, who });
     a.refill(now);
     if a.under_way >= PER_ADDRESS {
         return refused(Refused::Busy);
@@ -112,6 +142,11 @@ pub fn enter(key: String) -> Result<Pass, Refused> {
     a.tokens -= 1.0;
     a.under_way += 1;
     Ok(Pass { key })
+}
+
+/// The limit key of a trusted checker: their Discord id, not their address.
+pub fn trusted_key(user: u64) -> String {
+    format!("user:{user}")
 }
 
 /// Reports one person may send in an hour.
@@ -145,17 +180,27 @@ mod tests {
         // Its own address, so other tests' counts don't mix in. The total is shared: other
         // tests running at once hold a few passes at most.
         let key = "test:burst".to_string();
-        let held: Vec<Pass> = (0..PER_ADDRESS).map(|_| enter(key.clone()).unwrap()).collect();
-        assert_eq!(enter(key.clone()).err(), Some(Refused::Busy));
+        let held: Vec<Pass> = (0..PER_ADDRESS).map(|_| enter(key.clone(), Who::Stranger).unwrap()).collect();
+        assert_eq!(enter(key.clone(), Who::Stranger).err(), Some(Refused::Busy));
         drop(held);
         let mut started = PER_ADDRESS;
         while started < BURST as usize {
-            drop(enter(key.clone()).unwrap());
+            drop(enter(key.clone(), Who::Stranger).unwrap());
             started += 1;
         }
-        assert_eq!(enter(key.clone()).err(), Some(Refused::TooOften));
+        assert_eq!(enter(key.clone(), Who::Stranger).err(), Some(Refused::TooOften));
         // Another address is untouched.
-        assert!(enter("test:other".into()).is_ok());
+        assert!(enter("test:other".into(), Who::Stranger).is_ok());
+    }
+
+    #[test]
+    fn testers_and_staff_get_a_bigger_burst() {
+        // Past a stranger's burst, one at a time (as a tester checks a round of test saves).
+        let key = trusted_key(900_000_000_000_000_003);
+        for _ in 0..TRUSTED_BURST as usize {
+            drop(enter(key.clone(), Who::Trusted).unwrap());
+        }
+        assert_eq!(enter(key.clone(), Who::Trusted).err(), Some(Refused::TooOften));
     }
 
     #[test]
@@ -170,7 +215,7 @@ mod tests {
 
     #[test]
     fn a_pass_gives_its_place_back() {
-        let p = enter("test:give-back".into()).unwrap();
+        let p = enter("test:give-back".into(), Who::Stranger).unwrap();
         drop(p);
         let map = ADDRESSES.lock().unwrap();
         assert_eq!(map.get("test:give-back").map(|a| a.under_way), Some(0));
