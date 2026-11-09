@@ -225,6 +225,9 @@ fn main() {
             (cols, table, prio, anyone, HashMap::new(), keep, &[][..], Vec::new())
         } else {
             // The base's columns for stages short of saves, matched to these rows.
+            // The stage each item opens at, when it comes later than its mechanic (a World 7 row in
+            // the Killroy skull shop): nothing is asked of it before.
+            let item_open: HashMap<&str, usize> = m.items.iter().chain(&m.later).filter_map(|i| i.world.map(|w| (i.name.as_str(), usize::from(w.clamp(1, 7) - 1) * 3))).collect();
             let maxes: HashMap<&str, f64> = m.items.iter().chain(&m.later).filter(|i| i.raw.is_none() && i.max > 0.0).map(|i| (i.name.as_str(), i.max)).collect();
             let from_base: HashMap<usize, (Vec<Option<f64>>, Vec<f64>)> = base
                 .get(m.key)
@@ -257,7 +260,8 @@ fn main() {
                 cols.extend(b.stages.iter().copied());
             }
             if ramped {
-                cols.extend(whole_world.iter().copied());
+                // (Only from where it opens: before that, the whole-world column has nothing to say.)
+                cols.extend(whole_world.iter().copied().filter(|&s| s >= open));
                 let data = stages.iter().chain(&whole_world).chain(from_base.keys().filter(|_| counted.is_none())).copied().min().unwrap_or(crowd::ENDGAME);
                 cols.extend((open..data).filter(|s| s % 3 == 1));
             }
@@ -383,7 +387,7 @@ fn main() {
             // cells there as they are, `-` too (AutoReview's base only sets a floor).
             if let Some(kd) = first_data.filter(|_| ramped) {
                 let research = researched.iter().any(|k| k == m.key).then(|| &base[m.key]);
-                let ramp = |cells: &mut Vec<Option<f64>>, most: f64, named: bool, fixed: bool| {
+                let ramp = |cells: &mut Vec<Option<f64>>, most: f64, named: bool, fixed: bool, open: usize| {
                     let to = if named { (kd..cells.len()).find(|&k| cells[k].is_some()) } else { Some(kd) };
                     let Some(to) = to else { return };
                     let top = cells[to].unwrap_or(0.0);
@@ -410,11 +414,12 @@ fn main() {
                 };
                 for (c, cells) in count_table.iter_mut().enumerate() {
                     let fixed = research.is_some_and(|b| b.rows.iter().any(|(n, _)| crowd::any_level(n) == Some(levels[c]) || (levels[c] <= 1.0 && n == "@first")));
-                    ramp(cells, rows.len() as f64, false, fixed);
+                    ramp(cells, rows.len() as f64, false, fixed, open);
                 }
                 for (r, cells) in table.iter_mut().enumerate().filter(|(r, _)| keep[*r] && counted.is_some()) {
                     let fixed = research.is_some_and(|b| b.rows.iter().any(|(n, _)| n.eq_ignore_ascii_case(&rows[r])));
-                    ramp(cells, maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX), true, fixed);
+                    let open = item_open.get(rows[r].as_str()).copied().unwrap_or(0).max(open);
+                    ramp(cells, maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX), true, fixed, open);
                 }
                 // Every other table: each row climbs from where the mechanic opens toward the first
                 // saves column that asks it, with the square of the stages since. Rows come in a
@@ -430,8 +435,10 @@ fn main() {
                     let Some(to) = firsts[r] else { continue };
                     let top = cells[to].unwrap_or(0.0);
                     let after = place as f64 / n_rows;
+                    let open = item_open.get(rows[r].as_str()).copied().unwrap_or(0).max(open);
                     let mut run = 0.0f64;
-                    for k in 0..to {
+                    // (Never into a saves column: violet-ocelot, 7e has 37 saves of its own.)
+                    for k in 0..to.min(kd) {
                         let s = cols[k];
                         let share = if s < open { 0.0 } else { ((s - open + 1) as f64 / (cols[to] - open + 1) as f64).powi(2) };
                         let due = s >= open && share >= after;
@@ -445,6 +452,7 @@ fn main() {
             // opens, and goes first in its tiers (see the row order below).
             if counted.is_none() {
                 for r in (0..rows.len()).filter(|&r| first.iter().any(|f| f.eq_ignore_ascii_case(&rows[r]))) {
+                    let open = item_open.get(rows[r].as_str()).copied().unwrap_or(0).max(open);
                     let mut run = 0.0f64;
                     for (k, cell) in table[r].iter_mut().enumerate() {
                         if cols[k] >= open {
