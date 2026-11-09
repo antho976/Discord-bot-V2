@@ -1816,6 +1816,25 @@ exotic-market                           # Exotic Market, no max
   Snapegrass          -    -    -  1,200   1,300   3,200
   Bountiful I         -    -    -      -     250   4,000
 
+land-rank-upgrades                      # Land Rank Upgrades, no max; World 1 to 5 columns from crowd-research.txt
+  stages                   6l  7e   7m   7l   end1   end2    max
+  Production Boost          5  15   15   15    300    490  1,000  # new since the last run
+  Evolution Boost           3  10   35  110    700  1,100  2,000  # new since the last run
+  Soil Exp Boost            -  25  100  120  1,000  1,100  3,100  # new since the last run
+  Evolution Megaboost       -  18   80  110    670  1,000  1,200  # new since the last run
+  Production Superboost     -   -    1   11    520    740  1,300  # new since the last run
+  Soil Exp Megaboost        -   -   50  100    520    740    880  # new since the last run
+  Overgrowth Boost          -   -  100  130    420    500  2,000  # new since the last run
+  Evolution Superboost      -   -   50  160    710  1,000  1,500  # new since the last run
+  Evolution Ultraboost      -   -  100  300  1,200  1,900  4,600  # new since the last run
+  Overgrowth Megaboost      -   -  110  230    720  1,000  2,000  # new since the last run
+  Soil Exp Superboost       -   -  100  100    870    980  2,000  # new since the last run
+  Overgrowth Superboost     -   -  350  400  1,500  1,700  2,400  # new since the last run
+  Farmtastic Boost          -   -    -    -    120    210    740  # new since the last run
+  Production Megaboost      -   -    -    -    250    370    510  # new since the last run
+  Farmtastic Megaboost      -   -    -    -    140    320    750  # new since the last run
+  Farmtastic Superboost     -   -    -    -    260    570    770  # new since the last run
+
 land-rank                               # Land Rank Database
   stages             7e  7m  7l  end1  end2  max
   Seed of Stealth    11  11  11  11  11  11
