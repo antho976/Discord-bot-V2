@@ -250,7 +250,8 @@ fn main() {
         // Columns, every row's cell per column, how much each row matters there, whether any
         // save has it, and the base columns used.
         let (cols, table, prio, anyone, from_base, keep, levels, count_table) = if crowd::BEST.contains(&m.key) {
-            let (cols, table) = best_table(m, &rows, &ids, &seen);
+            let (cols, mut table) = best_table(m, &rows, &ids, &seen);
+            stagger(&mut table, &vec![false; cols.len()], &vec![vec![0.0; cols.len()]; rows.len()]);
             let anyone = rows.iter().map(|n| ids.get(n).is_some_and(|id| seen.iter().any(|x| x.levels.get(m.key).and_then(|l| l.get(id)).is_some_and(|v| *v > 0.0)))).collect();
             let prio = vec![vec![0.0; cols.len()]; rows.len()];
             let keep = vec![true; rows.len()];
@@ -739,7 +740,7 @@ fn stagger(table: &mut [Vec<Option<f64>>], fixed: &[bool], prio: &[Vec<f64>]) {
         let rising = (0..table.len()).filter(|&r| want[r] > asked[r]).count();
         let turns = rising.div_ceil(STEP).max(1);
         for (r, row) in table.iter_mut().enumerate() {
-            if fixed[k] || (place[r] + k) % turns == 0 {
+            if fixed[k] || (place[r] + k).is_multiple_of(turns) {
                 asked[r] = asked[r].max(want[r]);
             }
             row[k] = (asked[r] > 0.0).then_some(asked[r]);
