@@ -24,3 +24,5 @@ listed general stackable
 table Tome
 # Companions: each one's monster ID, bonus text and value.
 table CompanionDB
+# Guild bonuses: name, bonus text, max level (col 7).
+table GuildBonuses
