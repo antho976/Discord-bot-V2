@@ -387,13 +387,13 @@ fn done(guild: u64, r: &Review) -> Markup {
                     p { "In worlds you've reached, with no progress at all. New since you last played, or skipped" }
                 }
                 div.ia-fresh {
-                    @for &i in r.not_started.iter().take(FRESH) { (fresh(&r.mechanics[i])) }
+                    @for &i in r.not_started.iter().take(FRESH) { (fresh(r, &r.mechanics[i])) }
                 }
                 @if r.not_started.len() > FRESH {
                     details.ia-fresh-more {
                         summary { "Show " (r.not_started.len() - FRESH) " more" }
                         div.ia-fresh {
-                            @for &i in r.not_started.iter().skip(FRESH) { (fresh(&r.mechanics[i])) }
+                            @for &i in r.not_started.iter().skip(FRESH) { (fresh(r, &r.mechanics[i])) }
                         }
                     }
                 }
@@ -535,7 +535,7 @@ fn owed(r: &Review, b: &Behind) -> Markup {
     let w = crate::crowd::stage_world(b.stage);
     let names = b.owed.iter().map(|o| m.items[o.item].name.as_str()).collect::<Vec<_>>().join(", ");
     html! {
-        a.ia-owe-line href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(m.key)] data-w=(m.world) title={ (b.owed.len()) " left: " (names) } {
+        a.ia-owe-line href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(r, m.key)] data-w=(m.world) title={ (b.owed.len()) " left: " (names) } {
             (mark(m))
             span.ia-owe-name {
                 b { (m.name) }
@@ -548,9 +548,9 @@ fn owed(r: &Review, b: &Behind) -> Markup {
 }
 
 /// A Not started chip: opens its card.
-fn fresh(m: &Mechanic) -> Markup {
+fn fresh(r: &Review, m: &Mechanic) -> Markup {
     html! {
-        a.ia-fresh-item href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(m.key)] data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
+        a.ia-fresh-item href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(r, m.key)] data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
             (mark(m))
             span { (m.name) }
             span.ia-tag { (world_tag(m.world)) }
@@ -671,9 +671,25 @@ fn card_key(key: &str) -> &str {
     FOLD.iter().find(|f| f.0[1..].iter().any(|s| s.0 == key)).map_or(key, |f| f.0[0].0)
 }
 
-/// For a folded mechanic, the side of its card's switch it's on (links open that side).
-fn side_of(key: &str) -> Option<usize> {
-    FOLD.iter().find_map(|f| f.0.iter().position(|s| s.0 == key).filter(|&k| k > 0))
+/// For a folded mechanic, the side of its card's switch it's on (links open that side): the
+/// index of its first side as `card` lays the switch out. Sides the save doesn't have are left
+/// out, and a mechanic with two ladders of its own (Statues: Levels / Tiers) takes two, so
+/// Statue Flair is side 2, not its place in `FOLD`.
+fn side_of(r: &Review, key: &str) -> Option<usize> {
+    let card = card_key(key);
+    if card == key {
+        return None;
+    }
+    let head = r.mechanics.iter().find(|m| m.key == card)?;
+    let width = |x: &Mechanic| if x.two_sides() { 2 } else { 1 };
+    let mut at = width(head);
+    for (_, p) in folded(r, card) {
+        if p.key == key {
+            return (at < SIDES).then_some(at);
+        }
+        at += width(p);
+    }
+    None
 }
 
 /// The other mechanics folded into `key`'s card, with their sides' names.
@@ -697,6 +713,7 @@ fn card(m: &Mechanic, partners: &[(&'static str, &Mechanic)], reached: u8) -> Ma
         Some(f) => Some(
             std::iter::once((f.0[0].1, m))
                 .chain(partners.iter().map(|(l, p)| (*l, *p)))
+                // `side_of` counts sides the same way: keep the two in step.
                 .flat_map(|(l, x)| match x.levels_view().zip(x.tiers_view()) {
                     Some((lv, tv)) => vec![("Levels", lv), (x.other_side, tv)],
                     None => vec![(l, x.clone())],
@@ -1789,7 +1806,49 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 
 #[cfg(test)]
 mod tests {
-    use super::{stage_window, stage_world};
+    use super::{side_of, stage_window, stage_world};
+    use crate::review::{Count, Item, Mechanic, Review};
+    use crate::save::Save;
+
+    fn mech(key: &'static str) -> Mechanic {
+        Mechanic {
+            key,
+            world: 1,
+            name: key,
+            picture: None,
+            count: Count::Levels,
+            unit: "levels",
+            items: vec![Item::new("x", None, 1.0, 10.0)],
+            note: None,
+            tier_names: None,
+            tier_notes: Vec::new(),
+            raises: Vec::new(),
+            have: None,
+            later: Vec::new(),
+            open_order: None,
+            levels_note: None,
+            whole_tiers: false,
+            other_side: "Tiers",
+            pace: None,
+            crowd: None,
+        }
+    }
+
+    #[test]
+    fn a_link_opens_the_side_the_switch_draws_it_on() {
+        let s = Save::parse(r#"{"OptLacc": []}"#).expect("an empty save");
+        let mut statues = mech("statues");
+        statues.levels_note = Some("Levels".into());
+        let mut r = Review::new(&s, vec![statues, mech("statue-flair")], 7);
+        r.mechanics[0].crowd = Some(crate::crowd::Ladder { rungs: Vec::new() });
+        // Statues brings Levels and Tiers, so Flair is the third side.
+        assert!(r.mechanics[0].two_sides());
+        assert_eq!(side_of(&r, "statue-flair"), Some(2));
+        assert_eq!(side_of(&r, "statues"), None);
+        // A side the save doesn't have is left out of the switch, and out of the count.
+        let r = Review::new(&s, vec![mech("bubbles"), mech("cauldron-upgrades")], 7);
+        assert_eq!(side_of(&r, "cauldron-upgrades"), Some(1));
+    }
 
     #[test]
     fn a_ladder_shows_twelve_stages_from_a_few_before_yours() {
