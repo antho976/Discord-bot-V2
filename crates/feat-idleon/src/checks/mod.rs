@@ -13,6 +13,7 @@ mod tome;
 mod companions;
 mod guild;
 mod obols;
+mod star_talents;
 mod w1;
 mod w2;
 mod w3;
@@ -64,6 +65,7 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
     v.extend(companions::all(save));
     v.extend(guild::all(save));
     v.extend(obols::all(save));
+    v.extend(star_talents::all(save));
     v
 }
 
