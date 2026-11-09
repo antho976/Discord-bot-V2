@@ -482,7 +482,7 @@ fn pace_line(p: &Pace, reached: u8) -> Option<String> {
 /// 2026-11-08: Cauldron Upgrades and Pay2Win, "fold that in"): per card, each side's mechanic
 /// and the side's name, the card's own mechanic first. The card sits in its first mechanic's
 /// world tab. A side whose mechanic the save doesn't have is left out.
-const FOLD: &[&[(&str, &str)]] = &[&[("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win")]];
+const FOLD: &[&[(&str, &str)]] = &[&[("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win")], &[("islands", "Islands"), ("fractal-island", "Fractal Island")]];
 
 /// Most sides a switch has (the page's CSS has a rule per side).
 const SIDES: usize = 6;
