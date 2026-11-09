@@ -755,9 +755,10 @@ fn ladder(m: &Mechanic, tiers: &[Tier], current: Option<usize>, reached: u8, tag
     let here = groups.iter().position(|g| g.1.contains(&pick)).unwrap_or(0);
     let (from, to) = stage_window(groups.len(), here);
     let cut = from > 0 || to < groups.len();
-    // Tiers drawn in full, rows with pictures and how: the one before yours to `NEAR` after it.
-    // The rest list their asks by name (a mid-game save has some 1,600 tiers; drawing every one
-    // in full made the page 9.8 MB).
+    // Only the picked tier is drawn. The rest come as data (`tier_data`) the page script turns
+    // into the tier's page the first time it's picked: in full, rows with pictures and how, from
+    // the one before yours to `NEAR` after it; further off, their asks by name. A mid-game save
+    // has some 1,700 tiers, and drawing them all made the page 2.4 MB with 48,000 elements.
     let near = |k: usize| k + 1 >= pick && k <= pick + NEAR;
     html! {
         div.ia-b {
@@ -786,10 +787,16 @@ fn ladder(m: &Mechanic, tiers: &[Tier], current: Option<usize>, reached: u8, tag
                     }
                 }
             }
-            div.ia-peeks {
+            div.ia-peeks data-t={ (m.key) "-" (tag) } data-n=(tiers.len()) {
                 @for k in 0..tiers.len() {
                     input.ia-pick type="radio" name={ "t-" (m.key) "-" (tag) } id=(id(k)) data-k=(k) checked[k == pick] aria-label={ "Tier " (k + 1) ", " (tiers[k].label) };
-                    div.ia-peek { (peek(m, tiers, k, current, reached, &id, near(k))) }
+                    // The others' pages are made by the script, right after their radios.
+                    @if k == pick {
+                        div.ia-peek { (peek(m, tiers, k, current, reached, &id)) }
+                    }
+                }
+                @if tiers.len() > 1 {
+                    script.ia-later type="application/json" { (PreEscaped(tier_data(m, tiers, pick, current, reached, &near))) }
                 }
             }
         }
@@ -875,8 +882,6 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
     }
 }
 
-/// One tier's page, shown when it's picked: its name with steps to the tiers either side, a
-/// line on where you stand, then everything it asks, what's left first.
 /// Tiers after yours drawn in full (see `ladder`), and the asks a tier further off names.
 const NEAR: usize = 2;
 const FAR_NAMES: usize = 12;
@@ -891,13 +896,114 @@ fn names<'a>(items: impl Iterator<Item = &'a Item>) -> String {
     }
 }
 
-fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached: u8, id: &dyn Fn(usize) -> String, full: bool) -> Markup {
+/// The line under a tier's name: whether you're on it, what's left, and the world it's
+/// expected by. Plain text, so a tier's data (`tier_data`) carries it as is.
+fn peek_note(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached: u8, asks: &[(&Item, f64, bool)]) -> String {
     let t = &tiers[k];
-    // A done count tier has nothing to list: which items counted isn't kept.
-    let asks = if t.complete() && t.targets.is_none() { Vec::new() } else { m.tier_asks(tiers, k) };
     let left = asks.iter().filter(|a| !a.2).count();
     let ready = asks.iter().filter(|a| !a.2 && a.0.state == Step::Ready).count();
     let expected = m.pace.as_ref().and_then(|p| p.worlds.get(k).copied().flatten());
+    let mut s = String::new();
+    if current == Some(k) {
+        s.push_str("You're here. ");
+    }
+    if t.complete() {
+        s.push_str("Done.");
+        if current.is_none() && k + 1 == tiers.len() {
+            s.push_str(" Every tier is done.");
+        }
+        s.push(' ');
+    } else if t.targets.is_none() {
+        s += &format!("{} more", t.need - t.met);
+        if let Some(l) = t.at.filter(|l| *l > 1.0) {
+            s += &format!(" at Lv {}", num(l));
+        }
+        s.push_str(", any of these. ");
+    } else if left == 0 {
+        s.push_str("Everything this tier adds is done; a tier before it isn't yet. ");
+    } else {
+        s += &format!("{left} of {} left", asks.len());
+        if ready == left {
+            s.push_str(", all of them you can do now");
+        } else if ready > 0 {
+            s += &format!(", {ready} you can do now");
+        }
+        s.push_str(". ");
+    }
+    // The tier you're on has this in the line above the ladder already.
+    if let Some(w) = expected.filter(|_| current != Some(k)) {
+        s += &format!("Expected by World {w}, and you're in World {reached}. ");
+    }
+    if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty() && m.crowd.is_none()) {
+        s.push_str(n);
+    }
+    s
+}
+
+/// A tier's asks: none for a done count tier, since which items counted isn't kept.
+fn peek_asks<'a>(m: &'a Mechanic, tiers: &[Tier], k: usize) -> Vec<(&'a Item, f64, bool)> {
+    if tiers[k].complete() && tiers[k].targets.is_none() { Vec::new() } else { m.tier_asks(tiers, k) }
+}
+
+/// The tiers `ladder` doesn't draw, as data for the page script, which draws the page `peek`
+/// would have:
+/// - `i`: the asked items, each once: `[name, picture or "", left square, how or "", state]`
+///   (state 0 unknown, 1 do now, 2 locked) for one drawn as a row, `[name]` for one only named.
+///   Most are only named, and their how is a quarter of the data.
+/// - `n`: tiers near yours, drawn in full: `[label, note, [[item, ask, from or ""], ...] left,
+///   [item, ...] done]`.
+/// - `f`: tiers further off, their asks by name: `[label, note, [[item, ask], ...] at most
+///   `FAR_NAMES`, asks past those named, done, asks]`.
+fn tier_data(m: &Mechanic, tiers: &[Tier], pick: usize, current: Option<usize>, reached: u8, near: &dyn Fn(usize) -> bool) -> String {
+    use bot_core::serde_json::{Map, Value, json};
+    use std::collections::HashMap;
+    let mut items: Vec<Value> = Vec::new();
+    let mut seen: HashMap<*const Item, usize> = HashMap::new();
+    // An item's place in `i`; `row`: drawn as a row, so it needs all of it.
+    let mut at = |i: &Item, row: bool| -> usize {
+        let k = *seen.entry(std::ptr::from_ref(i)).or_insert_with(|| {
+            items.push(json!([i.name]));
+            items.len() - 1
+        });
+        if row && items[k].as_array().is_some_and(|v| v.len() == 1) {
+            let pic = i.picture.as_deref().filter(|p| pictures::has(p));
+            let state = match i.state {
+                Step::Unknown => 0,
+                Step::Ready => 1,
+                Step::Locked => 2,
+            };
+            items[k] = json!([i.name, pic.unwrap_or(""), u8::from(pic.is_some_and(left_square)), i.how.as_deref().unwrap_or(""), state]);
+        }
+        k
+    };
+    let (mut full, mut far) = (Map::new(), Map::new());
+    for k in (0..tiers.len()).filter(|&k| k != pick) {
+        let asks = peek_asks(m, tiers, k);
+        let left = asks.iter().filter(|a| !a.2).count();
+        let note = peek_note(m, tiers, k, current, reached, &asks);
+        if near(k) {
+            // Past `TASKS` the script only names them, as `peek` does.
+            let todo: Vec<Value> = asks[..left].iter().enumerate().map(|(n, (i, target, _))| {
+                let (to, from) = ask_text(m, i, *target);
+                json!([at(i, n < TASKS), to, from.unwrap_or_default()])
+            }).collect();
+            let done: Vec<usize> = asks[left..].iter().map(|a| at(a.0, false)).collect();
+            full.insert(k.to_string(), json!([tiers[k].label, note, todo, done]));
+        } else {
+            let named: Vec<Value> = asks.iter().take(left.min(FAR_NAMES)).map(|(i, target, _)| json!([at(i, false), ask_text(m, i, *target).0])).collect();
+            far.insert(k.to_string(), json!([tiers[k].label, note, named, left.saturating_sub(FAR_NAMES), asks.len() - left, asks.len()]));
+        }
+    }
+    json!({ "i": items, "n": full, "f": far }).to_string().replace('<', "\\u003c").replace('>', "\\u003e").replace('&', "\\u0026")
+}
+
+/// One tier's page, shown when it's picked: its name with steps to the tiers either side, a
+/// line on where you stand, then everything it asks, what's left first. Drawn for the tiers
+/// near yours; the page script draws the rest from `tier_data`, the same way.
+fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached: u8, id: &dyn Fn(usize) -> String) -> Markup {
+    let t = &tiers[k];
+    let asks = peek_asks(m, tiers, k);
+    let left = asks.iter().filter(|a| !a.2).count();
     html! {
         div.ia-peek-head {
             h3 { "Tier " (k + 1) " · " (t.label) }
@@ -907,36 +1013,8 @@ fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached:
                 @if k + 1 < tiers.len() { label.ia-step.next for=(id(k + 1)) title="Next tier" {} } @else { span.ia-step.next.off {} }
             }
         }
-        p.ia-note {
-            @if current == Some(k) { "You're here. " }
-            @if t.complete() {
-                "Done." @if current.is_none() && k + 1 == tiers.len() { " Every tier is done." } " "
-            } @else if t.targets.is_none() {
-                (t.need - t.met) " more"
-                @if let Some(l) = t.at.filter(|l| *l > 1.0) { " at Lv " (num(l)) }
-                ", any of these. "
-            } @else if left == 0 {
-                "Everything this tier adds is done; a tier before it isn't yet. "
-            } @else {
-                (left) " of " (asks.len()) " left"
-                @if ready == left { ", all of them you can do now" } @else if ready > 0 { ", " (ready) " you can do now" }
-                ". "
-            }
-            // The tier you're on has this in the line above the ladder already.
-            @if let Some(w) = expected.filter(|_| current != Some(k)) { "Expected by World " (w) ", and you're in World " (reached) ". " }
-            @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty() && m.crowd.is_none()) { (n) }
-        }
-        @if left > 0 && !full {
-            // A tier further off: what it asks, by name.
-            p.ia-asks {
-                @for (n, (i, target, _)) in asks.iter().take(left.min(FAR_NAMES)).enumerate() {
-                    @if n > 0 { ", " }
-                    (i.name) " " span { (ask_text(m, i, *target).0) }
-                }
-                @if left > FAR_NAMES { " and " (left - FAR_NAMES) " more" }
-            }
-        }
-        @if left > 0 && full {
+        p.ia-note { (peek_note(m, tiers, k, current, reached, &asks)) }
+        @if left > 0 {
             div.ia-task-list {
                 @for (i, target, _) in asks.iter().take(left.min(TASKS)) { (task(m, i, *target)) }
             }
@@ -951,10 +1029,7 @@ fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached:
             }
         }
         // What's done in it: one quiet line of names, not a row each.
-        @if left < asks.len() && !full {
-            p.ia-done-line { span.ia-tick {} span { "Done: " (asks.len() - left) " of " (asks.len()) "." } }
-        }
-        @if left < asks.len() && full {
+        @if left < asks.len() {
             p.ia-done-line {
                 span.ia-tick {}
                 span {
@@ -1241,9 +1316,60 @@ document.addEventListener("click",function(e){
   flip(m,true);
   m.scrollIntoView({behavior:still.matches?"auto":"smooth",block:"start"});
 });
-// Tier layout B: picking a tier moves the highlight in the stage list (the page itself is CSS).
+// Tier layout B: only the picked tier is drawn; the rest arrive as data (tier_data) and each
+// is drawn the first time it's picked, as peek() would have drawn it.
+function el(tag,cls,txt){var x=document.createElement(tag);if(cls)x.className=cls;if(txt!=null)x.textContent=txt;return x}
+function txt(s){return document.createTextNode(s)}
+var TASKS=8;
+function task(it,to,from){
+  var r=el("div","ia-task");
+  if(it[1]){var im=el("img",it[2]?"left":null);im.src="/idleon/pic/"+it[1]+".png";im.alt="";im.loading="lazy";if(it[4]==2)im.style.opacity=".55";r.appendChild(im)}
+  else r.appendChild(el("span","ia-item-dot"));
+  var tt=el("span","ia-task-text");tt.appendChild(el("b",null,it[0]));if(it[3])tt.appendChild(el("span",null,it[3]));r.appendChild(tt);
+  var f=el("span","ia-fig");f.appendChild(el("b",null,to));
+  if(it[4]==1)f.appendChild(el("span","ok","Do now"));else if(it[4]==2)f.appendChild(el("span","lock","Locked"));else if(from)f.appendChild(el("span",null,from));
+  r.appendChild(f);return r;
+}
+function laterPeek(p){
+  var d=p.nextElementSibling;if(d&&d.classList.contains("ia-peek"))return;
+  var ps=p.parentElement,js=ps.querySelector("script.ia-later");if(!js)return;
+  if(!ps._t){try{ps._t=JSON.parse(js.textContent)}catch(x){ps._t={i:[],n:{},f:{}}}}
+  var D=ps._t,k=+p.dataset.k,n=+ps.dataset.n,nt=D.n[k],t=nt||D.f[k];if(!t)return;
+  d=el("div","ia-peek");p.after(d);
+  var name=function(i){return D.i[i][0]};
+  var step=function(c,to,title){
+    if(to<0||to>=n)return el("span","ia-step "+c+" off");
+    var l=el("label","ia-step "+c);l.htmlFor="t-"+ps.dataset.t+"-"+to;l.title=title;return l;
+  };
+  var head=el("div","ia-peek-head"),st=el("span","ia-steps");
+  head.appendChild(el("h3",null,"Tier "+(k+1)+" · "+t[0]));
+  st.appendChild(step("back",k-1,"Tier before"));st.appendChild(step("next",k+1,"Next tier"));head.appendChild(st);
+  d.appendChild(head);d.appendChild(el("p","ia-note",t[1]));
+  var dl=el("p","ia-done-line");dl.appendChild(el("span","ia-tick"));
+  if(nt){
+    if(nt[2].length){
+      var l=el("div","ia-task-list");nt[2].slice(0,TASKS).forEach(function(a){l.appendChild(task(D.i[a[0]],a[1],a[2]))});d.appendChild(l);
+      if(nt[2].length>TASKS)d.appendChild(el("p","ia-asks","And "+(nt[2].length-TASKS)+" more: "+and(nt[2].slice(TASKS).map(function(a){return name(a[0])}))+"."));
+    }
+    if(nt[3].length){dl.appendChild(el("span",null,"Done: "+nt[3].map(name).join(", ")));d.appendChild(dl)}
+  }else{
+    if(t[2].length){
+      var a=el("p","ia-asks");
+      t[2].forEach(function(x,i){a.appendChild(txt((i?", ":"")+name(x[0])+" "));a.appendChild(el("span",null,x[1]))});
+      if(t[3])a.appendChild(txt(" and "+t[3]+" more"));
+      d.appendChild(a);
+    }
+    if(t[4]){dl.appendChild(el("span",null,"Done: "+t[4]+" of "+t[5]+"."));d.appendChild(dl)}
+  }
+}
+// "A, B and C", as names() says it.
+function and(v){return v.length<2?v.join(""):v.slice(0,-1).join(", ")+" and "+v[v.length-1]}
+// A tier the browser picked on its own (a page restored on Back) is drawn at once.
+document.querySelectorAll(".ia-pick:checked").forEach(laterPeek);
+// Picking a tier moves the highlight in the stage list (the page itself is CSS).
 document.addEventListener("change",function(e){
   var p=e.target;if(!p.classList||!p.classList.contains("ia-pick"))return;
+  laterPeek(p);
   var b=p.closest(".ia-b");if(!b)return;
   b.querySelectorAll(".ia-dash.picked,.ia-st.picked").forEach(function(x){x.classList.remove("picked")});
   var d=b.querySelector('.ia-dash[data-k="'+p.dataset.k+'"]');if(!d)return;
