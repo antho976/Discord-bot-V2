@@ -321,7 +321,7 @@ fn done(guild: u64, r: &Review) -> Markup {
                 div.ia-world data-w=(w) style={ "--w: var(--w" (w) ")" } {
                     div.ia-grid {
                         @for m in r.mechanics.iter().filter(|m| m.world == *w && card_key(m.key) == m.key) {
-                            (card(m, FOLD.iter().find(|f| f.0 == m.key).and_then(|f| r.mechanics.iter().find(|p| p.key == f.2)), r.world))
+                            (card(m, &folded(r, m.key), r.world))
                         }
                     }
                 }
@@ -478,37 +478,48 @@ fn pace_line(p: &Pace, reached: u8) -> Option<String> {
     }
 }
 
-/// Two mechanics drawn as one card behind a switch, like Stamps' Levels / Unlock (owner,
-/// 2026-11-08: Cauldron Upgrades and Pay2Win, "fold that in"): the card's mechanic and its
-/// side's name, then the folded one and its side's name.
-const FOLD: &[(&str, &str, &str, &str)] = &[("cauldron-upgrades", "Brewing", "pay2win", "Pay2Win")];
+/// Mechanics drawn as one card behind a switch, like Stamps' Levels / Unlock (owner,
+/// 2026-11-08: Cauldron Upgrades and Pay2Win, "fold that in"): per card, each side's mechanic
+/// and the side's name, the card's own mechanic first. The card sits in its first mechanic's
+/// world tab. A side whose mechanic the save doesn't have is left out.
+const FOLD: &[&[(&str, &str)]] = &[&[("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win")]];
+
+/// Most sides a switch has (the page's CSS has a rule per side).
+const SIDES: usize = 6;
 
 /// The key of the card a mechanic is drawn in: its own, or the one it's folded into.
 fn card_key(key: &str) -> &str {
-    FOLD.iter().find(|f| f.2 == key).map_or(key, |f| f.0)
+    FOLD.iter().find(|f| f[1..].iter().any(|s| s.0 == key)).map_or(key, |f| f[0].0)
 }
 
 /// For a folded mechanic, the side of its card's switch it's on (links open that side).
-fn side_of(key: &str) -> Option<&'static str> {
-    FOLD.iter().any(|f| f.2 == key).then_some("tiers")
+fn side_of(key: &str) -> Option<usize> {
+    FOLD.iter().find_map(|f| f.iter().position(|s| s.0 == key).filter(|&k| k > 0))
 }
 
-fn card(m: &Mechanic, partner: Option<&Mechanic>, reached: u8) -> Markup {
+/// The other mechanics folded into `key`'s card, with their sides' names.
+fn folded<'a>(r: &'a Review, key: &str) -> Vec<(&'static str, &'a Mechanic)> {
+    FOLD.iter()
+        .find(|f| f[0].0 == key)
+        .map(|f| f[1..].iter().filter_map(|s| r.mechanics.iter().find(|p| p.key == s.0).map(|p| (s.1, p))).collect())
+        .unwrap_or_default()
+}
+
+fn card(m: &Mechanic, partners: &[(&'static str, &Mechanic)], reached: u8) -> Markup {
     let tiers = m.tiers();
     let current = tiers.iter().position(|t| !t.complete());
     let hold = ON_HOLD.contains(&m.key);
-    let fold = FOLD.iter().find(|f| f.0 == m.key).zip(partner);
-    // Two sides behind a switch: statues and stamps show the game's tiers and a ladder on
-    // levels; a folded card shows its two mechanics. (label, the side, the side's mechanic)
-    let split: Option<[(&str, Mechanic); 2]> = match fold {
-        Some((f, p)) => Some([(f.1, m.clone()), (f.3, p.clone())]),
-        None => m.levels_view().zip(m.tiers_view()).map(|(lv, tv)| [("Levels", lv), (m.other_side, tv)]),
+    let fold = (!partners.is_empty()).then(|| FOLD.iter().find(|f| f[0].0 == m.key)).flatten();
+    // Sides behind a switch: statues and stamps show the game's tiers and a ladder on levels;
+    // a folded card shows its mechanics. (label, the side's mechanic)
+    let split: Option<Vec<(&str, Mechanic)>> = match fold {
+        Some(f) => Some(std::iter::once((f[0].1, m.clone())).chain(partners.iter().map(|(l, p)| (*l, (*p).clone()))).take(SIDES).collect()),
+        None => m.levels_view().zip(m.tiers_view()).map(|(lv, tv)| vec![("Levels", lv), (m.other_side, tv)]),
     };
-    let share = match partner.filter(|_| fold.is_some()) {
-        Some(p) if m.total() + p.total() > 0.0 => ((m.have() + p.have()) / (m.total() + p.total())).clamp(0.0, 1.0),
-        _ => m.share(),
-    };
-    let done = fold.is_some_and(|(_, p)| m.done() && p.done()) || (fold.is_none() && m.done());
+    let all = || std::iter::once(m).chain(partners.iter().map(|p| p.1));
+    let (have, total) = all().fold((0.0, 0.0), |(h, t), x| (h + x.have(), t + x.total()));
+    let share = if fold.is_some() && total > 0.0 { (have / total).clamp(0.0, 1.0) } else { m.share() };
+    let done = if fold.is_some() { all().all(|x| x.done()) } else { m.done() };
     html! {
         details.ia-card #{ "m-" (m.key) } {
             summary {
@@ -517,7 +528,7 @@ fn card(m: &Mechanic, partner: Option<&Mechanic>, reached: u8) -> Markup {
                     b { (m.name) }
                     // The tier you're on, numbered as the ladder numbers it ("Tier 3 · you're here").
                     span {
-                        @if fold.is_some() { (fig(m)) } @else if let Some([_, (_, tv)]) = &split { (ladder_fig(tv)) } @else { (fig(m)) }
+                        @if fold.is_some() { (fig(m)) } @else if let Some((_, tv)) = split.as_ref().and_then(|s| s.last()) { (ladder_fig(tv)) } @else { (fig(m)) }
                         @match current {
                             Some(k) if fold.is_some() => { " · Tier " (k + 1) "/" (tiers.len()) },
                             Some(k) if split.is_some() => { " · Level tier " (k + 1) "/" (tiers.len()) },
@@ -545,22 +556,20 @@ fn card(m: &Mechanic, partner: Option<&Mechanic>, reached: u8) -> Markup {
                 @if hold {
                     p.ia-hold { b { "Order coming later." } " The numbers here are right, but these tiers aren't in the order you'd really do them yet. That comes in a later update." }
                 }
-                @if let Some([(a, lv), (b, tv)]) = &split {
+                @if let Some(sides) = &split {
                     div.ia-split {
                         div.ia-switch role="radiogroup" aria-label="Show" {
-                            label {
-                                input type="radio" name={ "v-" (m.key) } value="levels" checked;
-                                b { (a) }
-                                span.ia-fig { (ladder_fig(lv)) }
-                            }
-                            label {
-                                input type="radio" name={ "v-" (m.key) } value="tiers";
-                                b { (b) }
-                                span.ia-fig { (ladder_fig(tv)) }
+                            @for (k, (label, side)) in sides.iter().enumerate() {
+                                label {
+                                    input type="radio" name={ "v-" (m.key) } value=(k) checked[k == 0];
+                                    b { (label) }
+                                    span.ia-fig { (ladder_fig(side)) }
+                                }
                             }
                         }
-                        div.ia-view.levels { (view(lv, reached, "levels")) @if fold.is_some() { (all_items(lv)) } }
-                        div.ia-view.tiers { (view(tv, reached, "tiers")) @if fold.is_some() { (all_items(tv)) } }
+                        @for (k, (_, side)) in sides.iter().enumerate() {
+                            div.ia-view data-v=(k) { (view(side, reached, &k.to_string())) @if fold.is_some() { (all_items(side)) } }
+                        }
                     }
                 } @else {
                     div.ia-view { (view(m, reached, "")) }
@@ -1052,6 +1061,7 @@ document.addEventListener("click",function(e){
   var w=document.getElementById("w-"+a.dataset.w),m=document.getElementById(a.dataset.go);
   if(!m)return;
   e.preventDefault();
+  var t=m.closest(".ia-world");if(t)w=document.getElementById("w-"+t.dataset.w);
   if(w){w.checked=true;showTab(false)}
   if(a.dataset.side){var v=m.querySelector('.ia-switch input[value="'+a.dataset.side+'"]');if(v)v.checked=true}
   flip(m,true);
@@ -1143,8 +1153,12 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-switch label:has(input:checked) b { font-weight: 600; }
 .ia-switch label:has(input:checked) .ia-fig { color: var(--ink); }
 .ia-view { display: flex; flex-direction: column; gap: 18px; }
-.ia-view.tiers, .ia-split:has(input[value="tiers"]:checked) .ia-view.levels { display: none; }
-.ia-split:has(input[value="tiers"]:checked) .ia-view.tiers { display: flex; animation: ia-in 0.18s var(--ease); }
+.ia-split > .ia-view:not([data-v="0"]), .ia-split:has(> .ia-switch input:not([value="0"]):checked) > .ia-view[data-v="0"] { display: none; }
+.ia-split:has(> .ia-switch input[value="1"]:checked) > .ia-view[data-v="1"],
+.ia-split:has(> .ia-switch input[value="2"]:checked) > .ia-view[data-v="2"],
+.ia-split:has(> .ia-switch input[value="3"]:checked) > .ia-view[data-v="3"],
+.ia-split:has(> .ia-switch input[value="4"]:checked) > .ia-view[data-v="4"],
+.ia-split:has(> .ia-switch input[value="5"]:checked) > .ia-view[data-v="5"] { display: flex; animation: ia-in 0.18s var(--ease); }
 .ia-world { display: none; }
 .ia-worlds:has(#w-0:checked) .ia-world[data-w="0"], .ia-worlds:has(#w-1:checked) .ia-world[data-w="1"],
 .ia-worlds:has(#w-2:checked) .ia-world[data-w="2"], .ia-worlds:has(#w-3:checked) .ia-world[data-w="3"],
