@@ -42,7 +42,7 @@ impl SaveError {
     pub fn message(&self) -> &'static str {
         match self {
             SaveError::TooBig => "That's bigger than any Idleon save. Paste only the JSON from IdleonToolbox or Idleon Efficiency.",
-            SaveError::NotJson => "That isn't JSON. Copy the whole save from IdleonToolbox (Raw data, Copy) or Idleon Efficiency and paste it as it is.",
+            SaveError::NotJson => "That isn't JSON. Copy your save again (Copy for support in IdleonToolbox, or Copy Raw JSON in Idleon Efficiency) and paste it as it is.",
             SaveError::NotASave => "That's JSON, but not an Idleon save: it has no account options in it.",
         }
     }
