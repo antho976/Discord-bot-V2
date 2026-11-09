@@ -381,7 +381,7 @@ fn ninja_upgrades(save: &Save) -> Mechanic {
         figure: format!("{} jade coins", big(jade)),
         text: if ready == 0 { "Not enough for the next level of any upgrade yet.".into() } else { format!("Enough for the next level of {ready} of these, each on its own.") },
     });
-    m.note = Some("No max: these level up without end. Costs include Centurion Lineage, Way of Bargain, Gold Coupon, Emerald and the talent that cuts Ninja Knowledge costs per 10 upgrades. Talent levels added by other bonuses, and the bubble on Currency Conduit, lower them further, so each cost is an upper bound.".into());
+    m.note = Some("No max. Costs shown are the most they can be: a few discounts aren't counted.".into());
     m
 }
 
@@ -772,7 +772,7 @@ fn summoning(save: &Save) -> Mechanic {
         .collect();
     let picture = items.first().and_then(|i| i.picture.clone());
     let mut m = mech("summoning", 6, "Summoning Upgrades", picture, Count::Levels, "levels", items);
-    m.note = Some("Only the upgrades with a cap, and not Familiar, whose level resets every few days. The rest level up without end. Costs are before reductions from talents, other Summoning upgrades, Sushi, Jelly, an Arcane upgrade and the Menagerie, so the real cost is lower. Teal upgrades are World 7.".into());
+    m.note = Some("Upgrades with a cap only; Familiar resets every few days. Costs are before discounts.".into());
     m
 }
 
