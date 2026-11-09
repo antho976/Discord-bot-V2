@@ -945,21 +945,21 @@ equinox-dreams                          # Equinox Dreams
   Find at least 1850 items, according to The Slab                                                                  -   -   -   -   -   -   -   -   1   1
   Get at least 100 Killroy kills on ALL monsters in World 1 through 6, as shown in Killroy Prime in Rift           -   -   -   -   -   -   -   -   -   -  # no save has it yet
 
-equinox-upgrades                        # Equinox Upgrades
-  stages               3m  4m  5m  6m  7e  7m  7l  end1  end2  max
-  Shades of K           1   1   1   2   3   3   3   3   3   3
-  Equinox Dreams        -   1   2   5   5   5   5   5   5   5
-  Matching Scims        -   1   4   8  12  12  12  53  53  53
-  Faux Jewels           -   1   1   1   1   1   1  31  31  31
-  Equinox Symbols       -   2   6  11  16  19  19  19  19  19
-  Voter Rights          -   3  10  18  25  30  35  40  40  40
-  Nonstop Studies       -   5  12  20  30  35  45  67  67  67
-  Equinox Resources     -   -   2   4   4   4   4   4   4   4
-  Liquidvestment        -   -   2   4   7  11  11  11  11  11
-  Slow Roast Wiz        -   -   1   1   2   7  11  21  21  21
-  Laboratory Fuse       -   -   1   2   3   3   4   5  10  10
-  Food Lust             -   -   1   2   3   3   4   5  10  16
-  Metal Detector        -   -   -   1   1  12  16  16  16  16
+equinox-upgrades                        # Equinox Upgrades, World 1 to 5 columns from crowd-research.txt
+  stages               3m  4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Faux Jewels           1   1   1   1   1   1   1   1   1   1   1   1   1  31  31  31
+  Equinox Dreams        -   1   1   1   1   2   3   4   5   5   5   5   5   5   5   5
+  Matching Scims        -   1   1   2   3   4   5   7   8  10  12  12  12  53  53  53
+  Equinox Symbols       -   1   2   3   4   6   7   9  11  13  16  19  19  19  19  19
+  Voter Rights          -   2   3   5   7  10  12  15  18  20  25  30  35  40  40  40
+  Nonstop Studies       -   3   5   7   9  12  16  20  20  25  30  35  45  67  67  67
+  Slow Roast Wiz        -   -   -   -   1   1   1   1   1   1   2   7  11  21  21  21
+  Equinox Resources     -   -   -   -   -   1   2   3   4   4   4   4   4   4   4   4
+  Liquidvestment        -   -   -   -   -   1   1   2   4   6   7  11  11  11  11  11
+  Laboratory Fuse       -   -   -   -   -   1   1   1   2   2   3   3   4   5  10  10
+  Metal Detector        -   -   -   -   -   1   1   1   1   1   1  12  16  16  16  16
+  Food Lust             -   -   -   -   -   1   1   1   2   2   3   3   4   5  10  16
+  Shades of K           -   -   -   -   -   -   -   1   1   1   3   3   3   3   3   3
 
 library                                 # Talent Book Library
   stages                          3m  4m  5m  6m   7e   7m   7l  end1  end2  max
@@ -1018,13 +1018,13 @@ meals                                   # Meals, counts; World 1 to 5 columns fr
   stages      4e  4m  4l  5e  5m  5l  6e  6m   7e   7m   7l  end1  end2  max
   Cabbage      1   1   1   1   5  11  11  50  110  120  140  150  150  150
   Corndog      -   1   1   1   5  11  11  50  110  120  140  150  150  150
-  @any 1       2   3   4   5   6   8  15  55   70   70   70   70   70   70  # new since the last run
-  @any 11      -   -   -   -   1   3   8  55   70   70   70   70   70   70  # new since the last run
-  @any 30      -   3   7  13  20  30  40  55   70   70   70   70   70   70  # new since the last run
-  @any 60      -   -   -   -   -   -   -   -   70   70   70   70   70   70  # new since the last run
-  @any 90      -   -   -   -   -   -   -   -   65   70   70   70   70   70  # new since the last run
-  @any 120     -   -   -   -   -   -   -   -    -   25   70   70   70   70  # new since the last run
-  @any 150     -   -   -   -   -   -   -   -    -    -    -   25   45   70  # new since the last run
+  @any 1       2   3   4   5   6   8  15  55   70   70   70   70   70   70
+  @any 11      -   -   -   -   1   3   8  55   70   70   70   70   70   70
+  @any 30      -   3   7  13  20  30  40  55   70   70   70   70   70   70
+  @any 60      -   -   -   -   -   -   -   -   70   70   70   70   70   70
+  @any 90      -   -   -   -   -   -   -   -   65   70   70   70   70   70
+  @any 120     -   -   -   -   -   -   -   -    -   25   70   70   70   70
+  @any 150     -   -   -   -   -   -   -   -    -    -    -   25   45   70
 
 kitchens                                # Kitchens
   stages        4m  5m  6m  7e  7m  7l  end1  end2  max
@@ -1071,7 +1071,7 @@ lab-chips                               # Lab Chips, counts; World 1 to 5 column
   Silkrode Nanochip     -   -   -   1   1   1   1   1   1   1   1   1   1
   Omega Nanochip        -   -   -   -   1   1   1   1   1   1   1   1   1
   Omega Motherboard     -   -   -   -   -   1   1   1   1   1   1   1   1
-  @any 1                1   2   3   4   5   6   7  17  20  20  20  20  20  # new since the last run
+  @any 1                1   2   3   4   5   6   7  17  20  20  20  20  20
 
 breeding-pets                           # Breeding Pets, World 1 to 5 columns from crowd-research.txt
   stages          4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
@@ -1084,27 +1084,27 @@ shiny                                   # Shiny Pets, counts; World 1 to 5 colum
   stages        4m  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
   Wode Board     1   1   1   2   2   6   6  13  20  20  25  30
   Tyson          1   1   -   1   1   5   5  10  20  20  20  25
-  @any 1         -   1   2   4   4  15  30  65  65  65  65  65  # new since the last run
-  @any 5         -   -   -   -   -   5  30  65  65  65  65  65  # new since the last run
-  @any 10        -   -   -   -   -   -  14  50  65  65  65  65  # new since the last run
-  @any 15        -   -   -   -   -   -   1  25  65  65  65  65  # new since the last run
-  @any 20        -   -   -   -   -   -   -   3  45  65  65  65  # new since the last run
-  @any 25        -   -   -   -   -   -   -   -   -   -   3  25  # new since the last run
+  @any 1         -   1   2   4   4  15  30  65  65  65  65  65
+  @any 5         -   -   -   -   -   5  30  65  65  65  65  65
+  @any 10        -   -   -   -   -   -  14  50  65  65  65  65
+  @any 15        -   -   -   -   -   -   1  25  65  65  65  65
+  @any 20        -   -   -   -   -   -   -   3  45  65  65  65
+  @any 25        -   -   -   -   -   -   -   -   -   -   3  25
 
-breeding-upgrades                       # Breeding Upgrades
-  stages                        4m  5m  6m  7e  7m  7l  end1  end2  max
-  Paint Bucket                   1   1   1   1   3   4   10   10   15
-  Gene Splicing                  -   3   9   9   9  13   20   20   20
-  Egg Capacity                   -   1   3   4   5   5    5    5    5
-  Fence Extension                -   1   3   5   8  10   10   10   10
-  Blooming Axe                   -   1   3   3   3   7   17   20   25
-  Pastpresent Brood              -   1   1   2   3   4    5    5    5
-  Shattershell Iteration         -   1   1   2   3   5   10   10   10
-  Grand Martial of Shinytown     -   4  10  16  20  75  130  150  290
-  Overwhelmed Golden Egg         -   -   1   2   2   3    5    5    8
-  Failsafe Restitution Cloud     -   -   1   2   3   5    8   10   25
-  Breedability Mobs              -   -   2   5   8  10   10   10   10
-  Rarity of the Egg              -   -   2   3   4   7   10   10   10
+breeding-upgrades                       # Breeding Upgrades, World 1 to 5 columns from crowd-research.txt
+  stages                        4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Gene Splicing                  1   2   3   4   5   5   6   6   7   7   8  13   20   20   20
+  Egg Capacity                   1   1   2   2   3   3   3   4   4   4   5   5    5    5    5
+  Breedability Mobs              -   1   2   3   3   4   4   5   5   5   8  10   10   10   10
+  Fence Extension                -   -   1   2   3   3   4   4   5   5   8  10   10   10   10
+  Rarity of the Egg              -   -   -   1   1   2   2   2   3   3   4   7   10   10   10
+  Blooming Axe                   -   -   -   -   1   1   2   2   3   3   3   7   17   20   25
+  Pastpresent Brood              -   -   -   -   -   1   1   1   2   2   3   4    5    5    5
+  Paint Bucket                   -   -   -   -   -   -   -   1   1   1   3   4   10   10   15
+  Overwhelmed Golden Egg         -   -   -   -   -   -   -   1   2   2   2   3    5    5    8
+  Shattershell Iteration         -   -   -   -   -   -   -   -   -   -   3   5   10   10   10
+  Failsafe Restitution Cloud     -   -   -   -   -   -   -   -   -   -   3   5    8   10   25
+  Grand Martial of Shinytown     -   -   -   -   -   -   -   -   -   -  20  75  130  150  290
 
 territories                             # Breeding Territories
   stages                        4m  5m  6m  7e  7m  7l  end1  end2  max
