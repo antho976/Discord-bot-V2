@@ -1199,22 +1199,22 @@ rift-bonuses                            # Rift Bonuses
 
 cape-vine                               # Cape Vine
   stages                             7e  7m  7l  end1  end2  max
-  Radiant Amarok Backstabber          -   -   -   1   1   1
-  Gilded Efaunt Dislodged Tusks       -   -   -   1   1   1
-  Blighted Chizoar Shard Cape         -   -   -   1   1   1
-  Cascading Scaled Cape of Krieg      -   -   -   1   1   1
-  Giant Rose                          -   -   -   1   1   1
-  Blooming Vine                       -   -   -   1   1   1
-  Eternal Flames of The Divine        -   -   -   1   1   1
-  Giant Nightshade                    -   -   -   1   1   1
+  Radiant Amarok Backstabber          1   1   1   1   1   1
+  Eternal Flames of The Divine        1   1   1   1   1   1
+  Gilded Efaunt Dislodged Tusks       -   1   1   1   1   1
+  Blighted Chizoar Shard Cape         -   1   1   1   1   1
+  Giant Nightshade                    -   1   1   1   1   1
+  Gilded Emperor Wings                -   1   1   1   1   1
+  Cascading Scaled Cape of Krieg      -   -   1   1   1   1
+  Giant Rose                          -   -   1   1   1   1
+  Blooming Vine                       -   -   1   1   1   1
+  Chains of the Gilded Vaultguard     -   -   1   1   1   1
+  Dragonroll Mantlepiece              -   -   1   1   1   1
+  Beeg Egg                            -   -   1   1   1   1
+  Lovely Balloon                      -   -   1   1   1   1
   Timeless Watch                      -   -   -   1   1   1
-  Gilded Emperor Wings                -   -   -   1   1   1
-  Chains of the Gilded Vaultguard     -   -   -   1   1   1
-  Dragonroll Mantlepiece              -   -   -   1   1   1
-  Beeg Egg                            -   -   -   1   1   1
   Crystal Crescent                    -   -   -   1   1   1
   Bladed Rucksack                     -   -   -   1   1   1
-  Lovely Balloon                      -   -   -   1   1   1
   Angel Wings                         -   -   -   -   1   1
   Easter Egg Backpack                 -   -   -   -   1   1
   Molten Cloak                        -   -   -   -   1   1

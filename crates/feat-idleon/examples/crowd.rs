@@ -463,7 +463,18 @@ fn main() {
                 // (Up to its first cell, from the saves or the research: research cells stay.)
                 let firsts: Vec<Option<usize>> = (0..rows.len()).map(|r| (0..cols.len()).find(|&k| table[r][k].is_some() && (k >= kd || from_base.contains_key(&cols[k])))).collect();
                 let mut order: Vec<usize> = (0..rows.len()).filter(|&r| keep[r] && counted.is_none() && firsts[r].is_some()).collect();
-                order.sort_by(|&a, &b| prio[b][firsts[b].unwrap_or(0)].total_cmp(&prio[a][firsts[a].unwrap_or(0)]).then(a.cmp(&b)));
+                // A table whose saves ask nothing before the endgame (Cape Vine: fewer than half of
+                // World 7 has a cape on the vine) climbs through its own world's saves columns
+                // too: a mechanic is asked for in the world it opens in. Its rows come in the order
+                // the most saves from its world have them, not by the endgame's best saves.
+                let late = (0..cols.len()).all(|k| crowd::endgame(cols[k]) || table.iter().all(|row| row[k].is_none()));
+                let into = if late { cols.iter().position(|&s| crowd::endgame(s)).unwrap_or(kd) } else { kd };
+                if late {
+                    let have = |r: usize| seen.iter().filter(|x| x.stage >= open && !crowd::endgame(x.stage) && full_level(x, r) > 0.0).count();
+                    order.sort_by_key(|&r| (std::cmp::Reverse(have(r)), firsts[r], r));
+                } else {
+                    order.sort_by(|&a, &b| prio[b][firsts[b].unwrap_or(0)].total_cmp(&prio[a][firsts[a].unwrap_or(0)]).then(a.cmp(&b)));
+                }
                 let n_rows = order.len().max(1) as f64;
                 for (place, &r) in order.iter().enumerate() {
                     let cells = &mut table[r];
@@ -472,8 +483,9 @@ fn main() {
                     let after = place as f64 / n_rows;
                     let open = item_open.get(rows[r].as_str()).copied().unwrap_or(0).max(open);
                     let mut run = 0.0f64;
-                    // (Never into a saves column: violet-ocelot, 7e has 37 saves of its own.)
-                    for k in 0..to.min(kd) {
+                    // (Never into a saves column, but for a `late` table: violet-ocelot, 7e has 37
+                    // saves of its own.)
+                    for k in 0..to.min(into) {
                         let s = cols[k];
                         let share = if s < open { 0.0 } else { ((s - open + 1) as f64 / (cols[to] - open + 1) as f64).powi(2) };
                         let due = s >= open && share >= after;
