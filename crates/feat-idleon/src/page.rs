@@ -1088,9 +1088,18 @@ fn peek_note(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, rea
         }
         s.push_str(". ");
     }
-    // The tier you're on has this in the line above the ladder already.
-    if let Some(w) = expected.filter(|_| current != Some(k)) {
-        s += &format!("Expected by World {w}, and you're in World {reached}. ");
+    // The tier you're on has this in the line above the ladder already (`pace_line`), worded
+    // the same: a ladder from players' saves names the stage, the owner's tier worlds the world.
+    if current != Some(k) {
+        match m.crowd.as_ref().and_then(|l| l.rungs.get(k)) {
+            Some(r) if crate::crowd::endgame(r.stage) => s.push_str("A goal from the best saves we have. "),
+            Some(r) => s += &format!("What players have by {}. You're in World {reached}. ", crate::crowd::stage_label(r.stage)),
+            None => {
+                if let Some(w) = expected {
+                    s += &format!("Expected by World {w}, and you're in World {reached}. ");
+                }
+            }
+        }
     }
     if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty() && m.crowd.is_none()) {
         s.push_str(n);
