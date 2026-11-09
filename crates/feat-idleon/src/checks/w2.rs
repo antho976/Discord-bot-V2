@@ -606,7 +606,7 @@ fn post_office(save: &Save) -> Mechanic {
         .collect();
     let with = chars.iter().filter(|c| c.2 >= 1.0).count();
     let best = chars.iter().max_by(|a, b| a.2.total_cmp(&b.2));
-    let mut m = mech("post-office", 2, "Post Office", pic("UIboxUpg0".into()), Count::Levels, "levels", items);
+    let mut m = mech("post-office", 2, "Post Office", pic("UIboxUpg0".into()), Count::Done, "maxed", items);
     m.have = Some(Have {
         figure: format!("{} box points earned", big(earned)),
         text: match (with, best) {
