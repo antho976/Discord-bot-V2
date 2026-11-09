@@ -506,6 +506,11 @@ fn main() {
                     }
                 }
             }
+            // A stage that would raise more than `STEP` rows raises them in turns (see `stagger`).
+            if counted.is_none() {
+                let fixed: Vec<bool> = cols.iter().map(|s| from_base.contains_key(s)).collect();
+                stagger(&mut table, &fixed, &prio);
+            }
             // Nor an item before its own world opens, whatever the saves or the research say.
             for (r, row) in table.iter_mut().enumerate() {
                 let from = item_open.get(rows[r].as_str()).copied().unwrap_or(0);
@@ -703,6 +708,43 @@ fn best_table(m: &feat_idleon::review::Mechanic, rows: &[String], ids: &HashMap<
         }
     }
     (cols, table)
+}
+
+/// Rows one stage raises at most, about: three tiers of `crowd::PART` (owner, 2026-11-09: the
+/// Tome asked 13 tiers at Mid World 4, the Death Note 12 at Early World 7, because every one of
+/// their hundred rows rose at every stage).
+const STEP: usize = 3 * crowd::PART;
+
+/// Where a stage would raise more than `STEP` rows, they rise in turns: with N turns (rows rising
+/// / `STEP`, rounded up), the row in place p (by when it's first asked, then how many of the
+/// stage's saves have it) rises at the columns where p + column is a multiple of N, and holds its
+/// last cell at the others. Every row still rises every N stages, a bigger step each time, and a
+/// row that isn't asked yet waits for its turn too (the page's last tier, everything maxed, asks
+/// the rest). Columns marked `fixed` (base, research) stay as they are.
+fn stagger(table: &mut [Vec<Option<f64>>], fixed: &[bool], prio: &[Vec<f64>]) {
+    let n_cols = fixed.len();
+    let first = |r: usize| table[r].iter().position(Option::is_some).unwrap_or(usize::MAX);
+    let mut order: Vec<usize> = (0..table.len()).collect();
+    order.sort_by(|&a, &b| first(a).cmp(&first(b)).then_with(|| {
+        let k = first(a);
+        if k == usize::MAX { std::cmp::Ordering::Equal } else { prio[b][k].total_cmp(&prio[a][k]) }
+    }).then(a.cmp(&b)));
+    let mut place = vec![0usize; table.len()];
+    for (p, &r) in order.iter().enumerate() {
+        place[r] = p;
+    }
+    let mut asked: Vec<f64> = vec![0.0; table.len()];
+    for k in 0..n_cols {
+        let want: Vec<f64> = table.iter().map(|row| row[k].unwrap_or(0.0)).collect();
+        let rising = (0..table.len()).filter(|&r| want[r] > asked[r]).count();
+        let turns = rising.div_ceil(STEP).max(1);
+        for (r, row) in table.iter_mut().enumerate() {
+            if fixed[k] || (place[r] + k) % turns == 0 {
+                asked[r] = asked[r].max(want[r]);
+            }
+            row[k] = (asked[r] > 0.0).then_some(asked[r]);
+        }
+    }
 }
 
 /// Adds to `greenstacks.txt` the stackable items some save has greenstacked or holds 1M of
