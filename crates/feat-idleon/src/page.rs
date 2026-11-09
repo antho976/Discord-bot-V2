@@ -490,6 +490,8 @@ const FOLD: &[(&[(&str, &str)], &str)] = &[
     (&[("menagerie-unlocks", "Unlocks"), ("menagerie-boosts", "Boosts"), ("menagerie-missions", "Missions"), ("menagerie-jellyfish", "Jellyfish")], "Menagerie"),
     (&[("observations", "Found"), ("observation-levels", "Insight")], "Observations"),
     (&[("minehead", "Upgrades"), ("minehead-opponents", "Opponents")], ""),
+    (&[("sushi", "Upgrades"), ("sushi-types", "Types")], ""),
+    (&[("jelly", "Upgrades"), ("jelly-obstructions", "Obstructions")], ""),
 ];
 
 /// Most sides a switch has (the page's CSS has a rule per side).

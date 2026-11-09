@@ -6,7 +6,9 @@ pub fn all(save: &Save) -> Vec<Mechanic> {
     vec![
         research_grid(save),
         sushi(save),
+        sushi_types(save),
         jelly(save),
+        jelly_obstructions(save),
         minehead(save),
         minehead_opponents(save),
         coral_reef(save),
@@ -1208,6 +1210,31 @@ fn minehead_opponents(save: &Save) -> Mechanic {
     let items = in_order(held(save, "Research", &[7, 4]), &names, &texts, &list("Research", 20), "Beating it");
     let mut m = mech("minehead-opponents", 7, "Minehead Opponents", pic("MineUpg0".into()), Count::Done, "beaten", items);
     m.note = Some("Opponents come one after another. What each one gives counts for the whole game, not just Minehead.".into());
+    m
+}
+
+/// Sushi types: N.js `SushiStuff("UniqueSushi")` counts the types from the first whose
+/// `Sushi[5][n]` is 0 or more, stopping at the first one never cooked; each type below that count
+/// gives its bonus `Research[36][t]` with the number `Research[37][t]` (`SushiStuff("RoG_BonusQTY")`).
+/// Names are `Research[30]`.
+fn sushi_types(save: &Save) -> Mechanic {
+    let cooked = save.numbers("Sushi", &[5]);
+    let names: Vec<String> = list("Research", 30).iter().map(|n| label(n)).collect();
+    let unique = (0..names.len()).take_while(|&n| cooked.get(n).is_some_and(|v| v.is_finite() && *v >= 0.0)).count();
+    let items = in_order(unique as f64, &names, &list("Research", 36), &list("Research", 37), "Cooking it the first time");
+    let mut m = mech("sushi-types", 7, "Sushi Types", pic("SushiUpg0".into()), Count::Done, "cooked", items);
+    m.note = Some("Each new type of sushi you cook gives a bonus for good. They come in order: a higher tier opens after the one before.".into());
+    m
+}
+
+/// Jelly Operator obstructions: `Research[7][9]` is how many are cleared, in order (N.js
+/// `JellyOperation("RoG_BonusQTY")`). Obstruction t is `Research[45][t]`, its bonus
+/// `Research[46][t]` with the number `Research[47][t]`.
+fn jelly_obstructions(save: &Save) -> Mechanic {
+    let names: Vec<String> = list("Research", 45).iter().map(|n| label(n)).collect();
+    let items = in_order(held(save, "Research", &[7, 9]), &names, &list("Research", 46), &list("Research", 47), "Clearing it");
+    let mut m = mech("jelly-obstructions", 7, "Jelly Operator Obstructions", pic("JellyUpg0".into()), Count::Done, "cleared", items);
+    m.note = Some("A successful operation clears the next obstruction, and its bonus counts for the whole game.".into());
     m
 }
 
