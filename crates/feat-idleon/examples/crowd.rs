@@ -52,9 +52,15 @@ const COUNTS: [(&str, &[f64]); 4] = [
 /// opens and lead their tiers.
 /// Artifacts (2026-11-09): Fauxory Tusk raises the chance to find artifacts and Genie Lamp what
 /// each chest is worth, so both speed up the rest; both come from the first two islands.
-const FIRST: [(&str, &[&str]); 2] = [
+/// World 7 (2026-11-09, docs/idleon-research.md): Research EXP multipliers before anything else
+/// in the grid; stamina, then amber, in the Spelunking shop (its POW upgrades have no cap, so
+/// they aren't on the card); Super Talent Points, the one Legend Talent every guide puts first.
+const FIRST: [(&str, &[&str]); 5] = [
     ("arcade", &["Gold Ball Gain", "Drop Rate", "Refinery Speed"]),
     ("artifacts", &["Fauxory Tusk", "Genie Lamp"]),
+    ("research", &["All Night Studying", "Takin' Notes", "See 'Em All"]),
+    ("spelunk-shop", &["Big Time Stamina", "Stamina Resurgence", "Deep Pockets"]),
+    ("legend-talents", &["Super Talent Points"]),
 ];
 
 /// Per mechanic key, per item name (interned in `names`): its level.
