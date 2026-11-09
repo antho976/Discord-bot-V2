@@ -493,6 +493,12 @@ const FOLD: &[(&[(&str, &str)], &str)] = &[
     (&[("minehead", "Upgrades"), ("minehead-opponents", "Opponents")], ""),
     (&[("sushi", "Upgrades"), ("sushi-types", "Types")], ""),
     (&[("jelly", "Upgrades"), ("jelly-obstructions", "Obstructions")], ""),
+    // World 3 and 4 (2026-11-09).
+    (&[("equinox-upgrades", "Upgrades"), ("equinox-dreams", "Dreams")], "Equinox"),
+    (&[("meals", "Meals"), ("kitchens", "Kitchens")], "Cooking"),
+    (&[("jewels", "Jewels"), ("lab-chips", "Chips")], "Lab"),
+    (&[("breeding-pets", "Pets"), ("territories", "Territories"), ("breeding-upgrades", "Upgrades"), ("shiny", "Shiny")], "Breeding"),
+    (&[("rift", "Rifts"), ("rift-bonuses", "Bonuses")], "Rift"),
 ];
 
 /// Most sides a switch has (the page's CSS has a rule per side).
