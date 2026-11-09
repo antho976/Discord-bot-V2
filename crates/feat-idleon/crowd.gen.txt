@@ -3460,129 +3460,129 @@ achievements                            # Achievements
   Capitalist Win             -   -   -   -   -   -   -   -   -   -   1   1
   The True Pirate            -   -   -   -   -   -   -   -   -   -   -   1
 
-gem-shop                                # Gem Shop
-  stages                     1m  2m  3m  4m  5m  6m  7e  7m  7l  end1  end2  max
-  Card Presets                1   1   1   1   1   -   -   1   2   5   5   5
-  Extra Card Slot             -   1   1   1   2   4   4   4   4   4   4   4
-  Infinity Hammer             -   1   1   1   1   1   1   1   1   1   1   1
-  Weekly Dungeon Boosters     -   -   1   2   4   -   -   -   -  11  11  11
-  Obol Storage Space          -   -   1   3   4   -   -   -   -  12  12  12
-  Item Backpack Space         -   -   -   1   1   -   3   6   6   6   6   6
-  Storage Chest Space         -   -   -   1   2   3   6  12  12  12  12  12
-  Carry Capacity              -   -   -   1   1   -   -   4  10  10  10  10
-  More Storage Space          -   -   -   1   2   -   -   -   5  10  10  10
-  Brimstone Forge Slot        -   -   -   1   1   -   1   4   9  16  16  16
-  Ivory Bubble Cauldrons      -   -   -   1   1   -   -   -   4   4   4   4
-  Crystal 3d Printer          -   -   -   1   1   1   1   1   1   1   1   1
-  Food Slot                   -   -   -   -   1   -   2   2   2   2   2   2
-  Daily Teleports             -   -   -   -   1   -   -   -   1   7  10  10
-  More Sample Spaces          -   -   -   -   2   4   4   4   6   6   6   6
-  Burning Bad Books           -   -   -   -   1   -   -   -   -   4   4   4
-  Prayer Slots                -   -   -   -   1   -   -   -   -   4   4   4
-  Zen Cogs                    -   -   -   -   1   -   -   1   4   8   8   8
-  Tower Building Slots        -   -   -   -   1   -   -   -   4   4   4   4
-  Richelin Kitchen            -   -   -   -   1   -   1   1   4  10  10  10
-  Fenceyard Space             -   -   -   -   1   -   -   -   6   6   6   6
-  Bleach Liquid Cauldrons     -   -   -   -   -   1   1   2   4   4   4   4
-  Golden Sprinkler            -   -   -   -   -   1   1   1   1   4   4   4
-  Instagrow Generator         -   -   -   -   -   -   1   1   4   8   8   8
-  Davey Jones Training        -   -   -   -   -   -   -   1   8   8   8   8
-  Lava Sprouts                -   -   -   -   -   -   -   1   6   6   6   6
-  Plot Of Land                -   -   -   -   -   -   -   3  12  12  12  12
-  King Of All Winners         -   -   -   -   -   -   -   5   5   5   5   5
-  Royal Egg Cap               -   -   -   -   -   -   -   1   3   5   5   5
-  Divinity Sparkie            -   -   -   -   -   -   -   1   8   8   8   8
-  Super Auto Mode             -   -   -   -   -   -   -   1   4   4   4   4
-  Bling Bags                  -   -   -   -   -   -   -   1   8   8   8   8
-  Fluorescent Flaggies        -   -   -   -   -   -   -   -   1   6   6   6
-  Legend Talent Pts           -   -   -   -   -   -   -   -   5   5   5   5
-  Parallel Villagers          -   -   -   -   -   -   -   -   4   5   5   5
-  Conjuror Pts                -   -   -   -   -   -   -   -   3  12  12  12
-  Daily Minigame Plays        -   -   -   -   -   -   -   -   1   4   4   4
-  Sigil Supercharge           -   -   -   -   -   -   -   -   1  10  10  10
-  Chest Sluggo                -   -   -   -   -   -   -   -   2  12  12  12
-  More Coral                  -   -   -   -   -   -   -   -  10  10  10  10
-  Shroom Familiar             -   -   -   -   -   -   -   -   3   6   6   6
-  Gallery Showcases           -   -   -   -   -   -   -   -   6   6   6   6
-  Novelty Jade Coins          -   -   -   -   -   -   -   -   -   7   7   7
-  Professional Papers         -   -   -   -   -   -   -   -   -  10  10  10
-  Souped Up Tube              -   -   -   -   -   -   -   -   -   5   5   5
-  Resource Boost              -   -   -   -   -   -   -   -   -  10  10  10
-  Mob Storage                 -   -   -   -   -   -   -   -   -   5   8  12
-  Opal                        -   -   -   -   -   -   -   -   -  20  60  60
-  Cog Inventory Space         -   -   -   -   -   -   -   -   -   3  20  20
-  Snehebatu Link              -   -   -   -   -   -   -   -   -   1   1   1
+gem-shop                                # Gem Shop, World 1 to 5 columns from crowd-research.txt
+  stages                     1m  1l  2e  2m  2l  3e  3m  3l  4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  Extra Card Slot             -   1   2   -   3   4   -   4   4   -   4   4   -   4   4   -   4   4   4   4   4   4   4
+  Infinity Hammer             -   -   1   -   1   1   -   1   1   -   1   1   -   1   1   -   1   1   1   1   1   1   1
+  Item Backpack Space         -   -   1   -   1   2   -   2   2   -   3   3   -   3   4   -   4   4   6   6   6   6   6
+  Storage Chest Space         -   -   1   -   2   2   -   3   3   -   4   5   -   5   6   -   7   7  12  12  12  12  12
+  Bleach Liquid Cauldrons     -   -   -   -   1   1   -   1   2   -   2   2   -   2   2   -   2   2   2   4   4   4   4
+  Crystal 3d Printer          -   -   -   -   -   1   -   1   1   -   1   1   -   1   1   -   1   1   1   1   1   1   1
+  Brimstone Forge Slot        -   -   -   -   -   1   -   1   2   -   2   2   -   3   3   -   3   3   4   9  16  16  16
+  More Sample Spaces          -   -   -   -   -   1   -   1   1   -   2   2   -   2   3   -   3   3   3   6   6   6   6
+  Card Presets                -   -   -   -   -   -   -   1   1   -   1   1   -   1   1   -   1   1   1   2   5   5   5
+  Carry Capacity              -   -   -   -   -   -   -   1   1   -   1   1   -   2   2   -   2   2   4  10  10  10  10
+  Food Slot                   -   -   -   -   -   -   -   -   1   -   1   1   -   2   2   -   2   2   2   2   2   2   2
+  Richelin Kitchen            -   -   -   -   -   -   -   -   -   -   1   1   -   1   1   -   1   1   1   4  10  10  10
+  Instagrow Generator         -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   -   1   1   1   4   8   8   8
+  Davey Jones Training        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   8   8   8   8
+  Lava Sprouts                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   6   6   6   6
+  Plot Of Land                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   3  12  12  12  12
+  King Of All Winners         -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   5   5   5   5   5
+  Zen Cogs                    -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   4   8   8   8
+  Royal Egg Cap               -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   3   5   5   5
+  Divinity Sparkie            -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   8   8   8   8
+  Golden Sprinkler            -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   4   4   4
+  Super Auto Mode             -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   4   4   4   4
+  Bling Bags                  -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   8   8   8   8
+  Tower Building Slots        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   4   4   4   4
+  Daily Teleports             -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   7  10  10
+  Fluorescent Flaggies        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   6   6   6
+  Legend Talent Pts           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   5   5   5   5
+  Parallel Villagers          -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   4   5   5   5
+  Conjuror Pts                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   3  12  12  12
+  Daily Minigame Plays        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   4   4   4
+  Sigil Supercharge           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1  10  10  10
+  Chest Sluggo                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   2  12  12  12
+  More Coral                  -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  10  10  10  10
+  More Storage Space          -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   5  10  10  10
+  Ivory Bubble Cauldrons      -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   4   4   4   4
+  Fenceyard Space             -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   6   6   6   6
+  Shroom Familiar             -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   3   6   6   6
+  Gallery Showcases           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   6   6   6   6
+  Novelty Jade Coins          -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   7   7   7
+  Professional Papers         -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  10  10  10
+  Souped Up Tube              -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   5   5   5
+  Resource Boost              -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  10  10  10
+  Obol Storage Space          -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  12  12  12
+  Burning Bad Books           -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   4   4   4
+  Prayer Slots                -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   4   4   4
+  Weekly Dungeon Boosters     -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  11  11  11
+  Mob Storage                 -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   5   8  12
+  Opal                        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -  20  60  60
+  Cog Inventory Space         -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   3  20  20
+  Snehebatu Link              -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
 
-event-shop                              # Event Shop
-  stages                   1m  2m  3m  4m  5m  6m  7e  7m  7l  end1  end2  max
-  Gilded Vote Button        1   1   1   1   1   -   -   1   1   1   1   1
-  Ribbon Connoisseur        -   1   1   1   1   -   -   -   1   1   1   1
-  Smiley Statue             -   1   1   1   1   -   -   -   1   1   1   1
-  King of the Rack          -   1   1   1   1   -   -   1   1   1   1   1
-  Dough Roller              -   1   1   1   1   -   -   -   1   1   1   1
-  Stamp Stack               -   -   1   1   1   -   1   1   1   1   1   1
-  Extra Page                -   -   1   1   1   -   -   -   1   1   1   1
-  Secret Pouch              -   -   1   1   1   -   -   1   1   1   1   1
-  Extra Exaltedness         -   -   1   1   1   -   -   -   1   1   1   1
-  Golden Registrant         -   -   1   1   1   -   -   -   1   1   1   1
-  Bubble Broth              -   -   -   1   1   -   -   1   1   1   1   1
-  Summoning Star            -   -   -   1   1   -   -   -   1   1   1   1
-  Another Page              -   -   -   1   1   -   -   -   1   1   1   1
-  Friendly Slot             -   -   -   1   1   -   -   1   1   1   1   1
-  Rift Guy Sticker          -   -   -   1   1   -   -   -   1   1   1   1
-  Supreme Wiring            -   -   -   -   1   -   -   -   1   1   1   1
-  Sleepy Joe Armstrong      -   -   -   -   1   -   -   -   1   1   1   1
-  Coin Stacking             -   -   -   -   1   -   1   1   1   1   1   1
-  Storage Chest             -   -   -   -   1   1   1   1   1   1   1   1
-  Government Subsidy        -   -   -   -   1   -   -   1   1   1   1   1
-  Automated Mail            -   -   -   -   1   -   -   -   1   1   1   1
-  Bonus Points              -   -   -   -   1   -   -   1   1   1   1   1
-  Keen Observations         -   -   -   -   1   -   -   -   1   1   1   1
-  Golden Tome               -   -   -   -   -   -   1   1   1   1   1   1
-  Village Encouragement     -   -   -   -   -   -   -   1   1   1   1   1
-  Sushi Stackz              -   -   -   -   -   -   -   1   1   1   1   1
-  Minehead Money            -   -   -   -   -   -   -   -   1   1   1   1
-  Fossil Meritocracy        -   -   -   -   -   -   -   -   1   1   1   1
-  Magnifying Glass          -   -   -   -   -   -   -   -   1   1   1   1
-  Equinox Enhancement       -   -   -   -   -   -   -   -   1   1   1   1
-  Golden Square             -   -   -   -   -   -   -   -   1   1   1   1
-  Glass Dice                -   -   -   -   -   -   -   -   1   1   1   1
-  Storage Vault             -   -   -   -   -   -   -   -   -   1   1   1
-  Plain Showcase            -   -   -   -   -   -   -   -   -   1   1   1
-  Legend Scroll             -   -   -   -   -   -   -   -   -   1   1   1
-  Boat Discount             -   -   -   -   -   -   -   -   -   1   1   1
-  Royal Vote Button         -   -   -   -   -   -   -   -   -   1   1   1
-  Noble Sluggo              -   -   -   -   -   -   -   -   -   1   1   1
-  Kaleidoscope              -   -   -   -   -   -   -   -   -   1   1   1
-  Higgs Boson               -   -   -   -   -   -   -   -   -   1   1   1
-  Big Clot                  -   -   -   -   -   -   -   -   -   1   1   1
-  Ivory Locket              -   -   -   -   -   -   -   -   -   1   1   1
-  Smol Pouch                -   -   -   -   -   -   -   -   -   1   1   1
-  Extra Lumi                -   -   -   -   -   -   -   -   -   1   1   1
-  Graduate Thesis           -   -   -   -   -   -   -   -   -   1   1   1
-  Coolral                   -   -   -   -   -   -   -   -   -   1   1   1
-  Singed Tome               -   -   -   -   -   -   -   -   -   1   1   1
-  Glimbo Coupon             -   -   -   -   -   -   -   -   -   1   1   1
-  Magnate Exotica           -   -   -   -   -   -   -   -   -   1   1   1
-  Monumental Reverence      -   -   -   -   -   -   -   -   -   1   1   1
-  Omega Bubble              -   -   -   -   -   -   -   -   -   1   1   1
-  Research Registrant       -   -   -   -   -   -   -   -   -   1   1   1
-  Gilded Awnings            -   -   -   -   -   -   -   -   -   1   1   1
-  Shape Obsession           -   -   -   -   -   -   -   -   -   1   1   1
-  A North Star              -   -   -   -   -   -   -   -   -   1   1   1
-  Glimbo VIP Pass           -   -   -   -   -   -   -   -   -   1   1   1
-  Organic Label             -   -   -   -   -   -   -   -   -   1   1   1
-  Doggie Sticker            -   -   -   -   -   -   -   -   -   1   1   1
-  Tiny Cog Twins            -   -   -   -   -   -   -   -   -   1   1   1
-  Worldclass Showcase       -   -   -   -   -   -   -   -   -   1   1   1
-  6 Star Cardifiers         -   -   -   -   -   -   -   -   -   -   1   1
-  Elegant Ribbons           -   -   -   -   -   -   -   -   -   -   1   1
-  Bejeweled Ladle           -   -   -   -   -   -   -   -   -   -   1   1
-  Menagerie Shell           -   -   -   -   -   -   -   -   -   -   1   1
-  Fishmaxxing               -   -   -   -   -   -   -   -   -   -   -   1
-  Meatmaxxing               -   -   -   -   -   -   -   -   -   -   -   -
-  Full Kitchen Simmer       -   -   -   -   -   -   -   -   -   -   -   -
-  Slot of Friendship        -   -   -   -   -   -   -   -   -   -   -   -
+event-shop                              # Event Shop, World 1 to 5 columns from crowd-research.txt
+  stages                   1m  2m  3e  3m  4e  4m  5e  5m  6e  6m  7e  7m  7l  end1  end2  max
+  Gilded Vote Button        1   1   1   1   1   1   1   1   1   -   -   1   1   1   1   1
+  Ribbon Connoisseur        -   1   1   1   1   1   1   1   1   -   -   -   1   1   1   1
+  Smiley Statue             -   1   1   1   1   1   1   1   1   -   -   -   1   1   1   1
+  King of the Rack          -   1   1   1   1   1   1   1   1   -   -   1   1   1   1   1
+  Dough Roller              -   1   1   1   1   1   1   1   1   -   -   -   1   1   1   1
+  Stamp Stack               -   -   1   -   1   -   1   -   1   1   1   1   1   1   1   1
+  Extra Page                -   -   1   1   1   1   1   1   1   -   -   -   1   1   1   1
+  Secret Pouch              -   -   1   1   1   1   1   1   1   -   -   1   1   1   1   1
+  Extra Exaltedness         -   -   1   1   1   1   1   1   1   -   -   -   1   1   1   1
+  Golden Registrant         -   -   -   1   1   1   1   1   1   -   -   -   1   1   1   1
+  Storage Chest             -   -   -   -   1   -   1   -   1   1   1   1   1   1   1   1
+  Bubble Broth              -   -   -   -   1   1   1   1   1   -   -   1   1   1   1   1
+  Summoning Star            -   -   -   -   1   1   1   1   1   -   -   -   1   1   1   1
+  Another Page              -   -   -   -   1   1   1   1   1   -   -   -   1   1   1   1
+  Friendly Slot             -   -   -   -   1   1   1   1   1   -   -   1   1   1   1   1
+  Rift Guy Sticker          -   -   -   -   1   1   1   1   1   -   -   -   1   1   1   1
+  Coin Stacking             -   -   -   -   -   -   1   -   1   1   1   1   1   1   1   1
+  Supreme Wiring            -   -   -   -   -   -   1   1   1   -   -   -   1   1   1   1
+  Government Subsidy        -   -   -   -   -   -   1   1   1   -   -   1   1   1   1   1
+  Automated Mail            -   -   -   -   -   -   1   1   1   -   -   -   1   1   1   1
+  Bonus Points              -   -   -   -   -   -   1   1   1   -   -   1   1   1   1   1
+  Keen Observations         -   -   -   -   -   -   1   1   1   -   -   -   1   1   1   1
+  Sleepy Joe Armstrong      -   -   -   -   -   -   -   1   1   -   -   -   1   1   1   1
+  Golden Square             -   -   -   -   -   -   -   1   1   -   -   -   1   1   1   1
+  Glass Dice                -   -   -   -   -   -   -   1   1   -   -   -   1   1   1   1
+  Golden Tome               -   -   -   -   -   -   -   -   1   1   1   1   1   1   1   1
+  Equinox Enhancement       -   -   -   -   -   -   -   -   1   -   -   -   1   1   1   1
+  Village Encouragement     -   -   -   -   -   -   -   -   1   -   -   1   1   1   1   1
+  Storage Vault             -   -   -   -   -   -   -   -   1   -   -   -   -   1   1   1
+  Royal Vote Button         -   -   -   -   -   -   -   -   1   -   -   -   -   1   1   1
+  Noble Sluggo              -   -   -   -   -   -   -   -   1   -   -   -   -   1   1   1
+  Boat Discount             -   -   -   -   -   -   -   -   1   -   -   -   -   1   1   1
+  Sushi Stackz              -   -   -   -   -   -   -   -   -   -   -   1   1   1   1   1
+  Minehead Money            -   -   -   -   -   -   -   -   -   -   -   -   1   1   1   1
+  Fossil Meritocracy        -   -   -   -   -   -   -   -   -   -   -   -   1   1   1   1
+  Magnifying Glass          -   -   -   -   -   -   -   -   -   -   -   -   1   1   1   1
+  Plain Showcase            -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Legend Scroll             -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Kaleidoscope              -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Higgs Boson               -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Big Clot                  -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Ivory Locket              -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Smol Pouch                -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Extra Lumi                -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Graduate Thesis           -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Coolral                   -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Singed Tome               -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Glimbo Coupon             -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Magnate Exotica           -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Monumental Reverence      -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Omega Bubble              -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Research Registrant       -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Gilded Awnings            -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Shape Obsession           -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  A North Star              -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Glimbo VIP Pass           -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Organic Label             -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Doggie Sticker            -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Tiny Cog Twins            -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  Worldclass Showcase       -   -   -   -   -   -   -   -   -   -   -   -   -   1   1   1
+  6 Star Cardifiers         -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   1
+  Elegant Ribbons           -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   1
+  Bejeweled Ladle           -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   1
+  Menagerie Shell           -   -   -   -   -   -   -   -   -   -   -   -   -   -   1   1
+  Fishmaxxing               -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   1
+  Meatmaxxing               -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Full Kitchen Simmer       -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
+  Slot of Friendship        -   -   -   -   -   -   -   -   -   -   -   -   -   -   -   -
 
 greenstacks                             # Greenstacks
   stages                                 1m  2m  3m  4m  5m  6m  7e  7m  7l  end1  end2  max
@@ -4089,110 +4089,110 @@ storage-chests                          # Storage Chests
   Holiday Chest             -   -   -   -   -   -   -   -   -   -   1   1
 
 tome                                    # The Tome
-  stages                                                1m  2m   3m   4m   5m   6m     7e     7m     7l   end1   end2    max
-  Account LV                                            11  70  180  350  560  840  1,200  1,500  1,500  1,500  1,500  1,500
-  Account Skills LV                                      7  40  110  210  350  520  1,000  1,200  1,200  1,200  1,200  1,200
-  Total Talent Max LV                                    8  50  130  250  400  600    600    600    600    600    600    600
-  Items Found                                            8  50  130  250  420  620    790  1,000  1,100  1,300  1,300  1,300
-  Stamp Total LV                                         5  35   90  170  270  410    490    960  1,000  1,000  1,000  1,000
-  Cards Total LV                                         4  25   60  120  190  290    540    900  1,000  1,000  1,000  1,000
-  Statue Total LV                                        3  20   55  100  160  250    320    600    600    600    600    600
-  Total Achievements Completed                           4  25   70  130  220  330    470    670    670    820    830    850
-  Unique Quests Completed                                3  20   55  110  180  270    290    390    390    490    500    500
-  Total Tasks Completed                                  2  14   35   70  110  170    310    420    440    470    470    470
-  Most Money held in Storage                             2  15   35   75  120  180    320    390    450    490    490    490
-  Total Colosseum Score                                  1  12   30   55   90  140    140    140    150    150    150    150
-  Trophies Found                                         1   8   20   35   60   95    120    310    350    630    630    700
-  Nametags Found                                         1  11   30   55   90  130    170    520    700    700    700    700
-  Lava Dev Streams watched                               1   6   17   30   50   75     95    100    110    130    180    230
-  DPS Record on Shimmer Island                           2  16   40   75  120  190    190    300    320    330    340    340
-  Average kills for a Crystal Spawn                      3  20   50   95  150  230    290    350    350    350    350    350
-  Highest Drop Rate Multi                                1   7   19   35   60   90    270    350    350    350    350    350
-  Constellations Completed                               1   7   19   35   60   90     90    200    290    300    300    300
-  Total Vial LV                                          1   8   20   40   65  100    220    470    600    600    600    600
-  Total Sigil LV                                         3  18   45   90  140  210    270    300    440    480    490    500
-  Highest Killroy Score on a Warrior                     1   6   16   30   50   75     80    130    150    190    200    200
-  Megafeathers Earned from Orion                         3  20   55  100  160  250    250    250    250    250    250    250
-  Megafish Earned from Poppy                             1   7   19   35   60   90     90    160    250    250    250    250
-  Megaflesh Earned from Bubba                            1  11   25   50   85  130    130    150    190    250    250    250
-  Fastest Time to kill Chaotic Efaunt (in Seconds)       1   7   19   35   55   85    110    170    200    200    200    200
-  Largest Oak Log Printer Sample                         3  19   50   95  150  230    280    330    360    380    390    390
-  Largest Copper Ore Printer Sample                      3  20   50  100  160  240    290    330    370    390    390    390
-  Largest Spore Cap Printer Sample                       2  13   35   65  100  160    190    200    210    250    250    250
-  Largest Goldfish Printer Sample                        2  13   35   65  100  160    180    230    250    280    280    290
-  Largest Fly Printer Sample                             2  14   35   70  110  170    190    230    250    280    280    290
-  Total Best Wave in Worship                             1   8   20   35   60   95    160    260    270    300    300    300
-  Most Giants Killed in a Single Week                    1  12   30   60   95  140    180    230    240    250    250    250
-  Total Refinery Rank                                    3  20   50  100  160  240    300    450    450    450    450    450
-  Total Atom Upgrade LV                                  1   8   20   40   65   95    120    400    400    400    400    400
-  Equinox Clouds Completed                               2  14   35   70  110  160    210    750    750    750    750    750
-  Most Greenstacks in Storage                            5  30   80  150  240  360    460    600    600    600    600    600
-  Total Cooking Meals LV                                 4  25   70  130  210  320    400    750    750    750    750    750
-  Highest Power Mob                                      1   7   19   35   55   85    110    120    120    130    130    130
-  Rift Levels Completed                                  5  30   85  160  270  400    500    500    500    500    500    500
-  Total Artifacts Found                                  3  20   50  100  160  240    310  1,000  1,000  1,000  1,000  1,000
-  Gold Bar Sailing Treasure Owned                        1   7   19   35   55   85    110    150    160    180    180    180
-  Highest Captain LV                                     1   6   16   30   50   75     95    120    120    140    140    150
-  Most Gaming Bits Owned                                 2  13   30   60  100  150    190    310    330    350    350    350
-  Best Gold Nugget                                       1   6   17   30   50   80    100    140    150    170    170    170
-  Highest Immortal Snail LV                              1   8   20   40   65  100    120    140    270    290    290    290
-  God Rank in Divinity                                   1   9   20   45   70  100    130    150    200    200    200    200
-  Fastest Time to Kill 200 Tremor Wurms (in Seconds)     1   9   20   45   75  110    140    150    150    150    150    150
-  Total LV of Cavern Villagers                           1  10   25   50   80  120    150    350    350    350    350    350
-  Total Digits of all Cavern Resources                   2  17   40   80  130  200    250    700    750    750    750    750
-  Best Dawg Den score                                    1  10   25   50   80  120    150    190    210    220    220    220
-  Best Wisdom Monument Round                             1   8   20   35   60   90    110    130    160    250    250    250
-  Total Gambit Time (in Seconds)                         3  19   45   90  150  220    270    310    380    400    400    400
-  Total Land Rank                                        1  10   25   45   75  110    140    160    170    200    200    200
-  Jade Emporium Upgrades Purchased                       4  25   65  130  210  310    390    650    650    670    670    670
-  Total Ninja Knowledge Upgrades LV                      2  18   45   90  140  210    270    500    500    500    500    500
-  Total Summoning Upgrades LV                            1   9   20   40   70  100    130    190    200    200    200    200
-  Best Deathbringer Max Damage in Wraith Mode            3  20   50   95  150  230    280    320    330    350    350    350
-  Best Windwalker Max Damage in Tempest Mode             2  16   40   80  130  190    240    270    320    340    350    360
-  Best Arcane Cultist Max Damage in Arcanist Mode        2  16   40   75  120  180    230    260    300    320    320    320
-  Spirited Valley Emperor Boss Kills                     3  20   55  100  170  260    320    360    370    400    400    400
-  Total Coral Reef upgrades                              3  20   50   95  160  230    290    330    400    400    400    400
-  Total Spelunk Shop Upgrades LV                         5  30   80  150  240  360    450    500    500    500    500    500
-  Total Spelunk Discoveries made                         2  12   30   60   95  140    180    200    290    300    300    300
-  Deepest Depth reached in a single Delve                2  18   45   85  140  200    260    290    300    300    300    300
-  Biggest Haul in a single Delve                         2  15   35   70  110  170    210    240    270    280    280    280
-  Highest leveled Spelunker                              1  11   25   50   85  130    160    180    200    200    200    200
-  Minehead Opponents Defeated                            1  11   25   50   85  130    160    180    240    340    360    360
-  Total Glimbo Trades                                    1   6   17   30   50   75     95    110    290    370    380    400
-  Button Presses                                         2  17   40   80  130  200    250    280    380    430    460    460
-  Successful Jelly Operations                            3  20   55  110  180  260    330    370    410    450    460    480
-  Total Bubble LV                                        -   2    6   12   20   30    100    460  1,500  1,700  1,700  1,700
-  Most Spore Caps held in Inventory at once              -   3    7   14   20   35    100    130    150    170    170    170
-  Premium Hats Found                                     -   1    4    7   12   19    120    300    400    690    700    700
-  Best Spiketrap Surprise round                          -   4   11   20   30   50     60     70     75     85    100    100
-  Total Minigame Highscore                               -   2    5   10   16   25     40     50     50    100    100    100
-  Total Arcade Gold Ball Shop Upgrade LV                 -   2    5   10   16   25    140    160    330  1,100  1,200  1,200
-  Most Balls earned from LBoFaF                          -   2    6   12   20   30     30     30     75    120    130    140
-  Jackpots Hit in Arcade                                 -   3    7   15   20   35     40     45     50     60     80     80
-  Unique Obols Found                                     -   4   12   20   35   55     95    130    150    250    250    250
-  Highest Killroy Score on an Archer                     -   5   13   25   40   60     70    130    150    190    200    200
-  Highest Killroy Score on a Mage                        -   5   14   25   40   60     80    140    150    200    200    200
-  Best Non Duplicate Goblin Gorefest Wave                -   1    3    7   11   17     20     30    140    200    200    200
-  Total Kitchen Upgrade LV                               -   6   15   30   45   70     90    120    200    200    200    200
-  Fastest Time reaching Round 100 Arena (in Seconds)     -   2    7   13   20   30     40     45    130    180    180    180
-  Total Lab Chips Owned                                  -   4   10   20   30   45     60     90    110    150    150    150
-  Total Boat Upgrade LV                                  -   3    8   16   25   40     50    140    150    200    200    200
-  Total Gaming Plants Evolved                            -   3    8   16   25   40     50    180    200    200    200    200
-  Rat King Crowns Reclaimed                              -   4   11   20   30   50     60     70    140    360    380    400
-  Total Opals Found                                      -   6   15   30   45   70     90    260    290    340    350    360
-  Total Resource Layers Destroyed                        -   3    8   16   25   40     50    200    240    310    310    320
-  Best Bravery Monument Round                            -   2    6   11   19   25     35    190    220    240    240    240
-  Best Justice Monument Round                            -   5   15   25   45   65     85     95    140    200    220    240
-  Total Crops Discovered                                 -   5   15   25   45   65     85    350    350    350    350    350
-  Total Golden Food Beanstacks                           -   3    8   16   25   40     50    380    400    400    400    400
-  Highest Crop OG                                        -   4   11   20   35   50     65    160    170    170    180    180
-  Largest Magic Bean Trade                               -   2    7   13   20   30     40    200    200    200    200    200
-  Familiars Owned in Summoning                           -   4   10   20   30   45     60    150    150    150    150    150
-  Most DMG Dealt to Gravestone in a Weekly Battle        -   3    9   18   25   40     50     60    160    200    200    200
-  Most Tottoise in Storage                               -   5   14   25   40   65     80     90    100    120    120    130
-  Total Royal Statue LV                                  -   3    7   15   20   35     45     45     55    200    220    320
-  Tournaments Registrations                              -   -    1    1    1    2     18     25    100    210    230    240
-  Total AFK Hours claimed                                -   -    2    4    7   11     20     20     30    130    160    180
-  Post Office PO Boxes Earned                            -   -    2    4    7   11     55    210    300    300    300    300
-  Total Prayer Upgrade LV                                -   -    -    1    2    3     20    110    180    200    200    200
-  Best Pure Memory Round Reached                         -   -    -    1    2    3      4      4      4     50     50     50
+  stages                                                1m  2m  3m  4m   5m   6m     7e     7m     7l   end1   end2    max
+  Account LV                                             -   -   -  50  320  840  1,200  1,500  1,500  1,500  1,500  1,500
+  Account Skills LV                                      -   -   -  30  200  520  1,000  1,200  1,200  1,200  1,200  1,200
+  Total Talent Max LV                                    -   -   -  35  230  600    600    600    600    600    600    600
+  Items Found                                            -   -   -  35  240  620    790  1,000  1,100  1,300  1,300  1,300
+  Total Bubble LV                                        -   -   -   1   11   30    100    460  1,500  1,700  1,700  1,700
+  Stamp Total LV                                         -   -   -  25  160  410    490    960  1,000  1,000  1,000  1,000
+  Cards Total LV                                         -   -   -  18  110  290    540    900  1,000  1,000  1,000  1,000
+  Statue Total LV                                        -   -   -  15   95  250    320    600    600    600    600    600
+  Total Achievements Completed                           -   -   -  20  120  330    470    670    670    820    830    850
+  Unique Quests Completed                                -   -   -  16  100  270    290    390    390    490    500    500
+  Total Tasks Completed                                  -   -   -  10   65  170    310    420    440    470    470    470
+  Most Money held in Storage                             -   -   -  11   70  180    320    390    450    490    490    490
+  Most Spore Caps held in Inventory at once              -   -   -   2   13   35    100    130    150    170    170    170
+  Total Colosseum Score                                  -   -   -   8   50  140    140    140    150    150    150    150
+  Trophies Found                                         -   -   -   5   35   95    120    310    350    630    630    700
+  Nametags Found                                         -   -   -   6   40    -    170    520    700    700    700    700
+  Premium Hats Found                                     -   -   -   1    7   19    120    300    400    690    700    700
+  Best Spiketrap Surprise round                          -   -   -   2   12    -      -      -      -     85    100    100
+  Lava Dev Streams watched                               -   -   -   3   19    -      -      -      -    130    180    230
+  Total Minigame Highscore                               -   -   -   1    9   25     40     50     50    100    100    100
+  DPS Record on Shimmer Island                           -   -   -  11   70  190    190    300    320    330    340    340
+  Total Arcade Gold Ball Shop Upgrade LV                 -   -   -   1    9   25    140    160    330  1,100  1,200  1,200
+  Most Balls earned from LBoFaF                          -   -   -   1   11   30     30     30     75    120    130    140
+  Jackpots Hit in Arcade                                 -   -   -   1    8    -      -      -      -     60     80     80
+  Average kills for a Crystal Spawn                      -   -   -  11   70    -    290    350    350    350    350    350
+  Highest Drop Rate Multi                                -   -   -   5   35   90    270    350    350    350    350    350
+  Constellations Completed                               -   -   -   5   35   90     90    200    290    300    300    300
+  Unique Obols Found                                     -   -   -   3   20   55     95    130    150    250    250    250
+  Total Vial LV                                          -   -   -   6   35  100    220    470    600    600    600    600
+  Total Sigil LV                                         -   -   -   9   60    -      -    300    440    480    490    500
+  Highest Killroy Score on a Warrior                     -   -   -   4   25   75     80    130    150    190    200    200
+  Highest Killroy Score on an Archer                     -   -   -   3   20   60     70    130    150    190    200    200
+  Highest Killroy Score on a Mage                        -   -   -   3   20    -     80    140    150    200    200    200
+  Megafeathers Earned from Orion                         -   -   -  15   95  250    250    250    250    250    250    250
+  Megafish Earned from Poppy                             -   -   -   5   35   90     90    160    250    250    250    250
+  Megaflesh Earned from Bubba                            -   -   -   8   50  130    130    150    190    250    250    250
+  Fastest Time to kill Chaotic Efaunt (in Seconds)       -   -   -   4   25    -    110    170    200    200    200    200
+  Largest Oak Log Printer Sample                         -   -   -  14   85  230    280    330    360    380    390    390
+  Largest Copper Ore Printer Sample                      -   -   -  15   90  240    290    330    370    390    390    390
+  Largest Spore Cap Printer Sample                       -   -   -  10   60  160    190    200    210    250    250    250
+  Largest Goldfish Printer Sample                        -   -   -  10   60  160    180    230    250    280    280    290
+  Largest Fly Printer Sample                             -   -   -  10   65  170    190    230    250    280    280    290
+  Total Best Wave in Worship                             -   -   -   5   35   95    160    260    270    300    300    300
+  Best Non Duplicate Goblin Gorefest Wave                -   -   -   1    6   17     20     30    140    200    200    200
+  Most Giants Killed in a Single Week                    -   -   -   7   45    -    180    230    240    250    250    250
+  Total Refinery Rank                                    -   -   -  12   75    -    300    450    450    450    450    450
+  Total Atom Upgrade LV                                  -   -   -   4   30    -    120    400    400    400    400    400
+  Equinox Clouds Completed                               -   -   -   8   50    -    210    750    750    750    750    750
+  Most Greenstacks in Storage                            -   -   -  18  110    -    460    600    600    600    600    600
+  Total Cooking Meals LV                                 -   -   -  16  100    -    400    750    750    750    750    750
+  Total Kitchen Upgrade LV                               -   -   -   3   20    -     90    120    200    200    200    200
+  Highest Power Mob                                      -   -   -   4   25    -    110    120    120    130    130    130
+  Fastest Time reaching Round 100 Arena (in Seconds)     -   -   -   1    9    -      -     45    130    180    180    180
+  Total Lab Chips Owned                                  -   -   -   2   15    -     60     90    110    150    150    150
+  Rift Levels Completed                                  -   -   -  20  120    -    500    500    500    500    500    500
+  Total Artifacts Found                                  -   -   -  12   75    -    310  1,000  1,000  1,000  1,000  1,000
+  Total Boat Upgrade LV                                  -   -   -   2   12    -     50    140    150    200    200    200
+  Gold Bar Sailing Treasure Owned                        -   -   -   4   25    -    110    150    160    180    180    180
+  Highest Captain LV                                     -   -   -   3   20    -     95    120    120    140    140    150
+  Most Gaming Bits Owned                                 -   -   -   7   45    -    190    310    330    350    350    350
+  Total Gaming Plants Evolved                            -   -   -   2   12    -     50    180    200    200    200    200
+  Best Gold Nugget                                       -   -   -   4   25    -    100    140    150    170    170    170
+  Highest Immortal Snail LV                              -   -   -   4   25    -      -    140    270    290    290    290
+  Rat King Crowns Reclaimed                              -   -   -   2   14    -      -     70    140    360    380    400
+  God Rank in Divinity                                   -   -   -   4   30    -      -    150    200    200    200    200
+  Fastest Time to Kill 200 Tremor Wurms (in Seconds)     -   -   -   5   35    -    140    150    150    150    150    150
+  Total Opals Found                                      -   -   -   3   20    -     90    260    290    340    350    360
+  Total LV of Cavern Villagers                           -   -   -   6   35    -    150    350    350    350    350    350
+  Total Digits of all Cavern Resources                   -   -   -  10   60    -    250    700    750    750    750    750
+  Total Resource Layers Destroyed                        -   -   -   2   12    -     50    200    240    310    310    320
+  Best Dawg Den score                                    -   -   -   6   35    -    150    190    210    220    220    220
+  Best Bravery Monument Round                            -   -   -   1    8    -     35    190    220    240    240    240
+  Best Justice Monument Round                            -   -   -   3   19    -      -     95    140    200    220    240
+  Best Wisdom Monument Round                             -   -   -   4   25    -      -    130    160    250    250    250
+  Total Gambit Time (in Seconds)                         -   -   -  10   60    -      -    310    380    400    400    400
+  Total Crops Discovered                                 -   -   -   3   20    -     85    350    350    350    350    350
+  Total Golden Food Beanstacks                           -   -   -   2   12    -     50    380    400    400    400    400
+  Highest Crop OG                                        -   -   -   2   16    -     65    160    170    170    180    180
+  Total Land Rank                                        -   -   -   5   30    -      -    160    170    200    200    200
+  Largest Magic Bean Trade                               -   -   -   1   10    -     40    200    200    200    200    200
+  Jade Emporium Upgrades Purchased                       -   -   -  15   95    -    390    650    650    670    670    670
+  Total Ninja Knowledge Upgrades LV                      -   -   -  10   65    -    270    500    500    500    500    500
+  Total Summoning Upgrades LV                            -   -   -   5   30    -    130    190    200    200    200    200
+  Familiars Owned in Summoning                           -   -   -   2   15    -     60    150    150    150    150    150
+  Most DMG Dealt to Gravestone in a Weekly Battle        -   -   -   1   12    -      -     60    160    200    200    200
+  Most Tottoise in Storage                               -   -   -   2   17    -      -      -    100    120    120    130
+  Best Deathbringer Max Damage in Wraith Mode            -   -   -  10   65    -      -    320    330    350    350    350
+  Best Windwalker Max Damage in Tempest Mode             -   -   -   8   55    -      -    270    320    340    350    360
+  Best Arcane Cultist Max Damage in Arcanist Mode        -   -   -   8   50    -      -    260    300    320    320    320
+  Total Royal Statue LV                                  -   -   -   1    9    -      -      -     55    200    220    320
+  Spirited Valley Emperor Boss Kills                     -   -   -  11   70    -      -    360    370    400    400    400
+  Total Coral Reef upgrades                              -   -   -  10   65    -      -    330    400    400    400    400
+  Total Spelunk Shop Upgrades LV                         -   -   -  16  100    -      -    500    500    500    500    500
+  Total Spelunk Discoveries made                         -   -   -   6   40    -      -    200    290    300    300    300
+  Deepest Depth reached in a single Delve                -   -   -   9   55    -      -    290    300    300    300    300
+  Biggest Haul in a single Delve                         -   -   -   7   45    -      -    240    270    280    280    280
+  Highest leveled Spelunker                              -   -   -   5   35    -      -    180    200    200    200    200
+  Minehead Opponents Defeated                            -   -   -   5   35    -      -    180    240    340    360    360
+  Total Glimbo Trades                                    -   -   -   3   20    -      -    110    290    370    380    400
+  Button Presses                                         -   -   -   9   55    -      -    280    380    430    460    460
+  Successful Jelly Operations                            -   -   -  10   65    -      -      -      -    450    460    480
+  Tournaments Registrations                              -   -   -   -    1    2     18     25    100    210    230    240
+  Total AFK Hours claimed                                -   -   -   -    4   11     20     20     30    130    160    180
+  Post Office PO Boxes Earned                            -   -   -   -    4   11     55    210    300    300    300    300
+  Total Prayer Upgrade LV                                -   -   -   -    1    3     20    110    180    200    200    200
+  Best Pure Memory Round Reached                         -   -   -   -    1    -      4      4      4     50     50     50
