@@ -506,7 +506,17 @@ fn card(m: &Mechanic, partners: &[(&'static str, &Mechanic)], reached: u8) -> Ma
     // Sides behind a switch: statues and stamps show the game's tiers and a ladder on levels;
     // a folded card shows its mechanics. (label, the side's mechanic)
     let split: Option<Vec<(&str, Mechanic)>> = match fold {
-        Some(f) => Some(std::iter::once((f.0[0].1, m.clone())).chain(partners.iter().map(|(l, p)| (*l, (*p).clone()))).take(SIDES).collect()),
+        // A side with two ladders of its own (Statues: Levels / Tiers) brings both.
+        Some(f) => Some(
+            std::iter::once((f.0[0].1, m))
+                .chain(partners.iter().map(|(l, p)| (*l, *p)))
+                .flat_map(|(l, x)| match x.levels_view().zip(x.tiers_view()) {
+                    Some((lv, tv)) => vec![("Levels", lv), (x.other_side, tv)],
+                    None => vec![(l, x.clone())],
+                })
+                .take(SIDES)
+                .collect(),
+        ),
         None => m.levels_view().zip(m.tiers_view()).map(|(lv, tv)| vec![("Levels", lv), (m.other_side, tv)]),
     };
     let all = || std::iter::once(m).chain(partners.iter().map(|p| p.1));
