@@ -356,9 +356,11 @@ fn main() {
             // the next. A count climbs to what its first saves say, nothing when they say none. A
             // named row is to get as soon as you can: Lv 1 from where the mechanic opens, and one
             // the first saves don't ask for yet (Refinery Speed in World 6) climbs toward the first
-            // column that does.
+            // column that does, and never drops once asked. A row crowd-research.txt names keeps its
+            // cells there as they are, `-` too (AutoReview's base only sets a floor).
             if let Some(kd) = first_data.filter(|_| counted.is_some()) {
-                let ramp = |cells: &mut Vec<Option<f64>>, most: f64, named: bool| {
+                let research = researched.iter().any(|k| k == m.key).then(|| &base[m.key]);
+                let ramp = |cells: &mut Vec<Option<f64>>, most: f64, named: bool, fixed: bool| {
                     let to = if named { (kd..cells.len()).find(|&k| cells[k].is_some()) } else { Some(kd) };
                     let Some(to) = to else { return };
                     let top = cells[to].unwrap_or(0.0);
@@ -366,16 +368,30 @@ fn main() {
                     let start = |s: usize| if named && s >= open { 1.0 } else { 0.0 };
                     let mut run = 0.0f64;
                     for k in 0..to {
+                        if fixed && from_base.contains_key(&cols[k]) {
+                            run = run.max(cells[k].unwrap_or(0.0));
+                            continue;
+                        }
                         let v = crowd::nice(top * share(cols[k])).floor().max(start(cols[k])).max(cells[k].unwrap_or(0.0)).max(run).min(most);
                         run = v;
                         cells[k] = (v > 0.0).then_some(v);
                     }
+                    if named {
+                        for cell in cells.iter_mut().skip(to) {
+                            if run > 0.0 && cell.is_none_or(|c| c < run) {
+                                *cell = Some(run);
+                            }
+                            run = run.max(cell.unwrap_or(0.0));
+                        }
+                    }
                 };
-                for cells in &mut count_table {
-                    ramp(cells, rows.len() as f64, false);
+                for (c, cells) in count_table.iter_mut().enumerate() {
+                    let fixed = research.is_some_and(|b| b.rows.iter().any(|(n, _)| crowd::any_level(n) == Some(levels[c]) || (levels[c] <= 1.0 && n == "@first")));
+                    ramp(cells, rows.len() as f64, false, fixed);
                 }
                 for (r, cells) in table.iter_mut().enumerate().filter(|(r, _)| keep[*r]) {
-                    ramp(cells, maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX), true);
+                    let fixed = research.is_some_and(|b| b.rows.iter().any(|(n, _)| n.eq_ignore_ascii_case(&rows[r])));
+                    ramp(cells, maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX), true, fixed);
                 }
             }
             (cols, table, prio, anyone, from_base, keep, levels, count_table)
