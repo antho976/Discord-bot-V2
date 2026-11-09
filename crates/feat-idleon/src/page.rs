@@ -784,7 +784,6 @@ const ON_HOLD: &[&str] = &[
     "lab-chips",
     "breeding-upgrades",
     "shiny",
-    "breeding-pets",
 ];
 
 /// Tasks shown under the current tier before "and N more".

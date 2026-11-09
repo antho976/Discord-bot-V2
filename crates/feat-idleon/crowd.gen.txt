@@ -1156,76 +1156,12 @@ lab-chips                               # Lab Chips
   Silkrode Motherboard       -   -   1   1   1   1
   Omega Motherboard          -   -   1   1   1   1
 
-breeding-pets                           # Breeding Pets
-  stages               7e  7m  7l  end1  end2  max
-  Green Mushroom        1   1   1   1   1   1
-  Squirrel              1   1   1   1   1   1
-  Frog                  1   1   1   1   1   1
-  Bored Bean            1   1   1   1   1   1
-  Red Mushroom          1   1   1   1   1   1
-  Slime                 1   1   1   1   1   1
-  Mr Pig                1   1   1   1   1   1
-  Baby Boa              1   1   1   1   1   1
-  Carrotman             1   1   1   1   1   1
-  Glublin               1   1   1   1   1   1
-  Wode Board            1   1   1   1   1   1
-  Gigafrog              1   1   1   1   1   1
-  Wild Boar             1   1   1   1   1   1
-  Walking Stick         1   1   1   1   1   1
-  Sandy Pot             1   1   1   1   1   1
-  Mimic                 1   1   1   1   1   1
-  Crabcake              1   1   1   1   1   1
-  Mafioso               1   1   1   1   1   1
-  Mallay                1   1   1   1   1   1
-  Sand Castle           1   1   1   1   1   1
-  Pincermin             1   1   1   1   1   1
-  Mashed Potato         1   1   1   1   1   1
-  Tyson                 1   1   1   1   1   1
-  Whale                 1   1   1   1   1   1
-  Moonmoon              1   1   1   1   1   1
-  Sheepie               1   1   1   1   1   1
-  Frost Flake           1   1   1   1   1   1
-  Sir Stache            1   1   1   1   1   1
-  Xylobone              1   1   1   1   1   1
-  Purp Mushroom         1   1   1   1   1   1
-  Nutto                 1   1   1   1   1   1
-  Sand Giant            1   1   1   1   1   1
-  Snelbie               1   1   1   1   1   1
-  Bunny                 1   1   1   1   1   1
-  Bloque                1   1   1   1   1   1
-  Mamooth               1   1   1   1   1   1
-  Snowman               1   1   1   1   1   1
-  Poop                  1   1   1   1   1   1
-  Dig Doug              1   1   1   1   1   1
-  Penguin               1   1   1   1   1   1
-  Thermister            1   1   1   1   1   1
-  Quenchie              1   1   1   1   1   1
-  Cryosnake             1   1   1   1   1   1
-  Mechanical Mouse      1   1   1   1   1   1
-  Bop Box               1   1   1   1   1   1
-  TV                    1   1   1   1   1   1
-  Rat                   1   1   1   1   1   1
-  Beefie                1   1   1   1   1   1
-  Neyeptune             1   1   1   1   1   1
-  Donut                 1   1   1   1   1   1
-  Demon Genie           1   1   1   1   1   1
-  Flying Worm           1   1   1   1   1   1
-  Crescent Spud         1   1   1   1   1   1
-  Dog                   1   1   1   1   1   1
-  Soda Can              1   1   1   1   1   1
-  Chippy                1   1   1   1   1   1
-  Dedotated Ram         1   1   1   1   1   1
-  Gelatinous Cuboid     1   1   1   1   1   1
-  Choccie               1   1   1   1   1   1
-  Biggole Wurm          1   1   1   1   1   1
-  Bloodbone             1   1   1   1   1   1
-  Panda                 1   1   1   1   1   1
-  Cool Bird             1   1   1   1   1   1
-  Clammie               1   1   1   1   1   1
-  Octodar               1   1   1   1   1   1
-  Flombeige             1   1   1   1   1   1
-  Stilted Seeker        1   1   1   1   1   1
-  Hedgehog              1   1   1   1   1   1
+breeding-pets                           # Breeding Pets, World 1 to 5 columns from crowd-research.txt
+  stages          4e  4m  4l  5e  5m  5l  6e  6m  6l  7e  7m  7l  end1  end2  max
+  World 1 pets     3   5   7   8   9  11  13  14  16  17  17  17  17  17  17
+  World 2 pets     -   -   1   1   2   4   8  12  14  17  17  17  17  17  17
+  World 4 pets     -   -   -   1   1   1   1   1   2  16  16  16  16  16  16
+  World 3 pets     -   -   -   -   -   1   2   6  10  18  18  18  18  18  18
 
 shiny                                   # Shiny Pets
   stages               7e  7m  7l  end1  end2  max
