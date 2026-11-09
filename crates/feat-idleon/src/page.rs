@@ -474,6 +474,12 @@ fn pace_line(p: &Pace, reached: u8) -> Option<String> {
 const FOLD: &[(&[(&str, &str)], &str)] = &[
     (&[("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win")], ""),
     (&[("islands", "Islands"), ("fractal-island", "Fractal Island")], "Islands"),
+    (&[("spelunk-shop", "Shop"), ("spelunk-caves", "Bosses"), ("spelunk-chapters", "Lore"), ("spelunk-depth", "Depths")], "Spelunking"),
+    (&[("clam-upgrades", "Upgrades"), ("clam-work", "Promotions")], "Clamworks"),
+    (&[("coral-reef", "Reef"), ("dancing-coral", "Dancing Coral")], ""),
+    (&[("gallery-trophies", "Trophies"), ("gallery-podiums", "Podiums"), ("gallery-nametags", "Nametags")], "Gallery"),
+    (&[("menagerie-unlocks", "Unlocks"), ("menagerie-boosts", "Boosts"), ("menagerie-missions", "Missions"), ("menagerie-jellyfish", "Jellyfish")], "Menagerie"),
+    (&[("observations", "Found"), ("observation-levels", "Insight")], "Observations"),
 ];
 
 /// Most sides a switch has (the page's CSS has a rule per side).
