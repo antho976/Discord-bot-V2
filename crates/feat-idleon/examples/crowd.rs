@@ -85,7 +85,16 @@ type Levels = HashMap<&'static str, HashMap<u32, f32>>;
 struct Seen {
     stage: usize,
     levels: Levels,
+    /// How far along the whole account is (its share of every max the checks read): the best
+    /// saves set the endgame.
+    score: f64,
 }
+
+/// The endgame tiers come from the best saves (owner, 2026-11-09: "have the end tiers be based on
+/// the best jsons"), not from each item's own top: per tier, how many of the best saves it looks
+/// at and the share of them that has a level (half of the best 10, half of the best 3, then the
+/// most any of the best 3 has). Each item's own top made a mix no one account has.
+const ENDGAME_SAVES: [(usize, f64); 3] = [(10, 0.5), (3, 0.5), (3, 0.0)];
 
 fn main() {
     let dir = env!("CARGO_MANIFEST_DIR");
@@ -121,7 +130,7 @@ fn main() {
     // Read every save once, keeping only levels.
     let mut names: Vec<String> = Vec::new();
     let mut ids: HashMap<String, u32> = HashMap::new();
-    let mut read: Vec<(u8, f64, std::time::SystemTime, Levels)> = Vec::new();
+    let mut read: Vec<(u8, f64, std::time::SystemTime, Levels, f64)> = Vec::new();
     let mut skipped = 0;
     // Items some save has greenstacked or holds 1M of, for greenstacks.txt.
     let mut stacked: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -152,7 +161,7 @@ fn main() {
                 *v = v.max(i.crowd_level() as f32);
             }
         }
-        read.push((world, levels, when, per));
+        read.push((world, levels, when, per, r.share()));
     }
     if skipped > 0 {
         eprintln!("{skipped} files weren't saves; left out");
@@ -175,17 +184,18 @@ fn main() {
             let stage = usize::from(w - 1) * 3 + part;
             counts[stage] = list.len();
             for r in list {
-                seen.push(Seen { stage, levels: r.3.clone() });
+                seen.push(Seen { stage, levels: r.3.clone(), score: r.4 });
             }
         }
     }
     let total: usize = counts.iter().sum();
-    // The endgame: two steps from Late World 7's saves, then the highest of every save.
-    let late7 = crowd::ENDGAME - 1;
-    counts[crowd::ENDGAME] = counts[late7];
-    counts[crowd::ENDGAME + 1] = counts[late7];
-    counts[crowd::ENDGAME + 2] = total;
-    let stages: Vec<usize> = (0..STAGES.len()).filter(|&s| counts[s] >= MIN_SAVES).collect();
+    // The endgame: the best saves (`ENDGAME_SAVES`).
+    let mut best: Vec<&Seen> = seen.iter().collect();
+    best.sort_by(|a, b| b.score.total_cmp(&a.score));
+    for (e, (n, _)) in ENDGAME_SAVES.iter().enumerate() {
+        counts[crowd::ENDGAME + e] = (*n).min(best.len());
+    }
+    let stages: Vec<usize> = (0..STAGES.len()).filter(|&s| counts[s] >= MIN_SAVES || (crowd::endgame(s) && counts[s] > 0)).collect();
     // For `COUNTS` mechanics, a world whose early, mid and late are each short of saves but that
     // has enough between them gets one column at its mid stage from all of them: a count is one
     // number per level, steady on a handful of saves where a row per item isn't.
@@ -318,8 +328,7 @@ fn main() {
             let mut first_data: Option<usize> = None;
             for (k, &s) in cols.iter().enumerate() {
                 let here: Vec<&Seen> = match s.checked_sub(crowd::ENDGAME) {
-                    Some(0 | 1) => seen.iter().filter(|x| x.stage == late7).collect(),
-                    Some(_) => seen.iter().collect(),
+                    Some(e) => best.iter().take(ENDGAME_SAVES[e.min(2)].0).copied().collect(),
                     None if ramped && whole_world.contains(&s) => seen.iter().filter(|x| x.stage / 3 == s / 3).collect(),
                     None => seen.iter().filter(|x| x.stage == s).collect(),
                 };
@@ -327,7 +336,7 @@ fn main() {
                 if n >= MIN_SAVES && first_data.is_none() && !only_base {
                     first_data = Some(k);
                 }
-                if n < MIN_SAVES || only_base {
+                if (n < MIN_SAVES && !crowd::endgame(s)) || n == 0 || only_base {
                     if let Some((col, rank)) = from_base.get(&s) {
                         for r in 0..rows.len() {
                             table[r][k] = if keep[r] { col[r] } else { None };
@@ -356,7 +365,7 @@ fn main() {
                 for (c, &l) in levels.iter().enumerate() {
                     let mut have: Vec<usize> = here.iter().map(|x| (0..rows.len()).filter(|&r| f64::from(full_level(x, r)) >= l).count()).collect();
                     have.sort_unstable_by(|a, b| b.cmp(a));
-                    let q = s.checked_sub(crowd::ENDGAME).map_or(0.5, |e| [0.25, 0.10, 0.0][e.min(2)]);
+                    let q = s.checked_sub(crowd::ENDGAME).map_or(0.5, |e| ENDGAME_SAVES[e.min(2)].1);
                     let at = ((q * n as f64).ceil() as usize).clamp(1, n) - 1;
                     let v = crowd::nice(have[at] as f64).max(count_floor[c]);
                     count_floor[c] = v;
@@ -371,11 +380,10 @@ fn main() {
                 // that stage has all of, not each item's own median.
                 let mut targets = floor.clone();
                 let mut chose = 1.0;
-                // The endgame: per item, the level the top quarter of Late World 7 has, then the top
-                // tenth, then the highest any save has; never under the tier before, so nothing
-                // there is already asked for by World 7.
+                // The endgame: per item, the level a share of the best saves has (`ENDGAME_SAVES`);
+                // never under the tier before, so nothing there is already asked for by World 7.
                 if let Some(e) = s.checked_sub(crowd::ENDGAME) {
-                    let top = [0.25, 0.10, 0.0][e.min(2)];
+                    let top = ENDGAME_SAVES[e.min(2)].1;
                     let at = ((top * n as f64).ceil() as usize).clamp(1, n) - 1;
                     targets = (0..rows.len()).map(|r| crowd::nice(f64::from(sorted[r][at])).max(floor[r]).min(maxes.get(rows[r].as_str()).copied().unwrap_or(f64::MAX))).collect();
                 }
@@ -468,6 +476,16 @@ fn main() {
                         run = v;
                         cells[k] = (v > 0.0).then_some(v);
                     }
+                }
+            }
+            // Never lower than the stage before, once asked (a research row that stops asking).
+            for row in table.iter_mut() {
+                let mut run = 0.0f64;
+                for cell in row.iter_mut() {
+                    if run > 0.0 && cell.is_none_or(|c| c < run) {
+                        *cell = Some(run);
+                    }
+                    run = run.max(cell.unwrap_or(0.0));
                 }
             }
             // In any other table, a `FIRST` row is asked (Lv 1 at least) from where the mechanic
@@ -721,6 +739,8 @@ const HEAD: &str = "\
 # a column per stage of the game (7e, 7m, 7l: early, mid and late World 7). A cell is the
 # level that at least half the players at that stage have; - means not asked for yet.
 # Each column is one tier on the page; a last \"Everything maxed\" tier follows.
+# end1, end2 and max come from the best accounts (by their share of every max): what half of
+# the 10 best have, what 2 of the 3 best have, then the most any of the 3 best has.
 #
 # Edit any cell: the next run of the generator keeps it (its row then says # hand).
 #   - to stop asking for something everyone levels but shouldn't, write -
