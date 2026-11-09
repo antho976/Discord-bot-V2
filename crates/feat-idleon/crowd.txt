@@ -2191,6 +2191,41 @@ minehead                                # Minehead
   Awesome Additives            -   -   2   2   3   3
   Record Breaking Jackpots     -   -   -   -   1   1
 
+minehead-opponents                      # Minehead Opponents
+  stages           7e  7m  7l  end1  end2  max
+  Bronzehead        1   1   1   1   1   1
+  Gemhead           1   1   1   1   1   1
+  Yarnhead          1   1   1   1   1   1
+  Sashimihead       1   1   1   1   1   1
+  Bleckhead         1   1   1   1   1   1
+  Saturnhead        1   1   1   1   1   1
+  Basshead          1   1   1   1   1   1
+  Kelphead          1   1   1   1   1   1
+  Snouthead         1   1   1   1   1   1
+  Threadhead        1   1   1   1   1   1
+  Clownhead         1   1   1   1   1   1
+  Goldhead          1   1   1   1   1   1
+  Maizehead         -   1   1   1   1   1
+  Ironhead          -   1   1   1   1   1
+  Purrhead          -   -   1   1   1   1
+  Screamhead        -   -   1   1   1   1
+  Ballhead          -   -   1   1   1   1
+  Grosshead         -   -   1   1   1   1
+  Blindhead         -   -   1   1   1   1
+  Detahead          -   -   -   1   1   1
+  Brainhead         -   -   -   1   1   1
+  Raspberryhead     -   -   -   1   1   1
+  Leopahead         -   -   -   1   1   1
+  Baldhead          -   -   -   -   1   1
+  Royalhead         -   -   -   -   -   -  # no save has it yet
+  Stouthead         -   -   -   -   -   -  # no save has it yet
+  Chillhead         -   -   -   -   -   -  # no save has it yet
+  Summerhead        -   -   -   -   -   -  # no save has it yet
+  Tentahead         -   -   -   -   -   -  # no save has it yet
+  Humungohead       -   -   -   -   -   -  # no save has it yet
+  Mr Minehead       -   -   -   -   -   -  # no save has it yet
+  Boghead           -   -   -   -   -   -  # no save has it yet
+
 coral-reef                              # Coral Reef
   stages                                                                                     7e  7m  7l  end1  end2  max
   Adds a new bonus to your Tome's Epilogue in World 4, which goes up with your Tome Score     5  10  10  10  10  10
