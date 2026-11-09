@@ -472,7 +472,7 @@ fn pace_line(p: &Pace, reached: u8) -> Option<String> {
 /// first mechanic's name). The card sits in its first mechanic's world tab. A side whose
 /// mechanic the save doesn't have is left out.
 const FOLD: &[(&[(&str, &str)], &str)] = &[
-    (&[("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win")], ""),
+    (&[("bubbles", "Bubbles"), ("vials", "Vials"), ("cauldron-upgrades", "Brewing"), ("pay2win", "Pay2Win"), ("sigils", "Sigils")], "Alchemy"),
     (&[("islands", "Islands"), ("fractal-island", "Fractal Island")], "Islands"),
     (&[("statues", "Statues"), ("statue-flair", "Flair")], ""),
     // World 5 and 6 (2026-11-09): one card per skill, as the game draws it.
