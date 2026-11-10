@@ -45,8 +45,9 @@ pub fn stage_label(stage: usize) -> String {
 /// Mechanics whose tables come from the best level any save has, not from what half of each
 /// stage has: every item rises a little at every stage, from the stage its world opens, toward
 /// the highest any save has (see the crowd example's `best_curve`). An item that is hard to
-/// level stays low even for the endgame, and its tiers follow. Their tiers are a stage each,
-/// never split into parts.
+/// level stays low even for the endgame, and its tiers follow. A stage raises about 24 of them
+/// at most, the rest in turns (the crowd example's `stagger`), and splits into parts of `PART`
+/// like any table (owner, 2026-11-09: Stamps asked up to 122 things in one tier).
 pub const BEST: [&str; 5] = ["statues", "stamps", "owl", "forge", "upgrade-vault"];
 
 /// Mechanics whose items differ from account to account (one per character), so they have no
@@ -57,9 +58,9 @@ pub const BY_MAX: [&str; 4] = ["anvil-points", "cauldron-upgrades", "pay2win", "
 /// Every crowd ladder fits on its card (owner, 2026-11-08: "enough tiers to not have more
 /// bubbles in a tier than it can show"; 2026-11-09, tier layout B: a tier is a page of at most
 /// 8 asks): a stage that raises more than `PART` items is split into as many parts as that
-/// takes. `whole` tables (`BEST`, a tier per stage where every item rises) stay whole unless
-/// they're here too.
-pub const FITS: [&str; 4] = ["bubbles", "cauldron-upgrades", "pay2win", "obols"];
+/// takes. `whole` tables (the made `BY_MAX` ones, a tier per stage where every item rises) stay
+/// whole unless they're here too.
+pub const FITS: [&str; 5] = ["bubbles", "anvil-points", "cauldron-upgrades", "pay2win", "obols"];
 
 /// Share of the best asked for at `stage` for something from `world` (`BEST` tables and
 /// `BY_MAX` ladders): nothing before the world opens, then rising with the square of the
@@ -97,7 +98,7 @@ pub fn by_max(key: &str, items: &[Item], world: u8) -> Block {
 pub struct Block {
     /// `off` after the key: the table is kept but not used (the mechanic keeps its own ladder).
     pub off: bool,
-    /// A `BEST` mechanic's table: a tier per stage, not split into parts.
+    /// A made (`by_max`) table: a tier per stage, not split into parts.
     pub whole: bool,
     /// A `FITS` mechanic's table: split into parts even when it's `whole`.
     pub fits: bool,
@@ -164,7 +165,7 @@ pub fn parse(text: &str) -> (Table, Vec<String>) {
             if table.contains_key(first) {
                 problems.push(format!("line {n}: {first} is listed twice"));
             }
-            let mut b = Block { whole: BEST.contains(&first), fits: FITS.contains(&first), ..Block::default() };
+            let mut b = Block { fits: FITS.contains(&first), ..Block::default() };
             match words.get(1) {
                 None => {}
                 Some(&"off") => b.off = true,
@@ -519,6 +520,20 @@ bad
     }
 
     #[test]
+    fn best_tables_split_into_parts_too() {
+        // Stamps once asked up to 122 things in one tier (2026-11-09): now a part is 8 at most.
+        let mut text = String::from("stamps\n  stages 7e\n");
+        for k in 0..20 {
+            text.push_str(&format!("  S{k}  5\n"));
+        }
+        let (t, _) = parse(&text);
+        assert!(!t["stamps"].whole);
+        let items: Vec<Item> = (0..20).map(|k| Item::new(format!("S{k}"), None, 0.0, 10.0)).collect();
+        let l = Ladder::new(&t["stamps"], &items).unwrap();
+        assert_eq!(l.rungs.len(), 3);
+    }
+
+    #[test]
     fn count_rungs_use_level_names() {
         let names: Vec<String> = ["Found", "Ancient", "Eldritch"].iter().map(|s| s.to_string()).collect();
         assert_eq!(count_text(20, 2.0, Some(&names)), "20 Ancient");
@@ -539,5 +554,26 @@ bad
         assert_eq!(labels, ["Mid World 6 · 2 unlocked", "Early World 7", "Early World 7 · 3 unlocked", "Early World 7 · 1 at Lv 10", "Mid World 7 · 2 at Lv 10"]);
         assert_eq!(l.rungs[3].count, Some((1, 10.0)));
         assert!(l.rungs[3].targets.iter().all(|&t| t == 0.0));
+    }
+
+    /// Nothing in `crowd.txt` is asked before its mechanic's world, or before its item's own
+    /// world when that comes later (owner, 2026-11-09: Statue Flair's tiers started in World 6).
+    #[test]
+    fn crowd_txt_asks_nothing_before_its_world() {
+        let empty = crate::save::Save::parse(r#"{"OptLacc": []}"#).expect("an empty save");
+        let (table, _) = parse(FILE);
+        let open = |w: u8| usize::from(w.clamp(1, 7) - 1) * 3;
+        let mut early = Vec::new();
+        for m in crate::run_checks(&empty) {
+            let Some(b) = table.get(m.key) else { continue };
+            for (name, cells) in &b.rows {
+                let item = m.items.iter().chain(&m.later).find(|i| &i.name == name).and_then(|i| i.world);
+                let from = open(item.unwrap_or(m.world).max(m.world));
+                if let Some(k) = (0..b.stages.len()).find(|&k| b.stages[k] < from && cells[k].is_some()) {
+                    early.push(format!("{} {name}: {} (opens {})", m.key, STAGES[b.stages[k]], STAGES[from]));
+                }
+            }
+        }
+        assert!(early.is_empty(), "asked before its world ({}):\n{}", early.len(), early.join("\n"));
     }
 }

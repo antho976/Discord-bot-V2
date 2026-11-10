@@ -250,7 +250,8 @@ fn main() {
         // Columns, every row's cell per column, how much each row matters there, whether any
         // save has it, and the base columns used.
         let (cols, table, prio, anyone, from_base, keep, levels, count_table) = if crowd::BEST.contains(&m.key) {
-            let (cols, table) = best_table(m, &rows, &ids, &seen);
+            let (cols, mut table) = best_table(m, &rows, &ids, &seen);
+            stagger(&mut table, &vec![false; cols.len()], &vec![vec![0.0; cols.len()]; rows.len()]);
             let anyone = rows.iter().map(|n| ids.get(n).is_some_and(|id| seen.iter().any(|x| x.levels.get(m.key).and_then(|l| l.get(id)).is_some_and(|v| *v > 0.0)))).collect();
             let prio = vec![vec![0.0; cols.len()]; rows.len()];
             let keep = vec![true; rows.len()];
@@ -299,6 +300,10 @@ fn main() {
             }
             cols.sort_unstable();
             cols.dedup();
+            // Nothing before the mechanic opens: a column there (kept from the last run, or the
+            // whole of World 6 for a World 7 mechanic) only reads levels the game hands out
+            // before you can play it, such as the three observations every save starts with.
+            cols.retain(|&s| s >= open);
             if cols.is_empty() {
                 continue;
             }
@@ -458,7 +463,18 @@ fn main() {
                 // (Up to its first cell, from the saves or the research: research cells stay.)
                 let firsts: Vec<Option<usize>> = (0..rows.len()).map(|r| (0..cols.len()).find(|&k| table[r][k].is_some() && (k >= kd || from_base.contains_key(&cols[k])))).collect();
                 let mut order: Vec<usize> = (0..rows.len()).filter(|&r| keep[r] && counted.is_none() && firsts[r].is_some()).collect();
-                order.sort_by(|&a, &b| prio[b][firsts[b].unwrap_or(0)].total_cmp(&prio[a][firsts[a].unwrap_or(0)]).then(a.cmp(&b)));
+                // A table whose saves ask nothing before the endgame (Cape Vine: fewer than half of
+                // World 7 has a cape on the vine) climbs through its own world's saves columns
+                // too: a mechanic is asked for in the world it opens in. Its rows come in the order
+                // the most saves from its world have them, not by the endgame's best saves.
+                let late = (0..cols.len()).all(|k| crowd::endgame(cols[k]) || table.iter().all(|row| row[k].is_none()));
+                let into = if late { cols.iter().position(|&s| crowd::endgame(s)).unwrap_or(kd) } else { kd };
+                if late {
+                    let have = |r: usize| seen.iter().filter(|x| x.stage >= open && !crowd::endgame(x.stage) && full_level(x, r) > 0.0).count();
+                    order.sort_by_key(|&r| (std::cmp::Reverse(have(r)), firsts[r], r));
+                } else {
+                    order.sort_by(|&a, &b| prio[b][firsts[b].unwrap_or(0)].total_cmp(&prio[a][firsts[a].unwrap_or(0)]).then(a.cmp(&b)));
+                }
                 let n_rows = order.len().max(1) as f64;
                 for (place, &r) in order.iter().enumerate() {
                     let cells = &mut table[r];
@@ -467,8 +483,9 @@ fn main() {
                     let after = place as f64 / n_rows;
                     let open = item_open.get(rows[r].as_str()).copied().unwrap_or(0).max(open);
                     let mut run = 0.0f64;
-                    // (Never into a saves column: violet-ocelot, 7e has 37 saves of its own.)
-                    for k in 0..to.min(kd) {
+                    // (Never into a saves column, but for a `late` table: violet-ocelot, 7e has 37
+                    // saves of its own.)
+                    for k in 0..to.min(into) {
                         let s = cols[k];
                         let share = if s < open { 0.0 } else { ((s - open + 1) as f64 / (cols[to] - open + 1) as f64).powi(2) };
                         let due = s >= open && share >= after;
@@ -499,6 +516,20 @@ fn main() {
                             run = run.max(cell.unwrap_or(0.0)).max(1.0);
                             *cell = Some(run);
                         }
+                    }
+                }
+            }
+            // A stage that would raise more than `STEP` rows raises them in turns (see `stagger`).
+            if counted.is_none() {
+                let fixed: Vec<bool> = cols.iter().map(|s| from_base.contains_key(s)).collect();
+                stagger(&mut table, &fixed, &prio);
+            }
+            // Nor an item before its own world opens, whatever the saves or the research say.
+            for (r, row) in table.iter_mut().enumerate() {
+                let from = item_open.get(rows[r].as_str()).copied().unwrap_or(0);
+                for (k, cell) in row.iter_mut().enumerate() {
+                    if cols[k] < from {
+                        *cell = None;
                     }
                 }
             }
@@ -690,6 +721,43 @@ fn best_table(m: &feat_idleon::review::Mechanic, rows: &[String], ids: &HashMap<
         }
     }
     (cols, table)
+}
+
+/// Rows one stage raises at most, about: three tiers of `crowd::PART` (owner, 2026-11-09: the
+/// Tome asked 13 tiers at Mid World 4, the Death Note 12 at Early World 7, because every one of
+/// their hundred rows rose at every stage).
+const STEP: usize = 3 * crowd::PART;
+
+/// Where a stage would raise more than `STEP` rows, they rise in turns: with N turns (rows rising
+/// / `STEP`, rounded up), the row in place p (by when it's first asked, then how many of the
+/// stage's saves have it) rises at the columns where p + column is a multiple of N, and holds its
+/// last cell at the others. Every row still rises every N stages, a bigger step each time, and a
+/// row that isn't asked yet waits for its turn too (the page's last tier, everything maxed, asks
+/// the rest). Columns marked `fixed` (base, research) stay as they are.
+fn stagger(table: &mut [Vec<Option<f64>>], fixed: &[bool], prio: &[Vec<f64>]) {
+    let n_cols = fixed.len();
+    let first = |r: usize| table[r].iter().position(Option::is_some).unwrap_or(usize::MAX);
+    let mut order: Vec<usize> = (0..table.len()).collect();
+    order.sort_by(|&a, &b| first(a).cmp(&first(b)).then_with(|| {
+        let k = first(a);
+        if k == usize::MAX { std::cmp::Ordering::Equal } else { prio[b][k].total_cmp(&prio[a][k]) }
+    }).then(a.cmp(&b)));
+    let mut place = vec![0usize; table.len()];
+    for (p, &r) in order.iter().enumerate() {
+        place[r] = p;
+    }
+    let mut asked: Vec<f64> = vec![0.0; table.len()];
+    for k in 0..n_cols {
+        let want: Vec<f64> = table.iter().map(|row| row[k].unwrap_or(0.0)).collect();
+        let rising = (0..table.len()).filter(|&r| want[r] > asked[r]).count();
+        let turns = rising.div_ceil(STEP).max(1);
+        for (r, row) in table.iter_mut().enumerate() {
+            if fixed[k] || (place[r] + k).is_multiple_of(turns) {
+                asked[r] = asked[r].max(want[r]);
+            }
+            row[k] = (asked[r] > 0.0).then_some(asked[r]);
+        }
+    }
 }
 
 /// Adds to `greenstacks.txt` the stackable items some save has greenstacked or holds 1M of

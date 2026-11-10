@@ -364,12 +364,18 @@ impl Mechanic {
         out
     }
 
+    /// Whether it has both ladders, Levels and `other_side`: `levels_view` and `tiers_view` are
+    /// both `Some` exactly when this is true.
+    pub fn two_sides(&self) -> bool {
+        self.levels_note.is_some() && self.crowd.is_some()
+    }
+
     /// Both ladders (`levels_note` set and a crowd ladder on `raw` levels): the Levels side. Its
     /// tasks are levels, so the items' next steps on the other side (`how`, `state`: a statue's
     /// next tier) are left off, except for what you don't have at all yet (a stamp's where to
     /// find it); the levels note stands in for the other one.
     pub fn levels_view(&self) -> Option<Mechanic> {
-        let note = self.levels_note.clone().filter(|_| self.crowd.is_some())?;
+        let note = self.levels_note.clone().filter(|_| self.two_sides())?;
         let mut m = self.clone();
         m.note = Some(note);
         // Items with no max (the owl's lasting bonuses) live on this side: theirs stay.
@@ -383,7 +389,7 @@ impl Mechanic {
     /// Both ladders: the other side (`other_side`), the game's own ladder (statue tiers whole,
     /// stamps found), with each item's next step. Its pace and side box belong to the levels.
     pub fn tiers_view(&self) -> Option<Mechanic> {
-        self.levels_note.as_ref().filter(|_| self.crowd.is_some())?;
+        self.levels_note.as_ref().filter(|_| self.two_sides())?;
         let mut m = self.clone();
         m.crowd = None;
         m.pace = None;

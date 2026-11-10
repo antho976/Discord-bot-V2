@@ -42,7 +42,7 @@ impl SaveError {
     pub fn message(&self) -> &'static str {
         match self {
             SaveError::TooBig => "That's bigger than any Idleon save. Paste only the JSON from IdleonToolbox or Idleon Efficiency.",
-            SaveError::NotJson => "That isn't JSON. Copy the whole save from IdleonToolbox (Raw data, Copy) or Idleon Efficiency and paste it as it is.",
+            SaveError::NotJson => "That isn't JSON. Copy your save again (Copy for support in IdleonToolbox, or Copy Raw JSON in Idleon Efficiency) and paste it as it is.",
             SaveError::NotASave => "That's JSON, but not an Idleon save: it has no account options in it.",
         }
     }
@@ -57,8 +57,11 @@ impl Save {
             return Err(SaveError::NotJson);
         };
         let mut names = string_list(root.get("charNames")).or_else(|| string_list(root.get("playerNames"))).unwrap_or_default();
-        let companions = companions(root.remove("companion"));
-        let server = match root.remove("serverVars") {
+        // IdleonToolbox names these `companion` and `serverVars`; Idleon Efficiency's copy
+        // `companions` and `servervars` (plucky-otter, 2026-11-09).
+        let companion = root.remove("companion").or_else(|| root.remove("companions"));
+        let companions = companions(companion);
+        let server = match root.remove("serverVars").or_else(|| root.remove("servervars")) {
             Some(Value::Object(m)) => m,
             _ => Map::new(),
         };

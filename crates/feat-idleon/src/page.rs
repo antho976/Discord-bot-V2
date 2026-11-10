@@ -1,6 +1,6 @@
 //! The public page: the paste box, then the review.
 //!
-//! The review leads with the answer: how far the account is overall with one bar per world,
+//! The review leads with the answer: how many of the tiers players have by your world you have, with one bar per world,
 //! then "Not started yet" and "Should have by now" (what the ranking expects by your world), then every mechanic by world (tabs switched in the page, no reload), each a
 //! card that opens to its items, least done first. Worlds wear their own colour (data colour,
 //! not decoration): the bars, the meters and the world tags.
@@ -9,7 +9,6 @@ use bot_core::Ctx;
 use bot_core::maud::{DOCTYPE, Markup, PreEscaped, html};
 use bot_core::web::ui;
 
-use crate::expected::Pace;
 use crate::game::GAME;
 use crate::pictures;
 use crate::review::{Count, Item, Mechanic, Packs, Review, State as Step, Tier};
@@ -24,7 +23,8 @@ pub struct Access {
     pub staff: bool,
     /// The name of whoever signed in with Discord (on this page or the dashboard).
     pub member: Option<String>,
-    /// May open a test account (everything at 0): staff, and the local preview.
+    /// May open a test account (everything at 0): staff, testers while the test is closed, and
+    /// the local preview.
     pub test: bool,
 }
 
@@ -36,7 +36,7 @@ pub enum State<'a> {
 }
 
 /// The page in a sentence, for link previews.
-const ABOUT: &str = "Paste your Idleon save and see how far each mechanic is from the game's max, and what to work on next.";
+const ABOUT: &str = "Paste your Idleon save and see where each mechanic stands against other players' saves in your world, and what to do next.";
 
 pub const WORLD_NAMES: [&str; 8] = ["Account", "Blunder Hills", "Yum-Yum Desert", "Frostbite Tundra", "Hyperion Nebula", "Smolderin' Plateau", "Spirited Valley", "Shimmerfin Deep"];
 
@@ -199,58 +199,134 @@ fn report_box(guild: u64, r: &Review, member: Option<&str>) -> Markup {
     }
 }
 
+/// Where a save comes from, and how to copy it: (radio value, site name, address, steps, note).
+/// Steps are the sites' own menu and button names (IdleonToolbox's user menu, Idleon
+/// Efficiency's Raw Data page). Companions are kept on the game's server, not in the save:
+/// only IdleonToolbox's "Copy for support" brings them (`companion`).
+const SOURCES: [(&str, &str, &str, [&str; 3], &str); 2] = [
+    (
+        "it",
+        "IdleonToolbox",
+        "https://idleontoolbox.com",
+        ["Open idleontoolbox.com and sign in.", "Open the menu under your picture, top right.", "Choose Copy for support, then paste it in the box."],
+        "This copy brings your companions too. Copy raw data works, but leaves out your characters' names and companions.",
+    ),
+    (
+        "ie",
+        "Idleon Efficiency",
+        "https://www.idleonefficiency.com",
+        ["Open idleonefficiency.com and sign in.", "Open Raw Data in the menu at the top.", "Press Copy Raw JSON, then paste it in the box."],
+        "Companions don't come through from here, so their card stays empty. Copy from IdleonToolbox to have them.",
+    ),
+];
+
+/// What changed in the latest update, under the paste box. Keep it to one line.
+const NEWS: (&str, &[&str]) = (
+    "9 Nov",
+    &[
+        "Tiers now come from other players' saves, placed by the world they reached.",
+        "Every card shows its stages down the side and one tier at a time.",
+        "New cards: the Tome, Obols, Star Talents, Companions and Guild Bonuses.",
+        "Cards that are one thing in the game are one card here, with a switch.",
+    ],
+);
+
 fn ask(guild: u64, error: Option<&str>, retry: bool, test: bool) -> Markup {
     html! {
         section.ia-panel.ia-ask {
             div.ia-ask-text {
                 h2 { "Paste your save" }
-                p { "Copy your account's JSON from IdleonToolbox or Idleon Efficiency and paste it here, or open the file. You get how far each mechanic is from the game's max, and what to work on next." }
-            }
-            // Sent as plain text: URL-encoding a save triples its size and was a fifth of the
-            // server's work per check.
-            form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
-                // First in the form so it's the first line of the plain-text body (the server
-                // reads it before the save); shown under the box (CSS order). The page script
-                // remembers the choice in this browser.
-                div.ia-packs role="radiogroup" aria-label="Packs" {
-                    span { "Packs" }
-                    @for (p, tip) in [
-                        (Packs::Buy, "Every tier counts everything."),
-                        (Packs::NoMore, "Leaves out what only a pack you don't own gives: the Potluck Pack's vault levels, pack-only Gallery items."),
-                        (Packs::Free, "That, and the Gem Shop leaves Should have by now."),
-                    ] {
-                        label title=(tip) {
-                            input type="radio" name="packs" value=(p.code()) checked[p == Packs::Buy];
-                            span { (p.label()) }
+                p { "Every mechanic is placed on tiers taken from other players' saves, so you see where you stand for your world and what to do next." }
+                // Picked with CSS (:has), no script; the page script remembers the choice.
+                div.ia-src role="radiogroup" aria-label="Where your save comes from" {
+                    @for (i, (code, name, ..)) in SOURCES.iter().enumerate() {
+                        label {
+                            input type="radio" name="ia-src" value=(code) checked[i == 0];
+                            span { (name) }
                         }
                     }
                 }
-                textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="{\"data\": {...}, \"charNames\": [...]}" required {}
-                p.ia-err #ia-err role="alert" hidden[error.is_none()] data-retry[retry] { (error.unwrap_or_default()) }
-                p.ia-note #ia-last hidden { "Filled in with the save you last checked in this tab." }
-                div.ia-ask-actions {
-                    label.btn {
-                        (ui::icon(bot_core::Icon::Enter))
-                        "Open a file"
-                        input #ia-file type="file" accept=".json,.txt,application/json" data-max=(crate::save::MAX_BYTES) hidden;
+                @for (code, _, url, steps, note) in SOURCES {
+                    div.ia-how data-src=(code) {
+                        ol {
+                            @for (i, s) in steps.iter().enumerate() {
+                                li {
+                                    span {
+                                        @if i == 0 {
+                                            // The site's address is the link; the rest of the step is words.
+                                            @let host = url.trim_start_matches("https://").trim_start_matches("www.");
+                                            @let (pre, post) = s.split_once(host).unwrap_or((s, ""));
+                                            (pre) a href=(url) target="_blank" rel="noopener" { (host) } (post)
+                                        } @else {
+                                            (s)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        p { (note) }
                     }
-                    // Shown by the page script where the browser can read the clipboard: on a
-                    // phone, pressing and holding in the box to paste a megabyte is the hard part.
-                    button.btn #ia-paste type="button" hidden { "Paste from clipboard" }
-                    button.btn.primary type="submit" { "Check my account" }
                 }
             }
-            @if test {
-                p.ia-try {
-                    span { "Test account, everything at 0, seen as a player in" }
-                    @for w in 1..=7u8 { a href={ "/p/" (guild) "/idleon/test?world=" (w) } { "World " (w) } }
+            div.ia-ask-main {
+                // Sent as plain text: URL-encoding a save triples its size and was a fifth of the
+                // server's work per check.
+                form method="post" action={ "/p/" (guild) "/idleon" } enctype="text/plain" data-full {
+                    // First in the form so it's the first line of the plain-text body (the server
+                    // reads it before the save); shown under the box (CSS order). The page script
+                    // remembers the choice in this browser.
+                    div.ia-packs {
+                        div.ia-packs-row role="radiogroup" aria-label="Packs" {
+                            span { "Packs" }
+                            @for p in [Packs::Buy, Packs::NoMore, Packs::Free] {
+                                label {
+                                    input type="radio" name="packs" value=(p.code()) checked[p == Packs::Buy];
+                                    span { (p.label()) }
+                                }
+                            }
+                        }
+                        // What the choice changes, for the one picked (CSS :has).
+                        p data-packs="buy" { "Tiers count everything, pack-only items too." }
+                        p data-packs="no-more" { "Tiers leave out what only a pack you don't own gives: the Potluck Pack's vault levels and pack-only Gallery items." }
+                        p data-packs="free" { "The same, and the Gem Shop isn't counted in Should have by now." }
+                    }
+                    textarea #ia-save name="save" rows="7" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" placeholder="Paste your save here, or drop its file on this box." required {}
+                    p.ia-err #ia-err role="alert" hidden[error.is_none()] data-retry[retry] { (error.unwrap_or_default()) }
+                    p.ia-note #ia-last hidden { "Filled in with the save you last checked in this tab." }
+                    p.ia-note #ia-sent hidden { "This is what you sent, to see what went wrong." }
+                    div.ia-ask-actions {
+                        label.btn {
+                            (ui::icon(bot_core::Icon::Enter))
+                            "Open a file"
+                            input #ia-file type="file" accept=".json,.txt,application/json" data-max=(crate::save::MAX_BYTES) hidden;
+                        }
+                        // Shown by the page script where the browser can read the clipboard: on a
+                        // phone, pressing and holding in the box to paste a megabyte is the hard part.
+                        button.btn #ia-paste type="button" hidden { "Paste from clipboard" }
+                        button.btn.primary type="submit" { "Check my account" }
+                    }
+                }
+                @if test {
+                    p.ia-try {
+                        span { "Staff and testers: a test account with everything at 0, in" }
+                        @for w in 1..=7u8 { a href={ "/p/" (guild) "/idleon/test?world=" (w) } { "World " (w) } }
+                    }
                 }
             }
+        }
+        section.ia-get aria-label="What you get" {
+            div { b { "How far each world is" } span { "One bar per world, and your share of the game overall." } }
+            div { b { "Should have by now" } span { "What accounts in your world usually have that you don't." } }
+            div { b { "Every mechanic's next tier" } span { "Up to 8 things to do, each with how to do it." } }
+        }
+        details.ia-news {
+            summary { b { "What's new, " (NEWS.0) } (NEWS.1[0]) }
+            ul { @for n in NEWS.1 { li { (n) } } }
         }
     }
 }
 
-fn done(guild: u64, r: &Review) -> Markup {
+pub(crate) fn done(guild: u64, r: &Review) -> Markup {
     let worlds: Vec<u8> = (1..=7).chain([0]).filter(|w| r.mechanics.iter().any(|m| m.world == *w)).collect();
     let start = worlds.iter().copied().filter(|w| (1..=r.world).contains(w)).max().unwrap_or(1);
     html! {
@@ -260,24 +336,42 @@ fn done(guild: u64, r: &Review) -> Markup {
                 " Everything is at 0, as a World " (r.world) " player would see the page. Paste a real save to check one."
             }
         }
+        // The answer in tiers from players' saves: how many of the tiers players have by your
+        // world you have, then the same for each world's mechanics. Without any such ladder
+        // (never on a real account), the maxes the checks read.
+        @let (done_t, due_t) = tiers_due(r, None);
         section.ia-panel.ia-lead {
             div.ia-lead-who {
-                b.ia-big { (pct(r.share())) }
-                span { "of the maxes this check reads, across " (r.mechanics.iter().filter(|m| m.world <= r.world && m.total() > 0.0).count()) " mechanics" }
+                @if due_t > 0 {
+                    b.ia-big { (pct(done_t as f64 / due_t as f64)) }
+                    span { "of the tiers players have by World " (r.world) ": " (num(done_t as f64)) " of " (num(due_t as f64)) }
+                } @else {
+                    b.ia-big { (pct(r.share())) }
+                    span { "of the maxes this check reads" }
+                }
                 p.ia-lead-line {
                     "World " (r.world) " · " (r.characters) " characters"
                     @if r.packs != Packs::Buy { " · " (r.packs.label()) }
                     " · " a.ia-again href={ "/p/" (guild) "/idleon" } { "Check another account" }
                 }
             }
-            div.ia-cols role="img" aria-label="How far each world is from max" {
+            div.ia-cols role="img" aria-label={ "Tiers players have by World " (r.world) " you have, by world" } {
                 @for w in (1..=7u8).chain([0]) {
-                    @let share = r.world_share(w);
+                    @let (d, t) = tiers_due(r, Some(w));
                     @let reached = w == 0 || w <= r.world;
-                    div.ia-col.off[!reached || share.is_none()] style={ "--w: var(--w" (w) ")" } data-tip={ (WORLD_NAMES[w as usize]) ": " (share.filter(|_| reached).map_or("not reached".into(), pct)) } {
-                        span.ia-col-track { span.ia-col-fill style={ "--s:" (share.filter(|_| reached).unwrap_or(0.0)) } {} }
-                        b { (share.filter(|_| reached).map_or("·".into(), |s| format!("{:.0}", s * 100.0))) }
-                        span { (world_tag(w)) }
+                    @let share = if due_t > 0 { (t > 0).then(|| d as f64 / t as f64) } else { r.world_share(w) };
+                    @let share = share.filter(|_| reached);
+                    @let tip = match share {
+                        Some(_) if due_t > 0 => format!("{} of {} tiers", num(d as f64), num(t as f64)),
+                        Some(s) => pct(s),
+                        None if reached => "nothing to count".into(),
+                        None => "not reached".into(),
+                    };
+                    div.ia-col.off[share.is_none()] style={ "--w: var(--w" (w) ")" } data-tip={ (WORLD_NAMES[w as usize]) ": " (tip) } {
+                        span.ia-col-track { span.ia-col-fill style={ "--s:" (share.unwrap_or(0.0)) } {} }
+                        b { (share.map_or("·".into(), |s| format!("{:.0}", s * 100.0))) }
+                        // Account-wide mechanics, not the whole account: "All" read as the total.
+                        span { (if w == 0 { "Acct".into() } else { world_tag(w) }) }
                     }
                 }
             }
@@ -292,13 +386,13 @@ fn done(guild: u64, r: &Review) -> Markup {
                     p { "In worlds you've reached, with no progress at all. New since you last played, or skipped" }
                 }
                 div.ia-fresh {
-                    @for &i in r.not_started.iter().take(FRESH) { (fresh(&r.mechanics[i])) }
+                    @for &i in r.not_started.iter().take(FRESH) { (fresh(r, &r.mechanics[i])) }
                 }
                 @if r.not_started.len() > FRESH {
                     details.ia-fresh-more {
                         summary { "Show " (r.not_started.len() - FRESH) " more" }
                         div.ia-fresh {
-                            @for &i in r.not_started.iter().skip(FRESH) { (fresh(&r.mechanics[i])) }
+                            @for &i in r.not_started.iter().skip(FRESH) { (fresh(r, &r.mechanics[i])) }
                         }
                     }
                 }
@@ -332,6 +426,22 @@ fn done(guild: u64, r: &Review) -> Markup {
 
 /// Not started chips shown before "Show N more".
 const FRESH: usize = 8;
+
+/// Tiers players have by your world, done and asked, for the mechanics of one world (`Some(w)`)
+/// or every world you've reached (`None`). Endgame tiers aren't asked of anyone.
+fn tiers_due(r: &Review, world: Option<u8>) -> (usize, usize) {
+    let mut out = (0, 0);
+    for m in r.mechanics.iter().filter(|m| m.world <= r.world && world.is_none_or(|w| m.world == w)) {
+        let Some(l) = &m.crowd else { continue };
+        for (rung, t) in l.rungs.iter().zip(m.tiers()) {
+            if !crate::crowd::endgame(rung.stage) && rung.world <= r.world {
+                out.0 += usize::from(t.complete());
+                out.1 += 1;
+            }
+        }
+    }
+    out
+}
 
 
 /// Boxes Should have by now shows, oldest first: two rows of four on a wide screen, never a
@@ -402,7 +512,7 @@ fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
     });
     let names = items.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", ");
     html! {
-        a.ia-owe-line href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(m.key)] data-w=(m.world) title={ (items.len()) " left: " (names) } {
+        a.ia-owe-line href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(r, m.key)] data-w=(m.world) title={ (items.len()) " left: " (names) } {
             (mark(m))
             span.ia-owe-name {
                 b { (m.name) }
@@ -415,9 +525,9 @@ fn owed(r: &Review, g: &[&crate::review::Owed]) -> Markup {
 }
 
 /// A Not started chip: opens its card.
-fn fresh(m: &Mechanic) -> Markup {
+fn fresh(r: &Review, m: &Mechanic) -> Markup {
     html! {
-        a.ia-fresh-item href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(m.key)] data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
+        a.ia-fresh-item href={ "#m-" (card_key(m.key)) } data-go={ "m-" (card_key(m.key)) } data-side=[side_of(r, m.key)] data-w=(m.world) style={ "--w: var(--w" (m.world) ")" } {
             (mark(m))
             span { (m.name) }
             span.ia-tag { (world_tag(m.world)) }
@@ -455,9 +565,37 @@ fn item_fig(i: &Item) -> String {
     }
 }
 
-/// Where a mechanic stands against its tiers' worlds, in a line: what world it's at, and the
-/// first tier overdue for the world you're in.
-fn pace_line(p: &Pace, reached: u8) -> Option<String> {
+/// Spaces that don't break.
+fn nb(s: &str) -> String {
+    s.replace(' ', "\u{a0}")
+}
+
+/// The stage tier `k` belongs to: "Late World 1", "Endgame 1" from a ladder from players'
+/// saves, "World 4" from the owner's tier worlds, `None` when it has neither ("Everything
+/// maxed").
+fn tier_stage(m: &Mechanic, k: usize) -> Option<String> {
+    match &m.crowd {
+        Some(l) => l.rungs.get(k).map(|r| crate::crowd::stage_label(r.stage)),
+        None => m.pace.as_ref().and_then(|p| p.worlds.get(k).copied().flatten()).map(|w| format!("World {w}")),
+    }
+}
+
+/// Where a mechanic stands against the world you're in, in a line under the card head: the
+/// stage of the tier you're on, against your world.
+fn pace_line(m: &Mechanic, reached: u8) -> Option<String> {
+    let k = m.tiers().iter().position(|t| !t.complete())?;
+    if let Some(l) = &m.crowd {
+        let r = l.rungs.get(k)?;
+        let stage = crate::crowd::stage_label(r.stage);
+        return Some(if crate::crowd::endgame(r.stage) {
+            format!("Every tier players have by World {reached} is done. The rest are goals from the best saves we have.")
+        } else if r.world <= reached {
+            format!("Tier {} is what players have by {stage}. You're in World {reached}.", k + 1)
+        } else {
+            format!("Every tier players have by World {reached} is done. Tier {} is {stage}'s.", k + 1)
+        });
+    }
+    let p = m.pace.as_ref()?;
     let at = p.at.map(|w| format!("Where a World {w} player would be."));
     match (at, p.due.and_then(|k| p.worlds[k].map(|w| (k, w)))) {
         (at, Some((k, w))) => Some(format!("{}Tier {} is expected by World {w}, and you're in World {reached}.", at.map(|a| a + " ").unwrap_or_default(), k + 1)),
@@ -510,9 +648,25 @@ fn card_key(key: &str) -> &str {
     FOLD.iter().find(|f| f.0[1..].iter().any(|s| s.0 == key)).map_or(key, |f| f.0[0].0)
 }
 
-/// For a folded mechanic, the side of its card's switch it's on (links open that side).
-fn side_of(key: &str) -> Option<usize> {
-    FOLD.iter().find_map(|f| f.0.iter().position(|s| s.0 == key).filter(|&k| k > 0))
+/// For a folded mechanic, the side of its card's switch it's on (links open that side): the
+/// index of its first side as `card` lays the switch out. Sides the save doesn't have are left
+/// out, and a mechanic with two ladders of its own (Statues: Levels / Tiers) takes two, so
+/// Statue Flair is side 2, not its place in `FOLD`.
+fn side_of(r: &Review, key: &str) -> Option<usize> {
+    let card = card_key(key);
+    if card == key {
+        return None;
+    }
+    let head = r.mechanics.iter().find(|m| m.key == card)?;
+    let width = |x: &Mechanic| if x.two_sides() { 2 } else { 1 };
+    let mut at = width(head);
+    for (_, p) in folded(r, card) {
+        if p.key == key {
+            return (at < SIDES).then_some(at);
+        }
+        at += width(p);
+    }
+    None
 }
 
 /// The other mechanics folded into `key`'s card, with their sides' names.
@@ -536,6 +690,7 @@ fn card(m: &Mechanic, partners: &[(&'static str, &Mechanic)], reached: u8) -> Ma
         Some(f) => Some(
             std::iter::once((f.0[0].1, m))
                 .chain(partners.iter().map(|(l, p)| (*l, *p)))
+                // `side_of` counts sides the same way: keep the two in step.
                 .flat_map(|(l, x)| match x.levels_view().zip(x.tiers_view()) {
                     Some((lv, tv)) => vec![("Levels", lv), (x.other_side, tv)],
                     None => vec![(l, x.clone())],
@@ -556,23 +711,20 @@ fn card(m: &Mechanic, partners: &[(&'static str, &Mechanic)], reached: u8) -> Ma
                 (mark(m))
                 span.ia-card-name {
                     b { (title) }
-                    // The tier you're on, numbered as the ladder numbers it ("Tier 3 · you're here").
+                    // The tier you're on, numbered and named as the ladder names it ("Tier 9 of 57
+                    // · Late World 1", owner's design 23). "World 1 level" beside 72% read as a
+                    // contradiction: the stage names the tier you're on, not a level for the card.
                     span {
-                        @if fold.is_some() { (fig(m)) } @else if let Some((_, tv)) = split.as_ref().and_then(|s| s.last()) { (ladder_fig(tv)) } @else { (fig(m)) }
+                        @if fold.is_some() { (nb(&fig(m))) } @else if let Some((_, tv)) = split.as_ref().and_then(|s| s.last()) { (nb(&ladder_fig(tv))) } @else { (nb(&fig(m))) }
+                        // Each part whole on a narrow card: "Early" and "World 7" on two lines read
+                        // as two things.
                         @match current {
-                            Some(k) if fold.is_some() => { " · Tier " (k + 1) "/" (tiers.len()) },
-                            Some(k) if split.is_some() => { " · Level tier " (k + 1) "/" (tiers.len()) },
-                            Some(k) => { " · Tier " (k + 1) "/" (tiers.len()) },
-                            None if !tiers.is_empty() => { " · All tiers" },
+                            Some(k) if split.is_some() && fold.is_none() => { " · " (nb(&format!("Levels tier {} of {}", k + 1, tiers.len()))) },
+                            Some(k) => { " · " (nb(&format!("Tier {} of {}", k + 1, tiers.len()))) },
+                            None if !tiers.is_empty() => { " · " (nb("All tiers")) },
                             None => {},
                         }
-                        @if let Some(p) = &m.pace {
-                            @match (p.at, p.worlds.iter().flatten().min()) {
-                                (Some(w), _) => { " · World " (w) " level" },
-                                (None, Some(f)) if *f <= reached => { " · Under World " (f) " level" },
-                                _ => {},
-                            }
-                        }
+                        @if let Some(st) = current.and_then(|k| tier_stage(m, k)) { " · " (nb(&st)) }
                     }
                 }
                 @if m.count == Count::Open {
@@ -645,7 +797,7 @@ fn view(m: &Mechanic, reached: u8, tag: &str) -> Markup {
     let side = current.is_some() && (m.have.is_some() || !m.raises.is_empty());
     html! {
         @if let Some(n) = &m.note { p.ia-note { (n) } }
-        @if let Some(line) = m.pace.as_ref().and_then(|p| pace_line(p, reached)) { p.ia-pace { (line) } }
+        @if let Some(line) = pace_line(m, reached) { p.ia-pace { (line) } }
         @if m.count == Count::Open {
             @if let Some([avg, median, top, low]) = m.spread() {
                 div.ia-spread {
@@ -738,9 +890,10 @@ fn ladder(m: &Mechanic, tiers: &[Tier], current: Option<usize>, reached: u8, tag
     let here = groups.iter().position(|g| g.1.contains(&pick)).unwrap_or(0);
     let (from, to) = stage_window(groups.len(), here);
     let cut = from > 0 || to < groups.len();
-    // Tiers drawn in full, rows with pictures and how: the one before yours to `NEAR` after it.
-    // The rest list their asks by name (a mid-game save has some 1,600 tiers; drawing every one
-    // in full made the page 9.8 MB).
+    // Only the picked tier is drawn. The rest come as data (`tier_data`) the page script turns
+    // into the tier's page the first time it's picked: in full, rows with pictures and how, from
+    // the one before yours to `NEAR` after it; further off, their asks by name. A mid-game save
+    // has some 1,700 tiers, and drawing them all made the page 2.4 MB with 48,000 elements.
     let near = |k: usize| k + 1 >= pick && k <= pick + NEAR;
     html! {
         div.ia-b {
@@ -769,10 +922,16 @@ fn ladder(m: &Mechanic, tiers: &[Tier], current: Option<usize>, reached: u8, tag
                     }
                 }
             }
-            div.ia-peeks {
+            div.ia-peeks data-t={ (m.key) "-" (tag) } data-n=(tiers.len()) {
                 @for k in 0..tiers.len() {
                     input.ia-pick type="radio" name={ "t-" (m.key) "-" (tag) } id=(id(k)) data-k=(k) checked[k == pick] aria-label={ "Tier " (k + 1) ", " (tiers[k].label) };
-                    div.ia-peek { (peek(m, tiers, k, current, reached, &id, near(k))) }
+                    // The others' pages are made by the script, right after their radios.
+                    @if k == pick {
+                        div.ia-peek { (peek(m, tiers, k, current, reached, &id)) }
+                    }
+                }
+                @if tiers.len() > 1 {
+                    script.ia-later type="application/json" { (PreEscaped(tier_data(m, tiers, pick, current, reached, &near))) }
                 }
             }
         }
@@ -780,7 +939,7 @@ fn ladder(m: &Mechanic, tiers: &[Tier], current: Option<usize>, reached: u8, tag
 }
 
 /// Where a side of the switch stands, for its label and the card head: "Onyx 23 / 32",
-/// "Tier 10 / 24", "86 / 120 unlocked", "All tiers".
+/// "Tier 10 of 24", "86 / 120 unlocked", "All tiers".
 fn ladder_fig(m: &Mechanic) -> String {
     let tiers = m.tiers();
     if m.crowd.is_none() && m.tier_names.is_none() {
@@ -788,7 +947,7 @@ fn ladder_fig(m: &Mechanic) -> String {
     }
     match tiers.iter().position(|t| !t.complete()) {
         Some(k) if m.crowd.is_none() => format!("{} {} / {}", tiers[k].label, tiers[k].met, tiers[k].need),
-        Some(k) => format!("Tier {} / {}", k + 1, tiers.len()),
+        Some(k) => format!("Tier {} of {}", k + 1, tiers.len()),
         None => "All tiers".into(),
     }
 }
@@ -858,8 +1017,6 @@ fn task(m: &Mechanic, i: &Item, target: f64) -> Markup {
     }
 }
 
-/// One tier's page, shown when it's picked: its name with steps to the tiers either side, a
-/// line on where you stand, then everything it asks, what's left first.
 /// Tiers after yours drawn in full (see `ladder`), and the asks a tier further off names.
 const NEAR: usize = 2;
 const FAR_NAMES: usize = 12;
@@ -874,13 +1031,123 @@ fn names<'a>(items: impl Iterator<Item = &'a Item>) -> String {
     }
 }
 
-fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached: u8, id: &dyn Fn(usize) -> String, full: bool) -> Markup {
+/// The line under a tier's name: whether you're on it, what's left, and the world it's
+/// expected by. Plain text, so a tier's data (`tier_data`) carries it as is.
+fn peek_note(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached: u8, asks: &[(&Item, f64, bool)]) -> String {
     let t = &tiers[k];
-    // A done count tier has nothing to list: which items counted isn't kept.
-    let asks = if t.complete() && t.targets.is_none() { Vec::new() } else { m.tier_asks(tiers, k) };
     let left = asks.iter().filter(|a| !a.2).count();
     let ready = asks.iter().filter(|a| !a.2 && a.0.state == Step::Ready).count();
     let expected = m.pace.as_ref().and_then(|p| p.worlds.get(k).copied().flatten());
+    let mut s = String::new();
+    if current == Some(k) {
+        s.push_str("You're here. ");
+    }
+    if t.complete() {
+        s.push_str("Done.");
+        if current.is_none() && k + 1 == tiers.len() {
+            s.push_str(" Every tier is done.");
+        }
+        s.push(' ');
+    } else if t.targets.is_none() {
+        s += &format!("{} more", t.need - t.met);
+        if let Some(l) = t.at.filter(|l| *l > 1.0) {
+            s += &format!(" at Lv {}", num(l));
+        }
+        s.push_str(", any of these. ");
+    } else if left == 0 {
+        s.push_str("Everything this tier adds is done; a tier before it isn't yet. ");
+    } else {
+        s += &format!("{left} of {} left", asks.len());
+        if ready == left {
+            s.push_str(", all of them you can do now");
+        } else if ready > 0 {
+            s += &format!(", {ready} you can do now");
+        }
+        s.push_str(". ");
+    }
+    // The tier you're on has this in the line above the ladder already (`pace_line`), worded
+    // the same: a ladder from players' saves names the stage, the owner's tier worlds the world.
+    if current != Some(k) {
+        match m.crowd.as_ref().and_then(|l| l.rungs.get(k)) {
+            Some(r) if crate::crowd::endgame(r.stage) => s.push_str("A goal from the best saves we have. "),
+            Some(r) => s += &format!("What players have by {}. You're in World {reached}. ", crate::crowd::stage_label(r.stage)),
+            None => {
+                if let Some(w) = expected {
+                    s += &format!("Expected by World {w}, and you're in World {reached}. ");
+                }
+            }
+        }
+    }
+    if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty() && m.crowd.is_none()) {
+        s.push_str(n);
+    }
+    s
+}
+
+/// A tier's asks: none for a done count tier, since which items counted isn't kept.
+fn peek_asks<'a>(m: &'a Mechanic, tiers: &[Tier], k: usize) -> Vec<(&'a Item, f64, bool)> {
+    if tiers[k].complete() && tiers[k].targets.is_none() { Vec::new() } else { m.tier_asks(tiers, k) }
+}
+
+/// The tiers `ladder` doesn't draw, as data for the page script, which draws the page `peek`
+/// would have:
+/// - `i`: the asked items, each once: `[name, picture or "", left square, how or "", state]`
+///   (state 0 unknown, 1 do now, 2 locked) for one drawn as a row, `[name]` for one only named.
+///   Most are only named, and their how is a quarter of the data.
+/// - `n`: tiers near yours, drawn in full: `[label, note, [[item, ask, from or ""], ...] left,
+///   [item, ...] done]`.
+/// - `f`: tiers further off, their asks by name: `[label, note, [[item, ask], ...] at most
+///   `FAR_NAMES`, asks past those named, done, asks]`.
+fn tier_data(m: &Mechanic, tiers: &[Tier], pick: usize, current: Option<usize>, reached: u8, near: &dyn Fn(usize) -> bool) -> String {
+    use bot_core::serde_json::{Map, Value, json};
+    use std::collections::HashMap;
+    let mut items: Vec<Value> = Vec::new();
+    let mut seen: HashMap<*const Item, usize> = HashMap::new();
+    // An item's place in `i`; `row`: drawn as a row, so it needs all of it.
+    let mut at = |i: &Item, row: bool| -> usize {
+        let k = *seen.entry(std::ptr::from_ref(i)).or_insert_with(|| {
+            items.push(json!([i.name]));
+            items.len() - 1
+        });
+        if row && items[k].as_array().is_some_and(|v| v.len() == 1) {
+            let pic = i.picture.as_deref().filter(|p| pictures::has(p));
+            let state = match i.state {
+                Step::Unknown => 0,
+                Step::Ready => 1,
+                Step::Locked => 2,
+            };
+            items[k] = json!([i.name, pic.unwrap_or(""), u8::from(pic.is_some_and(left_square)), i.how.as_deref().unwrap_or(""), state]);
+        }
+        k
+    };
+    let (mut full, mut far) = (Map::new(), Map::new());
+    for k in (0..tiers.len()).filter(|&k| k != pick) {
+        let asks = peek_asks(m, tiers, k);
+        let left = asks.iter().filter(|a| !a.2).count();
+        let note = peek_note(m, tiers, k, current, reached, &asks);
+        if near(k) {
+            // Past `TASKS` the script only names them, as `peek` does.
+            let todo: Vec<Value> = asks[..left].iter().enumerate().map(|(n, (i, target, _))| {
+                let (to, from) = ask_text(m, i, *target);
+                json!([at(i, n < TASKS), to, from.unwrap_or_default()])
+            }).collect();
+            let done: Vec<usize> = asks[left..].iter().map(|a| at(a.0, false)).collect();
+            full.insert(k.to_string(), json!([tiers[k].label, note, todo, done]));
+        } else {
+            let named: Vec<Value> = asks.iter().take(left.min(FAR_NAMES)).map(|(i, target, _)| json!([at(i, false), ask_text(m, i, *target).0])).collect();
+            far.insert(k.to_string(), json!([tiers[k].label, note, named, left.saturating_sub(FAR_NAMES), asks.len() - left, asks.len()]));
+        }
+    }
+    json!({ "i": items, "n": full, "f": far }).to_string().replace('<', "\\u003c").replace('>', "\\u003e").replace('&', "\\u0026")
+}
+
+/// One tier's page, shown when it's picked: its name with steps to the tiers either side, a
+/// line on where you stand, then everything it asks, what's left first. Drawn for the tiers
+/// near yours; the page script draws the rest from `tier_data`, the same way.
+fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached: u8, id: &dyn Fn(usize) -> String) -> Markup {
+    let t = &tiers[k];
+    let asks = peek_asks(m, tiers, k);
+    let left = asks.iter().filter(|a| !a.2).count();
     html! {
         div.ia-peek-head {
             h3 { "Tier " (k + 1) " · " (t.label) }
@@ -890,36 +1157,8 @@ fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached:
                 @if k + 1 < tiers.len() { label.ia-step.next for=(id(k + 1)) title="Next tier" {} } @else { span.ia-step.next.off {} }
             }
         }
-        p.ia-note {
-            @if current == Some(k) { "You're here. " }
-            @if t.complete() {
-                "Done." @if current.is_none() && k + 1 == tiers.len() { " Every tier is done." } " "
-            } @else if t.targets.is_none() {
-                (t.need - t.met) " more"
-                @if let Some(l) = t.at.filter(|l| *l > 1.0) { " at Lv " (num(l)) }
-                ", any of these. "
-            } @else if left == 0 {
-                "Everything this tier adds is done; a tier before it isn't yet. "
-            } @else {
-                (left) " of " (asks.len()) " left"
-                @if ready == left { ", all of them you can do now" } @else if ready > 0 { ", " (ready) " you can do now" }
-                ". "
-            }
-            // The tier you're on has this in the line above the ladder already.
-            @if let Some(w) = expected.filter(|_| current != Some(k)) { "Expected by World " (w) ", and you're in World " (reached) ". " }
-            @if let Some(n) = m.tier_notes.get(k).filter(|n| !n.is_empty() && m.crowd.is_none()) { (n) }
-        }
-        @if left > 0 && !full {
-            // A tier further off: what it asks, by name.
-            p.ia-asks {
-                @for (n, (i, target, _)) in asks.iter().take(left.min(FAR_NAMES)).enumerate() {
-                    @if n > 0 { ", " }
-                    (i.name) " " span { (ask_text(m, i, *target).0) }
-                }
-                @if left > FAR_NAMES { " and " (left - FAR_NAMES) " more" }
-            }
-        }
-        @if left > 0 && full {
+        p.ia-note { (peek_note(m, tiers, k, current, reached, &asks)) }
+        @if left > 0 {
             div.ia-task-list {
                 @for (i, target, _) in asks.iter().take(left.min(TASKS)) { (task(m, i, *target)) }
             }
@@ -934,10 +1173,7 @@ fn peek(m: &Mechanic, tiers: &[Tier], k: usize, current: Option<usize>, reached:
             }
         }
         // What's done in it: one quiet line of names, not a row each.
-        @if left < asks.len() && !full {
-            p.ia-done-line { span.ia-tick {} span { "Done: " (asks.len() - left) " of " (asks.len()) "." } }
-        }
-        @if left < asks.len() && full {
+        @if left < asks.len() {
             p.ia-done-line {
                 span.ia-tick {}
                 span {
@@ -1013,7 +1249,7 @@ fn pct(s: f64) -> String {
 }
 
 /// Whole numbers with thousands separators; anything else with one decimal. From a quadrillion
-/// on, the game's short form ("1.2Qa", "3.4e21"): past 2^53 the digits aren't real, and past
+/// on, `checks::big`'s short form ("9.6e16"): past 2^53 the digits aren't real, and past
 /// 2^64 a plain cast reads 18,446,744,073,709,551,615.
 pub(crate) fn num(n: f64) -> String {
     if n.is_nan() {
@@ -1037,17 +1273,31 @@ pub(crate) fn num(n: f64) -> String {
 }
 
 /// The paste box's file picker, and cards that grow out of their place: when one opens it
-/// spans the grid, so every card is measured before and after (FLIP). The opened one is
-/// revealed from its old size rather than stretched and draws on top; cards that only moved up
-/// or down slide; cards that changed column fade in where they land, since sliding them across
-/// their neighbours reads as a double image. Should have by now
+/// takes the full row under its own row, so every card is measured before and after (FLIP).
+/// The opened one is revealed from its old size rather than stretched, with its body there from
+/// the first frame, and draws on top; the cards under it slide on the same clock as its edge;
+/// the few that changed column fade in where they land, since sliding them across their
+/// neighbours reads as a double image. Should have by now
 /// and Not started links switch the world, open the card the same way and scroll to it.
 const JS: &str = r##"(function(){
 var f=document.getElementById("ia-file"),t=document.getElementById("ia-save"),pb=document.getElementById("ia-paste"),er=document.getElementById("ia-err");
 function say(s){if(er){er.textContent=s;er.hidden=false}}
-if(f&&t)f.addEventListener("change",function(){var x=f.files&&f.files[0];if(!x)return;
+// A file, opened or dropped on the box: read it and send it.
+function take(x){if(!x)return;
   if(x.size>+f.dataset.max){say("That file is bigger than any Idleon save. Pick the JSON you saved from IdleonToolbox or Idleon Efficiency.");f.value="";return}
-  x.text().then(function(s){t.value=s;t.form.requestSubmit()})});
+  x.text().then(function(s){t.value=s;t.form.requestSubmit()})}
+if(f&&t){
+  f.addEventListener("change",function(){take(f.files&&f.files[0])});
+  ["dragenter","dragover"].forEach(function(n){t.addEventListener(n,function(e){if(e.dataTransfer&&[].indexOf.call(e.dataTransfer.types,"Files")>=0){e.preventDefault();t.classList.add("drop")}})});
+  t.addEventListener("dragleave",function(){t.classList.remove("drop")});
+  t.addEventListener("drop",function(e){t.classList.remove("drop");var x=e.dataTransfer&&e.dataTransfer.files[0];if(x){e.preventDefault();take(x)}});
+  // A save is a JSON object: anything else is caught here, before a megabyte goes anywhere.
+  t.form.addEventListener("submit",function(e){if(t.value.trim()&&!/^\s*\{/.test(t.value)){e.preventDefault();say("That isn't a save: a save starts with {. Copy it again with Copy for support in IdleonToolbox, or Copy Raw JSON in Idleon Efficiency.")}});
+}
+// Where your save comes from: remembered in this browser.
+var SK="ia-src";
+try{var sv=localStorage.getItem(SK),sr=sv&&document.querySelector('input[name=ia-src][value="'+sv+'"]');if(sr)sr.checked=true}catch(x){}
+document.addEventListener("change",function(e){if(e.target.name==="ia-src")try{localStorage.setItem(SK,e.target.value)}catch(x){}});
 // Paste from clipboard: one tap on a phone, and the megabyte never has to be drawn in the box.
 if(pb&&t&&navigator.clipboard&&navigator.clipboard.readText){
   pb.hidden=false;
@@ -1075,14 +1325,15 @@ try{var pv=localStorage.getItem(PK),pr=pv&&document.querySelector('input[name=pa
 document.addEventListener("change",function(e){if(e.target.name!=="packs")return;try{localStorage.setItem(PK,e.target.value)}catch(x){}packsLinks(e.target.value)});
 function keep(s){try{if(s)sessionStorage.setItem(LAST,s);else sessionStorage.removeItem(LAST)}catch(x){try{sessionStorage.removeItem(LAST)}catch(y){}}}
 if(t){
-  t.form.addEventListener("submit",function(){keep(t.value)});
-  // After a paste that didn't read, there's nothing worth filling back in. After "busy, try
-  // again" the paste was fine: it goes back in the box to send again.
-  var failed=er&&!er.hidden;
-  if(failed&&!er.hasAttribute("data-retry"))keep("");
-  else{var last=null;try{last=sessionStorage.getItem(LAST)}catch(x){}
-    if(last&&!t.value){t.value=last;var ln=document.getElementById("ia-last");if(ln&&!failed)ln.hidden=false}
-    if(signin&&last&&!failed){t.form.action=location.pathname+"#ia-report";t.form.requestSubmit()}}
+  t.form.addEventListener("submit",function(e){if(!e.defaultPrevented)keep(t.value)});
+  // After a paste that didn't read, it goes back in the box so you can see what went wrong, and
+  // is forgotten (a reload shows an empty box). After "busy, try again" the paste was fine: it
+  // goes back in the box to send again, and stays remembered.
+  var failed=er&&!er.hidden,bad=failed&&!er.hasAttribute("data-retry");
+  var last=null;try{last=sessionStorage.getItem(LAST)}catch(x){}
+  if(last&&!t.value){t.value=last;var ln=document.getElementById(bad?"ia-sent":"ia-last");if(ln&&(bad||!failed))ln.hidden=false}
+  if(bad)keep("");
+  else if(signin&&last&&!failed){t.form.action=location.pathname+"#ia-report";t.form.requestSubmit()}
 }
 var DRAFT="ia-report-draft";
 document.addEventListener("click",function(e){
@@ -1106,59 +1357,116 @@ function showTab(smooth){
   s.scrollBy({left:b.left+b.width/2-(a.left+a.width/2),behavior:smooth&&!still.matches?"smooth":"auto"});
 }
 document.addEventListener("change",function(e){if(e.target.name==="ia-world")showTab(true)});
-var still=matchMedia("(prefers-reduced-motion: reduce)"),ease="cubic-bezier(.16,1,.3,1)";
+var still=matchMedia("(prefers-reduced-motion: reduce)"),ease="cubic-bezier(.32,.72,0,1)",OPEN=400,CLOSE=300;
 // Bars draw in once, with the page. After that a bar that appears (a card opening, another
 // world's tab) is just there, so nothing regrows while a card moves.
 setTimeout(function(){document.documentElement.classList.add("ia-settled")},1200);
-var busy=new Set(),easeIn="cubic-bezier(.4,0,1,1)";
-function rects(cs){return cs.map(function(c){return c.getBoundingClientRect()})}
-// After the grid changes shape: keep the clicked card where your eye is (scroll by however far
-// the layout moved it), slide cards that only moved up or down, and let cards that changed
-// column come up where they land (sliding them across their neighbours reads as a double image).
-function settle(cs,was,d){
-  var i=cs.indexOf(d),a=was[i],b=d.getBoundingClientRect(),shift=b.top-a.top;
-  if(Math.abs(shift)>1)window.scrollBy(0,shift);
-  cs.forEach(function(c,k){
-    if(c===d)return;
-    // Both rects are on screen, so dy also carries the scroll: cards slide from where you saw them.
-    var q=c.getBoundingClientRect(),dx=was[k].left-q.left,dy=was[k].top-q.top;
-    if(Math.abs(dx)>1)c.animate([{opacity:.25},{opacity:1}],{duration:260,easing:ease});
-    else if(Math.abs(dy)>1)c.animate([{transform:"translateY("+dy+"px)"},{transform:"none"}],{duration:420,easing:ease});
-  });
-  return d.getBoundingClientRect();
+// Where each card is on the page (not in the window), so a scroll between two measures can't
+// skew them.
+function rects(cs){var x=scrollX,y=scrollY;return cs.map(function(c){var r=c.getBoundingClientRect();return {left:r.left+x,top:r.top+y,width:r.width,height:r.height}})}
+// An open card takes the full row in place of its own row, and that row's other cards go under
+// it: the card's head stays at the height you clicked it, and every card that moves goes down
+// (or back up) the same way. Rows are counted as if every card were closed.
+function arrange(g){
+  var cs=[].slice.call(g.children),n=getComputedStyle(g).gridTemplateColumns.split(" ").length;
+  var brk={};
+  cs.forEach(function(c,i){if(n>1&&c.open)brk[(Math.floor(i/n)+1)*n]=1});
+  // The row after an open card's starts a new grid row, so the rows below keep their columns.
+  cs.forEach(function(c,i){c.style.order=n<2?"":c.open?2*Math.floor(i/n)*n-1:2*i;c.style.gridColumnStart=brk[i]&&!c.open?"1":""});
 }
+var rearrange=0;
+addEventListener("resize",function(){clearTimeout(rearrange);rearrange=setTimeout(function(){
+  document.querySelectorAll(".ia-grid").forEach(function(g){if(g.querySelector(":scope > .ia-card[open]"))arrange(g)})},120)});
+// A close waits for its fold to end before the layout switches; anything that starts meanwhile
+// runs that switch first. A click while cards move takes over from where they are.
+var pending=null;
+function settle(g){
+  if(pending){var p=pending;pending=null;p()}
+  [].forEach.call(g.children,function(c){c.getAnimations().forEach(function(x){x.cancel()});c.style.zIndex=""});
+}
+// A card laid out at `at` slides from where it was drawn (`from`) to `to`.
+function slide(c,at,from,to,dur,fill){
+  if(Math.abs(from.left-to.left)<1&&Math.abs(from.top-to.top)<1&&Math.abs(from.top-at.top)<1&&Math.abs(from.left-at.left)<1)return null;
+  var tr=function(x){return "translate("+(x.left-at.left)+"px,"+(x.top-at.top)+"px)"};
+  return c.animate([{transform:tr(from)},{transform:tr(to)}],{duration:dur,easing:ease,fill:fill?"forwards":"none"});
+}
+// The open card's row-mates go under it or come back beside it, through the space the card
+// fills: they fade out as it covers them and fade back in where they land, so nothing is seen
+// passing through it.
+var HIDE=[{opacity:1},{opacity:0,offset:.2},{opacity:0,offset:.6},{opacity:1}];
+function hide(c,dur,fill){return c.animate(HIDE,{duration:dur,easing:"linear",fill:fill?"forwards":"none"})}
+// The card grows out of its cell: it is revealed from its old size by a clip (never stretched),
+// its body there from the first frame, drawn on top; every other card that moves slides to its
+// new place on the same curve and clock. Closing is the same in reverse, a little quicker.
 function flip(d,open){
-  if(d.open===open||busy.has(d))return;
+  if(d.open===open)return;
+  var g=d.parentElement,cs=[].slice.call(g.children),r="px 0 round 14px)";
   // Closed from its sticky head, far down a long card: the card's top is off screen, so fold it
   // at once and bring its head back into view rather than animating a part you can't see.
   if(!open&&d.getBoundingClientRect().top<-8){
-    d.open=false;
+    settle(g);d.open=false;arrange(g);
     window.scrollBy(0,d.getBoundingClientRect().top-16);
     return;
   }
-  var cs=[].slice.call(d.parentElement.children);
-  if(still.matches||!d.animate){d.open=open;return}
-  busy.add(d);d.style.zIndex=2;
-  var fin=function(){d.style.zIndex="";busy.delete(d)},body=d.querySelector(".ia-body"),r="px 0 round 14px)";
-  if(open){
-    var was=rects(cs),a=was[cs.indexOf(d)];
-    d.open=true;
-    var b=settle(cs,was,d);
-    d.animate([{transform:"translate("+(a.left-b.left)+"px,"+(a.top-b.top)+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+r},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:420,easing:ease}).finished.then(fin,fin);
-    if(body)body.animate([{opacity:0,transform:"translateY(-4px)"},{opacity:1,transform:"none"}],{duration:300,delay:140,easing:ease,fill:"backwards"});
-  }else{
-    // Fold into the size it will have, then let the grid close up around it.
-    var big=d.getBoundingClientRect();
-    d.open=false;var small=d.getBoundingClientRect();d.open=true;
-    var fade=body&&body.animate([{opacity:1},{opacity:0}],{duration:150,easing:easeIn,fill:"forwards"});
-    var fold=d.animate([{clipPath:"inset(0 0 0 0 round 14px)"},{clipPath:"inset(0 "+Math.max(0,big.width-small.width)+"px "+Math.max(0,big.height-small.height)+r}],{duration:260,easing:ease,fill:"forwards"});
-    fold.finished.then(function(){
-      var was=rects(cs);
-      d.open=false;fold.cancel();if(fade)fade.cancel();
-      var b=settle(cs,was,d);
-      d.animate([{transform:"translate("+(big.left-b.left)+"px,0)"},{transform:"none"}],{duration:360,easing:ease}).finished.then(fin,fin);
-    },fin);
+  if(still.matches||!d.animate){
+    settle(g);d.open=open;arrange(g);
+    // Reduced motion: nothing moves, the body fades in.
+    var body=d.querySelector(".ia-body");
+    if(open&&body&&d.animate)body.animate([{opacity:0},{opacity:1}],{duration:120,easing:"ease"});
+    return;
   }
+  var was=rects(cs),i=cs.indexOf(d);
+  settle(g);
+  d.style.zIndex=2;
+  if(open){
+    var gb=g.getBoundingClientRect().bottom;
+    d.open=true;arrange(g);
+    var grow=g.getBoundingClientRect().bottom-gb;
+    if(grow>1)below(g).forEach(function(e){e.animate([{transform:"translateY("+(-grow)+"px)"},{transform:"none"}],{duration:OPEN,easing:ease})});
+    // The tier page and the side shown fade in when they appear; in a card that is opening
+    // they are just there, like the rest of the body.
+    d.getAnimations({subtree:true}).forEach(function(x){if(x.animationName)x.finish()});
+    var now=rects(cs),a=was[i],b=now[i];
+    cs.forEach(function(c,k){if(c===d)return;slide(c,now[k],was[k],now[k],OPEN);if(Math.abs(was[k].top-a.top)<2)hide(c,OPEN)});
+    d.animate([{transform:"translate("+(a.left-b.left)+"px,"+(a.top-b.top)+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+r},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:OPEN,easing:ease})
+      .finished.then(function(){d.style.zIndex=""},function(){});
+  }else{
+    // Measure the closed layout, go back to the open one, and move everything to where it will
+    // be; then switch, all in one frame.
+    var y0=scrollY,gb=g.getBoundingClientRect().bottom+y0;
+    d.open=false;arrange(g);var after=rects(cs),room=document.documentElement.scrollHeight-innerHeight,dh=gb-g.getBoundingClientRect().bottom-scrollY;d.open=true;arrange(g);
+    // Measuring the shorter page can pull the scroll up; put it back.
+    if(scrollY!==y0)window.scrollTo(0,y0);
+    var now=rects(cs),big=now[i],small=after[i],moves=[];
+    // The page gets shorter. Where it would end above the window's bottom, the page scrolls up
+    // with the fold, so it never stops short and jumps at the end.
+    var shift=Math.min(0,room-y0);
+    cs.forEach(function(c,k){
+      if(c===d)return;
+      var m=slide(c,now[k],was[k],after[k],CLOSE,true);if(m)moves.push(m);
+      if(Math.abs(after[k].top-small.top)<2)moves.push(hide(c,CLOSE,true));
+    });
+    // What's under the grid comes up with its bottom edge instead of jumping at the end.
+    if(dh>1)below(g).forEach(function(e){moves.push(e.animate([{transform:"none"},{transform:"translateY("+(-dh)+"px)"}],{duration:CLOSE,easing:ease,fill:"forwards"}))});
+    var fold=d.animate([{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"},{transform:"translate("+(small.left-big.left)+"px,"+(small.top-big.top)+"px)",clipPath:"inset(0 "+Math.max(0,big.width-small.width)+"px "+Math.max(0,big.height-small.height)+r}],{duration:CLOSE,easing:ease,fill:"forwards"});
+    var done=function(){
+      d.open=false;arrange(g);
+      moves.forEach(function(m){m.cancel()});fold.cancel();d.style.zIndex="";
+      if(shift<0)window.scrollTo(0,y0+shift);
+    };
+    pending=done;
+    // The scroll up is drawn as the whole page moving down on the fold's clock (a real scroll
+    // runs a frame behind the cards), then made a real scroll in the frame the layout switches.
+    var pg=g.closest("main");
+    if(shift<0&&pg)moves.push(pg.animate([{transform:"none"},{transform:"translateY("+(-shift)+"px)"}],{duration:CLOSE,easing:ease,fill:"forwards"}));
+    fold.finished.then(function(){if(pending===done){pending=null;done()}},function(){});
+  }
+}
+// Everything that comes after a grid on the page, as drawn.
+function below(g){
+  var out=[],e=g;
+  while(e&&e!==document.body){for(var x=e.nextElementSibling;x;x=x.nextElementSibling)if(x.getClientRects().length)out.push(x);e=e.parentElement}
+  return out;
 }
 // "Show all" lists arrive as data and are drawn the first time each opens.
 var data=null;
@@ -1219,14 +1527,73 @@ document.addEventListener("click",function(e){
   if(!m)return;
   e.preventDefault();
   var t=m.closest(".ia-world");if(t)w=document.getElementById("w-"+t.dataset.w);
-  if(w){w.checked=true;showTab(false)}
+  // The card is somewhere else on the page: it opens at once, with no world tab fade and no
+  // card moving, so the only motion is the scroll to it (two at once read as a jitter).
+  if(w&&!w.checked){w.checked=true;showTab(false);if(t)t.getAnimations().forEach(function(x){x.finish()})}
   if(a.dataset.side){var v=m.querySelector('.ia-switch input[value="'+a.dataset.side+'"]');if(v)v.checked=true}
-  flip(m,true);
+  if(!m.open){var g=m.parentElement;settle(g);m.open=true;arrange(g)}
+  m.getAnimations({subtree:true}).forEach(function(x){if(x.animationName)x.finish()});
   m.scrollIntoView({behavior:still.matches?"auto":"smooth",block:"start"});
 });
+// Focus rings are for the keyboard: a tap or click on a tier or a switch doesn't draw one.
+var root=document.documentElement;
+document.addEventListener("pointerdown",function(){root.classList.add("ia-pointer")},true);
+document.addEventListener("keydown",function(){root.classList.remove("ia-pointer")},true);
 // Tier layout B: picking a tier moves the highlight in the stage list (the page itself is CSS).
+// Tier layout B: only the picked tier is drawn; the rest arrive as data (tier_data) and each
+// is drawn the first time it's picked, as peek() would have drawn it.
+function el(tag,cls,txt){var x=document.createElement(tag);if(cls)x.className=cls;if(txt!=null)x.textContent=txt;return x}
+function txt(s){return document.createTextNode(s)}
+var TASKS=8;
+function task(it,to,from){
+  var r=el("div","ia-task");
+  if(it[1]){var im=el("img",it[2]?"left":null);im.src="/idleon/pic/"+it[1]+".png";im.alt="";im.loading="lazy";if(it[4]==2)im.style.opacity=".55";r.appendChild(im)}
+  else r.appendChild(el("span","ia-item-dot"));
+  var tt=el("span","ia-task-text");tt.appendChild(el("b",null,it[0]));if(it[3])tt.appendChild(el("span",null,it[3]));r.appendChild(tt);
+  var f=el("span","ia-fig");f.appendChild(el("b",null,to));
+  if(it[4]==1)f.appendChild(el("span","ok","Do now"));else if(it[4]==2)f.appendChild(el("span","lock","Locked"));else if(from)f.appendChild(el("span",null,from));
+  r.appendChild(f);return r;
+}
+function laterPeek(p){
+  var d=p.nextElementSibling;if(d&&d.classList.contains("ia-peek"))return;
+  var ps=p.parentElement,js=ps.querySelector("script.ia-later");if(!js)return;
+  if(!ps._t){try{ps._t=JSON.parse(js.textContent)}catch(x){ps._t={i:[],n:{},f:{}}}}
+  var D=ps._t,k=+p.dataset.k,n=+ps.dataset.n,nt=D.n[k],t=nt||D.f[k];if(!t)return;
+  d=el("div","ia-peek");p.after(d);
+  var name=function(i){return D.i[i][0]};
+  var step=function(c,to,title){
+    if(to<0||to>=n)return el("span","ia-step "+c+" off");
+    var l=el("label","ia-step "+c);l.htmlFor="t-"+ps.dataset.t+"-"+to;l.title=title;return l;
+  };
+  var head=el("div","ia-peek-head"),st=el("span","ia-steps");
+  head.appendChild(el("h3",null,"Tier "+(k+1)+" · "+t[0]));
+  st.appendChild(step("back",k-1,"Tier before"));st.appendChild(step("next",k+1,"Next tier"));head.appendChild(st);
+  d.appendChild(head);d.appendChild(el("p","ia-note",t[1]));
+  var dl=el("p","ia-done-line");dl.appendChild(el("span","ia-tick"));
+  if(nt){
+    if(nt[2].length){
+      var l=el("div","ia-task-list");nt[2].slice(0,TASKS).forEach(function(a){l.appendChild(task(D.i[a[0]],a[1],a[2]))});d.appendChild(l);
+      if(nt[2].length>TASKS)d.appendChild(el("p","ia-asks","And "+(nt[2].length-TASKS)+" more: "+and(nt[2].slice(TASKS).map(function(a){return name(a[0])}))+"."));
+    }
+    if(nt[3].length){dl.appendChild(el("span",null,"Done: "+nt[3].map(name).join(", ")));d.appendChild(dl)}
+  }else{
+    if(t[2].length){
+      var a=el("p","ia-asks");
+      t[2].forEach(function(x,i){a.appendChild(txt((i?", ":"")+name(x[0])+" "));a.appendChild(el("span",null,x[1]))});
+      if(t[3])a.appendChild(txt(" and "+t[3]+" more"));
+      d.appendChild(a);
+    }
+    if(t[4]){dl.appendChild(el("span",null,"Done: "+t[4]+" of "+t[5]+"."));d.appendChild(dl)}
+  }
+}
+// "A, B and C", as names() says it.
+function and(v){return v.length<2?v.join(""):v.slice(0,-1).join(", ")+" and "+v[v.length-1]}
+// A tier the browser picked on its own (a page restored on Back) is drawn at once.
+document.querySelectorAll(".ia-pick:checked").forEach(laterPeek);
+// Picking a tier moves the highlight in the stage list (the page itself is CSS).
 document.addEventListener("change",function(e){
   var p=e.target;if(!p.classList||!p.classList.contains("ia-pick"))return;
+  laterPeek(p);
   var b=p.closest(".ia-b");if(!b)return;
   b.querySelectorAll(".ia-dash.picked,.ia-st.picked").forEach(function(x){x.classList.remove("picked")});
   var d=b.querySelector('.ia-dash[data-k="'+p.dataset.k+'"]');if(!d)return;
@@ -1254,24 +1621,53 @@ body.ia-pub { background: var(--page); -webkit-tap-highlight-color: transparent;
 
 /* The paste box. */
 .ia-ask { display: grid; gap: 18px; }
-@container col (min-width: 900px) { .ia-ask { grid-template-columns: 320px minmax(0, 1fr); gap: 28px; } }
-.ia-ask-text p { margin-top: 6px; color: var(--ink-2); font-size: 14px; line-height: 1.55; }
-.ia-ask form { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+@container col (min-width: 900px) { .ia-ask { grid-template-columns: 360px minmax(0, 1fr); gap: 36px; } .ia-ask textarea { flex: 1; min-height: 200px; } }
+.ia-ask-text > p { margin-top: 6px; color: var(--ink-2); font-size: 14px; line-height: 1.55; }
+/* Where your save comes from: a switch, then that site's steps (CSS :has picks them). */
+.ia-src, .ia-packs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.ia-src { margin-top: 16px; }
+.ia-src label, .ia-packs-row label { position: relative; cursor: pointer; }
+.ia-src input, .ia-packs-row input { position: absolute; opacity: 0; pointer-events: none; }
+.ia-src label span, .ia-packs-row label span { display: block; padding: 6px 11px; border-radius: 8px; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--edge-1); }
+.ia-src label:hover span, .ia-packs-row label:hover span { color: var(--ink); }
+.ia-src input:checked + span, .ia-packs-row input:checked + span { color: var(--ink); background: color-mix(in oklab, var(--accent) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 55%, transparent); }
+.ia-src input:focus-visible + span, .ia-packs-row input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ia-how { display: none; margin-top: 12px; }
+.ia-ask-text:has(input[value=it]:checked) .ia-how[data-src=it], .ia-ask-text:has(input[value=ie]:checked) .ia-how[data-src=ie] { display: block; }
+.ia-how ol { list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 8px; padding: 0; margin: 0; }
+.ia-how li { counter-increment: step; display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; font-size: 14px; line-height: 1.5; color: var(--ink); }
+.ia-how li::before { content: counter(step); font: 13px/21px var(--mono); color: var(--ink-3); }
+.ia-how a { color: var(--accent); text-underline-offset: 3px; }
+.ia-how p { margin-top: 12px; font-size: 13px; line-height: 1.5; color: var(--ink-3); }
+.ia-ask-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.ia-ask form { display: flex; flex-direction: column; gap: 12px; min-width: 0; flex: 1; }
 .ia-ask textarea { width: 100%; min-height: 150px; resize: vertical; padding: 12px 14px; border-radius: 10px; border: 0; background: var(--well); box-shadow: inset 0 0 0 1px var(--edge-1); color: var(--ink); font: 12.5px/1.5 var(--mono); }
+.ia-ask textarea::placeholder { color: var(--ink-2); }
 .ia-ask textarea:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* A file held over the box: it takes it. */
+.ia-ask textarea.drop { box-shadow: inset 0 0 0 2px var(--accent); background: color-mix(in oklab, var(--accent) 8%, var(--well)); }
 .ia-ask-actions { order: 2; display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
-.ia-packs { order: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
-.ia-packs > span { margin-right: 4px; color: var(--ink-3); }
-.ia-packs label { position: relative; cursor: pointer; }
-.ia-packs input { position: absolute; opacity: 0; pointer-events: none; }
-.ia-packs label span { display: block; padding: 6px 11px; border-radius: 8px; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--edge-1); }
-.ia-packs label:hover span { color: var(--ink); }
-.ia-packs input:checked + span { color: var(--ink); background: color-mix(in oklab, var(--accent) 16%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 55%, transparent); }
-.ia-packs input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 1px; }
+.ia-packs { order: 1; display: flex; flex-direction: column; gap: 6px; }
+.ia-packs-row > span { margin-right: 4px; color: var(--ink-3); }
+.ia-packs p { display: none; font-size: 13px; line-height: 1.5; color: var(--ink-3); }
+.ia-packs:has(input[value=buy]:checked) p[data-packs=buy], .ia-packs:has(input[value=no-more]:checked) p[data-packs=no-more], .ia-packs:has(input[value=free]:checked) p[data-packs=free] { display: block; }
 .ia-try { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding-top: 14px; border-top: 1px solid var(--edge-1); color: var(--ink-3); font-size: 13px; }
 .ia-try a { color: var(--ink-2); text-underline-offset: 3px; }
 .ia-try a:hover { color: var(--ink); }
-@media (pointer: coarse) { .ia-try a { padding: 8px 0; } .ia-switch label { min-height: 40px; } }
+/* What you get, and what's new: quiet lines under the box, no panels. */
+.ia-get { display: grid; gap: 14px; padding: 0 22px; }
+@container col (min-width: 720px) { .ia-get { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 36px; } }
+.ia-get div { display: flex; flex-direction: column; gap: 3px; }
+.ia-get b { font-size: 14px; font-weight: 500; color: var(--ink); }
+.ia-get span, .ia-news { font-size: 13px; line-height: 1.5; color: var(--ink-3); }
+.ia-news { padding: 0 22px; }
+.ia-news summary { cursor: pointer; list-style: none; }
+.ia-news summary::-webkit-details-marker { display: none; }
+.ia-news summary b { color: var(--ink-2); font-weight: 500; margin-right: 6px; }
+.ia-news summary::after { content: " Show all"; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; }
+.ia-news[open] summary::after { content: " Hide"; }
+.ia-news ul { margin: 8px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+@media (pointer: coarse) { .ia-try a { padding: 8px 0; } .ia-switch label { min-height: 40px; } .ia-src label span, .ia-packs-row label span { padding: 10px 12px; } .ia-news summary { padding: 8px 0; } }
 .ia-err { color: var(--held); font-size: 13.5px; }
 
 /* The answer: the big share and one column per world. */
@@ -1336,7 +1732,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-worlds:has(#w-4:checked) .ia-world[data-w="4"], .ia-worlds:has(#w-5:checked) .ia-world[data-w="5"],
 .ia-worlds:has(#w-6:checked) .ia-world[data-w="6"], .ia-worlds:has(#w-7:checked) .ia-world[data-w="7"] { display: block; animation: ia-in 0.18s var(--ease); }
 @keyframes ia-in { from { opacity: 0; } }
-.ia-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: stretch; }
+.ia-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; align-items: stretch; overflow-anchor: none; }
 .ia-card { background: var(--raised); border: 1px solid var(--edge-1); border-radius: 14px; scroll-margin-top: 20px; }
 .ia-card[open] { grid-column: 1 / -1; }
 .ia-card > summary { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; grid-template-areas: "m n p" "b b b"; align-items: center; gap: 10px 12px; padding: 14px 16px; cursor: pointer; list-style: none; border-radius: 14px; transition: background 0.18s; }
@@ -1384,6 +1780,7 @@ html.ia-settled .ia-meter > span, html.ia-settled .ia-col-fill { animation: none
 .ia-peek-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .ia-peek-head h3 { font-size: 15px; font-weight: 600; }
 .ia-pick:focus-visible + .ia-peek .ia-peek-head h3 { outline: 2px solid var(--focus); outline-offset: 3px; border-radius: 4px; }
+html.ia-pointer .ia-pick:focus-visible + .ia-peek .ia-peek-head h3, html.ia-pointer .ia-switch label:has(input:focus-visible) { outline: none; }
 .ia-peek > .ia-note { margin-top: 4px; }
 .ia-steps { display: flex; gap: 6px; }
 .ia-step { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--well); color: var(--ink-2); cursor: pointer; }
@@ -1534,6 +1931,8 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-switch { display: flex; flex-wrap: wrap; }
   .ia-switch label { flex: 1 1 30%; min-width: 0; flex-direction: column; align-items: flex-start; gap: 2px; white-space: nowrap; }
   .ia-switch label .ia-fig { font-size: 12px; }
+  /* Four sides are two rows of two, not three and one. */
+  .ia-switch:has(> label:nth-child(4):last-child) label { flex-basis: 40%; }
   .ia-hero { min-height: 180px; }
   .ia-hero .ov-hello h1 { font-size: 26px; }
   .ia-page { padding: 0 16px 56px; gap: 14px; }
@@ -1541,6 +1940,8 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
   .ia-big { font-size: 48px; }
   .ia-cols { height: 112px; gap: 6px; }
   .ia-ask-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .ia-get, .ia-news { padding: 0 4px; }
+  .ia-ask textarea { min-height: 110px; }
   /* World tabs: one row that scrolls sideways instead of three rows of tabs. */
   .ia-tabs { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px 12px; padding: 0 16px 2px; scrollbar-width: none; scroll-padding: 0 16px; overscroll-behavior-x: contain; }
   .ia-tabs::-webkit-scrollbar { display: none; }
@@ -1562,7 +1963,49 @@ form.ia-signout button { padding: 0; border: 0; background: none; color: var(--i
 
 #[cfg(test)]
 mod tests {
-    use super::{stage_window, stage_world};
+    use super::{side_of, stage_window, stage_world};
+    use crate::review::{Count, Item, Mechanic, Review};
+    use crate::save::Save;
+
+    fn mech(key: &'static str) -> Mechanic {
+        Mechanic {
+            key,
+            world: 1,
+            name: key,
+            picture: None,
+            count: Count::Levels,
+            unit: "levels",
+            items: vec![Item::new("x", None, 1.0, 10.0)],
+            note: None,
+            tier_names: None,
+            tier_notes: Vec::new(),
+            raises: Vec::new(),
+            have: None,
+            later: Vec::new(),
+            open_order: None,
+            levels_note: None,
+            whole_tiers: false,
+            other_side: "Tiers",
+            pace: None,
+            crowd: None,
+        }
+    }
+
+    #[test]
+    fn a_link_opens_the_side_the_switch_draws_it_on() {
+        let s = Save::parse(r#"{"OptLacc": []}"#).expect("an empty save");
+        let mut statues = mech("statues");
+        statues.levels_note = Some("Levels".into());
+        let mut r = Review::new(&s, vec![statues, mech("statue-flair")], 7);
+        r.mechanics[0].crowd = Some(crate::crowd::Ladder { rungs: Vec::new() });
+        // Statues brings Levels and Tiers, so Flair is the third side.
+        assert!(r.mechanics[0].two_sides());
+        assert_eq!(side_of(&r, "statue-flair"), Some(2));
+        assert_eq!(side_of(&r, "statues"), None);
+        // A side the save doesn't have is left out of the switch, and out of the count.
+        let r = Review::new(&s, vec![mech("bubbles"), mech("cauldron-upgrades")], 7);
+        assert_eq!(side_of(&r, "cauldron-upgrades"), Some(1));
+    }
 
     #[test]
     fn a_ladder_shows_twelve_stages_from_a_few_before_yours() {

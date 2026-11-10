@@ -271,7 +271,7 @@ gem-shop                                # Gem Shop (DigitalTQ tier list: card sl
   Carry Capacity              -   -   -   -   1   1   1   1   2   2   2
   Food Slot                   -   -   -   -   -   1   1   1   2   2   2
   Richelin Kitchen            -   -   -   -   -   -   1   1   1   1   1
-  Instagrow Generator         -   -   -   -   -   -   -   -   1   1   1
+  Instagrow Generator         -   -   -   -   -   -   -   -   -   1   1
 
 event-shop                              # Event Shop (gameslikefinder tier list; only what early World 7 saves own)
   stages                     3e  4e  5e  6e
