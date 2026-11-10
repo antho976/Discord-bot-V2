@@ -1361,7 +1361,9 @@ var still=matchMedia("(prefers-reduced-motion: reduce)"),ease="cubic-bezier(.32,
 // Bars draw in once, with the page. After that a bar that appears (a card opening, another
 // world's tab) is just there, so nothing regrows while a card moves.
 setTimeout(function(){document.documentElement.classList.add("ia-settled")},1200);
-function rects(cs){return cs.map(function(c){return c.getBoundingClientRect()})}
+// Where each card is on the page (not in the window), so a scroll between two measures can't
+// skew them.
+function rects(cs){var x=scrollX,y=scrollY;return cs.map(function(c){var r=c.getBoundingClientRect();return {left:r.left+x,top:r.top+y,width:r.width,height:r.height}})}
 // An open card takes the full row in place of its own row, and that row's other cards go under
 // it: the card's head stays at the height you clicked it, and every card that moves goes down
 // (or back up) the same way. Rows are counted as if every card were closed.
@@ -1388,6 +1390,11 @@ function slide(c,at,from,to,dur,fill){
   var tr=function(x){return "translate("+(x.left-at.left)+"px,"+(x.top-at.top)+"px)"};
   return c.animate([{transform:tr(from)},{transform:tr(to)}],{duration:dur,easing:ease,fill:fill?"forwards":"none"});
 }
+// The open card's row-mates go under it or come back beside it, through the space the card
+// fills: they fade out as it covers them and fade back in where they land, so nothing is seen
+// passing through it.
+var HIDE=[{opacity:1},{opacity:0,offset:.2},{opacity:0,offset:.6},{opacity:1}];
+function hide(c,dur,fill){return c.animate(HIDE,{duration:dur,easing:"linear",fill:fill?"forwards":"none"})}
 // The card grows out of its cell: it is revealed from its old size by a clip (never stretched),
 // its body there from the first frame, drawn on top; every other card that moves slides to its
 // new place on the same curve and clock. Closing is the same in reverse, a little quicker.
@@ -1412,35 +1419,54 @@ function flip(d,open){
   settle(g);
   d.style.zIndex=2;
   if(open){
+    var gb=g.getBoundingClientRect().bottom;
     d.open=true;arrange(g);
+    var grow=g.getBoundingClientRect().bottom-gb;
+    if(grow>1)below(g).forEach(function(e){e.animate([{transform:"translateY("+(-grow)+"px)"},{transform:"none"}],{duration:OPEN,easing:ease})});
     // The tier page and the side shown fade in when they appear; in a card that is opening
     // they are just there, like the rest of the body.
     d.getAnimations({subtree:true}).forEach(function(x){if(x.animationName)x.finish()});
     var now=rects(cs),a=was[i],b=now[i];
-    cs.forEach(function(c,k){if(c!==d)slide(c,now[k],was[k],now[k],OPEN)});
+    cs.forEach(function(c,k){if(c===d)return;slide(c,now[k],was[k],now[k],OPEN);if(Math.abs(was[k].top-a.top)<2)hide(c,OPEN)});
     d.animate([{transform:"translate("+(a.left-b.left)+"px,"+(a.top-b.top)+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+r},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:OPEN,easing:ease})
       .finished.then(function(){d.style.zIndex=""},function(){});
   }else{
     // Measure the closed layout, go back to the open one, and move everything to where it will
     // be; then switch, all in one frame.
-    d.open=false;arrange(g);var after=rects(cs),room=document.documentElement.scrollHeight-innerHeight;d.open=true;arrange(g);
-    var now=rects(cs);
-    // The page gets shorter: if it ends above the window's bottom, the browser would pull the
-    // scroll up at the end; move everything to where that leaves it instead.
-    var shift=Math.min(0,room-scrollY),big=now[i],small=after[i],moves=[];
+    var y0=scrollY,gb=g.getBoundingClientRect().bottom+y0;
+    d.open=false;arrange(g);var after=rects(cs),room=document.documentElement.scrollHeight-innerHeight,dh=gb-g.getBoundingClientRect().bottom-scrollY;d.open=true;arrange(g);
+    // Measuring the shorter page can pull the scroll up; put it back.
+    if(scrollY!==y0)window.scrollTo(0,y0);
+    var now=rects(cs),big=now[i],small=after[i],moves=[];
+    // The page gets shorter. Where it would end above the window's bottom, the page scrolls up
+    // with the fold, so it never stops short and jumps at the end.
+    var shift=Math.min(0,room-y0);
     cs.forEach(function(c,k){
       if(c===d)return;
-      var m=slide(c,now[k],was[k],{left:after[k].left,top:after[k].top-shift},CLOSE,true);if(m)moves.push(m);
+      var m=slide(c,now[k],was[k],after[k],CLOSE,true);if(m)moves.push(m);
+      if(Math.abs(after[k].top-small.top)<2)moves.push(hide(c,CLOSE,true));
     });
-    var fold=d.animate([{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"},{transform:"translate("+(small.left-big.left)+"px,"+(small.top-shift-big.top)+"px)",clipPath:"inset(0 "+Math.max(0,big.width-small.width)+"px "+Math.max(0,big.height-small.height)+r}],{duration:CLOSE,easing:ease,fill:"forwards"});
+    // What's under the grid comes up with its bottom edge instead of jumping at the end.
+    if(dh>1)below(g).forEach(function(e){moves.push(e.animate([{transform:"none"},{transform:"translateY("+(-dh)+"px)"}],{duration:CLOSE,easing:ease,fill:"forwards"}))});
+    var fold=d.animate([{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"},{transform:"translate("+(small.left-big.left)+"px,"+(small.top-big.top)+"px)",clipPath:"inset(0 "+Math.max(0,big.width-small.width)+"px "+Math.max(0,big.height-small.height)+r}],{duration:CLOSE,easing:ease,fill:"forwards"});
     var done=function(){
       d.open=false;arrange(g);
-      if(Math.abs(shift)>1)window.scrollBy(0,shift);
       moves.forEach(function(m){m.cancel()});fold.cancel();d.style.zIndex="";
+      if(shift<0)window.scrollTo(0,y0+shift);
     };
     pending=done;
+    // The scroll up is drawn as the whole page moving down on the fold's clock (a real scroll
+    // runs a frame behind the cards), then made a real scroll in the frame the layout switches.
+    var pg=g.closest("main");
+    if(shift<0&&pg)moves.push(pg.animate([{transform:"none"},{transform:"translateY("+(-shift)+"px)"}],{duration:CLOSE,easing:ease,fill:"forwards"}));
     fold.finished.then(function(){if(pending===done){pending=null;done()}},function(){});
   }
+}
+// Everything that comes after a grid on the page, as drawn.
+function below(g){
+  var out=[],e=g;
+  while(e&&e!==document.body){for(var x=e.nextElementSibling;x;x=x.nextElementSibling)if(x.getClientRects().length)out.push(x);e=e.parentElement}
+  return out;
 }
 // "Show all" lists arrive as data and are drawn the first time each opens.
 var data=null;
