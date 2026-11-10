@@ -1378,11 +1378,15 @@ var rearrange=0;
 addEventListener("resize",function(){clearTimeout(rearrange);rearrange=setTimeout(function(){
   document.querySelectorAll(".ia-grid").forEach(function(g){if(g.querySelector(":scope > .ia-card[open]"))arrange(g)})},120)});
 // A close waits for its fold to end before the layout switches; anything that starts meanwhile
-// runs that switch first. A click while cards move takes over from where they are.
-var pending=null;
-function settle(g){
-  if(pending){var p=pending;pending=null;p()}
-  [].forEach.call(g.children,function(c){c.getAnimations().forEach(function(x){x.cancel()});c.style.zIndex=""});
+// runs that switch first (unless it is the same card opening again: `stay`). A click while cards
+// move takes over from where they are.
+var pending=null,live=[];
+function keep(a){if(a)live.push(a);return a}
+function clear(){live.forEach(function(a){a.cancel()});live=[]}
+function settle(g,stay){
+  if(pending){var p=pending;pending=null;if(!stay)p()}
+  clear();
+  [].forEach.call(g.children,function(c){c.style.zIndex=""});
 }
 // A card laid out at `at` slides from where it was drawn (`from`) to `to`.
 function slide(c,at,from,to,dur,fill){
@@ -1390,17 +1394,37 @@ function slide(c,at,from,to,dur,fill){
   var tr=function(x){return "translate("+(x.left-at.left)+"px,"+(x.top-at.top)+"px)"};
   return c.animate([{transform:tr(from)},{transform:tr(to)}],{duration:dur,easing:ease,fill:fill?"forwards":"none"});
 }
-// The open card's row-mates go under it or come back beside it, through the space the card
-// fills: they fade out as it covers them and fade back in where they land, so nothing is seen
-// passing through it.
-var HIDE=[{opacity:1},{opacity:0,offset:.2},{opacity:0,offset:.6},{opacity:1}];
-function hide(c,dur,fill){return c.animate(HIDE,{duration:dur,easing:"linear",fill:fill?"forwards":"none"})}
-// The card grows out of its cell: it is revealed from its old size by a clip (never stretched),
-// its body there from the first frame, drawn on top; every other card that moves slides to its
-// new place on the same curve and clock. Closing is the same in reverse, a little quicker.
+// The card's clip: how much of its right, bottom and left is cut away. What of box `b` is cut
+// away to leave box `a`; the clip a card is at right now, when one is running.
+function inset(v){return "inset(0 "+v[0]+"px "+v[1]+"px "+v[2]+"px round 14px)"}
+function cut(a,b){return [Math.max(0,b.left+b.width-a.left-a.width),Math.max(0,b.height-a.height),Math.max(0,a.left-b.left)]}
+function reveal(d,from,to,dur,fill){
+  var a=d.animate([{clipPath:inset(from)},{clipPath:inset(to)}],{duration:dur,easing:ease,fill:fill?"forwards":"none"});
+  d._clip={a:a,f:from,t:to};return a;
+}
+function clipped(d){
+  var c=d._clip,p=c&&c.a.effect.getComputedTiming().progress;
+  return p==null?null:c.f.map(function(v,k){return v+(c.t[k]-v)*p});
+}
+// The head's own parts (picture, name, figure, bar) are laid out for the cell or for the full
+// row. Each rides from one place to the other with the clip's edges, the bar stretching with
+// it, so the head is never drawn twice and never jumps.
+function parts(d){return [].slice.call(d.querySelector("summary").children)}
+function ride(e,at,from,to,dur,fill){
+  var bar=e.classList.contains("ia-meter");
+  var tr=function(x){return "translate("+(x.left-at.left)+"px,"+(x.top-at.top)+"px)"+(bar&&at.width?" scaleX("+(x.width/at.width)+")":"")};
+  return e.animate([{transform:tr(from),transformOrigin:"0 0"},{transform:tr(to),transformOrigin:"0 0"}],{duration:dur,easing:ease,fill:fill?"forwards":"none"});
+}
+// The card grows out of its cell, in place: a clip opens from the cell to the full row (nothing
+// is stretched and the body doesn't move), drawn on top, so its row-mates are covered by it as
+// they go under and uncovered as they come back. Every card stays solid the whole way: nothing
+// fades while it moves, and nothing is drawn twice. Every other card that moves slides to its
+// new place on the same curve and clock. Closing is the same in reverse, a little quicker. A
+// click on a card that is still moving turns it round from where it is.
 function flip(d,open){
-  if(d.open===open)return;
-  var g=d.parentElement,cs=[].slice.call(g.children),r="px 0 round 14px)";
+  var back=open&&d._closing;
+  if(d.open===open&&!back)return;
+  var g=d.parentElement,cs=[].slice.call(g.children),body=d.querySelector(".ia-body");
   // Closed from its sticky head, far down a long card: the card's top is off screen, so fold it
   // at once and bring its head back into view rather than animating a part you can't see.
   if(!open&&d.getBoundingClientRect().top<-8){
@@ -1411,54 +1435,64 @@ function flip(d,open){
   if(still.matches||!d.animate){
     settle(g);d.open=open;arrange(g);
     // Reduced motion: nothing moves, the body fades in.
-    var body=d.querySelector(".ia-body");
     if(open&&body&&d.animate)body.animate([{opacity:0},{opacity:1}],{duration:120,easing:"ease"});
     return;
   }
-  var was=rects(cs),i=cs.indexOf(d);
-  settle(g);
+  // Everything is measured where it is drawn now, so a card caught moving carries on from there.
+  // What comes after the grid follows its bottom edge.
+  var was=rects(cs),i=cs.indexOf(d),cur=clipped(d),ks=parts(d),wk=rects(ks),bo=cur&&body?+getComputedStyle(body).opacity:open?0:1;
+  var under=below(g),uy=under.map(function(e){return e.getBoundingClientRect().top+scrollY});
+  d._closing=0;
+  settle(g,back);
   d.style.zIndex=2;
   if(open){
-    var gb=g.getBoundingClientRect().bottom;
     d.open=true;arrange(g);
-    var grow=g.getBoundingClientRect().bottom-gb;
-    if(grow>1)below(g).forEach(function(e){e.animate([{transform:"translateY("+(-grow)+"px)"},{transform:"none"}],{duration:OPEN,easing:ease})});
+    under.forEach(function(e,k){
+      var dy=uy[k]-e.getBoundingClientRect().top-scrollY;
+      if(Math.abs(dy)>1)keep(e.animate([{transform:"translateY("+dy+"px)"},{transform:"none"}],{duration:OPEN,easing:ease}));
+    });
     // The tier page and the side shown fade in when they appear; in a card that is opening
     // they are just there, like the rest of the body.
     d.getAnimations({subtree:true}).forEach(function(x){if(x.animationName)x.finish()});
-    var now=rects(cs),a=was[i],b=now[i];
-    cs.forEach(function(c,k){if(c===d)return;slide(c,now[k],was[k],now[k],OPEN);if(Math.abs(was[k].top-a.top)<2)hide(c,OPEN)});
-    d.animate([{transform:"translate("+(a.left-b.left)+"px,"+(a.top-b.top)+"px)",clipPath:"inset(0 "+Math.max(0,b.width-a.width)+"px "+Math.max(0,b.height-a.height)+r},{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"}],{duration:OPEN,easing:ease})
-      .finished.then(function(){d.style.zIndex=""},function(){});
+    var now=rects(cs),b=now[i],nk=rects(ks);
+    cs.forEach(function(c,k){if(c!==d)keep(slide(c,now[k],was[k],now[k],OPEN))});
+    ks.forEach(function(e,k){keep(ride(e,nk[k],wk[k],nk[k],OPEN))});
+    // The card opens as a plain surface and its body comes in once there's room to read it, in
+    // place: nothing of the body is seen crossing the cards it covers.
+    if(body&&bo<1)keep(body.animate([{opacity:bo},{opacity:bo,offset:.15},{opacity:1,offset:.55},{opacity:1}],{duration:OPEN,easing:"linear"}));
+    keep(reveal(d,cur||cut(was[i],b),[0,0,0],OPEN)).finished.then(function(){d.style.zIndex=""},function(){});
   }else{
     // Measure the closed layout, go back to the open one, and move everything to where it will
     // be; then switch, all in one frame.
     var y0=scrollY,gb=g.getBoundingClientRect().bottom+y0;
-    d.open=false;arrange(g);var after=rects(cs),room=document.documentElement.scrollHeight-innerHeight,dh=gb-g.getBoundingClientRect().bottom-scrollY;d.open=true;arrange(g);
+    d.open=false;arrange(g);var after=rects(cs),ak=rects(ks),room=document.documentElement.scrollHeight-innerHeight,dh=gb-g.getBoundingClientRect().bottom-scrollY;d.open=true;arrange(g);
     // Measuring the shorter page can pull the scroll up; put it back.
     if(scrollY!==y0)window.scrollTo(0,y0);
-    var now=rects(cs),big=now[i],small=after[i],moves=[];
+    var now=rects(cs),big=now[i],small=after[i],nk=rects(ks);
     // The page gets shorter. Where it would end above the window's bottom, the page scrolls up
     // with the fold, so it never stops short and jumps at the end.
     var shift=Math.min(0,room-y0);
-    cs.forEach(function(c,k){
-      if(c===d)return;
-      var m=slide(c,now[k],was[k],after[k],CLOSE,true);if(m)moves.push(m);
-      if(Math.abs(after[k].top-small.top)<2)moves.push(hide(c,CLOSE,true));
-    });
+    cs.forEach(function(c,k){if(c!==d)keep(slide(c,now[k],was[k],after[k],CLOSE,true))});
+    ks.forEach(function(e,k){keep(ride(e,nk[k],wk[k],ak[k],CLOSE,true))});
     // What's under the grid comes up with its bottom edge instead of jumping at the end.
-    if(dh>1)below(g).forEach(function(e){moves.push(e.animate([{transform:"none"},{transform:"translateY("+(-dh)+"px)"}],{duration:CLOSE,easing:ease,fill:"forwards"}))});
-    var fold=d.animate([{transform:"none",clipPath:"inset(0 0 0 0 round 14px)"},{transform:"translate("+(small.left-big.left)+"px,"+(small.top-big.top)+"px)",clipPath:"inset(0 "+Math.max(0,big.width-small.width)+"px "+Math.max(0,big.height-small.height)+r}],{duration:CLOSE,easing:ease,fill:"forwards"});
+    if(dh>1)under.forEach(function(e,k){
+      var dy=uy[k]-e.getBoundingClientRect().top-scrollY;
+      keep(e.animate([{transform:"translateY("+dy+"px)"},{transform:"translateY("+(-dh)+"px)"}],{duration:CLOSE,easing:ease,fill:"forwards"}));
+    });
+    // The body goes first, in place, and the plain surface folds back to the cell.
+    if(body)keep(body.animate([{opacity:bo},{opacity:0,offset:.3},{opacity:0}],{duration:CLOSE,easing:"linear",fill:"forwards"}));
+    var fold=keep(reveal(d,cur||[0,0,0],cut(small,big),CLOSE,true));
+    d._closing=1;
     var done=function(){
-      d.open=false;arrange(g);
-      moves.forEach(function(m){m.cancel()});fold.cancel();d.style.zIndex="";
+      d._closing=0;d.open=false;arrange(g);
+      clear();d.style.zIndex="";
       if(shift<0)window.scrollTo(0,y0+shift);
     };
     pending=done;
     // The scroll up is drawn as the whole page moving down on the fold's clock (a real scroll
     // runs a frame behind the cards), then made a real scroll in the frame the layout switches.
     var pg=g.closest("main");
-    if(shift<0&&pg)moves.push(pg.animate([{transform:"none"},{transform:"translateY("+(-shift)+"px)"}],{duration:CLOSE,easing:ease,fill:"forwards"}));
+    if(shift<0&&pg)keep(pg.animate([{transform:"none"},{transform:"translateY("+(-shift)+"px)"}],{duration:CLOSE,easing:ease,fill:"forwards"}));
     fold.finished.then(function(){if(pending===done){pending=null;done()}},function(){});
   }
 }
@@ -1520,7 +1554,7 @@ if(rf)rf.addEventListener("submit",function(e){
 });
 document.addEventListener("click",function(e){
   var s=e.target.closest(".ia-card > summary");
-  if(s){e.preventDefault();flip(s.parentElement,!s.parentElement.open);return}
+  if(s){e.preventDefault();var c=s.parentElement;flip(c,c._closing?true:!c.open);return}
   var a=e.target.closest("a[data-go]");
   if(!a)return;
   var w=document.getElementById("w-"+a.dataset.w),m=document.getElementById(a.dataset.go);
