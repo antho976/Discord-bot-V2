@@ -1,5 +1,5 @@
-# The container's one public port (Render's $PORT): Relay's rendezvous under /relay, the bot and
-# its dashboard everywhere else. Render, or the Cloudflare Tunnel when self-hosted, ends TLS in
+# The container's one public port (Render's $PORT): Relay's rendezvous under /relay, Leaf's server
+# under /leaf, the bot and its dashboard everywhere else. Render, or the Cloudflare Tunnel when self-hosted, ends TLS in
 # front of this, so phones dial wss://<host>/relay.
 {
 	admin off
@@ -18,6 +18,12 @@
 	# WebSockets pass through reverse_proxy as they are, with no idle timeout.
 	handle_path /relay/* {
 		reverse_proxy 127.0.0.1:7430
+	}
+	# Leaf's comics server (RelayV4, apps/leaf/server): its own compose project on the same host,
+	# on this compose network as `leaf-server`. Strips /leaf; leaf-server checks its own token.
+	# While it is not running, only /leaf answers 502.
+	handle_path /leaf/* {
+		reverse_proxy leaf-server:4580
 	}
 	handle {
 		reverse_proxy 127.0.0.1:3001

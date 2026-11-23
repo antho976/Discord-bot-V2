@@ -198,6 +198,13 @@ and fight over the gateway.
    Twitch drops the old Render ones on its own); Tally and Avex reach Relay at
    `wss://bot.<domain>/relay` (re-pair them if they still dial the Render address).
 
+### Leaf beside the bot
+
+Leaf's comics server (RelayV4, `apps/leaf/server`) is a compose project of its own in
+`~/apps/leaf`. It publishes no port: `leaf-server` joins this project's network
+(`discord-bot_default`), and Caddy sends `https://<domain>/leaf/*` to it. Without it running, only
+`/leaf` answers 502.
+
 ### Going back
 
 `docker compose down` on the server, then resume the Render service. Render still has its disk
